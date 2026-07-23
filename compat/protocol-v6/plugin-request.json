@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "id": 9,
+  "kind": 1,
+  "command": "echo",
+  "payload": {
+    "stable": true
+  }
+}

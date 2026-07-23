@@ -84,6 +84,17 @@ final readonly class Shell
      */
     public function toArray(): array
     {
+        if (count($this->menus) > 1) {
+            throw new RuntimeException(
+                'The stable Linux shell accepts one tray menu per application.',
+            );
+        }
+        if ($this->menus !== [] && $this->tray === null) {
+            throw new RuntimeException(
+                'Native menus require a tray configuration on Linux.',
+            );
+        }
+
         return [
             'menus' => array_map(
                 static fn (Menu $menu): array => $menu->toArray(),

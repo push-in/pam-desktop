@@ -1,6 +1,6 @@
 # Plugins
 
-Pam Desktop 0.6 supports two extension styles with different trust boundaries:
+Pam Desktop 1.0 supports two extension styles with different trust boundaries:
 
 - PHP plugins compose application policy inside the supervised Pam worker;
 - Rust plugins run as separate supervised executables and expose explicit
@@ -67,8 +67,8 @@ pam desktop plugin build system.info .
 
 The first command creates `plugins/system.info`; the second performs a locked
 release build when a lockfile exists and copies the executable to
-`plugins/bin/system.info` (`.exe` on Windows). The scaffold pins the SDK to the
-matching Pam Desktop tag.
+`plugins/bin/system.info` on Linux. The scaffold pins the SDK to the matching
+Pam Desktop tag.
 
 Declare the resulting project-relative executable in PHP:
 
@@ -146,6 +146,11 @@ Rust extensions are executables, not dynamic libraries. This avoids loading an
 unstable or unsafe ABI into the Servo host and gives every plugin a separate
 process boundary.
 
+That process boundary provides crash containment and a stable transport; it is
+not an operating-system sandbox. A Rust plugin is trusted native code with the
+ambient authority of the application user. Only install and register plugins
+you trust, and model sensitive access through narrow plugin commands.
+
 For each configured plugin, the host:
 
 1. resolves a regular executable below the project while rejecting `.git`,
@@ -166,6 +171,5 @@ hub as PHP events.
 
 Only configured plugin executables are required at application boot. Keep
 sources under `plugins/<id>` and built executables under `plugins/bin`; the
-normal application bundle copies them with the project and verifies that every
-declared executable is present.
-
+normal application bundle excludes the standard scaffold sources, copies the
+configured executable and verifies that every declared executable is present.

@@ -11,6 +11,7 @@ use Throwable;
 
 final class Application
 {
+    public const API_VERSION = 1;
     public const PROTOCOL_VERSION = 6;
     public const BOOT_COMMAND = '@pam/boot';
     public const EVENT_COMMAND = '@pam/event';

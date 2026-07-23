@@ -1,0 +1,10 @@
+{
+  "version": 6,
+  "id": 41,
+  "kind": 1,
+  "command": "compat.echo",
+  "windowId": "main",
+  "payload": {
+    "message": "stable"
+  }
+}

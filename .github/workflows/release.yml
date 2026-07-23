@@ -20,19 +20,31 @@ jobs:
       - name: Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libclang-dev libfontconfig1-dev pkg-config
+          sudo apt-get install -y clang jq libclang-dev libfontconfig1-dev pkg-config
       - name: Build production host
         run: cargo build --locked --release -p pam-desktop --target x86_64-unknown-linux-gnu
-      - name: Package Linux host
+      - name: Package and verify reproducible Linux host
         run: |
-          mkdir -p staging
-          cp target/x86_64-unknown-linux-gnu/release/pam-desktop staging/
-          cp target/x86_64-unknown-linux-gnu/release/pam-desktop-launcher staging/
-          tar -C staging -czf pam-desktop-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz .
+          version=${GITHUB_REF_NAME#v}
+          source_epoch=$(git log -1 --format=%ct)
+          mkdir -p dist verification
+          SOURCE_DATE_EPOCH="${source_epoch}" scripts/package-host-linux.sh \
+            target/x86_64-unknown-linux-gnu/release \
+            dist \
+            "${version}"
+          SOURCE_DATE_EPOCH="${source_epoch}" scripts/package-host-linux.sh \
+            target/x86_64-unknown-linux-gnu/release \
+            verification \
+            "${version}"
+          cmp \
+            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
+            "verification/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
+          scripts/test-host-archive.sh \
+            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
           name: pam-desktop-x86_64-unknown-linux-gnu
-          path: pam-desktop-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+          path: dist/pam-desktop-*
           if-no-files-found: error
 
   publish:

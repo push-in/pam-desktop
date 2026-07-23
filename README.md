@@ -7,8 +7,8 @@
 A direct Servo host for building native desktop applications whose application
 logic remains elegant, typed PHP.
 
-![Version](https://img.shields.io/badge/version-0.6.0-68ded2?style=flat-square)
-![Status](https://img.shields.io/badge/status-alpha-f59e0b?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.0.0-68ded2?style=flat-square)
+![Status](https://img.shields.io/badge/Linux-stable-22c55e?style=flat-square)
 ![Servo](https://img.shields.io/badge/Servo-0.4.0-5b50d6?style=flat-square)
 ![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?style=flat-square&logo=php&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-1.88%2B-000000?style=flat-square&logo=rust&logoColor=white)
@@ -22,7 +22,8 @@ Pam Desktop is intentionally separate from the Pam server core. This repository
 owns the native window, Servo integration, secure local bridge, shared protocol,
 and the `pam/desktop` Composer package. Pam remains the PHP worker runtime.
 
-Version 0.6 adds a supervised extension runtime and native application shell:
+Version 1.0 freezes the public PHP, JavaScript and Rust plugin APIs and turns
+the Linux host into a reproducible, verifiable release:
 
 - local HTML, CSS, JavaScript and assets rendered directly by Servo;
 - explicit commands and bidirectional events through `window.pam`;
@@ -39,11 +40,12 @@ Version 0.6 adds a supervised extension runtime and native application shell:
   vendored application code and per-file SHA-256 integrity metadata;
 - portable `.tar.gz` distribution, per-user install/uninstall scripts and
   optional native `.deb` packages;
-- native launchers and portable archives on Linux, Windows and macOS;
-- native MSIX and DMG packaging with Authenticode or hardened-runtime signing;
-- optional Apple notarization and stapling;
+- a stable Linux x86-64 host contract and reproducible official archive;
+- an XDG-aware, atomic per-user host installer that never invokes `sudo`;
+- preserved experimental Windows/macOS packager code, outside the 1.x support
+  and release guarantee;
 - an immutable PHP update policy with pinned Ed25519 public keys;
-- signed multi-platform feeds, bounded HTTPS downloads, exact size/SHA-256
+- signed update feeds, bounded HTTPS downloads, exact size/SHA-256
   verification and atomic install with one-version rollback;
 - frozen `pam.updater` status, check, download and install operations plus
   notify/automatic background policies;
@@ -62,8 +64,10 @@ Version 0.6 adds a supervised extension runtime and native application shell:
 - a random loopback gateway with origin and token enforcement;
 - no Node runtime and no unrestricted ambient native API.
 
-Pam Desktop currently targets controlled prototypes and product exploration.
-Servo 0.4 is still evolving, so this is not yet a drop-in Electron replacement.
+Pam Desktop 1.x is stable for Linux x86-64 applications built against public
+API version 1 and protocol 6. Servo 0.4 is still evolving, so engine behavior
+does not imply feature-for-feature Electron compatibility. The PAM contracts
+around it are protected by executable compatibility fixtures.
 
 ## Create an application
 
@@ -113,7 +117,7 @@ $app = Application::create(
         ->size(1120, 720)
         ->minimumSize(720, 520)
         ->theme(WindowTheme::Dark),
-    manifest: Manifest::create('com.pushin.my-app', 'My desktop app', '0.6.0')
+    manifest: Manifest::create('com.pushin.my-app', 'My desktop app', '1.0.0')
         ->description('A PHP-first native desktop application.')
         ->publisher('My team')
         ->category(ApplicationCategory::Development),
@@ -167,6 +171,8 @@ $app->run();
 In the trusted local frontend:
 
 ```js
+console.assert(window.pam.apiVersion === 1);
+
 window.pam.on("greeting.completed", ({ name }) => {
     console.log(`Event received for ${name}`);
 });
@@ -243,7 +249,7 @@ Updates remain disabled unless PHP pins the feed and Ed25519 public key:
 use Pam\Desktop\UpdatePolicy;
 use Pam\Desktop\Updates;
 
-$manifest = Manifest::create('com.pushin.my-app', 'My desktop app', '0.6.0')
+$manifest = Manifest::create('com.pushin.my-app', 'My desktop app', '1.0.0')
     ->updates(
         Updates::from(
             'https://updates.example.com/my-app/stable.json',
@@ -278,6 +284,17 @@ sudo apt-get install -y \
 cargo build --locked --release -p pam-desktop
 ```
 
+Tagged releases publish only
+`pam-desktop-<version>-x86_64-unknown-linux-gnu.tar.gz` and its adjacent
+SHA-256 file. Verify, extract and install it without root privileges:
+
+```bash
+sha256sum --check pam-desktop-1.0.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+tar -xzf pam-desktop-1.0.0-x86_64-unknown-linux-gnu.tar.gz
+cd pam-desktop-1.0.0-x86_64-unknown-linux-gnu
+./install.sh
+```
+
 Install a development binary:
 
 ```bash
@@ -298,6 +315,10 @@ crates/
 └── pam-desktop-shell/     Servo, Winit, gateway and process supervision
 packages/
 └── desktop/               public PHP application API and worker loop
+compat/
+├── php-api-v1.txt         frozen PHP symbols and signatures
+├── protocol-v6/           golden worker/plugin transport fixtures
+└── rust-plugin-v1/        Rust SDK compile-compatibility consumer
 docs/
 ├── architecture.md        process, security and extension boundaries
 ├── background-jobs.md     supervised PHP scheduling and lifecycle events
@@ -305,7 +326,10 @@ docs/
 ├── distribution.md        Linux bundles, archives and Debian packages
 ├── native-shell.md        menus, tray, global shortcuts and shell effects
 ├── plugins.md             PHP composition and process-isolated Rust SDK
+├── stability.md           1.x support, SemVer and compatibility policy
 └── updates.md             signing, feeds and atomic automatic updates
+packaging/linux/            rootless host installation templates
+scripts/                    reproducible Linux host packaging and verification
 ```
 
 Read [Architecture](docs/architecture.md) before expanding native capabilities.
@@ -320,6 +344,7 @@ cargo check --locked -p pam-desktop
 composer test --working-dir=packages/desktop
 composer analyse --working-dir=packages/desktop
 composer validate --strict packages/desktop/composer.json
+scripts/test-host-archive.sh dist/pam-desktop-1.0.0-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 ## Roadmap
@@ -331,7 +356,7 @@ composer validate --strict packages/desktop/composer.json
 | **0.4** | **Self-contained Linux build, icons, manifest and installers — implemented** |
 | **0.5** | **Windows and macOS, signing and automatic updates — implemented** |
 | **0.6** | **PHP/Rust plugins, menus, tray, global shortcuts and background jobs — implemented** |
-| 1.0 | Stable API, compatibility suite and production-grade Linux distribution |
+| **1.0** | **Stable API, executable compatibility suite and production-grade Linux distribution — implemented** |
 
 ## License
 

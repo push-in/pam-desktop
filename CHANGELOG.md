@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.0.0
+
+- Declared public API version `1` while retaining worker protocol `6` and Rust
+  plugin protocol `1` for the complete 1.x line.
+- Added an exact reflection snapshot for every public PHP symbol, method
+  signature, constant, enum case and promoted property.
+- Added golden protocol-6 bootstrap, request, response and plugin transport
+  fixtures with deserialize/validate/reserialize compatibility tests.
+- Added a standalone Rust plugin consumer that compiles the complete stable SDK
+  surface as part of the locked workspace.
+- Added `window.pam.apiVersion`, the Rust `PUBLIC_API_VERSION` constant and
+  explicit SemVer, deprecation and support policies.
+- Tightened the stable Linux shell contract to one tray-backed menu and made
+  invalid shell effects fail explicitly.
+- Excluded standard Rust plugin scaffold sources from application bundles while
+  retaining and hashing configured release executables.
+- Documented that process-isolated Rust plugins are trusted native code, not an
+  operating-system sandbox.
+- Added deterministic Linux x86-64 host archives with a versioned manifest,
+  per-file sizes and SHA-256 digests, normalized metadata and an adjacent
+  archive checksum.
+- Added atomic rootless XDG install/uninstall scripts that refuse unrelated
+  command paths and affect only the exact installed version.
+- Added end-to-end host archive validation for safe members, exact file sets,
+  checksums, byte-for-byte reproducibility, installed execution and uninstall.
+- Prevented a custom application output directory from entering its own bundle
+  and added a byte-for-byte portable archive reproducibility regression test.
+- Focused the official 1.x build, release, documentation and compatibility
+  guarantee on Linux x86-64 built from Ubuntu 22.04.
+
 ## 0.6.0
 
 - Added protocol 6 contracts for native shell configuration, supervised jobs,

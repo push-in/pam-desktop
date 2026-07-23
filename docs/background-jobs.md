@@ -1,6 +1,6 @@
 # Background jobs
 
-Pam Desktop 0.6 schedules periodic PHP work from typed application policy. Jobs
+Pam Desktop 1.0 schedules periodic PHP work from typed application policy. Jobs
 run through the same supervised worker as commands, so they retain PHP
 application state, use the same crash recovery, and cannot execute concurrently
 inside one Zend runtime.
@@ -72,4 +72,3 @@ hot-reloading PHP policy cancels active work, wakes sleeping schedules, joins
 their threads, and only then installs the replacement schedule. This prevents
 duplicate timers after development reloads and avoids waiting for a long
 interval during shutdown.
-

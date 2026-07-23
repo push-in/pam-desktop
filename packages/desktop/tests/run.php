@@ -47,6 +47,17 @@ function expect(bool $condition, string $message): void
     }
 }
 
+expect(Application::API_VERSION === 1, 'The stable PHP API version should be 1.');
+expect(Application::PROTOCOL_VERSION === 6, 'The stable PHP protocol should remain version 6.');
+
+try {
+    Shell::none()
+        ->menu(Menu::create('orphan', 'Orphan', MenuItem::command('show', 'Show')))
+        ->toArray();
+    expect(false, 'A Linux native menu without a tray must be rejected.');
+} catch (RuntimeException) {
+}
+
 try {
     Manifest::create('Invalid Application ID', 'Pam', '0.4.0');
     expect(false, 'Unsafe application identifiers must be rejected.');

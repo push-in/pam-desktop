@@ -1,0 +1,15 @@
+[package]
+name = "pam-desktop-rust-plugin-compat-v1"
+description = "Compile-time compatibility contract for the stable Pam Desktop Rust plugin API."
+version = "1.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+pam-desktop-plugin = { path = "../../crates/pam-desktop-plugin" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

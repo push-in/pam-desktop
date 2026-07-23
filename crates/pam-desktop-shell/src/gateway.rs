@@ -1710,6 +1710,7 @@ const BRIDGE_SCRIPT: &str = r#"
         enumerable: true,
         writable: false,
         value: Object.freeze({
+            apiVersion: 1,
             clipboard,
             dialog,
             emit,
@@ -1755,6 +1756,7 @@ mod tests {
         assert!(BRIDGE_SCRIPT.contains("const updater = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const plugins = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("value: Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("apiVersion: 1,"));
         assert!(BRIDGE_SCRIPT.contains("fs: filesystem,"));
         assert!(BRIDGE_SCRIPT.contains("updater,"));
         assert!(BRIDGE_SCRIPT.contains("plugins,"));

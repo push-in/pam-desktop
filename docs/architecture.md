@@ -64,6 +64,18 @@ execution contexts.
 This division lets Pam Desktop evolve independently without coupling Servo's
 native dependency graph to every Pam server installation.
 
+## Stable 1.x boundary
+
+Public API version `1`, worker protocol `6`, and Rust plugin protocol `1` are
+independent compatibility axes. PHP exposes the first two as
+`Application::API_VERSION` and `Application::PROTOCOL_VERSION`; the injected,
+frozen frontend bridge exposes `window.pam.apiVersion`.
+
+The 1.x compatibility suite reflects the complete PHP surface, round-trips
+golden protocol messages and compiles an external-style Rust SDK consumer.
+Protocol fixtures are values, not implementation snapshots: a field removal,
+renaming, discriminator change or serialization-default change fails CI.
+
 ## Protocol
 
 Host and worker exchange one JSON object per line. Messages are limited to
@@ -179,16 +191,16 @@ rejects non-vendor symlink escapes, omits secrets and configured exclusions,
 and copies the exact `pam-desktop` and Pam worker binaries.
 
 On Linux, `ldd` is applied only to those trusted binaries and non-glibc runtime
-libraries are copied beside them. Windows/macOS packages use the dedicated
-native launcher and adjacent DLL/dylib materialization. Launchers fix
-`PAM_BINARY`, bundle/update roots, `PHPRC`, `PHP_INI_SCAN_DIR` and the platform
-library path before starting production `run` mode without the watcher.
+libraries are copied beside them. The launcher fixes `PAM_BINARY`,
+bundle/update roots, `PHPRC`, `PHP_INI_SCAN_DIR` and the platform library path
+before starting production `run` mode without the watcher.
 
 The staged bundle receives platform metadata, validated icons and a sorted
-integrity manifest. Linux adds Freedesktop metadata and scoped user installers;
-macOS adds `.app`/DMG metadata and Windows adds MSIX metadata/assets. Existing
-artifacts are never removed unless the caller explicitly passes `--force`;
-publication is a rename from the completed staging directory.
+integrity manifest. Linux adds Freedesktop metadata and scoped user installers.
+Existing Windows/macOS packaging code is experimental and is neither generated
+nor compatibility-tested for 1.x. Existing artifacts are never removed unless
+the caller explicitly passes `--force`; publication is a rename from the
+completed staging directory.
 
 ## Update boundary
 
@@ -203,13 +215,11 @@ before selecting an application/channel/platform/architecture artifact. HTTPS
 transport is bounded; the downloaded bytes must match both signed length and
 SHA-256.
 
-Installation is delegated to a copied helper so Windows executables are no
-longer locked. The helper waits for the original process, extracts into a
-same-filesystem staging directory, verifies every manifest file, moves the
-current bundle to one rollback slot, atomically moves the replacement into
-place, verifies again and relaunches. macOS portable updates replace the signed
-`.app`, pass `codesign --verify --deep --strict`, and then verify the nested
-runtime manifest so outer code signing is not invalidated by a partial update.
+Installation is delegated to a copied helper. The helper waits for the original
+process, extracts into a same-filesystem staging directory, verifies every
+manifest file, moves the current bundle to one rollback slot, atomically moves
+the replacement into place, verifies again and relaunches. The official 1.x
+update and release validation covers Linux x86-64 only.
 
 ## Extension rules
 

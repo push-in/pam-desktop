@@ -1,6 +1,6 @@
 # Linux distribution
 
-Pam Desktop 0.6 packages the application policy declared in PHP. The build
+Pam Desktop 1.0 packages the application policy declared in PHP. The build
 command boots the application, validates protocol 6, and derives identity,
 version, publisher, category, icon and update policy from that typed contract.
 It does not require a Node-based bundler.
@@ -14,7 +14,7 @@ use Pam\Desktop\Manifest;
 $manifest = Manifest::create(
     identifier: 'com.example.my-app',
     name: 'My application',
-    version: '0.6.0',
+    version: '1.0.0',
 )
     ->description('A focused desktop tool managed in PHP.')
     ->publisher('Example')
@@ -49,9 +49,9 @@ exact versioned artifacts.
 | --- | --- | --- | --- |
 | Linux | self-contained directory | deterministic `.tar.gz` | `.deb` |
 
-The official 0.6 release pipeline generates Linux x86-64 artifacts only. The
-existing Windows/macOS packagers remain in the codebase for future work, but
-they are not part of the current release or compatibility guarantee.
+The official 1.x release pipeline generates Linux x86-64 artifacts only. The
+existing Windows/macOS packagers remain experimental code for future work;
+they are not built, published, or covered by the 1.x compatibility guarantee.
 
 Linux packages are built on Linux. The build copies the
 host, the native launcher, Pam worker, application, isolated `php.ini`, adjacent
@@ -76,7 +76,7 @@ and the repository; see the updates guide for the Ed25519 publication flow.
 
 Every runtime bundle contains `manifest.json` with:
 
-- schema and protocol versions;
+- schema, public API and protocol versions;
 - complete typed PHP application metadata;
 - Pam Desktop and Pam runtime versions;
 - operating system, architecture and ABI;
@@ -91,3 +91,26 @@ Linux portable archives normalize ordering, ownership and timestamps using
 supported glibc distribution. The release workflow builds tagged x86-64 host
 binaries on Ubuntu 22.04. Product applications should run a clean install,
 launcher and update smoke test on their oldest supported Linux distribution.
+
+## Official host archive
+
+A tagged release builds the Servo host on Ubuntu 22.04, packages it twice with
+the commit timestamp, and requires both archives to be byte-identical. The
+archive contains:
+
+- `bin/pam-desktop` and `bin/pam-desktop-launcher`;
+- a schema-1 host `manifest.json` with public API `1`, protocol `6`, target,
+  byte lengths and SHA-256 values;
+- rootless `install.sh` and exact-version `uninstall.sh`;
+- license and installation notes.
+
+The adjacent `.sha256` file authenticates the complete compressed archive.
+`scripts/test-host-archive.sh` rejects unsafe members, unexpected files,
+manifest mismatches and non-reproducible or nonfunctional installs. It then
+installs into temporary XDG directories, invokes the installed host and
+uninstalls the exact version.
+
+The installer defaults to
+`${XDG_DATA_HOME:-$HOME/.local/share}/pam-desktop/<version>` and links commands
+under `${XDG_BIN_HOME:-$HOME/.local/bin}`. It refuses to replace unrelated
+commands and atomically changes only links already managed by PAM Desktop.

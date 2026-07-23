@@ -10,7 +10,7 @@ never ships with the application.
 use Pam\Desktop\UpdatePolicy;
 use Pam\Desktop\Updates;
 
-$manifest = Manifest::create('com.example.my-app', 'My application', '0.6.0')
+$manifest = Manifest::create('com.example.my-app', 'My application', '1.0.0')
     ->updates(
         Updates::from(
             'https://updates.example.com/my-app/stable.json',
@@ -57,7 +57,7 @@ pam desktop publish-update . \
   --key /secure/my-app-update.key \
   --output dist/stable.json \
   --published-at 2026-07-23T14:00:00Z \
-  --notes-url https://example.com/releases/0.6.0 \
+  --notes-url https://example.com/releases/1.0.0 \
   --artifact linux,x86_64,portable,dist/app-linux.tar.gz,https://cdn.example.com/app-linux.tar.gz
 ```
 
@@ -67,10 +67,12 @@ Each `--artifact` tuple is:
 platform,architecture,kind,local-path,HTTPS-URL
 ```
 
-Platforms are `linux`, `windows`, and `macos`; kinds are `portable` and
-`installer`. The publisher calculates byte lengths and SHA-256 values itself.
-It writes the feed through a same-directory staging file and refuses an
-existing destination unless `--force` is explicit.
+The 1.x supported release target is `linux,x86_64`; kinds are `portable` and
+`installer`. Historical Windows/macOS feed parsing remains in the codebase but
+is outside current artifact generation and support. The publisher calculates
+byte lengths and SHA-256 values itself. It writes the feed through a
+same-directory staging file and refuses an existing destination unless
+`--force` is explicit.
 
 The signed payload is the compact JSON serialization of the typed `release`
 object in protocol field order. Unknown feed fields are rejected. The outer
@@ -82,7 +84,7 @@ document contains only:
     "schemaVersion": 1,
     "applicationId": "com.example.my-app",
     "channel": "stable",
-    "version": "0.6.0",
+    "version": "1.0.0",
     "publishedAt": "2026-07-23T14:00:00Z",
     "artifacts": []
   },

@@ -6,6 +6,7 @@ use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
 pub const PROTOCOL_VERSION: u16 = 6;
+pub const PUBLIC_API_VERSION: u16 = 1;
 pub const PLUGIN_PROTOCOL_VERSION: u16 = 1;
 pub const UPDATE_FEED_VERSION: u16 = 1;
 pub const BOOT_COMMAND: &str = "@pam/boot";
@@ -872,6 +873,12 @@ impl ShellConfig {
         if item_count > 256 {
             return Err("native menus cannot contain more than 256 items".to_owned());
         }
+        if self.menus.len() > 1 {
+            return Err("the stable Linux shell accepts one tray menu per application".to_owned());
+        }
+        if !self.menus.is_empty() && self.tray.is_none() {
+            return Err("native menus require a tray configuration on Linux".to_owned());
+        }
         if let Some(tray) = &self.tray {
             tray.validate()?;
             if !menu_ids.contains(tray.menu_id.as_str()) {
@@ -1588,6 +1595,24 @@ mod tests {
             }],
         };
         assert!(shell.validate().is_ok());
+        let mut menu_without_tray = shell.clone();
+        menu_without_tray.tray = None;
+        assert!(menu_without_tray.validate().is_err());
+        let mut multiple_menus = shell.clone();
+        multiple_menus.menus.push(MenuConfig {
+            id: "other".to_owned(),
+            label: "Other".to_owned(),
+            items: vec![MenuItemConfig {
+                kind: MenuItemKind::Command,
+                id: "other.command".to_owned(),
+                label: "Other".to_owned(),
+                enabled: true,
+                checked: false,
+                accelerator: None,
+                items: Vec::new(),
+            }],
+        });
+        assert!(multiple_menus.validate().is_err());
 
         let job = BackgroundJobConfig {
             id: "heartbeat".to_owned(),
@@ -1615,6 +1640,76 @@ mod tests {
         );
         assert!(response.validate_for(9).is_ok());
         assert!(response.validate_for(8).is_err());
+    }
+
+    #[test]
+    fn preserves_the_stable_protocol_six_golden_contracts() {
+        let bootstrap_json: Value =
+            serde_json::from_str(include_str!("../../../compat/protocol-v6/bootstrap.json"))
+                .expect("bootstrap golden JSON should parse");
+        let bootstrap: Bootstrap = serde_json::from_value(bootstrap_json.clone())
+            .expect("bootstrap golden contract should deserialize");
+        bootstrap
+            .validate()
+            .expect("bootstrap golden contract should remain valid");
+        assert_eq!(
+            serde_json::to_value(bootstrap).expect("bootstrap should serialize"),
+            bootstrap_json
+        );
+
+        let request_json: Value =
+            serde_json::from_str(include_str!("../../../compat/protocol-v6/request.json"))
+                .expect("request golden JSON should parse");
+        let request: RequestEnvelope = serde_json::from_value(request_json.clone())
+            .expect("request golden contract should deserialize");
+        assert_eq!(request.version, PROTOCOL_VERSION);
+        assert_eq!(
+            serde_json::to_value(request).expect("request should serialize"),
+            request_json
+        );
+
+        let response_json: Value =
+            serde_json::from_str(include_str!("../../../compat/protocol-v6/response.json"))
+                .expect("response golden JSON should parse");
+        let response: ResponseEnvelope = serde_json::from_value(response_json.clone())
+            .expect("response golden contract should deserialize");
+        response
+            .validate_for(41)
+            .expect("response golden contract should remain valid");
+        assert_eq!(
+            serde_json::to_value(response).expect("response should serialize"),
+            response_json
+        );
+
+        let plugin_request_json: Value = serde_json::from_str(include_str!(
+            "../../../compat/protocol-v6/plugin-request.json"
+        ))
+        .expect("plugin request golden JSON should parse");
+        let plugin_request: PluginRequestEnvelope =
+            serde_json::from_value(plugin_request_json.clone())
+                .expect("plugin request golden contract should deserialize");
+        plugin_request
+            .validate()
+            .expect("plugin request golden contract should remain valid");
+        assert_eq!(
+            serde_json::to_value(plugin_request).expect("plugin request should serialize"),
+            plugin_request_json
+        );
+
+        let plugin_response_json: Value = serde_json::from_str(include_str!(
+            "../../../compat/protocol-v6/plugin-response.json"
+        ))
+        .expect("plugin response golden JSON should parse");
+        let plugin_response: PluginResponseEnvelope =
+            serde_json::from_value(plugin_response_json.clone())
+                .expect("plugin response golden contract should deserialize");
+        plugin_response
+            .validate_for(9)
+            .expect("plugin response golden contract should remain valid");
+        assert_eq!(
+            serde_json::to_value(plugin_response).expect("plugin response should serialize"),
+            plugin_response_json
+        );
     }
 
     #[test]

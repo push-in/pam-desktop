@@ -190,6 +190,10 @@ fn run_build(
 fn run_doctor(path: &std::path::Path) -> Result<(), String> {
     let runtime = DesktopRuntime::prepare(Project::discover(path)?)?;
     println!(
+        "[ok] Public API: {}",
+        pam_desktop_protocol::PUBLIC_API_VERSION
+    );
+    println!(
         "[ok] PHP worker protocol: {}",
         pam_desktop_protocol::PROTOCOL_VERSION
     );

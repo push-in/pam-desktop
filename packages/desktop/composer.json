@@ -21,7 +21,10 @@
     },
     "scripts": {
         "analyse": "phpstan analyse --configuration=phpstan.neon.dist",
-        "test": "php tests/run.php"
+        "test": [
+            "php tests/run.php",
+            "php tests/compatibility.php"
+        ]
     },
     "require-dev": {
         "phpstan/phpstan": "^2.2"

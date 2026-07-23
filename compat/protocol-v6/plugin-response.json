@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "id": 9,
+  "kind": 2,
+  "status": 1,
+  "payload": {
+    "stable": true
+  },
+  "events": [
+    {
+      "name": "compat.echoed",
+      "payload": null
+    }
+  ]
+}

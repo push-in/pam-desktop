@@ -4,7 +4,9 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-use pam_desktop_protocol::{ApplicationCategory, ApplicationManifest, Bootstrap, PROTOCOL_VERSION};
+use pam_desktop_protocol::{
+    ApplicationCategory, ApplicationManifest, Bootstrap, PROTOCOL_VERSION, PUBLIC_API_VERSION,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -602,6 +604,12 @@ fn copy_directory(
                 .file_type()
                 .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
             if file_type.is_dir() {
+                let canonical = path
+                    .canonicalize()
+                    .map_err(|error| format!("cannot resolve {}: {error}", path.display()))?;
+                if canonical.starts_with(context.build_output) {
+                    continue;
+                }
                 fs::create_dir(&target)
                     .map_err(|error| format!("cannot create {}: {error}", target.display()))?;
                 copy_directory(context, &path, &target, &child_relative, active)?;
@@ -716,6 +724,17 @@ fn write_json_object(
 }
 
 fn excluded_path(relative: &Path, configured: &[String]) -> bool {
+    let mut plugin_components = relative.components().filter_map(|component| {
+        if let Component::Normal(name) = component {
+            Some(name)
+        } else {
+            None
+        }
+    });
+    let scaffold_plugin_source = plugin_components.next() == Some(OsStr::new("plugins"))
+        && plugin_components
+            .next()
+            .is_some_and(|name| name != OsStr::new("bin"));
     let nested_package_vendor = relative
         .components()
         .filter_map(|component| match component {
@@ -737,6 +756,7 @@ fn excluded_path(relative: &Path, configured: &[String]) -> bool {
             || name.starts_with(".env.")
     });
     default
+        || scaffold_plugin_source
         || nested_package_vendor
         || configured
             .iter()
@@ -1081,6 +1101,7 @@ printf 'Removed @APP_ID@.\n'
 #[serde(rename_all = "camelCase")]
 struct BundleManifest<'a> {
     schema_version: u8,
+    api_version: u16,
     protocol_version: u16,
     application: &'a ApplicationManifest,
     runtime: RuntimeManifest,
@@ -1119,6 +1140,7 @@ fn write_bundle_manifest(
 ) -> Result<(), String> {
     let manifest = BundleManifest {
         schema_version: 1,
+        api_version: PUBLIC_API_VERSION,
         protocol_version: PROTOCOL_VERSION,
         application: &bootstrap.manifest,
         runtime: RuntimeManifest {
@@ -2012,6 +2034,72 @@ mod tests {
     }
 
     #[test]
+    fn excludes_rust_plugin_sources_but_keeps_installed_executables() {
+        assert!(excluded_path(
+            Path::new("plugins/system.info/src/main.rs"),
+            &[]
+        ));
+        assert!(excluded_path(
+            Path::new("plugins/system.info/Cargo.toml"),
+            &[]
+        ));
+        assert!(!excluded_path(Path::new("plugins/bin/system.info"), &[]));
+    }
+
+    #[test]
+    fn creates_reproducible_linux_archives_without_bundling_the_output() {
+        if !cfg!(target_os = "linux") {
+            return;
+        }
+
+        let fixture = Fixture::create();
+        let project = Project::discover(&fixture.project).expect("project should be valid");
+        let bootstrap = Fixture::bootstrap();
+        let mut options = BuildOptions {
+            project: fixture.project.clone(),
+            output: Some(fixture.output.clone()),
+            formats: BTreeSet::from([PackageFormat::Portable]),
+            force: false,
+            sign: false,
+        };
+        let first = build_with_binaries(
+            &project,
+            &bootstrap,
+            &options,
+            &fixture.host,
+            &fixture.pam,
+            None,
+        )
+        .expect("first portable archive should build");
+        let first_bytes =
+            fs::read(&first.artifacts[0]).expect("first portable archive should be readable");
+        let listing = Command::new("tar")
+            .args(["-tzf"])
+            .arg(&first.artifacts[0])
+            .output()
+            .expect("portable archive should be listable");
+        assert!(listing.status.success());
+        assert!(
+            !String::from_utf8_lossy(&listing.stdout).contains("/app/artifacts/"),
+            "the selected output directory must not leak into its own bundle"
+        );
+
+        options.force = true;
+        let second = build_with_binaries(
+            &project,
+            &bootstrap,
+            &options,
+            &fixture.host,
+            &fixture.pam,
+            None,
+        )
+        .expect("second portable archive should build");
+        let second_bytes =
+            fs::read(&second.artifacts[0]).expect("second portable archive should be readable");
+        assert_eq!(first_bytes, second_bytes);
+    }
+
+    #[test]
     fn builds_a_materialized_directory_with_integrity_metadata() {
         let fixture = Fixture::create();
         let project = Project::discover(&fixture.project).expect("project should be valid");
@@ -2050,12 +2138,14 @@ mod tests {
         );
         assert!(!bundle.join("app/.env").exists());
         assert!(!bundle.join("app/storage/cache").exists());
+        assert!(!bundle.join("app/artifacts").exists());
         assert!(bundle.join("manifest.json").is_file());
         let manifest: serde_json::Value = serde_json::from_slice(
             &fs::read(bundle.join("manifest.json")).expect("manifest should be readable"),
         )
         .expect("manifest should be JSON");
         assert_eq!(manifest["schemaVersion"], 1);
+        assert_eq!(manifest["apiVersion"], PUBLIC_API_VERSION);
         assert_eq!(manifest["protocolVersion"], PROTOCOL_VERSION);
         assert_eq!(manifest["sourceDateEpoch"], 0);
         assert_eq!(manifest["application"]["category"], 1);
@@ -2114,7 +2204,7 @@ mod tests {
                 std::process::id()
             ));
             let project = root.join("project");
-            let output = root.join("output");
+            let output = project.join("artifacts");
             fs::create_dir_all(project.join("resources")).expect("resources should be created");
             fs::create_dir_all(project.join("vendor")).expect("vendor should be created");
             fs::create_dir_all(project.join("vendor/pam/desktop/vendor"))

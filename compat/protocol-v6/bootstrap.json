@@ -1,0 +1,107 @@
+{
+  "manifest": {
+    "identifier": "com.pushin.compat",
+    "name": "Pam Compatibility",
+    "version": "1.0.0",
+    "description": "Protocol 6 compatibility fixture.",
+    "publisher": "Pushin",
+    "category": 1,
+    "icon": "resources/icon.svg",
+    "bundleExcludes": []
+  },
+  "windows": [
+    {
+      "id": "main",
+      "entry": "resources/index.html",
+      "title": "Compatibility",
+      "width": 1024,
+      "height": 720,
+      "minWidth": 640,
+      "minHeight": 480,
+      "resizable": true,
+      "visible": true,
+      "theme": 3
+    }
+  ],
+  "commandTimeoutMs": 10000,
+  "capabilities": {
+    "filesystemRoots": [
+      {
+        "name": "data",
+        "path": "storage",
+        "access": 3
+      }
+    ],
+    "dialogs": true,
+    "clipboardRead": true,
+    "clipboardWrite": true,
+    "notifications": true,
+    "dragAndDrop": true
+  },
+  "shell": {
+    "menus": [
+      {
+        "id": "application",
+        "label": "Application",
+        "items": [
+          {
+            "kind": 1,
+            "id": "show",
+            "label": "Show",
+            "enabled": true,
+            "checked": false,
+            "accelerator": "CmdOrCtrl+Shift+KeyP",
+            "items": []
+          },
+          {
+            "kind": 3,
+            "id": "",
+            "label": "",
+            "enabled": true,
+            "checked": false,
+            "items": []
+          },
+          {
+            "kind": 2,
+            "id": "background",
+            "label": "Background",
+            "enabled": true,
+            "checked": true,
+            "items": []
+          }
+        ]
+      }
+    ],
+    "tray": {
+      "menuId": "application",
+      "tooltip": "Pam Compatibility",
+      "closeBehavior": 2
+    },
+    "shortcuts": [
+      {
+        "id": "show",
+        "accelerator": "CmdOrCtrl+Shift+KeyP"
+      }
+    ]
+  },
+  "backgroundJobs": [
+    {
+      "id": "heartbeat",
+      "intervalMs": 30000,
+      "initialDelayMs": 1000,
+      "timeoutMs": 3000,
+      "overlap": 1
+    }
+  ],
+  "rustPlugins": [
+    {
+      "id": "system.info",
+      "executable": "plugins/bin/system.info",
+      "arguments": [],
+      "timeoutMs": 5000
+    }
+  ],
+  "phpPlugins": [
+    "compat.php"
+  ]
+}

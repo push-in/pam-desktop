@@ -1,6 +1,6 @@
 # Native shell
 
-Pam Desktop 0.6 declares menus, tray behavior, and global shortcuts in immutable
+Pam Desktop 1.0 declares menus, tray behavior, and global shortcuts in immutable
 PHP objects. Native code owns operating-system handles and sends selections
 back through the normal typed event path.
 
@@ -43,6 +43,11 @@ Every ID is unique across the shell. Menus accept at most 256 items and eight
 levels. Supported item kinds are sequential integers: command `1`, checkbox
 `2`, separator `3`, and submenu `4`. Tray close behavior is exit `1` or hide
 `2`.
+
+The stable Linux shell accepts one menu tree per application and uses it as the
+tray menu, so declaring a menu requires a matching `Tray`. Shortcuts remain
+valid without a tray. Dynamic menu, checkbox and tray effects fail explicitly
+if no tray is configured.
 
 Accelerators use explicit `+`-separated tokens such as
 `CmdOrCtrl+Shift+KeyP`. At least one modifier is required. The same syntax is
@@ -120,4 +125,3 @@ the application usable.
 With close behavior `Hide`, closing the main window hides it while the tray
 remains active. Use a menu item or global shortcut that returns
 `WindowEffect::visible(true)` and `WindowEffect::focus()` to restore it.
-

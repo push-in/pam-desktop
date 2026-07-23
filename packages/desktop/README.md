@@ -26,7 +26,7 @@ use Pam\Desktop\WindowEffect;
 
 $app = Application::create(
     window: Window::create('My application')->size(1120, 720),
-    manifest: Manifest::create('com.example.my-app', 'My application', '0.6.0')
+    manifest: Manifest::create('com.example.my-app', 'My application', '1.0.0')
         ->publisher('Example')
         ->category(ApplicationCategory::Development),
 )
@@ -77,6 +77,18 @@ Protocol 6 supports:
 All coded variants—statuses, kinds, categories, themes, policies and
 errors—are sequential integer-backed enums. Application command, event, job and
 plugin names remain explicit validated identifiers chosen by the application.
+
+The PHP API has public version `1`:
+
+```php
+assert(Application::API_VERSION === 1);
+assert(Application::PROTOCOL_VERSION === 6);
+```
+
+Every public symbol, method signature, constant, enum case and promoted
+property is checked against `compat/php-api-v1.txt`. Additive changes require an
+intentional snapshot review; removals or signature changes require a new major
+API version.
 
 Rust extensions use the separate `pam-desktop-plugin` SDK and never load a
 dynamic-library ABI into the Servo host. Create one with:

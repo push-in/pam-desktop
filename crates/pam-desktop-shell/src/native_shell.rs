@@ -117,12 +117,14 @@ impl NativeShell {
 
     pub fn apply_effect(&mut self, effect: &Effect) -> Result<bool, String> {
         let Some(tray) = &mut self.tray else {
-            return Ok(matches!(
-                effect.kind,
+            return match effect.kind {
                 EffectKind::SetMenuItemEnabled
-                    | EffectKind::SetMenuItemChecked
-                    | EffectKind::SetTrayVisible
-            ));
+                | EffectKind::SetMenuItemChecked
+                | EffectKind::SetTrayVisible => {
+                    Err("native shell effects require a configured tray".to_owned())
+                }
+                _ => Ok(false),
+            };
         };
         match effect.kind {
             EffectKind::SetMenuItemEnabled => {

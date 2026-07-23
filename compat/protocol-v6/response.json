@@ -1,0 +1,26 @@
+{
+  "version": 6,
+  "id": 41,
+  "kind": 2,
+  "status": 1,
+  "payload": {
+    "message": "stable"
+  },
+  "effects": [
+    {
+      "kind": 1,
+      "windowId": "main",
+      "payload": {
+        "title": "Stable"
+      }
+    }
+  ],
+  "events": [
+    {
+      "name": "compat.completed",
+      "payload": {
+        "stable": true
+      }
+    }
+  ]
+}

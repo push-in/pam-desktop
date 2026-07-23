@@ -24,6 +24,19 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets --no-default-features --features gateway -- -D warnings
       - run: cargo test --locked --workspace --no-default-features --features gateway
+      - name: Linux host archive contract
+        run: |
+          sh -n scripts/package-host-linux.sh scripts/test-host-archive.sh
+          cargo build --locked -p pam-desktop --no-default-features --features gateway --bins
+          version=$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pam-desktop") | .version')
+          mkdir -p "${RUNNER_TEMP}/host-one" "${RUNNER_TEMP}/host-two"
+          SOURCE_DATE_EPOCH=0 scripts/package-host-linux.sh target/debug "${RUNNER_TEMP}/host-one" "${version}"
+          SOURCE_DATE_EPOCH=0 scripts/package-host-linux.sh target/debug "${RUNNER_TEMP}/host-two" "${version}"
+          cmp \
+            "${RUNNER_TEMP}/host-one/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
+            "${RUNNER_TEMP}/host-two/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
+          scripts/test-host-archive.sh \
+            "${RUNNER_TEMP}/host-one/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
       - run: composer install --working-dir=packages/desktop --no-interaction --prefer-dist
       - run: composer validate --strict packages/desktop/composer.json
       - run: composer test --working-dir=packages/desktop
