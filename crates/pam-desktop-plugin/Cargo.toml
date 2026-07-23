@@ -1,0 +1,16 @@
+[package]
+name = "pam-desktop-plugin"
+description = "Safe JSON-lines SDK for supervised Pam Desktop Rust plugins."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pam-desktop-protocol.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

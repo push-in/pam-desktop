@@ -1,12 +1,13 @@
 [workspace]
 members = [
+    "crates/pam-desktop-plugin",
     "crates/pam-desktop-protocol",
     "crates/pam-desktop-shell",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Pushin <engineering@pushin.com.br>"]
@@ -21,6 +22,8 @@ cap-std = "4.0.2"
 ed25519-dalek = { version = "=3.0.0-rc.1", default-features = false, features = ["fast", "signature", "zeroize"] }
 euclid = "0.22.14"
 getrandom = "0.3.4"
+global-hotkey = "0.8.0"
+ksni = { version = "0.3.6", default-features = false, features = ["blocking", "tokio"] }
 # Servo 0.4's tested lock uses these prerelease-compatible versions. Keeping
 # them exact prevents Cargo from selecting later semver-compatible releases
 # that currently fail together.
@@ -37,6 +40,7 @@ sha2 = "0.10.9"
 servo = { version = "=0.4.0", default-features = false, features = ["baked-in-resources", "clipboard", "js_jit"] }
 tokio = { version = "1.53.1", features = ["fs", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1.44"
+tray-icon = { version = "0.24.1", default-features = false }
 ureq = { version = "3.3.0", default-features = false, features = ["json", "rustls"] }
 url = "2.5.8"
 winit = "0.30.13"

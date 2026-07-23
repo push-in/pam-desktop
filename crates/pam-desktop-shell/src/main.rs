@@ -12,9 +12,19 @@ mod host_event;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod native;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod native_shell;
 mod packager;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod plugin;
+mod plugin_scaffold;
 mod project;
 mod runtime;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod scheduler;
 mod updater;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
@@ -82,6 +92,7 @@ fn run() -> Result<(), String> {
             run_desktop(Project::discover(&project)?, false)
         }
         "build" => run_build(&executable, arguments.collect()),
+        "plugin" => run_plugin(&executable, arguments.collect()),
         "update-key" => run_update_key(&arguments.collect::<Vec<_>>()),
         "publish-update" => run_publish_update(arguments.collect()),
         "apply-update" => updater::apply(updater::ApplyOptions::parse(arguments)?),
@@ -92,6 +103,34 @@ fn run() -> Result<(), String> {
             run_doctor(&project)
         }
         unknown => Err(format!("unknown command {unknown:?}")),
+    }
+}
+
+fn run_plugin(
+    executable: &std::ffi::OsStr,
+    arguments: Vec<std::ffi::OsString>,
+) -> Result<(), String> {
+    match plugin_scaffold::PluginCommand::parse(arguments)? {
+        plugin_scaffold::PluginCommand::Help => {
+            plugin_scaffold::print_usage(executable);
+            Ok(())
+        }
+        plugin_scaffold::PluginCommand::New { project, id } => {
+            let directory = plugin_scaffold::scaffold(&project, &id)?;
+            println!("[ok] Rust plugin scaffolded: {}", directory.display());
+            println!(
+                "[next] Implement it, then run: {} plugin build {} {}",
+                executable.to_string_lossy(),
+                id,
+                project.display(),
+            );
+            Ok(())
+        }
+        plugin_scaffold::PluginCommand::Build { project, id } => {
+            let output = plugin_scaffold::build(&project, &id)?;
+            println!("[ok] Rust plugin built: {}", output.display());
+            Ok(())
+        }
     }
 }
 
@@ -207,6 +246,18 @@ fn run_doctor(path: &std::path::Path) -> Result<(), String> {
         capabilities.drag_and_drop,
     );
     println!(
+        "[ok] Native shell: menus={}, tray={}, global-shortcuts={}",
+        runtime.bootstrap().shell.menus.len(),
+        runtime.bootstrap().shell.tray.is_some(),
+        runtime.bootstrap().shell.shortcuts.len(),
+    );
+    println!(
+        "[ok] Extensions: PHP plugins={}, PHP background-jobs={}, Rust plugins={}",
+        runtime.bootstrap().php_plugins.len(),
+        runtime.bootstrap().background_jobs.len(),
+        runtime.bootstrap().rust_plugins.len(),
+    );
+    println!(
         "[ok] PHP worker generation: {}",
         runtime.worker_generation()
     );
@@ -236,7 +287,9 @@ fn print_engine_diagnostic() {
 
 fn print_usage(executable: &std::ffi::OsStr) {
     println!(
-        "Usage: {} dev [directory]\n       {} run [directory]\n       {} build [directory] [options]\n       {} update-key --output <private-key-file>\n       {} publish-update [directory] [options]\n       {} doctor [directory]\n       {} --version",
+        "Usage: {} dev [directory]\n       {} run [directory]\n       {} build [directory] [options]\n       {} plugin new <id> [directory]\n       {} plugin build <id> [directory]\n       {} update-key --output <private-key-file>\n       {} publish-update [directory] [options]\n       {} doctor [directory]\n       {} --version",
+        executable.to_string_lossy(),
+        executable.to_string_lossy(),
         executable.to_string_lossy(),
         executable.to_string_lossy(),
         executable.to_string_lossy(),

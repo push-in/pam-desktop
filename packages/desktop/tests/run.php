@@ -13,6 +13,7 @@ spl_autoload_register(static function (string $class): void {
 
 use Pam\Desktop\Application;
 use Pam\Desktop\ApplicationCategory;
+use Pam\Desktop\BackgroundJob;
 use Pam\Desktop\Capabilities;
 use Pam\Desktop\ClientEvent;
 use Pam\Desktop\CommandContext;
@@ -20,8 +21,19 @@ use Pam\Desktop\CommandResult;
 use Pam\Desktop\EffectKind;
 use Pam\Desktop\EventContext;
 use Pam\Desktop\FileSystemRoot;
+use Pam\Desktop\GlobalShortcut;
+use Pam\Desktop\JobContext;
+use Pam\Desktop\JobOverlapPolicy;
 use Pam\Desktop\Manifest;
+use Pam\Desktop\Menu;
+use Pam\Desktop\MenuItem;
+use Pam\Desktop\Plugin;
 use Pam\Desktop\ResponseStatus;
+use Pam\Desktop\RustPlugin;
+use Pam\Desktop\Shell;
+use Pam\Desktop\ShellEffect;
+use Pam\Desktop\Tray;
+use Pam\Desktop\TrayCloseBehavior;
 use Pam\Desktop\UpdatePolicy;
 use Pam\Desktop\Updates;
 use Pam\Desktop\Window;
@@ -92,7 +104,55 @@ $application = Application::create(
             ->notifications()
             ->dragAndDrop(),
     )
+    ->shell(
+        Shell::none()
+            ->menu(
+                Menu::create(
+                    'tray',
+                    'Pam Desktop',
+                    MenuItem::command('show', 'Show window', 'CmdOrCtrl+Shift+KeyP'),
+                    MenuItem::checkbox('background', 'Background mode', true),
+                    MenuItem::separator(),
+                    MenuItem::command('quit', 'Quit'),
+                ),
+            )
+            ->tray(
+                Tray::create('tray', 'Pam Desktop')
+                    ->closeBehavior(TrayCloseBehavior::Hide),
+            )
+            ->shortcut(GlobalShortcut::create('show', 'CmdOrCtrl+Shift+KeyP')),
+    )
+    ->job(
+        'heartbeat',
+        BackgroundJob::every(60_000)
+            ->runOnStart()
+            ->timeout(5_000)
+            ->overlap(JobOverlapPolicy::Skip),
+        static fn (JobContext $job): CommandResult => CommandResult::success([
+            'runId' => $job->runId,
+        ]),
+    )
+    ->rustPlugin(
+        RustPlugin::executable('system', 'plugins/bin/system')
+            ->arguments('--quiet')
+            ->timeout(5_000),
+    )
     ->commandTimeout(12_000);
+
+$application->plugin(new class implements Plugin {
+    public function identifier(): string
+    {
+        return 'fixture';
+    }
+
+    public function register(Application $application): void
+    {
+        $application->command(
+            'plugin.ping',
+            static fn (CommandContext $context): array => ['window' => $context->windowId],
+        );
+    }
+});
 
 $application->command(
     'greet',
@@ -116,7 +176,7 @@ $application->on(
 );
 
 $boot = $application->dispatch([
-    'version' => 5,
+    'version' => 6,
     'id' => 1,
     'kind' => 1,
     'windowId' => 'main',
@@ -140,9 +200,16 @@ expect($boot['payload']['capabilities']['dialogs'] === true, 'Dialogs should be 
 expect($boot['payload']['capabilities']['clipboardRead'] === true, 'Clipboard read should be enabled.');
 expect($boot['payload']['capabilities']['notifications'] === true, 'Notifications should be enabled.');
 expect($boot['payload']['capabilities']['dragAndDrop'] === true, 'Drag and drop should be enabled.');
+expect($boot['payload']['shell']['menus'][0]['id'] === 'tray', 'The tray menu should be serialized.');
+expect($boot['payload']['shell']['menus'][0]['items'][1]['kind'] === 2, 'Checkbox must be integer 2.');
+expect($boot['payload']['shell']['tray']['closeBehavior'] === 2, 'Hide behavior must be integer 2.');
+expect($boot['payload']['shell']['shortcuts'][0]['id'] === 'show', 'The shortcut should be serialized.');
+expect($boot['payload']['backgroundJobs'][0]['overlap'] === 1, 'Skip overlap must be integer 1.');
+expect($boot['payload']['rustPlugins'][0]['id'] === 'system', 'Rust plugins should be declared.');
+expect($boot['payload']['phpPlugins'] === ['fixture'], 'PHP plugins should be visible to the host.');
 
 $greeting = $application->dispatch([
-    'version' => 5,
+    'version' => 6,
     'id' => 2,
     'kind' => 1,
     'windowId' => 'main',
@@ -155,7 +222,7 @@ expect($greeting['effects'][0]['windowId'] === 'main', 'Effects should target a 
 expect($greeting['events'][0]['name'] === 'greeting.completed', 'Client events should be emitted.');
 
 $event = $application->dispatch([
-    'version' => 5,
+    'version' => 6,
     'id' => 3,
     'kind' => 1,
     'windowId' => 'main',
@@ -170,7 +237,7 @@ expect($event['effects'][0]['kind'] === EffectKind::SetWindowVisible->value, 'Ev
 expect($event['effects'][0]['windowId'] === 'settings', 'Event effects should target child windows.');
 
 $missing = $application->dispatch([
-    'version' => 5,
+    'version' => 6,
     'id' => 4,
     'kind' => 1,
     'windowId' => 'main',
@@ -179,5 +246,32 @@ $missing = $application->dispatch([
 ]);
 expect($missing['status'] === ResponseStatus::Failure->value, 'Unknown commands should fail.');
 expect($missing['error']['code'] === 3, 'UnknownCommand must remain integer 3.');
+
+$job = $application->dispatch([
+    'version' => 6,
+    'id' => 5,
+    'kind' => 1,
+    'windowId' => 'main',
+    'command' => '@pam/job',
+    'payload' => [
+        'id' => 'heartbeat',
+        'runId' => 42,
+        'startedAtMs' => 1_700_000_000_000,
+    ],
+]);
+expect($job['payload']['runId'] === 42, 'Background jobs should receive a typed run context.');
+
+$plugin = $application->dispatch([
+    'version' => 6,
+    'id' => 6,
+    'kind' => 1,
+    'windowId' => 'main',
+    'command' => 'plugin.ping',
+    'payload' => null,
+]);
+expect($plugin['payload']['window'] === 'main', 'PHP plugins should register application commands.');
+
+$shellEffect = ShellEffect::menuChecked('background', false)->toArray();
+expect($shellEffect['kind'] === 6, 'Menu checked effects must use integer kind 6.');
 
 echo "pam/desktop protocol tests passed\n";

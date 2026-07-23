@@ -14,12 +14,15 @@ HTML / CSS / JavaScript
         ▼
 Rust host
 Winit ─ Servo ─ loopback gateway
-  │                  │
-  │ typed effects    │ bounded JSON lines
-  │                  ▼
-  └──────────── Pam worker
-                  PHP 8.4
-               pam/desktop app
+  │         │            │
+  │         │            ├── supervised Rust plugin processes
+  │         │            │   versioned bounded JSON lines
+  │         │            └── interruptible background scheduler
+  │         │
+  │ typed effects / bounded JSON lines
+  ▼
+Pam worker
+PHP 8.4 + pam/desktop app
 ```
 
 `pam desktop dev .` delegates to the internal host, which performs these steps:
@@ -28,16 +31,20 @@ Winit ─ Servo ─ loopback gateway
    `vendor/autoload.php`.
 2. Start `pam exec app.php` with piped standard input and output.
 3. Send the reserved `@pam/boot` request and validate all returned window,
-   application-manifest, entry, command-timeout and native-capability contracts.
+   application-manifest, entry, command-timeout, native-capability, native-shell,
+   job and plugin contracts.
 4. Bind an ephemeral port on `127.0.0.1`, generate a 256-bit bridge token, and
    start the local gateway.
 5. Open each declared filesystem root once as a capability-scoped directory;
    no request receives ambient filesystem authority.
-6. Create one native Winit window, rendering context and Servo WebView for each
-   declared application window.
-7. Navigate each WebView to its isolated gateway route and process targeted
-   effects until the main window exits.
-8. Gracefully stop the gateway and terminate the supervised PHP worker.
+6. Start declared Rust plugin processes, validate their metadata handshake, and
+   install the interruptible PHP job schedule.
+7. Register menus, tray and global shortcuts, then create one native Winit
+   window, rendering context and Servo WebView per application window.
+8. Navigate each WebView to its isolated gateway route and process targeted
+   window/shell effects until the main window exits.
+9. Stop jobs and plugins, gracefully stop the gateway, and terminate the
+   supervised PHP worker.
 
 The PHP worker is long-lived. Registered commands therefore retain application
 state across invocations, while the UI and host stay responsive in separate
@@ -48,9 +55,10 @@ execution contexts.
 | Layer | Owns | Does not own |
 | --- | --- | --- |
 | Pam core | PHP Embed runtime and `pam exec` | Servo, windows, frontend assets |
-| PHP package | windows, commands, events, deadlines, capabilities, update policy, typed effects | operating-system handles and signing secrets |
+| PHP package | windows, commands, events, jobs, plugins, shell policy, deadlines, capabilities, update policy, typed effects | operating-system handles and signing secrets |
 | Protocol crate | envelopes, versions, integer enums, validation | application commands |
-| Rust shell | lifecycle, gateway, Servo, scoped filesystem, native adapters | domain logic |
+| Rust plugin SDK | isolated command handler and metadata contract | Servo or host memory |
+| Rust shell | lifecycle, gateway, Servo, scheduler, plugin supervision, scoped filesystem, native adapters | domain logic |
 | Frontend | presentation and explicit command calls | ambient native capabilities |
 
 This division lets Pam Desktop evolve independently without coupling Servo's
@@ -68,8 +76,8 @@ All coded variants are sequential integers:
 | message kind | `1` request, `2` response |
 | response status | `1` success, `2` failure |
 | window theme | `1` system, `2` light, `3` dark |
-| effect kind | `1` title, `2` visibility, `3` close, `4` focus |
-| error code | `1` through `22`, defined by `ErrorCode` |
+| effect kind | `1` title through `7` tray visibility |
+| error code | `1` through `26`, defined by `ErrorCode` |
 | file access | `1` read, `2` write, `3` read-write |
 | file entry kind | `1` file, `2` directory |
 | file operation | `1` read text through `5` create directory |
@@ -81,12 +89,19 @@ All coded variants are sequential integers:
 | update platform | `1` Linux, `2` Windows, `3` macOS |
 | update artifact kind | `1` portable, `2` native installer |
 | update state | `1` disabled through `9` failed |
+| menu item kind | `1` command, `2` checkbox, `3` separator, `4` submenu |
+| tray close behavior | `1` exit, `2` hide |
+| shortcut state | `1` pressed, `2` released |
+| job overlap policy | `1` skip, `2` wait |
 
 Command names are application-owned strings because they are identifiers, not
 stored domain variants. They must begin with a letter, contain only ASCII
 letters, digits, dots, dashes or underscores, and remain at most 64 bytes.
 
-Protocol 5 adds immutable update policy and signed-feed target contracts.
+Protocol 6 adds native shell, background-job, PHP plugin and supervised Rust
+plugin contracts. Rust plugins use a separate protocol version `1` so their
+process boundary can evolve independently.
+Protocol 5 added immutable update policy and signed-feed target contracts.
 Protocol 4 introduced application identity and distribution metadata.
 Protocol 3 introduced native-capability policy and the sequential
 integer contracts for filesystem, dialogs, clipboard and notifications. The
@@ -124,7 +139,8 @@ not as arbitrary code execution.
 
 ## Concurrency and failure
 
-Protocol 5 serializes commands through one worker mutex. This gives
+Protocol 6 serializes commands, PHP events and background jobs through one
+worker mutex. This gives
 deterministic PHP state and avoids pretending that a single Zend runtime is
 parallel. Axum handles transport concurrently, while blocking worker I/O runs
 outside Tokio's async workers.
@@ -147,6 +163,12 @@ Hot-reloading PHP capability policy prepares a complete replacement native
 service before it becomes visible. A successful replacement expires old file
 grants and atomically swaps the authorized roots; invalid roots keep the current
 application alive and emit `pam.dev.error`.
+
+The same prepare-before-swap rule applies to plugins, jobs, menus, tray, and
+shortcuts. Old schedules are cancelled and joined before replacement. A Rust
+plugin crash, timeout, or cancellation terminates only that plugin process,
+prepares a fresh instance for the next call, and never retries the interrupted
+command.
 
 ## Distribution boundary
 
@@ -201,3 +223,7 @@ When adding a capability:
 5. Add round-trip tests and document whether the capability is synchronous,
    cancellable, persistent, and platform-specific.
 6. Bump the protocol version for incompatible envelope or semantic changes.
+
+Rust extensions remain process-isolated executables. Loading arbitrary dynamic
+libraries into the Servo host is intentionally unsupported because it would
+expand the memory-safety and ABI boundary.

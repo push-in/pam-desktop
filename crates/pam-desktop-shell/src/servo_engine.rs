@@ -28,6 +28,7 @@ use winit::window::{Theme, Window, WindowId};
 use crate::gateway::Gateway;
 use crate::host_event::HostEvent;
 use crate::native::show_dialog;
+use crate::native_shell::NativeShell;
 use crate::runtime::DesktopRuntime;
 
 pub fn run(runtime: DesktopRuntime, watch: bool) -> Result<(), String> {
@@ -37,6 +38,7 @@ pub fn run(runtime: DesktopRuntime, watch: bool) -> Result<(), String> {
     let event_loop = EventLoop::with_user_event()
         .build()
         .map_err(|error| format!("cannot create desktop event loop: {error}"))?;
+    NativeShell::install_event_handlers(&event_loop.create_proxy());
     let gateway = Gateway::start(
         &project,
         supervisor,
@@ -112,6 +114,8 @@ struct AppState {
     windows: RefCell<HashMap<WindowId, DesktopWindow>>,
     allowed_origin: String,
     gateway: Gateway,
+    native_shell: RefCell<NativeShell>,
+    event_proxy: winit::event_loop::EventLoopProxy<HostEvent>,
 }
 
 impl AppState {
@@ -211,6 +215,14 @@ impl AppState {
 
     fn apply_effects(&self, event_loop: &ActiveEventLoop, effects: Vec<Effect>) {
         for effect in effects {
+            match self.native_shell.borrow_mut().apply_effect(&effect) {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(error) => {
+                    warn!(?error, "cannot apply native shell effect");
+                    continue;
+                }
+            }
             let Some(window_id) = self.target_window_id(&effect.window_id) else {
                 warn!(
                     window = effect.window_id,
@@ -259,6 +271,11 @@ impl AppState {
                         window.window.focus_window();
                     }
                 }
+                EffectKind::SetMenuItemEnabled
+                | EffectKind::SetMenuItemChecked
+                | EffectKind::SetTrayVisible => {
+                    unreachable!("native shell effects are handled before window effects")
+                }
             }
         }
     }
@@ -270,6 +287,20 @@ impl AppState {
     }
 
     fn close_requested(&self, event_loop: &ActiveEventLoop, window_id: WindowId) {
+        if self
+            .windows
+            .borrow()
+            .get(&window_id)
+            .is_some_and(|window| window.id == MAIN_WINDOW_ID)
+            && self.native_shell.borrow().close_behavior()
+                == pam_desktop_protocol::TrayCloseBehavior::Hide
+        {
+            if let Some(window) = self.windows.borrow().get(&window_id) {
+                window.window.set_visible(false);
+                window.webview.hide();
+            }
+            return;
+        }
         let close_application =
             self.windows.borrow().get(&window_id).is_none_or(|window| {
                 window.id == MAIN_WINDOW_ID || self.windows.borrow().len() == 1
@@ -335,11 +366,22 @@ impl ApplicationHandler<HostEvent> for Application {
             .take()
             .expect("desktop gateway should only be consumed once");
         let allowed_origin = gateway.url().trim_end_matches('/').to_owned();
+        let event_proxy = initial.waker.0.clone();
+        let native_shell = match NativeShell::prepare(&initial.bootstrap, event_proxy.clone()) {
+            Ok(shell) => shell,
+            Err(error) => {
+                eprintln!("pam-desktop: cannot configure native shell: {error}");
+                event_loop.exit();
+                return;
+            }
+        };
         let state = Rc::new(AppState {
             servo,
             windows: RefCell::new(HashMap::new()),
             allowed_origin,
             gateway,
+            native_shell: RefCell::new(native_shell),
+            event_proxy,
         });
         if let Err(error) = state.configure(event_loop, &initial.bootstrap) {
             eprintln!("pam-desktop: {error}");
@@ -358,11 +400,25 @@ impl ApplicationHandler<HostEvent> for Application {
             HostEvent::ApplyEffects(effects) => state.apply_effects(event_loop, effects),
             HostEvent::ReloadViews => state.reload_views(),
             HostEvent::Reconfigure(bootstrap) => {
+                state.native_shell.replace(NativeShell::empty());
+                match NativeShell::prepare(&bootstrap, state.event_proxy.clone()) {
+                    Ok(shell) => {
+                        state.native_shell.replace(shell);
+                    }
+                    Err(error) => {
+                        eprintln!("pam-desktop: cannot reload native shell: {error}");
+                    }
+                }
                 if let Err(error) = state.configure(event_loop, &bootstrap) {
                     eprintln!("pam-desktop: cannot apply hot reload: {error}");
                 }
             }
             HostEvent::Dialog(request) => show_dialog(request),
+            HostEvent::Shell(event) => {
+                if let Some((name, payload)) = state.native_shell.borrow().dispatch(event) {
+                    state.gateway.dispatch_native_event(name, payload);
+                }
+            }
             HostEvent::Exit => event_loop.exit(),
         }
     }

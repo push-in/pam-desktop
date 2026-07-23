@@ -480,6 +480,23 @@ fn materialize_bundle(
     };
     copy_project(&context, project.root(), &app, Path::new(""))?;
     sanitize_composer_metadata(&app)?;
+    for plugin in &bootstrap.rust_plugins {
+        let mut executable = app.join(&plugin.executable);
+        if !executable.is_file() && !std::env::consts::EXE_SUFFIX.is_empty() {
+            executable = PathBuf::from(format!(
+                "{}{}",
+                executable.to_string_lossy(),
+                std::env::consts::EXE_SUFFIX
+            ));
+        }
+        if !executable.is_file() {
+            return Err(format!(
+                "Rust plugin {:?} was excluded from the application bundle: {}",
+                plugin.id,
+                executable.display()
+            ));
+        }
+    }
     let host_destination = bin.join(format!("pam-desktop{}", std::env::consts::EXE_SUFFIX));
     let pam_destination = bin.join(format!("pam{}", std::env::consts::EXE_SUFFIX));
     copy_binary(host_binary, &host_destination)?;
@@ -2178,6 +2195,10 @@ mod tests {
                 }],
                 command_timeout_ms: 30_000,
                 capabilities: NativeCapabilities::default(),
+                shell: pam_desktop_protocol::ShellConfig::default(),
+                background_jobs: Vec::new(),
+                rust_plugins: Vec::new(),
+                php_plugins: Vec::new(),
             }
         }
     }

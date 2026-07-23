@@ -29,7 +29,9 @@ use crate::native::{
     ClipboardRequest, DialogBridgeRequest, DialogRequest, FileRequest, NativeError, NativeServices,
     NotificationRequest,
 };
+use crate::plugin::{PluginError, PluginSupervisor};
 use crate::project::Project;
+use crate::scheduler::BackgroundScheduler;
 use crate::updater::{UpdateError, UpdateSnapshot, Updater};
 use crate::watcher::{ChangeKind, ProjectWatcher};
 use crate::worker::{CancellationToken, WorkerRequestError, WorkerSupervisor};
@@ -67,6 +69,8 @@ impl Gateway {
         let token = secure_token()?;
         let native = NativeServices::prepare(project.root(), &bootstrap.capabilities)?;
         let updater = Updater::prepare(&bootstrap.manifest);
+        let plugins = PluginSupervisor::prepare(project, &bootstrap.rust_plugins)?;
+        let background_jobs = bootstrap.background_jobs.clone();
 
         let state = GatewayState {
             project: project.clone(),
@@ -80,7 +84,10 @@ impl Gateway {
             event_proxy,
             native: Arc::new(RwLock::new(Arc::new(native))),
             updater: Arc::new(RwLock::new(updater)),
+            plugins: Arc::new(RwLock::new(Arc::new(plugins))),
+            scheduler: Arc::new(Mutex::new(None)),
         };
+        state.replace_scheduler(&background_jobs)?;
         let router = Router::new()
             .route("/", get(serve_main))
             .route("/_pam/window/{window}", get(serve_window))
@@ -97,6 +104,7 @@ impl Gateway {
             .route("/_pam/update/check", post(update_check))
             .route("/_pam/update/download", post(update_download))
             .route("/_pam/update/install", post(update_install))
+            .route("/_pam/plugin/invoke", post(plugin_invoke))
             .route("/{*path}", get(serve_asset))
             .with_state(state.clone());
         let (shutdown, receiver) = oneshot::channel();
@@ -229,11 +237,25 @@ impl Gateway {
             window_id: Some(window_id.to_owned()),
         });
     }
+
+    pub fn dispatch_native_event(&self, name: &'static str, payload: Value) {
+        self.state.events.publish(ClientEvent {
+            name: name.to_owned(),
+            payload: payload.clone(),
+            window_id: None,
+        });
+        self.state.dispatch_php_event(name, payload);
+    }
 }
 
 impl Drop for Gateway {
     fn drop(&mut self) {
         self.watcher.take();
+        self.state
+            .scheduler
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
@@ -256,6 +278,8 @@ struct GatewayState {
     event_proxy: EventLoopProxy<HostEvent>,
     native: Arc<RwLock<Arc<NativeServices>>>,
     updater: Arc<RwLock<Updater>>,
+    plugins: Arc<RwLock<Arc<PluginSupervisor>>>,
+    scheduler: Arc<Mutex<Option<BackgroundScheduler>>>,
 }
 
 impl GatewayState {
@@ -310,6 +334,82 @@ impl GatewayState {
             .clone()
     }
 
+    fn plugins(&self) -> Arc<PluginSupervisor> {
+        self.plugins
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn replace_scheduler(
+        &self,
+        jobs: &[pam_desktop_protocol::BackgroundJobConfig],
+    ) -> Result<(), String> {
+        let scheduler =
+            BackgroundScheduler::start(jobs, &self.supervisor, &self.events, &self.event_proxy)?;
+        *self
+            .scheduler
+            .lock()
+            .map_err(|_| "background scheduler lock is poisoned".to_owned())? = Some(scheduler);
+        Ok(())
+    }
+
+    fn dispatch_php_event(&self, name: &'static str, payload: Value) {
+        let state = self.clone();
+        let _ = std::thread::Builder::new()
+            .name(format!("pam-native-event-{}", name.replace('.', "-")))
+            .spawn(move || {
+                let timeout = Duration::from_millis(state.default_timeout_ms());
+                let result = state
+                    .supervisor
+                    .lock()
+                    .map_err(|_| WorkerRequestError::Crashed("worker lock is poisoned".to_owned()))
+                    .and_then(|mut supervisor| {
+                        supervisor.request(
+                            EVENT_COMMAND,
+                            MAIN_WINDOW_ID,
+                            serde_json::json!({"name": name, "payload": payload}),
+                            timeout,
+                            &CancellationToken::default(),
+                        )
+                    });
+                match result {
+                    Ok(response) if response.status == ResponseStatus::Success => {
+                        state.process_response(&response);
+                    }
+                    Ok(response)
+                        if response
+                            .error
+                            .as_ref()
+                            .is_some_and(|error| error.code == ErrorCode::UnknownEvent) => {}
+                    Ok(response) => {
+                        let message = response.error.map_or_else(
+                            || "PHP worker rejected a native event.".to_owned(),
+                            |error| error.message,
+                        );
+                        state.events.publish(ClientEvent {
+                            name: "pam.shell.error".to_owned(),
+                            payload: serde_json::json!({
+                                "code": ErrorCode::HandlerFailed as u16,
+                                "message": message,
+                            }),
+                            window_id: None,
+                        });
+                    }
+                    Err(error) => {
+                        state.events.publish(ClientEvent {
+                            name: "pam.shell.error".to_owned(),
+                            payload: serde_json::json!({
+                                "code": ErrorCode::WorkerUnavailable as u16,
+                                "message": error.to_string(),
+                            }),
+                            window_id: None,
+                        });
+                    }
+                }
+            });
+    }
+
     fn reload(&self, kind: ChangeKind) {
         match kind {
             ChangeKind::Assets => {
@@ -330,10 +430,12 @@ impl GatewayState {
                         self.project.validate_bootstrap(&bootstrap)?;
                         let native =
                             NativeServices::prepare(self.project.root(), &bootstrap.capabilities)?;
-                        Ok((bootstrap, native))
+                        let plugins =
+                            PluginSupervisor::prepare(&self.project, &bootstrap.rust_plugins)?;
+                        Ok((bootstrap, native, plugins))
                     });
                 match result {
-                    Ok((bootstrap, native)) => {
+                    Ok((bootstrap, native, plugins)) => {
                         *self
                             .native
                             .write()
@@ -347,6 +449,13 @@ impl GatewayState {
                             .write()
                             .unwrap_or_else(std::sync::PoisonError::into_inner) =
                             Updater::prepare(&bootstrap.manifest);
+                        *self
+                            .plugins
+                            .write()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(plugins);
+                        if let Err(error) = self.replace_scheduler(&bootstrap.background_jobs) {
+                            eprintln!("pam-desktop: cannot reload background scheduler: {error}");
+                        }
                         let _ = self
                             .event_proxy
                             .send_event(HostEvent::Reconfigure(Box::new(bootstrap)));
@@ -417,6 +526,18 @@ struct EventPollRequest {
 #[serde(rename_all = "camelCase")]
 struct UpdateBridgeRequest {
     window_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginBridgeRequest {
+    request_id: u64,
+    window_id: String,
+    plugin: String,
+    command: String,
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    payload: Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -966,6 +1087,102 @@ fn publish_update_error(events: &EventHub, error: &UpdateError) {
     });
 }
 
+async fn plugin_invoke(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<PluginBridgeRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if request.request_id == 0
+        || !state.has_window(&request.window_id)
+        || validate_identifier(&request.plugin, "plugin").is_err()
+        || validate_identifier(&request.command, "plugin command").is_err()
+    {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The Rust plugin invocation identity is invalid.",
+        );
+    }
+    let timeout_ms = request
+        .timeout_ms
+        .unwrap_or_else(|| state.default_timeout_ms());
+    if !(MIN_COMMAND_TIMEOUT_MS..=MAX_COMMAND_TIMEOUT_MS).contains(&timeout_ms) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidPayload,
+            "The Rust plugin timeout is outside the allowed range.",
+        );
+    }
+
+    let key = RequestKey {
+        window_id: request.window_id,
+        request_id: request.request_id,
+    };
+    let cancellation = CancellationToken::default();
+    {
+        let mut cancellations = state
+            .cancellations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cancellations
+            .insert(key.clone(), cancellation.clone())
+            .is_some()
+        {
+            return client_failure(
+                StatusCode::CONFLICT,
+                ErrorCode::InvalidMessage,
+                "The bridge request identifier is already active.",
+            );
+        }
+    }
+
+    let plugins = state.plugins();
+    let result = tokio::task::spawn_blocking(move || {
+        plugins.invoke(
+            &request.plugin,
+            &request.command,
+            request.payload,
+            Some(Duration::from_millis(timeout_ms)),
+            &cancellation,
+        )
+    })
+    .await;
+    state
+        .cancellations
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&key);
+
+    match result {
+        Ok(Ok(invocation)) => {
+            for event in invocation.events {
+                state.events.publish(event);
+            }
+            native_success(invocation.payload)
+        }
+        Ok(Err(error)) => plugin_failure(&error),
+        Err(error) => plugin_failure(&PluginError {
+            code: ErrorCode::PluginFailed,
+            message: format!("The Rust plugin task failed: {error}"),
+        }),
+    }
+}
+
+fn plugin_failure(error: &PluginError) -> Response<Body> {
+    let status = match error.code {
+        ErrorCode::UnknownCommand | ErrorCode::InvalidMessage | ErrorCode::InvalidPayload => {
+            StatusCode::BAD_REQUEST
+        }
+        ErrorCode::PluginUnavailable => StatusCode::SERVICE_UNAVAILABLE,
+        ErrorCode::RequestTimedOut | ErrorCode::RequestCancelled => StatusCode::REQUEST_TIMEOUT,
+        _ => StatusCode::UNPROCESSABLE_ENTITY,
+    };
+    client_failure(status, error.code, &error.message)
+}
+
 async fn dialog(
     State(state): State<GatewayState>,
     headers: HeaderMap,
@@ -1434,6 +1651,22 @@ const BRIDGE_SCRIPT: &str = r#"
         install: () => request("/_pam/update/install", {}),
     });
 
+    const plugins = Object.freeze({
+        invoke: (plugin, command, payload = null, options = {}) => {
+            if (typeof plugin !== "string" || plugin.length === 0) {
+                throw new TypeError("Pam Rust plugin identifiers must be non-empty strings.");
+            }
+            if (typeof command !== "string" || command.length === 0) {
+                throw new TypeError("Pam Rust plugin commands must be non-empty strings.");
+            }
+            return request("/_pam/plugin/invoke", {
+                plugin,
+                command,
+                payload,
+            }, nativeOptions(options));
+        },
+    });
+
     const on = (name, listener) => {
         if (typeof name !== "string" || typeof listener !== "function") {
             throw new TypeError("Pam event listeners require a name and function.");
@@ -1484,6 +1717,7 @@ const BRIDGE_SCRIPT: &str = r#"
             invoke,
             notification,
             on,
+            plugins,
             updater,
             windowId,
         }),
@@ -1519,8 +1753,10 @@ mod tests {
         assert!(BRIDGE_SCRIPT.contains("const clipboard = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const notification = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const updater = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const plugins = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("value: Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("fs: filesystem,"));
         assert!(BRIDGE_SCRIPT.contains("updater,"));
+        assert!(BRIDGE_SCRIPT.contains("plugins,"));
     }
 }

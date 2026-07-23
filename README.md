@@ -7,7 +7,7 @@
 A direct Servo host for building native desktop applications whose application
 logic remains elegant, typed PHP.
 
-![Version](https://img.shields.io/badge/version-0.5.0-68ded2?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.6.0-68ded2?style=flat-square)
 ![Status](https://img.shields.io/badge/status-alpha-f59e0b?style=flat-square)
 ![Servo](https://img.shields.io/badge/Servo-0.4.0-5b50d6?style=flat-square)
 ![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?style=flat-square&logo=php&logoColor=white)
@@ -22,7 +22,7 @@ Pam Desktop is intentionally separate from the Pam server core. This repository
 owns the native window, Servo integration, secure local bridge, shared protocol,
 and the `pam/desktop` Composer package. Pam remains the PHP worker runtime.
 
-Version 0.5 adds signed multi-platform distribution and updates:
+Version 0.6 adds a supervised extension runtime and native application shell:
 
 - local HTML, CSS, JavaScript and assets rendered directly by Servo;
 - explicit commands and bidirectional events through `window.pam`;
@@ -47,6 +47,17 @@ Version 0.5 adds signed multi-platform distribution and updates:
   verification and atomic install with one-version rollback;
 - frozen `pam.updater` status, check, download and install operations plus
   notify/automatic background policies;
+- composable PHP plugins that register commands, events and jobs;
+- process-isolated Rust plugins with a versioned SDK, declared exports,
+  deadlines, cancellation and crash recovery;
+- `pam desktop plugin new/build` for generating and bundling native extensions;
+- immutable PHP menu trees, checkbox state, application tray and optional
+  close-to-tray behavior;
+- global shortcuts with typed press/release events and graceful platform
+  fallback;
+- supervised PHP background jobs with initial delay, timeout and integer-backed
+  skip/wait overlap policy;
+- dynamic menu, checkbox and tray-visibility effects;
 - one supervised Pam worker with bounded, versioned JSON-lines messages;
 - a random loopback gateway with origin and token enforcement;
 - no Node runtime and no unrestricted ambient native API.
@@ -86,7 +97,13 @@ use Pam\Desktop\ClientEvent;
 use Pam\Desktop\CommandContext;
 use Pam\Desktop\CommandResult;
 use Pam\Desktop\FileSystemRoot;
+use Pam\Desktop\GlobalShortcut;
 use Pam\Desktop\Manifest;
+use Pam\Desktop\Menu;
+use Pam\Desktop\MenuItem;
+use Pam\Desktop\Shell;
+use Pam\Desktop\Tray;
+use Pam\Desktop\TrayCloseBehavior;
 use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
 use Pam\Desktop\WindowTheme;
@@ -96,7 +113,7 @@ $app = Application::create(
         ->size(1120, 720)
         ->minimumSize(720, 520)
         ->theme(WindowTheme::Dark),
-    manifest: Manifest::create('com.pushin.my-app', 'My desktop app', '0.5.0')
+    manifest: Manifest::create('com.pushin.my-app', 'My desktop app', '0.6.0')
         ->description('A PHP-first native desktop application.')
         ->publisher('My team')
         ->category(ApplicationCategory::Development),
@@ -114,6 +131,21 @@ $app = Application::create(
             ->clipboard()
             ->notifications()
             ->dragAndDrop(),
+    )
+    ->shell(
+        Shell::none()
+            ->menu(Menu::create(
+                'app',
+                'Application',
+                MenuItem::command('show', 'Show window', 'CmdOrCtrl+Shift+KeyP'),
+                MenuItem::separator(),
+                MenuItem::command('quit', 'Quit'),
+            ))
+            ->tray(
+                Tray::create('app', 'My desktop app')
+                    ->closeBehavior(TrayCloseBehavior::Hide),
+            )
+            ->shortcut(GlobalShortcut::create('show', 'CmdOrCtrl+Shift+KeyP')),
     )
     ->commandTimeout(10_000);
 
@@ -162,6 +194,8 @@ const update = await window.pam.updater.check();
 if (update.state === 4) {
     await window.pam.updater.download();
 }
+
+const system = await window.pam.plugins.invoke("system.info", "snapshot");
 ```
 
 `window.pam.emit(name, payload, options)` sends a typed application event to
@@ -174,6 +208,11 @@ only after an explicit operating-system dialog or drag and drop. The host
 returns an opaque `grantId`, never the ambient filesystem path. Read the
 [Capabilities guide](docs/capabilities.md) for the complete frontend API,
 integer contracts and limits.
+
+Native shell events use the same ordered channel: `pam.menu.selected`,
+`pam.tray.activated`, and `pam.shortcut.changed`. Continue with the
+[Native shell guide](docs/native-shell.md), [Background jobs guide](docs/background-jobs.md),
+and [Plugin guide](docs/plugins.md).
 
 ## Package and update
 
@@ -188,13 +227,12 @@ Additional formats and output control:
 
 ```bash
 pam desktop build . --output dist --format deb
-pam desktop build . --format native --sign # DMG on macOS, MSIX on Windows
 pam desktop build . --format all --force
 ```
 
 Linux portable archives contain `install.sh` and `uninstall.sh` for a per-user
-installation. Debian packaging requires `dpkg-deb`; macOS/Windows native
-packaging uses `--format native`. Every runtime bundle contains a
+installation, and Debian packaging requires `dpkg-deb`. The current release
+pipeline generates Linux x86-64 artifacts only. Every runtime bundle contains a
 `manifest.json` with protocol, application, runtime and target metadata plus
 the byte size and SHA-256 digest of every shipped file. See the
 [Linux distribution guide](docs/distribution.md).
@@ -205,7 +243,7 @@ Updates remain disabled unless PHP pins the feed and Ed25519 public key:
 use Pam\Desktop\UpdatePolicy;
 use Pam\Desktop\Updates;
 
-$manifest = Manifest::create('com.pushin.my-app', 'My desktop app', '0.5.0')
+$manifest = Manifest::create('com.pushin.my-app', 'My desktop app', '0.6.0')
     ->updates(
         Updates::from(
             'https://updates.example.com/my-app/stable.json',
@@ -255,14 +293,18 @@ absolute path as `PAM_BINARY`. Development overrides remain available through
 
 ```text
 crates/
+├── pam-desktop-plugin/    process-isolated Rust plugin SDK
 ├── pam-desktop-protocol/  shared Rust contracts and integer discriminators
-└── pam-desktop-shell/     Servo, Winit, gateway and Pam worker supervision
+└── pam-desktop-shell/     Servo, Winit, gateway and process supervision
 packages/
 └── desktop/               public PHP application API and worker loop
 docs/
 ├── architecture.md        process, security and extension boundaries
+├── background-jobs.md     supervised PHP scheduling and lifecycle events
 ├── capabilities.md        PHP policy and frontend native APIs
-├── distribution.md        Linux, Windows and macOS packages
+├── distribution.md        Linux bundles, archives and Debian packages
+├── native-shell.md        menus, tray, global shortcuts and shell effects
+├── plugins.md             PHP composition and process-isolated Rust SDK
 └── updates.md             signing, feeds and atomic automatic updates
 ```
 
@@ -272,8 +314,8 @@ Read [Architecture](docs/architecture.md) before expanding native capabilities.
 
 ```bash
 cargo fmt --all -- --check
-cargo test --locked -p pam-desktop-protocol
-cargo test --locked -p pam-desktop --no-default-features --features gateway
+cargo test --locked --workspace --no-default-features --features gateway
+cargo clippy --locked --workspace --all-targets --no-default-features --features gateway -- -D warnings
 cargo check --locked -p pam-desktop
 composer test --working-dir=packages/desktop
 composer analyse --working-dir=packages/desktop
@@ -288,8 +330,8 @@ composer validate --strict packages/desktop/composer.json
 | **0.3** | **Authorized filesystem, dialogs, clipboard, notifications and drag and drop — implemented** |
 | **0.4** | **Self-contained Linux build, icons, manifest and installers — implemented** |
 | **0.5** | **Windows and macOS, signing and automatic updates — implemented** |
-| 0.6 | PHP/Rust plugins, menus, tray, global shortcuts and background jobs |
-| 1.0 | Stable API, compatibility suite and multi-platform distribution |
+| **0.6** | **PHP/Rust plugins, menus, tray, global shortcuts and background jobs — implemented** |
+| 1.0 | Stable API, compatibility suite and production-grade Linux distribution |
 
 ## License
 

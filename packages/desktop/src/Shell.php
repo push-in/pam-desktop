@@ -1,0 +1,118 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop;
+
+use RuntimeException;
+
+final readonly class Shell
+{
+    /**
+     * @param list<Menu> $menus
+     * @param list<GlobalShortcut> $shortcuts
+     */
+    private function __construct(
+        public array $menus,
+        public ?Tray $tray,
+        public array $shortcuts,
+    ) {
+        $menuIds = [];
+        $itemIds = [];
+        foreach ($menus as $menu) {
+            if (isset($menuIds[$menu->id])) {
+                throw new RuntimeException("Menu {$menu->id} is already registered.");
+            }
+            $menuIds[$menu->id] = true;
+            self::collectItemIds($menu->items, $itemIds);
+        }
+        if ($tray !== null && !isset($menuIds[$tray->menuId])) {
+            throw new RuntimeException("Tray menu {$tray->menuId} is not registered.");
+        }
+
+        $shortcutIds = [];
+        $accelerators = [];
+        foreach ($shortcuts as $shortcut) {
+            if (isset($shortcutIds[$shortcut->id])) {
+                throw new RuntimeException("Global shortcut {$shortcut->id} is already registered.");
+            }
+            $normalized = strtolower($shortcut->accelerator);
+            if (isset($accelerators[$normalized])) {
+                throw new RuntimeException(
+                    "Global shortcut accelerator {$shortcut->accelerator} is already registered.",
+                );
+            }
+            $shortcutIds[$shortcut->id] = true;
+            $accelerators[$normalized] = true;
+        }
+    }
+
+    public static function none(): self
+    {
+        return new self([], null, []);
+    }
+
+    public function menu(Menu ...$menus): self
+    {
+        return new self(
+            array_values(array_merge($this->menus, $menus)),
+            $this->tray,
+            $this->shortcuts,
+        );
+    }
+
+    public function tray(Tray $tray): self
+    {
+        return new self($this->menus, $tray, $this->shortcuts);
+    }
+
+    public function shortcut(GlobalShortcut ...$shortcuts): self
+    {
+        return new self(
+            $this->menus,
+            $this->tray,
+            array_values(array_merge($this->shortcuts, $shortcuts)),
+        );
+    }
+
+    /**
+     * @return array{
+     *     menus: list<array{id: string, label: string, items: list<array<string, mixed>>}>,
+     *     tray: null|array{menuId: string, tooltip: string, closeBehavior: int},
+     *     shortcuts: list<array{id: string, accelerator: string}>
+     * }
+     */
+    public function toArray(): array
+    {
+        return [
+            'menus' => array_map(
+                static fn (Menu $menu): array => $menu->toArray(),
+                $this->menus,
+            ),
+            'tray' => $this->tray?->toArray(),
+            'shortcuts' => array_map(
+                static fn (GlobalShortcut $shortcut): array => $shortcut->toArray(),
+                $this->shortcuts,
+            ),
+        ];
+    }
+
+    /**
+     * @param list<MenuItem> $items
+     * @param array<string, true> $ids
+     */
+    private static function collectItemIds(array $items, array &$ids): void
+    {
+        foreach ($items as $item) {
+            if ($item->kind !== MenuItemKind::Separator) {
+                if (isset($ids[$item->id])) {
+                    throw new RuntimeException(
+                        "Menu item {$item->id} is already registered in another menu.",
+                    );
+                }
+                $ids[$item->id] = true;
+            }
+            self::collectItemIds($item->items, $ids);
+        }
+    }
+}

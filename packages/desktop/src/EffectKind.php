@@ -10,4 +10,7 @@ enum EffectKind: int
     case SetWindowVisible = 2;
     case CloseWindow = 3;
     case FocusWindow = 4;
+    case SetMenuItemEnabled = 5;
+    case SetMenuItemChecked = 6;
+    case SetTrayVisible = 7;
 }

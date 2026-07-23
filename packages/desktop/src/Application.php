@@ -11,9 +11,10 @@ use Throwable;
 
 final class Application
 {
-    public const PROTOCOL_VERSION = 5;
+    public const PROTOCOL_VERSION = 6;
     public const BOOT_COMMAND = '@pam/boot';
     public const EVENT_COMMAND = '@pam/event';
+    public const JOB_COMMAND = '@pam/job';
     public const MAX_MESSAGE_BYTES = 1_048_576;
     public const MIN_COMMAND_TIMEOUT_MS = 100;
     public const MAX_COMMAND_TIMEOUT_MS = 120_000;
@@ -27,9 +28,23 @@ final class Application
     /** @var array<string, Closure(EventContext): mixed> */
     private array $eventHandlers = [];
 
+    /** @var array<string, BackgroundJob> */
+    private array $backgroundJobs = [];
+
+    /** @var array<string, Closure(JobContext): mixed> */
+    private array $jobHandlers = [];
+
+    /** @var array<string, RustPlugin> */
+    private array $rustPlugins = [];
+
+    /** @var array<string, true> */
+    private array $phpPlugins = [];
+
     private int $commandTimeoutMilliseconds = 30_000;
 
     private Capabilities $capabilities;
+
+    private Shell $shell;
 
     private function __construct(
         private readonly Manifest $manifest,
@@ -38,6 +53,7 @@ final class Application
     {
         $this->windows = ['main' => $window];
         $this->capabilities = Capabilities::none();
+        $this->shell = Shell::none();
     }
 
     public static function create(Window $window, Manifest $manifest): self
@@ -83,6 +99,56 @@ final class Application
     public function capabilities(Capabilities $capabilities): self
     {
         $this->capabilities = $capabilities;
+
+        return $this;
+    }
+
+    public function shell(Shell $shell): self
+    {
+        $this->shell = $shell;
+
+        return $this;
+    }
+
+    /**
+     * @param Closure(JobContext): mixed $handler
+     */
+    public function job(string $id, BackgroundJob $job, Closure $handler): self
+    {
+        Identifier::assert($id, 'The background job identifier');
+        if (isset($this->backgroundJobs[$id])) {
+            throw new RuntimeException("Background job {$id} is already registered.");
+        }
+        $this->backgroundJobs[$id] = $job;
+        $this->jobHandlers[$id] = $handler;
+
+        return $this;
+    }
+
+    public function rustPlugin(RustPlugin $plugin): self
+    {
+        if (isset($this->rustPlugins[$plugin->id])) {
+            throw new RuntimeException("Rust plugin {$plugin->id} is already registered.");
+        }
+        $this->rustPlugins[$plugin->id] = $plugin;
+
+        return $this;
+    }
+
+    public function plugin(Plugin $plugin): self
+    {
+        $identifier = $plugin->identifier();
+        Identifier::assert($identifier, 'The PHP plugin identifier');
+        if (isset($this->phpPlugins[$identifier])) {
+            throw new RuntimeException("PHP plugin {$identifier} is already registered.");
+        }
+        $this->phpPlugins[$identifier] = true;
+        try {
+            $plugin->register($this);
+        } catch (Throwable $error) {
+            unset($this->phpPlugins[$identifier]);
+            throw $error;
+        }
 
         return $this;
     }
@@ -214,11 +280,26 @@ final class Application
                 ),
                 'commandTimeoutMs' => $this->commandTimeoutMilliseconds,
                 'capabilities' => $this->capabilities->toArray(),
+                'shell' => $this->shell->toArray(),
+                'backgroundJobs' => array_map(
+                    static fn (string $id, BackgroundJob $job): array => $job->toArray($id),
+                    array_keys($this->backgroundJobs),
+                    array_values($this->backgroundJobs),
+                ),
+                'rustPlugins' => array_map(
+                    static fn (RustPlugin $plugin): array => $plugin->toArray(),
+                    array_values($this->rustPlugins),
+                ),
+                'phpPlugins' => array_keys($this->phpPlugins),
             ]);
         }
 
         if ($command === self::EVENT_COMMAND) {
             return $this->dispatchEvent($id, $windowId, $message['payload'] ?? null);
+        }
+
+        if ($command === self::JOB_COMMAND) {
+            return $this->dispatchJob($id, $message['payload'] ?? null);
         }
 
         $handler = $this->commands[$command] ?? null;
@@ -274,10 +355,54 @@ final class Application
     }
 
     /**
-     * @param Closure(CommandContext): mixed|Closure(EventContext): mixed $handler
      * @return array<string, mixed>
      */
-    private function invoke(int $id, Closure $handler, CommandContext|EventContext $context): array
+    private function dispatchJob(int $id, mixed $payload): array
+    {
+        if (
+            !is_array($payload)
+            || !is_string($payload['id'] ?? null)
+            || !is_int($payload['runId'] ?? null)
+            || !is_int($payload['startedAtMs'] ?? null)
+        ) {
+            return $this->failure(
+                $id,
+                ErrorCode::InvalidPayload,
+                'The background job envelope is invalid.',
+            );
+        }
+
+        $jobId = $payload['id'];
+        $handler = $this->jobHandlers[$jobId] ?? null;
+        if ($handler === null) {
+            return $this->failure(
+                $id,
+                ErrorCode::BackgroundJobFailed,
+                "Background job {$jobId} has no registered handler.",
+            );
+        }
+
+        return $this->invoke(
+            id: $id,
+            handler: $handler,
+            context: new JobContext(
+                requestId: $id,
+                id: $jobId,
+                runId: $payload['runId'],
+                startedAtMilliseconds: $payload['startedAtMs'],
+            ),
+        );
+    }
+
+    /**
+     * @param Closure(CommandContext): mixed|Closure(EventContext): mixed|Closure(JobContext): mixed $handler
+     * @return array<string, mixed>
+     */
+    private function invoke(
+        int $id,
+        Closure $handler,
+        CommandContext|EventContext|JobContext $context,
+    ): array
     {
         try {
             $result = $handler($context);

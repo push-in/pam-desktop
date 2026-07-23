@@ -5,10 +5,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
-pub const PROTOCOL_VERSION: u16 = 5;
+pub const PROTOCOL_VERSION: u16 = 6;
+pub const PLUGIN_PROTOCOL_VERSION: u16 = 1;
 pub const UPDATE_FEED_VERSION: u16 = 1;
 pub const BOOT_COMMAND: &str = "@pam/boot";
 pub const EVENT_COMMAND: &str = "@pam/event";
+pub const JOB_COMMAND: &str = "@pam/job";
+pub const PLUGIN_BOOT_COMMAND: &str = "@pam/plugin/boot";
 pub const MAIN_WINDOW_ID: &str = "main";
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 pub const MIN_COMMAND_TIMEOUT_MS: u64 = 100;
@@ -53,6 +56,10 @@ pub enum ErrorCode {
     UpdateUnavailable = 20,
     UpdateIntegrityFailed = 21,
     UpdateInstallFailed = 22,
+    PluginUnavailable = 23,
+    PluginFailed = 24,
+    ShortcutUnavailable = 25,
+    BackgroundJobFailed = 26,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
@@ -62,6 +69,9 @@ pub enum EffectKind {
     SetWindowVisible = 2,
     CloseWindow = 3,
     FocusWindow = 4,
+    SetMenuItemEnabled = 5,
+    SetMenuItemChecked = 6,
+    SetTrayVisible = 7,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
@@ -123,6 +133,38 @@ pub enum UpdateState {
     Applying = 7,
     UpToDate = 8,
     Failed = 9,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum MenuItemKind {
+    Command = 1,
+    Checkbox = 2,
+    Separator = 3,
+    Submenu = 4,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum TrayCloseBehavior {
+    #[default]
+    Exit = 1,
+    Hide = 2,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum ShortcutState {
+    Pressed = 1,
+    Released = 2,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum JobOverlapPolicy {
+    #[default]
+    Skip = 1,
+    Wait = 2,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
@@ -296,6 +338,156 @@ pub struct ProtocolError {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginRequestEnvelope {
+    pub version: u16,
+    pub id: u64,
+    pub kind: MessageKind,
+    pub command: String,
+    #[serde(default)]
+    pub payload: Value,
+}
+
+impl PluginRequestEnvelope {
+    #[must_use]
+    pub fn new(id: u64, command: impl Into<String>, payload: Value) -> Self {
+        Self {
+            version: PLUGIN_PROTOCOL_VERSION,
+            id,
+            kind: MessageKind::Request,
+            command: command.into(),
+            payload,
+        }
+    }
+
+    /// Validates an inbound Rust plugin request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the plugin protocol, identity, message kind, or
+    /// command is invalid.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.version != PLUGIN_PROTOCOL_VERSION {
+            return Err(format!(
+                "plugin protocol {} is incompatible with SDK protocol {}",
+                self.version, PLUGIN_PROTOCOL_VERSION
+            ));
+        }
+        if self.id == 0 || self.kind != MessageKind::Request {
+            return Err("plugin request identity is invalid".to_owned());
+        }
+        if self.command != PLUGIN_BOOT_COMMAND {
+            validate_identifier(&self.command, "plugin command")?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginResponseEnvelope {
+    pub version: u16,
+    pub id: u64,
+    pub kind: MessageKind,
+    pub status: ResponseStatus,
+    #[serde(default)]
+    pub payload: Value,
+    #[serde(default)]
+    pub events: Vec<ClientEvent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ProtocolError>,
+}
+
+impl PluginResponseEnvelope {
+    #[must_use]
+    pub fn success(id: u64, payload: Value, events: Vec<ClientEvent>) -> Self {
+        Self {
+            version: PLUGIN_PROTOCOL_VERSION,
+            id,
+            kind: MessageKind::Response,
+            status: ResponseStatus::Success,
+            payload,
+            events,
+            error: None,
+        }
+    }
+
+    #[must_use]
+    pub fn failure(id: u64, code: ErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            version: PLUGIN_PROTOCOL_VERSION,
+            id,
+            kind: MessageKind::Response,
+            status: ResponseStatus::Failure,
+            payload: Value::Null,
+            events: Vec::new(),
+            error: Some(ProtocolError {
+                code,
+                message: message.into(),
+            }),
+        }
+    }
+
+    /// Validates that a plugin response matches its host request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for incompatible protocol, mismatched identity,
+    /// invalid events, or an incomplete failure.
+    pub fn validate_for(&self, request_id: u64) -> Result<(), String> {
+        if self.version != PLUGIN_PROTOCOL_VERSION {
+            return Err(format!(
+                "plugin protocol {} is incompatible with host plugin protocol {}",
+                self.version, PLUGIN_PROTOCOL_VERSION
+            ));
+        }
+        if self.kind != MessageKind::Response || self.id != request_id {
+            return Err("plugin response identity does not match its request".to_owned());
+        }
+        if self.status == ResponseStatus::Failure && self.error.is_none() {
+            return Err("plugin returned failure without an error".to_owned());
+        }
+        for event in &self.events {
+            event.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginMetadata {
+    pub identifier: String,
+    pub name: String,
+    pub version: String,
+    pub commands: Vec<String>,
+}
+
+impl PluginMetadata {
+    /// Validates plugin identity and its exported command surface.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed metadata or duplicate commands.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier(&self.identifier, "plugin")?;
+        validate_text(&self.name, "plugin name", 80, false)?;
+        validate_version(&self.version)?;
+        if self.commands.is_empty() {
+            return Err("Rust plugins must export at least one command".to_owned());
+        }
+        let mut commands = HashSet::with_capacity(self.commands.len());
+        for command in &self.commands {
+            validate_identifier(command, "plugin command")?;
+            if !commands.insert(command.as_str()) {
+                return Err(format!("plugin command {command:?} is duplicated"));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Effect {
     pub kind: EffectKind,
@@ -338,6 +530,14 @@ pub struct Bootstrap {
     pub command_timeout_ms: u64,
     #[serde(default)]
     pub capabilities: NativeCapabilities,
+    #[serde(default)]
+    pub shell: ShellConfig,
+    #[serde(default)]
+    pub background_jobs: Vec<BackgroundJobConfig>,
+    #[serde(default)]
+    pub rust_plugins: Vec<RustPluginConfig>,
+    #[serde(default)]
+    pub php_plugins: Vec<String>,
 }
 
 impl Bootstrap {
@@ -371,6 +571,36 @@ impl Bootstrap {
             ));
         }
         self.capabilities.validate()?;
+        self.shell.validate()?;
+
+        let mut jobs = HashSet::with_capacity(self.background_jobs.len());
+        for job in &self.background_jobs {
+            job.validate()?;
+            if !jobs.insert(job.id.as_str()) {
+                return Err(format!(
+                    "background job identifier {:?} is duplicated",
+                    job.id
+                ));
+            }
+        }
+
+        let mut plugins = HashSet::with_capacity(self.rust_plugins.len());
+        for plugin in &self.rust_plugins {
+            plugin.validate()?;
+            if !plugins.insert(plugin.id.as_str()) {
+                return Err(format!(
+                    "Rust plugin identifier {:?} is duplicated",
+                    plugin.id
+                ));
+            }
+        }
+        let mut php_plugins = HashSet::with_capacity(self.php_plugins.len());
+        for plugin in &self.php_plugins {
+            validate_identifier(plugin, "PHP plugin")?;
+            if !php_plugins.insert(plugin.as_str()) {
+                return Err(format!("PHP plugin identifier {plugin:?} is duplicated"));
+            }
+        }
         Ok(())
     }
 }
@@ -611,6 +841,293 @@ impl NativeCapabilities {
     }
 }
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ShellConfig {
+    #[serde(default)]
+    pub menus: Vec<MenuConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tray: Option<TrayConfig>,
+    #[serde(default)]
+    pub shortcuts: Vec<GlobalShortcutConfig>,
+}
+
+impl ShellConfig {
+    /// Validates native menu, tray, and global shortcut configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed or duplicated identifiers, an invalid
+    /// tray menu reference, or duplicate shortcut accelerators.
+    pub fn validate(&self) -> Result<(), String> {
+        let mut menu_ids = HashSet::with_capacity(self.menus.len());
+        let mut item_ids = HashSet::new();
+        let mut item_count = 0_usize;
+        for menu in &self.menus {
+            menu.validate(&mut item_ids, &mut item_count)?;
+            if !menu_ids.insert(menu.id.as_str()) {
+                return Err(format!("menu identifier {:?} is duplicated", menu.id));
+            }
+        }
+        if item_count > 256 {
+            return Err("native menus cannot contain more than 256 items".to_owned());
+        }
+        if let Some(tray) = &self.tray {
+            tray.validate()?;
+            if !menu_ids.contains(tray.menu_id.as_str()) {
+                return Err(format!(
+                    "tray menu {:?} is not registered in the shell",
+                    tray.menu_id
+                ));
+            }
+        }
+
+        let mut shortcut_ids = HashSet::with_capacity(self.shortcuts.len());
+        let mut accelerators = HashSet::with_capacity(self.shortcuts.len());
+        for shortcut in &self.shortcuts {
+            shortcut.validate()?;
+            if !shortcut_ids.insert(shortcut.id.as_str()) {
+                return Err(format!(
+                    "global shortcut identifier {:?} is duplicated",
+                    shortcut.id
+                ));
+            }
+            let normalized = shortcut.accelerator.to_ascii_lowercase();
+            if !accelerators.insert(normalized) {
+                return Err(format!(
+                    "global shortcut accelerator {:?} is duplicated",
+                    shortcut.accelerator
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MenuConfig {
+    pub id: String,
+    pub label: String,
+    pub items: Vec<MenuItemConfig>,
+}
+
+impl MenuConfig {
+    fn validate<'a>(
+        &'a self,
+        item_ids: &mut HashSet<&'a str>,
+        item_count: &mut usize,
+    ) -> Result<(), String> {
+        validate_identifier(&self.id, "menu")?;
+        validate_text(&self.label, "menu label", 80, false)?;
+        if self.items.is_empty() {
+            return Err(format!("menu {:?} must contain at least one item", self.id));
+        }
+        for item in &self.items {
+            item.validate(1, item_ids, item_count)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MenuItemConfig {
+    pub kind: MenuItemKind,
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub checked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accelerator: Option<String>,
+    #[serde(default)]
+    pub items: Vec<MenuItemConfig>,
+}
+
+impl MenuItemConfig {
+    fn validate<'a>(
+        &'a self,
+        depth: usize,
+        item_ids: &mut HashSet<&'a str>,
+        item_count: &mut usize,
+    ) -> Result<(), String> {
+        if depth > 8 {
+            return Err("native menu nesting cannot exceed eight levels".to_owned());
+        }
+        *item_count = item_count.saturating_add(1);
+        match self.kind {
+            MenuItemKind::Separator => {
+                if !self.id.is_empty()
+                    || !self.label.is_empty()
+                    || self.checked
+                    || self.accelerator.is_some()
+                    || !self.items.is_empty()
+                {
+                    return Err(
+                        "menu separators cannot define identity, text, state, or children"
+                            .to_owned(),
+                    );
+                }
+            }
+            MenuItemKind::Command | MenuItemKind::Checkbox => {
+                validate_identifier(&self.id, "menu item")?;
+                validate_text(&self.label, "menu item label", 80, false)?;
+                if !item_ids.insert(self.id.as_str()) {
+                    return Err(format!("menu item identifier {:?} is duplicated", self.id));
+                }
+                if !self.items.is_empty() {
+                    return Err(format!("menu item {:?} cannot contain children", self.id));
+                }
+                if self.kind == MenuItemKind::Command && self.checked {
+                    return Err(format!("command menu item {:?} cannot be checked", self.id));
+                }
+                if let Some(accelerator) = &self.accelerator {
+                    validate_accelerator(accelerator)?;
+                }
+            }
+            MenuItemKind::Submenu => {
+                validate_identifier(&self.id, "submenu")?;
+                validate_text(&self.label, "submenu label", 80, false)?;
+                if !item_ids.insert(self.id.as_str()) {
+                    return Err(format!("menu item identifier {:?} is duplicated", self.id));
+                }
+                if self.checked || self.accelerator.is_some() || self.items.is_empty() {
+                    return Err(format!(
+                        "submenu {:?} must contain children and cannot be checked or accelerated",
+                        self.id
+                    ));
+                }
+                for item in &self.items {
+                    item.validate(depth + 1, item_ids, item_count)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrayConfig {
+    pub menu_id: String,
+    pub tooltip: String,
+    #[serde(default)]
+    pub close_behavior: TrayCloseBehavior,
+}
+
+impl TrayConfig {
+    fn validate(&self) -> Result<(), String> {
+        validate_identifier(&self.menu_id, "tray menu")?;
+        validate_text(&self.tooltip, "tray tooltip", 128, false)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GlobalShortcutConfig {
+    pub id: String,
+    pub accelerator: String,
+}
+
+impl GlobalShortcutConfig {
+    fn validate(&self) -> Result<(), String> {
+        validate_identifier(&self.id, "global shortcut")?;
+        validate_accelerator(&self.accelerator)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BackgroundJobConfig {
+    pub id: String,
+    pub interval_ms: u64,
+    #[serde(default)]
+    pub initial_delay_ms: u64,
+    pub timeout_ms: u64,
+    #[serde(default)]
+    pub overlap: JobOverlapPolicy,
+}
+
+impl BackgroundJobConfig {
+    /// Validates a host-scheduled PHP background job.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid identity, cadence, delay, or timeout.
+    pub fn validate(&self) -> Result<(), String> {
+        const MIN_INTERVAL_MS: u64 = 1_000;
+        const MAX_INTERVAL_MS: u64 = 86_400_000;
+        validate_identifier(&self.id, "background job")?;
+        if !(MIN_INTERVAL_MS..=MAX_INTERVAL_MS).contains(&self.interval_ms) {
+            return Err(format!(
+                "background job {:?} interval must be between {MIN_INTERVAL_MS} and {MAX_INTERVAL_MS} milliseconds",
+                self.id
+            ));
+        }
+        if self.initial_delay_ms > MAX_INTERVAL_MS {
+            return Err(format!(
+                "background job {:?} initial delay cannot exceed {MAX_INTERVAL_MS} milliseconds",
+                self.id
+            ));
+        }
+        if !(MIN_COMMAND_TIMEOUT_MS..=MAX_COMMAND_TIMEOUT_MS).contains(&self.timeout_ms) {
+            return Err(format!(
+                "background job {:?} timeout must be between {MIN_COMMAND_TIMEOUT_MS} and {MAX_COMMAND_TIMEOUT_MS} milliseconds",
+                self.id
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RustPluginConfig {
+    pub id: String,
+    pub executable: String,
+    #[serde(default)]
+    pub arguments: Vec<String>,
+    pub timeout_ms: u64,
+}
+
+impl RustPluginConfig {
+    /// Validates a supervised Rust sidecar declaration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid identity, unsafe project path, malformed
+    /// arguments, or an unsupported timeout.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier(&self.id, "Rust plugin")?;
+        validate_relative_project_path(&self.executable, "Rust plugin executable")?;
+        if self.arguments.len() > 32 {
+            return Err(format!(
+                "Rust plugin {:?} cannot declare more than 32 arguments",
+                self.id
+            ));
+        }
+        for argument in &self.arguments {
+            if argument.len() > 1_024 || argument.contains('\0') {
+                return Err(format!(
+                    "Rust plugin {:?} has an invalid process argument",
+                    self.id
+                ));
+            }
+        }
+        if !(MIN_COMMAND_TIMEOUT_MS..=MAX_COMMAND_TIMEOUT_MS).contains(&self.timeout_ms) {
+            return Err(format!(
+                "Rust plugin {:?} timeout must be between {MIN_COMMAND_TIMEOUT_MS} and {MAX_COMMAND_TIMEOUT_MS} milliseconds",
+                self.id
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileSystemRootConfig {
@@ -705,6 +1222,40 @@ pub fn validate_identifier(value: &str, label: &str) -> Result<(), String> {
         return Err(format!(
             "{label} identifier must begin with a letter and contain at most 64 ASCII letters, numbers, dots, dashes, or underscores"
         ));
+    }
+    Ok(())
+}
+
+fn validate_accelerator(value: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 64 || value.contains(char::is_whitespace) {
+        return Err("keyboard accelerators must contain 1-64 non-whitespace characters".to_owned());
+    }
+    let tokens = value.split('+').collect::<Vec<_>>();
+    if tokens.is_empty() || tokens.iter().any(|token| token.is_empty()) {
+        return Err(format!("keyboard accelerator {value:?} is malformed"));
+    }
+    let mut modifiers = HashSet::new();
+    for modifier in &tokens[..tokens.len().saturating_sub(1)] {
+        let normalized = modifier.to_ascii_lowercase();
+        if !matches!(
+            normalized.as_str(),
+            "alt" | "ctrl" | "control" | "shift" | "super" | "cmd" | "command" | "cmdorctrl"
+        ) || !modifiers.insert(normalized)
+        {
+            return Err(format!(
+                "keyboard accelerator {value:?} has an invalid or duplicate modifier"
+            ));
+        }
+    }
+    let key = tokens
+        .last()
+        .expect("a non-empty accelerator contains a key token");
+    if key.len() > 24
+        || !key
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+    {
+        return Err(format!("keyboard accelerator {value:?} has an invalid key"));
     }
     Ok(())
 }
@@ -830,6 +1381,10 @@ fn main_window_id() -> String {
     MAIN_WINDOW_ID.to_owned()
 }
 
+const fn default_true() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -848,6 +1403,9 @@ mod tests {
         assert_eq!(EffectKind::SetWindowVisible as u16, 2);
         assert_eq!(EffectKind::CloseWindow as u16, 3);
         assert_eq!(EffectKind::FocusWindow as u16, 4);
+        assert_eq!(EffectKind::SetMenuItemEnabled as u16, 5);
+        assert_eq!(EffectKind::SetMenuItemChecked as u16, 6);
+        assert_eq!(EffectKind::SetTrayVisible as u16, 7);
         assert_eq!(ApplicationCategory::Development as u8, 1);
         assert_eq!(ApplicationCategory::Productivity as u8, 2);
         assert_eq!(ApplicationCategory::Graphics as u8, 3);
@@ -873,6 +1431,16 @@ mod tests {
         assert_eq!(UpdateState::Applying as u8, 7);
         assert_eq!(UpdateState::UpToDate as u8, 8);
         assert_eq!(UpdateState::Failed as u8, 9);
+        assert_eq!(MenuItemKind::Command as u8, 1);
+        assert_eq!(MenuItemKind::Checkbox as u8, 2);
+        assert_eq!(MenuItemKind::Separator as u8, 3);
+        assert_eq!(MenuItemKind::Submenu as u8, 4);
+        assert_eq!(TrayCloseBehavior::Exit as u8, 1);
+        assert_eq!(TrayCloseBehavior::Hide as u8, 2);
+        assert_eq!(ShortcutState::Pressed as u8, 1);
+        assert_eq!(ShortcutState::Released as u8, 2);
+        assert_eq!(JobOverlapPolicy::Skip as u8, 1);
+        assert_eq!(JobOverlapPolicy::Wait as u8, 2);
         assert_eq!(FileAccess::Read as u8, 1);
         assert_eq!(FileAccess::Write as u8, 2);
         assert_eq!(FileAccess::ReadWrite as u8, 3);
@@ -973,9 +1541,80 @@ mod tests {
                 notifications: true,
                 drag_and_drop: true,
             },
+            shell: ShellConfig::default(),
+            background_jobs: Vec::new(),
+            rust_plugins: Vec::new(),
+            php_plugins: Vec::new(),
         };
 
         assert!(bootstrap.validate().is_ok());
+    }
+
+    #[test]
+    fn validates_shell_jobs_plugins_and_plugin_transport() {
+        let shell = ShellConfig {
+            menus: vec![MenuConfig {
+                id: "tray".to_owned(),
+                label: "Application".to_owned(),
+                items: vec![
+                    MenuItemConfig {
+                        kind: MenuItemKind::Command,
+                        id: "show".to_owned(),
+                        label: "Show".to_owned(),
+                        enabled: true,
+                        checked: false,
+                        accelerator: Some("CmdOrCtrl+Shift+KeyP".to_owned()),
+                        items: Vec::new(),
+                    },
+                    MenuItemConfig {
+                        kind: MenuItemKind::Separator,
+                        id: String::new(),
+                        label: String::new(),
+                        enabled: true,
+                        checked: false,
+                        accelerator: None,
+                        items: Vec::new(),
+                    },
+                ],
+            }],
+            tray: Some(TrayConfig {
+                menu_id: "tray".to_owned(),
+                tooltip: "Pam Desktop".to_owned(),
+                close_behavior: TrayCloseBehavior::Hide,
+            }),
+            shortcuts: vec![GlobalShortcutConfig {
+                id: "show".to_owned(),
+                accelerator: "CmdOrCtrl+Shift+KeyP".to_owned(),
+            }],
+        };
+        assert!(shell.validate().is_ok());
+
+        let job = BackgroundJobConfig {
+            id: "heartbeat".to_owned(),
+            interval_ms: 60_000,
+            initial_delay_ms: 1_000,
+            timeout_ms: 5_000,
+            overlap: JobOverlapPolicy::Skip,
+        };
+        assert!(job.validate().is_ok());
+
+        let plugin = RustPluginConfig {
+            id: "system".to_owned(),
+            executable: "plugins/bin/system".to_owned(),
+            arguments: vec!["--quiet".to_owned()],
+            timeout_ms: 5_000,
+        };
+        assert!(plugin.validate().is_ok());
+
+        let request = PluginRequestEnvelope::new(9, "system.info", Value::Null);
+        assert!(request.validate().is_ok());
+        let response = PluginResponseEnvelope::success(
+            9,
+            serde_json::json!({"platform": "linux"}),
+            Vec::new(),
+        );
+        assert!(response.validate_for(9).is_ok());
+        assert!(response.validate_for(8).is_err());
     }
 
     #[test]

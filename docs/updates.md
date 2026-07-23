@@ -10,7 +10,7 @@ never ships with the application.
 use Pam\Desktop\UpdatePolicy;
 use Pam\Desktop\Updates;
 
-$manifest = Manifest::create('com.example.my-app', 'My application', '0.5.0')
+$manifest = Manifest::create('com.example.my-app', 'My application', '0.6.0')
     ->updates(
         Updates::from(
             'https://updates.example.com/my-app/stable.json',
@@ -57,10 +57,8 @@ pam desktop publish-update . \
   --key /secure/my-app-update.key \
   --output dist/stable.json \
   --published-at 2026-07-23T14:00:00Z \
-  --notes-url https://example.com/releases/0.5.0 \
-  --artifact linux,x86_64,portable,dist/app-linux.tar.gz,https://cdn.example.com/app-linux.tar.gz \
-  --artifact windows,x86_64,portable,dist/app-windows.zip,https://cdn.example.com/app-windows.zip \
-  --artifact macos,aarch64,portable,dist/app-macos.zip,https://cdn.example.com/app-macos.zip
+  --notes-url https://example.com/releases/0.6.0 \
+  --artifact linux,x86_64,portable,dist/app-linux.tar.gz,https://cdn.example.com/app-linux.tar.gz
 ```
 
 Each `--artifact` tuple is:
@@ -84,7 +82,7 @@ document contains only:
     "schemaVersion": 1,
     "applicationId": "com.example.my-app",
     "channel": "stable",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "publishedAt": "2026-07-23T14:00:00Z",
     "artifacts": []
   },

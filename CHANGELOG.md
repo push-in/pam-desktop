@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.0
+
+- Added protocol 6 contracts for native shell configuration, supervised jobs,
+  PHP plugins, Rust plugins and dynamic shell effects.
+- Added immutable PHP `Shell`, `Menu`, `MenuItem`, `Tray`, `GlobalShortcut`,
+  `BackgroundJob` and `RustPlugin` configuration APIs with sequential
+  integer-backed variants.
+- Added composable PHP plugins that register only through the public
+  `Application` API and are reported in the validated boot contract.
+- Added the `pam-desktop-plugin` Rust SDK with a bounded, versioned JSON-lines
+  process protocol and typed metadata, results, failures and events.
+- Added a Rust plugin supervisor with exact export enforcement, per-plugin
+  serialization, deadlines, cancellation and crash recovery without replay.
+- Added `pam desktop plugin new` and `pam desktop plugin build` scaffolding for
+  project-local, release-built native extensions.
+- Added native menu trees, checkbox state, status tray activation and
+  close-to-tray behavior; Linux uses the D-Bus StatusNotifierItem protocol
+  without a GTK/AppIndicator runtime dependency.
+- Added global shortcuts with graceful registration fallback and typed
+  press/release lifecycle events.
+- Added periodic PHP background jobs with interruptible shutdown, initial
+  delay, timeout, skip/wait overlap policy, typed effects and ordered lifecycle
+  events.
+- Added hot-reload replacement of the complete plugin, scheduler and native
+  shell configuration without leaving duplicate timers or registrations.
+- Focused tagged host artifacts and official 0.6 package validation on Linux
+  x86-64 while preserving the existing non-Linux packager code for future work.
+
 ## 0.5.0
 
 - Added protocol 5 update configuration with integer-backed policy, platform,

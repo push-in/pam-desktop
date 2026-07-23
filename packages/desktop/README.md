@@ -1,41 +1,49 @@
 # pam/desktop
 
-The PHP application model for Pam Desktop. It owns window configuration,
-commands, typed effects, payload validation, and the versioned worker loop while
-the Rust host owns Servo, operating-system integration, security boundaries, and
-process lifecycle.
+The PHP application model for Pam Desktop. It owns windows, commands, events,
+jobs, plugins, native-shell policy, typed effects, payload validation and the
+versioned worker loop. The Rust host owns Servo, operating-system handles,
+security boundaries, plugin processes and lifecycle.
 
 ```php
 <?php
 
 use Pam\Desktop\Application;
 use Pam\Desktop\ApplicationCategory;
-use Pam\Desktop\ClientEvent;
+use Pam\Desktop\BackgroundJob;
 use Pam\Desktop\CommandContext;
 use Pam\Desktop\CommandResult;
+use Pam\Desktop\GlobalShortcut;
+use Pam\Desktop\JobContext;
 use Pam\Desktop\Manifest;
-use Pam\Desktop\UpdatePolicy;
-use Pam\Desktop\Updates;
+use Pam\Desktop\Menu;
+use Pam\Desktop\MenuItem;
+use Pam\Desktop\Shell;
+use Pam\Desktop\Tray;
+use Pam\Desktop\TrayCloseBehavior;
 use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
 
 $app = Application::create(
     window: Window::create('My application')->size(1120, 720),
-    manifest: Manifest::create('com.example.my-app', 'My application', '0.5.0')
+    manifest: Manifest::create('com.example.my-app', 'My application', '0.6.0')
         ->publisher('Example')
-        ->category(ApplicationCategory::Development)
-        ->updates(
-            Updates::from(
-                'https://updates.example.com/my-app/stable.json',
-                str_repeat('a', 64),
-            )->policy(UpdatePolicy::Notify),
-        ),
+        ->category(ApplicationCategory::Development),
 )
-    ->window(
-        'settings',
-        Window::create('Settings')
-            ->entry('resources/settings.html')
-            ->visible(false),
+    ->shell(
+        Shell::none()
+            ->menu(Menu::create(
+                'application',
+                'Application',
+                MenuItem::command('show', 'Show', 'CmdOrCtrl+Shift+KeyP'),
+                MenuItem::separator(),
+                MenuItem::command('quit', 'Quit'),
+            ))
+            ->tray(
+                Tray::create('application', 'My application')
+                    ->closeBehavior(TrayCloseBehavior::Hide),
+            )
+            ->shortcut(GlobalShortcut::create('show', 'CmdOrCtrl+Shift+KeyP')),
     )
     ->commandTimeout(10_000);
 
@@ -43,24 +51,40 @@ $app->command('greet', static function (CommandContext $command): CommandResult 
     $name = $command->string('name', 'world');
 
     return CommandResult::success(['message' => "Hello, {$name}!"])
-        ->effect(WindowEffect::title("Hello, {$name}", $command->windowId))
-        ->event(new ClientEvent(
-            'greeting.completed',
-            ['name' => $name],
-            $command->windowId,
-        ));
+        ->effect(WindowEffect::title("Hello, {$name}", $command->windowId));
 });
+
+$app->job(
+    'heartbeat',
+    BackgroundJob::every(30_000)->timeout(3_000),
+    static fn (JobContext $job): array => ['runId' => $job->runId],
+);
 
 $app->run();
 ```
 
-Protocol 5 supports named windows, JavaScript-to-PHP event handlers,
-PHP-to-JavaScript events, targeted effects, bounded command timeouts, explicit
-native capabilities, typed application distribution metadata and immutable
-signed-update policy. Protocol
-discriminators, statuses, categories, effect kinds, themes and errors are
-sequential integer-backed enums. Application command and event names remain
-explicit strings chosen by the application.
+Protocol 6 supports:
+
+- named windows and targeted effects;
+- JavaScript-to-PHP event handlers and PHP-to-JavaScript events;
+- bounded command timeouts, cancellation and crash recovery;
+- explicit native capabilities and signed-update policy;
+- native menus, tray, global shortcuts and dynamic shell effects;
+- supervised periodic PHP jobs;
+- composable PHP plugins;
+- process-isolated Rust plugins invoked through `window.pam.plugins`.
+
+All coded variants—statuses, kinds, categories, themes, policies and
+errors—are sequential integer-backed enums. Application command, event, job and
+plugin names remain explicit validated identifiers chosen by the application.
+
+Rust extensions use the separate `pam-desktop-plugin` SDK and never load a
+dynamic-library ABI into the Servo host. Create one with:
+
+```bash
+pam desktop plugin new system.info .
+pam desktop plugin build system.info .
+```
 
 Validate the package with:
 

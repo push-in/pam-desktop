@@ -103,6 +103,73 @@ impl Project {
         Ok(resolved)
     }
 
+    pub fn resolve_plugin_executable(&self, executable: &str) -> Result<PathBuf, String> {
+        let relative = Path::new(executable);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+            || matches!(
+                relative.components().next(),
+                Some(Component::Normal(name))
+                    if matches!(
+                        name.to_string_lossy().as_ref(),
+                        ".git" | ".pam" | "dist" | "node_modules" | "target"
+                    )
+            )
+        {
+            return Err(
+                "Rust plugin executables must use a bundled project-relative path".to_owned(),
+            );
+        }
+        let mut candidate = self.root.join(relative);
+        if !candidate.is_file() && !std::env::consts::EXE_SUFFIX.is_empty() {
+            let with_suffix = PathBuf::from(format!(
+                "{}{}",
+                candidate.to_string_lossy(),
+                std::env::consts::EXE_SUFFIX
+            ));
+            if with_suffix.is_file() {
+                candidate = with_suffix;
+            }
+        }
+        let resolved = candidate.canonicalize().map_err(|error| {
+            format!(
+                "cannot resolve Rust plugin executable {}: {error}",
+                candidate.display()
+            )
+        })?;
+        if !resolved.starts_with(&self.root) || !resolved.is_file() {
+            return Err(format!(
+                "Rust plugin executable is not a regular project file: {}",
+                resolved.display()
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            if resolved
+                .metadata()
+                .map_err(|error| {
+                    format!(
+                        "cannot inspect Rust plugin executable {}: {error}",
+                        resolved.display()
+                    )
+                })?
+                .permissions()
+                .mode()
+                & 0o111
+                == 0
+            {
+                return Err(format!(
+                    "Rust plugin file is not executable: {}",
+                    resolved.display()
+                ));
+            }
+        }
+        Ok(resolved)
+    }
+
     fn resolve_public_asset(&self, asset: &str, label: &str) -> Result<PathBuf, String> {
         let relative = Path::new(asset);
         if relative.is_absolute()
@@ -138,6 +205,9 @@ impl Project {
             self.resolve_entry(&window.entry)?;
         }
         self.resolve_icon(&bootstrap.manifest.icon)?;
+        for plugin in &bootstrap.rust_plugins {
+            self.resolve_plugin_executable(&plugin.executable)?;
+        }
         Ok(())
     }
 }

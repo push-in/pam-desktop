@@ -28,4 +28,8 @@ enum ErrorCode: int
     case UpdateUnavailable = 20;
     case UpdateIntegrityFailed = 21;
     case UpdateInstallFailed = 22;
+    case PluginUnavailable = 23;
+    case PluginFailed = 24;
+    case ShortcutUnavailable = 25;
+    case BackgroundJobFailed = 26;
 }
