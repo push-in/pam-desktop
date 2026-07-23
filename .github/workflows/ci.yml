@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+          components: clippy,rustfmt
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          coverage: none
+      - run: cargo fmt --all -- --check
+      - run: cargo test --locked -p pam-desktop-protocol
+      - run: cargo clippy --locked -p pam-desktop --no-default-features --features gateway --all-targets -- -D warnings
+      - run: cargo test --locked -p pam-desktop --no-default-features --features gateway
+      - run: composer install --working-dir=packages/desktop --no-interaction --prefer-dist
+      - run: composer validate --strict packages/desktop/composer.json
+      - run: composer test --working-dir=packages/desktop
+      - run: composer analyse --working-dir=packages/desktop
+
+  platform-contract:
+    name: platform-contract (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+      - run: cargo check --locked -p pam-desktop --no-default-features --features gateway
+      - run: cargo test --locked -p pam-desktop --no-default-features --features gateway

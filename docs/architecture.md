@@ -48,7 +48,7 @@ execution contexts.
 | Layer | Owns | Does not own |
 | --- | --- | --- |
 | Pam core | PHP Embed runtime and `pam exec` | Servo, windows, frontend assets |
-| PHP package | windows, commands, events, deadlines, capabilities, typed effects | operating-system handles |
+| PHP package | windows, commands, events, deadlines, capabilities, update policy, typed effects | operating-system handles and signing secrets |
 | Protocol crate | envelopes, versions, integer enums, validation | application commands |
 | Rust shell | lifecycle, gateway, Servo, scoped filesystem, native adapters | domain logic |
 | Frontend | presentation and explicit command calls | ambient native capabilities |
@@ -69,7 +69,7 @@ All coded variants are sequential integers:
 | response status | `1` success, `2` failure |
 | window theme | `1` system, `2` light, `3` dark |
 | effect kind | `1` title, `2` visibility, `3` close, `4` focus |
-| error code | `1` through `18`, defined by `ErrorCode` |
+| error code | `1` through `22`, defined by `ErrorCode` |
 | file access | `1` read, `2` write, `3` read-write |
 | file entry kind | `1` file, `2` directory |
 | file operation | `1` read text through `5` create directory |
@@ -77,13 +77,18 @@ All coded variants are sequential integers:
 | clipboard operation | `1` read, `2` write, `3` clear |
 | notification urgency | `1` low, `2` normal, `3` critical |
 | application category | `1` development through `8` education |
+| update policy | `1` manual, `2` notify, `3` automatic |
+| update platform | `1` Linux, `2` Windows, `3` macOS |
+| update artifact kind | `1` portable, `2` native installer |
+| update state | `1` disabled through `9` failed |
 
 Command names are application-owned strings because they are identifiers, not
 stored domain variants. They must begin with a letter, contain only ASCII
 letters, digits, dots, dashes or underscores, and remain at most 64 bytes.
 
-Protocol 4 adds immutable application identity and distribution metadata to the
-bootstrap. Protocol 3 introduced native-capability policy and the sequential
+Protocol 5 adds immutable update policy and signed-feed target contracts.
+Protocol 4 introduced application identity and distribution metadata.
+Protocol 3 introduced native-capability policy and the sequential
 integer contracts for filesystem, dialogs, clipboard and notifications. The
 version is validated on every response. A mismatched
 version, message kind, request ID, malformed payload, oversized line, or failure
@@ -119,7 +124,7 @@ not as arbitrary code execution.
 
 ## Concurrency and failure
 
-Protocol 4 serializes commands through one worker mutex. This gives
+Protocol 5 serializes commands through one worker mutex. This gives
 deterministic PHP state and avoids pretending that a single Zend runtime is
 parallel. Axum handles transport concurrently, while blocking worker I/O runs
 outside Tokio's async workers.
@@ -151,17 +156,38 @@ directory under the selected output, materializes Composer package symlinks,
 rejects non-vendor symlink escapes, omits secrets and configured exclusions,
 and copies the exact `pam-desktop` and Pam worker binaries.
 
-`ldd` is applied only to those trusted binaries. Non-glibc runtime libraries
-are copied beside them, while the launcher fixes `PAM_BINARY`, `PHPRC`,
-`PHP_INI_SCAN_DIR` and `LD_LIBRARY_PATH` before starting production `run` mode
-without the development watcher. A minimal bundled `php.ini` prevents host
-machine scan directories from changing the worker.
+On Linux, `ldd` is applied only to those trusted binaries and non-glibc runtime
+libraries are copied beside them. Windows/macOS packages use the dedicated
+native launcher and adjacent DLL/dylib materialization. Launchers fix
+`PAM_BINARY`, bundle/update roots, `PHPRC`, `PHP_INI_SCAN_DIR` and the platform
+library path before starting production `run` mode without the watcher.
 
-The staged bundle receives a Freedesktop entry, validated icon, user installer,
-uninstaller and a sorted integrity manifest. Archive metadata uses
-`SOURCE_DATE_EPOCH` (or zero) for reproducibility. Existing artifacts are never
-removed unless the caller explicitly passes `--force`; publication is a rename
-from the completed staging directory.
+The staged bundle receives platform metadata, validated icons and a sorted
+integrity manifest. Linux adds Freedesktop metadata and scoped user installers;
+macOS adds `.app`/DMG metadata and Windows adds MSIX metadata/assets. Existing
+artifacts are never removed unless the caller explicitly passes `--force`;
+publication is a rename from the completed staging directory.
+
+## Update boundary
+
+The application manifest pins the feed URL, channel, Ed25519 public key and
+integer update policy. The release seed is read only by `publish-update`, must
+have owner-only permissions on Unix, and is never available to PHP, Servo or
+the frontend.
+
+The updater parses a closed feed schema, reserializes the typed release into its
+canonical compact representation and performs strict Ed25519 verification
+before selecting an application/channel/platform/architecture artifact. HTTPS
+transport is bounded; the downloaded bytes must match both signed length and
+SHA-256.
+
+Installation is delegated to a copied helper so Windows executables are no
+longer locked. The helper waits for the original process, extracts into a
+same-filesystem staging directory, verifies every manifest file, moves the
+current bundle to one rollback slot, atomically moves the replacement into
+place, verifies again and relaunches. macOS portable updates replace the signed
+`.app`, pass `codesign --verify --deep --strict`, and then verify the nested
+runtime manifest so outer code signing is not invalidated by a partial update.
 
 ## Extension rules
 

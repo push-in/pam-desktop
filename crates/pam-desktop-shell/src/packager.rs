@@ -18,6 +18,7 @@ enum PackageFormat {
     Directory = 1,
     Portable = 2,
     Debian = 3,
+    Native = 4,
 }
 
 /// Parsed `pam desktop build` action.
@@ -26,12 +27,13 @@ pub enum BuildCommand {
     Build(BuildOptions),
 }
 
-/// Validated inputs for a Linux desktop distribution build.
+/// Validated inputs for a cross-platform desktop distribution build.
 pub struct BuildOptions {
     pub project: PathBuf,
     pub output: Option<PathBuf>,
     formats: BTreeSet<PackageFormat>,
     force: bool,
+    sign: bool,
 }
 
 impl BuildOptions {
@@ -48,6 +50,7 @@ impl BuildOptions {
         let mut formats = BTreeSet::from([PackageFormat::Directory, PackageFormat::Portable]);
         let mut explicit_format = false;
         let mut force = false;
+        let mut sign = false;
 
         while let Some(argument) = arguments.next() {
             match argument.to_str() {
@@ -81,21 +84,26 @@ impl BuildOptions {
                         "deb" | "debian" => {
                             formats.insert(PackageFormat::Debian);
                         }
+                        "native" | "dmg" | "msix" => {
+                            formats.insert(PackageFormat::Native);
+                        }
                         "all" => {
-                            formats.extend([
-                                PackageFormat::Directory,
-                                PackageFormat::Portable,
-                                PackageFormat::Debian,
-                            ]);
+                            formats.extend([PackageFormat::Directory, PackageFormat::Portable]);
+                            if cfg!(target_os = "linux") {
+                                formats.insert(PackageFormat::Debian);
+                            } else {
+                                formats.insert(PackageFormat::Native);
+                            }
                         }
                         _ => {
                             return Err(format!(
-                                "unknown package format {value:?}; expected directory, portable, deb, or all"
+                                "unknown package format {value:?}; expected directory, portable, deb, native, dmg, msix, or all"
                             ));
                         }
                     }
                 }
                 Some("--force") => force = true,
+                Some("--sign") => sign = true,
                 Some(value) if value.starts_with('-') => {
                     return Err(format!("unknown build option {value:?}"));
                 }
@@ -115,6 +123,7 @@ impl BuildOptions {
             output,
             formats,
             force,
+            sign,
         }))
     }
 }
@@ -136,8 +145,11 @@ pub fn build(
     bootstrap: &Bootstrap,
     options: &BuildOptions,
 ) -> Result<BuildResult, String> {
-    if std::env::consts::OS != "linux" {
-        return Err("Pam Desktop 0.4 packaging currently targets Linux only".to_owned());
+    if !matches!(std::env::consts::OS, "linux" | "windows" | "macos") {
+        return Err(format!(
+            "Pam Desktop packaging does not support {}",
+            std::env::consts::OS
+        ));
     }
     if !cfg!(feature = "servo-engine") {
         return Err(
@@ -152,7 +164,27 @@ pub fn build(
             "PAM_BINARY is missing; invoke builds through `pam desktop build`".to_owned()
         })
         .and_then(|value| resolve_executable(&value))?;
-    build_with_binaries(project, bootstrap, options, &host, &pam)
+    let launcher = if cfg!(target_os = "linux") {
+        None
+    } else {
+        let sibling = host.with_file_name(format!(
+            "pam-desktop-launcher{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        Some(validated_binary(&sibling, "Pam Desktop native launcher").map_err(|error| {
+            format!(
+                "{error}; install both pam-desktop workspace binaries before building applications"
+            )
+        })?)
+    };
+    build_with_binaries(
+        project,
+        bootstrap,
+        options,
+        &host,
+        &pam,
+        launcher.as_deref(),
+    )
 }
 
 fn build_with_binaries(
@@ -161,7 +193,9 @@ fn build_with_binaries(
     options: &BuildOptions,
     host_binary: &Path,
     pam_binary: &Path,
+    launcher_binary: Option<&Path>,
 ) -> Result<BuildResult, String> {
+    validate_platform_formats(options)?;
     bootstrap.validate()?;
     let icon = project.resolve_icon(&bootstrap.manifest.icon)?;
     let host_binary = validated_binary(host_binary, "Pam Desktop host")?;
@@ -180,14 +214,25 @@ fn build_with_binaries(
         &output,
         &host_binary,
         &pam_binary,
+        launcher_binary,
         &icon,
+        options.sign,
     )?;
 
     let source_date_epoch = source_date_epoch()?;
     let mut staged = Vec::new();
     if options.formats.contains(&PackageFormat::Portable) {
         let archive = workspace.path.join(&names.portable);
-        create_portable_archive(&workspace.path, &names.bundle, &archive, source_date_epoch)?;
+        create_portable_archive(
+            &workspace.path,
+            &bundle,
+            bootstrap,
+            &names,
+            &icon,
+            &archive,
+            source_date_epoch,
+            options.sign,
+        )?;
         staged.push((archive, destinations.portable.clone()));
     }
     if options.formats.contains(&PackageFormat::Debian) {
@@ -202,6 +247,19 @@ fn build_with_binaries(
             source_date_epoch,
         )?;
         staged.push((debian, destinations.debian.clone()));
+    }
+    if options.formats.contains(&PackageFormat::Native) {
+        let native = workspace.path.join(&names.native);
+        create_native_package(
+            &workspace.path,
+            &bundle,
+            bootstrap,
+            &names,
+            &icon,
+            &native,
+            options.sign,
+        )?;
+        staged.push((native, destinations.native.clone()));
     }
     if options.formats.contains(&PackageFormat::Directory) {
         staged.push((bundle, destinations.directory.clone()));
@@ -224,10 +282,30 @@ fn build_with_binaries(
     Ok(BuildResult { artifacts })
 }
 
+fn validate_platform_formats(options: &BuildOptions) -> Result<(), String> {
+    if options.formats.contains(&PackageFormat::Debian) && !cfg!(target_os = "linux") {
+        return Err("the deb format is only available on Linux".to_owned());
+    }
+    if options.formats.contains(&PackageFormat::Native) && cfg!(target_os = "linux") {
+        return Err(
+            "Linux native packaging uses --format deb; --format native targets DMG or MSIX"
+                .to_owned(),
+        );
+    }
+    if options.sign && cfg!(target_os = "linux") {
+        return Err(
+            "--sign is available for macOS codesigning/notarization and Windows Authenticode"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
 struct ArtifactNames {
     bundle: String,
     portable: String,
     debian: String,
+    native: String,
     executable: String,
     architecture: String,
 }
@@ -241,15 +319,36 @@ impl ArtifactNames {
             .ok_or_else(|| "application identifier has no executable segment".to_owned())?
             .to_owned();
         let architecture = std::env::consts::ARCH.to_owned();
-        let bundle = format!("{}-{}-linux-{architecture}", executable, manifest.version);
-        let debian_architecture = debian_architecture(&architecture)?;
-        Ok(Self {
-            portable: format!("{bundle}.tar.gz"),
-            debian: format!(
+        let operating_system = std::env::consts::OS;
+        let bundle = format!(
+            "{}-{}-{operating_system}-{architecture}",
+            executable, manifest.version
+        );
+        let portable = if cfg!(target_os = "linux") {
+            format!("{bundle}.tar.gz")
+        } else {
+            format!("{bundle}.zip")
+        };
+        let native = if cfg!(target_os = "macos") {
+            format!("{}-{}-{architecture}.dmg", executable, manifest.version)
+        } else {
+            format!("{}-{}-{architecture}.msix", executable, manifest.version)
+        };
+        let debian = if cfg!(target_os = "linux") {
+            format!(
                 "{}_{}_{}.deb",
-                executable, manifest.version, debian_architecture
-            ),
+                executable,
+                manifest.version,
+                debian_architecture(&architecture)?
+            )
+        } else {
+            format!("{}-{}-{architecture}.deb", executable, manifest.version)
+        };
+        Ok(Self {
             bundle,
+            portable,
+            debian,
+            native,
             executable,
             architecture,
         })
@@ -260,6 +359,7 @@ struct ArtifactDestinations {
     directory: Option<PathBuf>,
     portable: Option<PathBuf>,
     debian: Option<PathBuf>,
+    native: Option<PathBuf>,
 }
 
 impl ArtifactDestinations {
@@ -274,6 +374,9 @@ impl ArtifactDestinations {
             debian: formats
                 .contains(&PackageFormat::Debian)
                 .then(|| output.join(&names.debian)),
+            native: formats
+                .contains(&PackageFormat::Native)
+                .then(|| output.join(&names.native)),
         }
     }
 
@@ -282,6 +385,7 @@ impl ArtifactDestinations {
             .iter()
             .chain(self.portable.iter())
             .chain(self.debian.iter())
+            .chain(self.native.iter())
     }
 
     fn ensure_available(&self, force: bool) -> Result<(), String> {
@@ -354,7 +458,9 @@ fn materialize_bundle(
     output: &Path,
     host_binary: &Path,
     pam_binary: &Path,
+    launcher_binary: Option<&Path>,
     icon: &Path,
+    sign: bool,
 ) -> Result<(), String> {
     let app = bundle.join("app");
     let bin = bundle.join("bin");
@@ -374,10 +480,26 @@ fn materialize_bundle(
     };
     copy_project(&context, project.root(), &app, Path::new(""))?;
     sanitize_composer_metadata(&app)?;
-    copy_binary(host_binary, &bin.join("pam-desktop"))?;
-    copy_binary(pam_binary, &bin.join("pam"))?;
-    copy_runtime_libraries([host_binary, pam_binary], &lib)?;
-    write_launcher(&bin.join(executable_name(&bootstrap.manifest)?))?;
+    let host_destination = bin.join(format!("pam-desktop{}", std::env::consts::EXE_SUFFIX));
+    let pam_destination = bin.join(format!("pam{}", std::env::consts::EXE_SUFFIX));
+    copy_binary(host_binary, &host_destination)?;
+    copy_binary(pam_binary, &pam_destination)?;
+    if cfg!(target_os = "linux") {
+        copy_runtime_libraries([host_binary, pam_binary], &lib)?;
+        write_launcher(&bin.join(executable_name(&bootstrap.manifest)?))?;
+    } else {
+        copy_adjacent_runtime_libraries([host_binary, pam_binary], &lib)?;
+        let launcher = launcher_binary.ok_or_else(|| {
+            "the Pam Desktop native launcher is required on Windows and macOS".to_owned()
+        })?;
+        let destination = bin.join(format!(
+            "{}{}",
+            executable_name(&bootstrap.manifest)?,
+            std::env::consts::EXE_SUFFIX
+        ));
+        copy_binary(launcher, &destination)?;
+        copy_adjacent_runtime_libraries([launcher], &lib)?;
+    }
     write_php_ini(&etc.join("php.ini"))?;
 
     let icon_destination = bundle_icon_path(bundle, &bootstrap.manifest, icon)?;
@@ -391,14 +513,22 @@ fn materialize_bundle(
             icon_destination.display()
         )
     })?;
-    let desktop_template = desktop_entry(&bootstrap.manifest, "@PAM_EXEC@");
-    fs::write(
-        applications.join(format!("{}.desktop.in", bootstrap.manifest.identifier)),
-        desktop_template,
-    )
-    .map_err(|error| format!("cannot write desktop entry template: {error}"))?;
-    write_portable_installer(bundle, &bootstrap.manifest, icon)?;
-    write_portable_uninstaller(bundle, &bootstrap.manifest, icon)?;
+    if cfg!(target_os = "linux") {
+        let desktop_template = desktop_entry(&bootstrap.manifest, "@PAM_EXEC@");
+        fs::write(
+            applications.join(format!("{}.desktop.in", bootstrap.manifest.identifier)),
+            desktop_template,
+        )
+        .map_err(|error| format!("cannot write desktop entry template: {error}"))?;
+        write_portable_installer(bundle, &bootstrap.manifest, icon)?;
+        write_portable_uninstaller(bundle, &bootstrap.manifest, icon)?;
+    }
+    if sign && cfg!(target_os = "windows") {
+        sign_windows_bundle(bundle)?;
+    }
+    if sign && cfg!(target_os = "macos") {
+        sign_macos_bundle_binaries(bundle)?;
+    }
     write_bundle_manifest(bundle, bootstrap, pam_binary)?;
     normalize_permissions(bundle)?;
     Ok(())
@@ -638,6 +768,41 @@ fn copy_runtime_libraries<'a>(
     Ok(())
 }
 
+fn copy_adjacent_runtime_libraries<'a>(
+    binaries: impl IntoIterator<Item = &'a Path>,
+    destination: &Path,
+) -> Result<(), String> {
+    let extension = if cfg!(target_os = "windows") {
+        "dll"
+    } else {
+        "dylib"
+    };
+    let mut copied = BTreeSet::new();
+    for binary in binaries {
+        let Some(parent) = binary.parent() else {
+            continue;
+        };
+        for entry in fs::read_dir(parent).map_err(|error| {
+            format!(
+                "cannot inspect runtime directory {}: {error}",
+                parent.display()
+            )
+        })? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = entry.path();
+            if path.extension().and_then(OsStr::to_str) != Some(extension) {
+                continue;
+            }
+            let name = entry.file_name();
+            if copied.insert(name.clone()) {
+                fs::copy(&path, destination.join(name))
+                    .map_err(|error| format!("cannot bundle {}: {error}", path.display()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn runtime_libraries(binary: &Path) -> Result<Vec<PathBuf>, String> {
     let output = Command::new("ldd")
         .arg(binary)
@@ -707,9 +872,20 @@ fn write_launcher(path: &Path) -> Result<(), String> {
         path,
         r#"#!/bin/sh
 set -eu
-PAM_BUNDLE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PAM_LAUNCHER=$0
+while [ -L "$PAM_LAUNCHER" ]; do
+    PAM_LINK=$(readlink "$PAM_LAUNCHER")
+    case "$PAM_LINK" in
+        /*) PAM_LAUNCHER=$PAM_LINK ;;
+        *) PAM_LAUNCHER=$(dirname -- "$PAM_LAUNCHER")/$PAM_LINK ;;
+    esac
+done
+PAM_LAUNCHER=$(CDPATH= cd -- "$(dirname -- "$PAM_LAUNCHER")" && pwd)/$(basename -- "$PAM_LAUNCHER")
+PAM_BUNDLE=$(CDPATH= cd -- "$(dirname -- "$PAM_LAUNCHER")/.." && pwd)
 export PAM_BINARY="$PAM_BUNDLE/bin/pam"
 export PAM_DESKTOP_BUNDLE=1
+export PAM_DESKTOP_BUNDLE_ROOT="$PAM_BUNDLE"
+export PAM_DESKTOP_LAUNCHER="$PAM_LAUNCHER"
 export PHPRC="$PAM_BUNDLE/etc/php.ini"
 export PHP_INI_SCAN_DIR=
 export LD_LIBRARY_PATH="$PAM_BUNDLE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -935,7 +1111,7 @@ fn write_bundle_manifest(
         target: TargetManifest {
             operating_system: std::env::consts::OS,
             architecture: std::env::consts::ARCH,
-            abi: "glibc",
+            abi: target_abi(),
         },
         source_date_epoch: source_date_epoch()?,
         files: bundle_files(bundle)?,
@@ -944,6 +1120,20 @@ fn write_bundle_manifest(
         .map_err(|error| format!("cannot serialize bundle manifest: {error}"))?;
     fs::write(bundle.join("manifest.json"), encoded)
         .map_err(|error| format!("cannot write bundle manifest: {error}"))
+}
+
+const fn target_abi() -> &'static str {
+    if cfg!(all(target_os = "windows", target_env = "msvc")) {
+        "msvc"
+    } else if cfg!(target_os = "windows") {
+        "gnu"
+    } else if cfg!(target_os = "macos") {
+        "darwin"
+    } else if cfg!(target_env = "musl") {
+        "musl"
+    } else {
+        "glibc"
+    }
 }
 
 fn bundle_files(root: &Path) -> Result<Vec<BundleFile>, String> {
@@ -991,31 +1181,484 @@ impl std::io::Write for DigestWriter<'_> {
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "portable packaging keeps platform-specific signed inputs explicit"
+)]
 fn create_portable_archive(
     workspace: &Path,
-    bundle_name: &str,
+    bundle: &Path,
+    bootstrap: &Bootstrap,
+    names: &ArtifactNames,
+    icon: &Path,
     output: &Path,
     source_date_epoch: u64,
+    sign: bool,
 ) -> Result<(), String> {
-    let status = Command::new("tar")
-        .args([
-            "--sort=name",
-            &format!("--mtime=@{source_date_epoch}"),
-            "--owner=0",
-            "--group=0",
-            "--numeric-owner",
-            "-czf",
-        ])
-        .arg(output)
-        .arg("-C")
-        .arg(workspace)
-        .arg(bundle_name)
-        .status()
-        .map_err(|error| format!("cannot start tar: {error}"))?;
+    let bundle_name = bundle
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or_else(|| "bundle name is not valid UTF-8".to_owned())?;
+    let status = if cfg!(target_os = "linux") {
+        Command::new("tar")
+            .args([
+                "--sort=name",
+                &format!("--mtime=@{source_date_epoch}"),
+                "--owner=0",
+                "--group=0",
+                "--numeric-owner",
+                "-czf",
+            ])
+            .arg(output)
+            .arg("-C")
+            .arg(workspace)
+            .arg(bundle_name)
+            .status()
+    } else if cfg!(target_os = "macos") {
+        let application =
+            create_macos_application(workspace, bundle, bootstrap, names, icon, sign)?;
+        Command::new("ditto")
+            .args(["-c", "-k", "--sequesterRsrc", "--keepParent"])
+            .arg(application)
+            .arg(output)
+            .status()
+    } else if cfg!(target_os = "windows") {
+        Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Compress-Archive -LiteralPath $env:PAM_ARCHIVE_SOURCE -DestinationPath $env:PAM_ARCHIVE_OUTPUT -CompressionLevel Optimal -Force",
+            ])
+            .env("PAM_ARCHIVE_SOURCE", workspace.join(bundle_name))
+            .env("PAM_ARCHIVE_OUTPUT", output)
+            .status()
+    } else {
+        return Err("portable archives are unsupported on this platform".to_owned());
+    }
+    .map_err(|error| format!("cannot start portable archive tool: {error}"))?;
     if !status.success() {
-        return Err(format!("tar failed with status {status}"));
+        return Err(format!("portable archive tool failed with status {status}"));
     }
     Ok(())
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "native packaging keeps all signed build inputs explicit"
+)]
+fn create_native_package(
+    workspace: &Path,
+    bundle: &Path,
+    bootstrap: &Bootstrap,
+    names: &ArtifactNames,
+    icon: &Path,
+    output: &Path,
+    sign: bool,
+) -> Result<(), String> {
+    if cfg!(target_os = "macos") {
+        create_macos_package(workspace, bundle, bootstrap, names, icon, output, sign)
+    } else if cfg!(target_os = "windows") {
+        create_windows_package(workspace, bundle, bootstrap, names, icon, output, sign)
+    } else {
+        Err("native packages are only available on macOS and Windows".to_owned())
+    }
+}
+
+fn create_macos_package(
+    workspace: &Path,
+    bundle: &Path,
+    bootstrap: &Bootstrap,
+    names: &ArtifactNames,
+    icon: &Path,
+    output: &Path,
+    sign: bool,
+) -> Result<(), String> {
+    let application = create_macos_application(workspace, bundle, bootstrap, names, icon, sign)?;
+    let status = Command::new("hdiutil")
+        .args(["create", "-ov", "-format", "UDZO", "-volname"])
+        .arg(&bootstrap.manifest.name)
+        .arg("-srcfolder")
+        .arg(&application)
+        .arg(output)
+        .status()
+        .map_err(|error| format!("cannot start hdiutil: {error}"))?;
+    if !status.success() {
+        return Err(format!("hdiutil failed with status {status}"));
+    }
+    if sign {
+        sign_macos_path(output)?;
+        notarize_macos(output)?;
+    }
+    Ok(())
+}
+
+fn create_macos_application(
+    workspace: &Path,
+    bundle: &Path,
+    bootstrap: &Bootstrap,
+    names: &ArtifactNames,
+    icon: &Path,
+    sign: bool,
+) -> Result<PathBuf, String> {
+    let application = workspace.join(format!("{}.app", names.executable));
+    if application.exists() {
+        return Ok(application);
+    }
+    let contents = application.join("Contents");
+    let macos = contents.join("MacOS");
+    let resources = contents.join("Resources");
+    let runtime = resources.join("runtime");
+    fs::create_dir_all(&macos).map_err(|error| error.to_string())?;
+    fs::create_dir_all(&resources).map_err(|error| error.to_string())?;
+    hardlink_or_copy(bundle, &runtime)?;
+    let executable = macos.join(&names.executable);
+    fs::write(
+        &executable,
+        format!(
+            "#!/bin/sh\nset -eu\nAPP=$(CDPATH= cd -- \"$(dirname -- \"$0\")/../..\" && pwd)\nROOT=\"$APP/Contents/Resources/runtime\"\nexport PAM_DESKTOP_UPDATE_ROOT=\"$APP\"\nexec \"$ROOT/bin/{}\" \"$@\"\n",
+            names.executable
+        ),
+    )
+    .map_err(|error| format!("cannot write macOS application launcher: {error}"))?;
+    make_executable(&executable)?;
+    let icon_name = format!(
+        "AppIcon.{}",
+        icon.extension()
+            .and_then(OsStr::to_str)
+            .ok_or_else(|| "macOS application icon has no extension".to_owned())?
+    );
+    fs::copy(icon, resources.join(&icon_name))
+        .map_err(|error| format!("cannot copy macOS application icon: {error}"))?;
+    fs::write(
+        contents.join("Info.plist"),
+        macos_info_plist(&bootstrap.manifest, &names.executable, &icon_name),
+    )
+    .map_err(|error| format!("cannot write macOS Info.plist: {error}"))?;
+
+    if sign {
+        sign_macos_path(&executable)?;
+        sign_macos_path(&application)?;
+    }
+    Ok(application)
+}
+
+fn macos_info_plist(manifest: &ApplicationManifest, executable: &str, icon_name: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleDisplayName</key><string>{}</string>
+  <key>CFBundleExecutable</key><string>{}</string>
+  <key>CFBundleIconFile</key><string>{}</string>
+  <key>CFBundleIdentifier</key><string>{}</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>{}</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>{}</string>
+  <key>CFBundleVersion</key><string>{}</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+"#,
+        xml_escape(&manifest.name),
+        xml_escape(executable),
+        xml_escape(icon_name),
+        xml_escape(&manifest.identifier),
+        xml_escape(&manifest.name),
+        xml_escape(&apple_version(&manifest.version)),
+        xml_escape(&apple_version(&manifest.version)),
+    )
+}
+
+fn apple_version(version: &str) -> String {
+    let mut numbers = version
+        .split(|character: char| !character.is_ascii_digit())
+        .filter(|value| !value.is_empty())
+        .take(3)
+        .map(|value| value.parse::<u16>().unwrap_or(u16::MAX))
+        .collect::<Vec<_>>();
+    numbers.resize(3, 0);
+    numbers
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn create_windows_package(
+    workspace: &Path,
+    bundle: &Path,
+    bootstrap: &Bootstrap,
+    names: &ArtifactNames,
+    icon: &Path,
+    output: &Path,
+    sign: bool,
+) -> Result<(), String> {
+    if icon
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_none_or(|extension| !extension.eq_ignore_ascii_case("png"))
+    {
+        return Err("MSIX packaging requires a PNG application icon".to_owned());
+    }
+    if bootstrap.manifest.identifier.len() > 50 {
+        return Err("MSIX application identifiers must contain at most 50 characters".to_owned());
+    }
+    let root = workspace.join("msix-root");
+    let runtime = root.join("runtime");
+    let assets = root.join("Assets");
+    fs::create_dir_all(&assets).map_err(|error| error.to_string())?;
+    hardlink_or_copy(bundle, &runtime)?;
+    create_windows_assets(icon, &assets)?;
+    let publisher = std::env::var("PAM_WINDOWS_PUBLISHER")
+        .unwrap_or_else(|_| "CN=Pam Desktop Development".to_owned());
+    fs::write(
+        root.join("AppxManifest.xml"),
+        windows_appx_manifest(&bootstrap.manifest, names, &publisher),
+    )
+    .map_err(|error| format!("cannot write AppxManifest.xml: {error}"))?;
+    let status = Command::new("makeappx.exe")
+        .args(["pack", "/o", "/d"])
+        .arg(&root)
+        .arg("/p")
+        .arg(output)
+        .status()
+        .map_err(|error| format!("cannot start makeappx.exe: {error}"))?;
+    if !status.success() {
+        return Err(format!("makeappx.exe failed with status {status}"));
+    }
+    if sign {
+        sign_windows_path(output)?;
+    }
+    Ok(())
+}
+
+fn create_windows_assets(icon: &Path, assets: &Path) -> Result<(), String> {
+    let status = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Add-Type -AssemblyName System.Drawing; $source=[System.Drawing.Image]::FromFile($env:PAM_ICON_SOURCE); foreach($asset in @(@('StoreLogo.png',50),@('Square44x44Logo.png',44),@('Square150x150Logo.png',150))){$bitmap=New-Object System.Drawing.Bitmap($asset[1],$asset[1]);$graphics=[System.Drawing.Graphics]::FromImage($bitmap);$graphics.DrawImage($source,0,0,$asset[1],$asset[1]);$bitmap.Save((Join-Path $env:PAM_ICON_OUTPUT $asset[0]),[System.Drawing.Imaging.ImageFormat]::Png);$graphics.Dispose();$bitmap.Dispose()};$source.Dispose()",
+        ])
+        .env("PAM_ICON_SOURCE", icon)
+        .env("PAM_ICON_OUTPUT", assets)
+        .status()
+        .map_err(|error| format!("cannot start Windows icon renderer: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "Windows icon rendering failed with status {status}"
+        ));
+    }
+    Ok(())
+}
+
+fn windows_appx_manifest(
+    manifest: &ApplicationManifest,
+    names: &ArtifactNames,
+    publisher: &str,
+) -> String {
+    let architecture = match names.architecture.as_str() {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        value => value,
+    };
+    let version = windows_version(&manifest.version);
+    format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap rescap">
+  <Identity Name="{}" Publisher="{}" Version="{}" ProcessorArchitecture="{}"/>
+  <Properties>
+    <DisplayName>{}</DisplayName>
+    <PublisherDisplayName>{}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>{}</Description>
+  </Properties>
+  <Resources><Resource Language="en-us"/></Resources>
+  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0"/></Dependencies>
+  <Applications>
+    <Application Id="App" Executable="runtime\bin\{}.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="{}" Description="{}" BackgroundColor="transparent"
+          Square44x44Logo="Assets\Square44x44Logo.png" Square150x150Logo="Assets\Square150x150Logo.png"/>
+    </Application>
+  </Applications>
+  <Capabilities><rescap:Capability Name="runFullTrust"/></Capabilities>
+</Package>
+"#,
+        xml_escape(&manifest.identifier),
+        xml_escape(publisher),
+        version,
+        architecture,
+        xml_escape(&manifest.name),
+        xml_escape(&manifest.publisher),
+        xml_escape(&manifest.description),
+        xml_escape(&names.executable),
+        xml_escape(&manifest.name),
+        xml_escape(&manifest.description),
+    )
+}
+
+fn windows_version(version: &str) -> String {
+    let mut numbers = version
+        .split(|character: char| !character.is_ascii_digit())
+        .filter(|value| !value.is_empty())
+        .take(4)
+        .map(|value| value.parse::<u16>().unwrap_or(u16::MAX))
+        .collect::<Vec<_>>();
+    numbers.resize(4, 0);
+    numbers
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn sign_windows_bundle(bundle: &Path) -> Result<(), String> {
+    for directory in [bundle.join("bin"), bundle.join("lib")] {
+        for entry in fs::read_dir(&directory)
+            .map_err(|error| format!("cannot inspect signable files: {error}"))?
+        {
+            let path = entry.map_err(|error| error.to_string())?.path();
+            if matches!(
+                path.extension().and_then(OsStr::to_str),
+                Some("exe" | "dll")
+            ) {
+                sign_windows_path(&path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn sign_windows_path(path: &Path) -> Result<(), String> {
+    let thumbprint = std::env::var("PAM_WINDOWS_CERTIFICATE_SHA1")
+        .map_err(|_| "PAM_WINDOWS_CERTIFICATE_SHA1 is required for Windows signing".to_owned())?;
+    if thumbprint.len() != 40 || !thumbprint.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(
+            "PAM_WINDOWS_CERTIFICATE_SHA1 must be a 40-digit certificate thumbprint".to_owned(),
+        );
+    }
+    let timestamp = std::env::var("PAM_WINDOWS_TIMESTAMP_URL")
+        .unwrap_or_else(|_| "http://timestamp.digicert.com".to_owned());
+    let status = Command::new("signtool.exe")
+        .args(["sign", "/fd", "SHA256", "/td", "SHA256", "/tr"])
+        .arg(timestamp)
+        .arg("/sha1")
+        .arg(thumbprint)
+        .arg(path)
+        .status()
+        .map_err(|error| format!("cannot start signtool.exe: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "Authenticode signing failed for {} with status {status}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn sign_macos_bundle_binaries(bundle: &Path) -> Result<(), String> {
+    let entitlements = bundle
+        .parent()
+        .ok_or_else(|| "macOS bundle has no build workspace".to_owned())?
+        .join("pam-desktop-entitlements.plist");
+    fs::write(&entitlements, MACOS_RUNTIME_ENTITLEMENTS)
+        .map_err(|error| format!("cannot write macOS runtime entitlements: {error}"))?;
+    for directory in [bundle.join("bin"), bundle.join("lib")] {
+        for entry in fs::read_dir(&directory)
+            .map_err(|error| format!("cannot inspect signable files: {error}"))?
+        {
+            let path = entry.map_err(|error| error.to_string())?.path();
+            if path.is_file() {
+                sign_macos_path_with_entitlements(&path, Some(&entitlements))?;
+            }
+        }
+    }
+    fs::remove_file(&entitlements)
+        .map_err(|error| format!("cannot remove macOS runtime entitlements staging: {error}"))?;
+    Ok(())
+}
+
+fn sign_macos_path(path: &Path) -> Result<(), String> {
+    sign_macos_path_with_entitlements(path, None)
+}
+
+fn sign_macos_path_with_entitlements(
+    path: &Path,
+    entitlements: Option<&Path>,
+) -> Result<(), String> {
+    let identity = std::env::var("PAM_MACOS_SIGNING_IDENTITY")
+        .map_err(|_| "PAM_MACOS_SIGNING_IDENTITY is required for macOS signing".to_owned())?;
+    let mut command = Command::new("codesign");
+    command
+        .args(["--force", "--options", "runtime", "--timestamp", "--sign"])
+        .arg(identity);
+    if let Some(entitlements) = entitlements {
+        command.arg("--entitlements").arg(entitlements);
+    }
+    let status = command
+        .arg(path)
+        .status()
+        .map_err(|error| format!("cannot start codesign: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "codesign failed for {} with status {status}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+const MACOS_RUNTIME_ENTITLEMENTS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key><true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+</dict>
+</plist>
+"#;
+
+fn notarize_macos(path: &Path) -> Result<(), String> {
+    let Ok(profile) = std::env::var("PAM_MACOS_NOTARY_PROFILE") else {
+        return Ok(());
+    };
+    let status = Command::new("xcrun")
+        .args(["notarytool", "submit"])
+        .arg(path)
+        .args(["--keychain-profile", &profile, "--wait"])
+        .status()
+        .map_err(|error| format!("cannot start Apple notarytool: {error}"))?;
+    if !status.success() {
+        return Err(format!("Apple notarization failed with status {status}"));
+    }
+    let status = Command::new("xcrun")
+        .args(["stapler", "staple"])
+        .arg(path)
+        .status()
+        .map_err(|error| format!("cannot start Apple stapler: {error}"))?;
+    if !status.success() {
+        return Err(format!(
+            "Apple notarization stapling failed with status {status}"
+        ));
+    }
+    Ok(())
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 #[allow(
@@ -1312,10 +1955,10 @@ fn hex(bytes: &[u8]) -> String {
     encoded
 }
 
-/// Prints the stable Linux build command surface.
+/// Prints the stable cross-platform build command surface.
 pub fn print_build_usage(executable: &OsStr) {
     println!(
-        "Usage: {} build [directory] [--output directory] [--format directory|portable|deb|all] [--force]\n\nDefault formats: directory and portable.\n`deb` requires dpkg-deb; portable bundles include install.sh and uninstall.sh.",
+        "Usage: {} build [directory] [--output directory] [--format directory|portable|deb|native|all] [--sign] [--force]\n\nDefault formats: directory and portable.\nLinux native installers use `deb`; macOS and Windows use `native` (DMG/MSIX). `--sign` reads platform credentials from PAM_MACOS_* or PAM_WINDOWS_* environment variables.",
         executable.to_string_lossy()
     );
 }
@@ -1360,13 +2003,15 @@ mod tests {
             output: Some(fixture.output.clone()),
             formats: BTreeSet::from([PackageFormat::Directory]),
             force: false,
+            sign: false,
         };
         let result = build_with_binaries(
             &project,
-            &fixture.bootstrap(),
+            &Fixture::bootstrap(),
             &options,
             &fixture.host,
             &fixture.pam,
+            None,
         )
         .expect("bundle should build");
 
@@ -1405,6 +2050,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            use std::os::unix::fs::symlink;
             assert_eq!(
                 fs::metadata(bundle.join("bin/hello"))
                     .expect("launcher metadata should exist")
@@ -1421,6 +2067,14 @@ mod tests {
                     & 0o777,
                 0o644
             );
+            let linked_bin = fixture.root.join("linked-bin");
+            fs::create_dir(&linked_bin).expect("linked bin directory should be created");
+            symlink(bundle.join("bin/hello"), linked_bin.join("hello"))
+                .expect("launcher symlink should be created");
+            let status = Command::new(linked_bin.join("hello"))
+                .status()
+                .expect("launcher symlink should execute");
+            assert!(status.success());
         }
     }
 
@@ -1497,7 +2151,7 @@ mod tests {
             }
         }
 
-        fn bootstrap(&self) -> Bootstrap {
+        fn bootstrap() -> Bootstrap {
             Bootstrap {
                 manifest: ApplicationManifest {
                     identifier: "com.pushin.hello".to_owned(),
@@ -1508,6 +2162,7 @@ mod tests {
                     category: ApplicationCategory::Development,
                     icon: "resources/icon.svg".to_owned(),
                     bundle_excludes: vec!["storage/cache".to_owned()],
+                    updates: None,
                 },
                 windows: vec![WindowConfig {
                     id: "main".to_owned(),

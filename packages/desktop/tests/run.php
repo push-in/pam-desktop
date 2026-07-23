@@ -22,6 +22,8 @@ use Pam\Desktop\EventContext;
 use Pam\Desktop\FileSystemRoot;
 use Pam\Desktop\Manifest;
 use Pam\Desktop\ResponseStatus;
+use Pam\Desktop\UpdatePolicy;
+use Pam\Desktop\Updates;
 use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
 use Pam\Desktop\WindowTheme;
@@ -45,6 +47,18 @@ try {
 } catch (InvalidArgumentException) {
 }
 
+try {
+    Updates::from('http://updates.pushin.dev/latest.json', str_repeat('a', 64));
+    expect(false, 'Remote update endpoints must require HTTPS.');
+} catch (InvalidArgumentException) {
+}
+
+try {
+    Updates::from('https://updates.pushin.dev/latest.json', str_repeat('A', 64));
+    expect(false, 'Update public keys must use canonical lowercase hexadecimal.');
+} catch (InvalidArgumentException) {
+}
+
 $application = Application::create(
     Window::create('Pam Desktop')
         ->size(1024, 680)
@@ -54,7 +68,13 @@ $application = Application::create(
         ->description('Typed PHP on a native desktop runtime.')
         ->publisher('Pushin')
         ->category(ApplicationCategory::Development)
-        ->excludeFromBundle('storage/cache'),
+        ->excludeFromBundle('storage/cache')
+        ->updates(
+            Updates::from(
+                'https://updates.pushin.dev/pam/stable.json',
+                str_repeat('a', 64),
+            )->policy(UpdatePolicy::Notify),
+        ),
 )
     ->window(
         'settings',
@@ -96,7 +116,7 @@ $application->on(
 );
 
 $boot = $application->dispatch([
-    'version' => 4,
+    'version' => 5,
     'id' => 1,
     'kind' => 1,
     'windowId' => 'main',
@@ -112,6 +132,8 @@ expect($boot['payload']['manifest']['identifier'] === 'com.pushin.pam', 'The app
 expect($boot['payload']['manifest']['category'] === 1, 'Development must be integer 1.');
 expect($boot['payload']['manifest']['icon'] === 'resources/icon.svg', 'The default icon should be portable.');
 expect($boot['payload']['manifest']['bundleExcludes'] === ['storage/cache'], 'Bundle exclusions should be retained.');
+expect($boot['payload']['manifest']['updates']['policy'] === 2, 'Notify update policy must be integer 2.');
+expect($boot['payload']['manifest']['updates']['channel'] === 'stable', 'The stable update channel is the default.');
 expect($boot['payload']['capabilities']['filesystemRoots'][0]['name'] === 'data', 'The root should be named.');
 expect($boot['payload']['capabilities']['filesystemRoots'][0]['access'] === 3, 'ReadWrite must be integer 3.');
 expect($boot['payload']['capabilities']['dialogs'] === true, 'Dialogs should be enabled explicitly.');
@@ -120,7 +142,7 @@ expect($boot['payload']['capabilities']['notifications'] === true, 'Notification
 expect($boot['payload']['capabilities']['dragAndDrop'] === true, 'Drag and drop should be enabled.');
 
 $greeting = $application->dispatch([
-    'version' => 4,
+    'version' => 5,
     'id' => 2,
     'kind' => 1,
     'windowId' => 'main',
@@ -133,7 +155,7 @@ expect($greeting['effects'][0]['windowId'] === 'main', 'Effects should target a 
 expect($greeting['events'][0]['name'] === 'greeting.completed', 'Client events should be emitted.');
 
 $event = $application->dispatch([
-    'version' => 4,
+    'version' => 5,
     'id' => 3,
     'kind' => 1,
     'windowId' => 'main',
@@ -148,7 +170,7 @@ expect($event['effects'][0]['kind'] === EffectKind::SetWindowVisible->value, 'Ev
 expect($event['effects'][0]['windowId'] === 'settings', 'Event effects should target child windows.');
 
 $missing = $application->dispatch([
-    'version' => 4,
+    'version' => 5,
     'id' => 4,
     'kind' => 1,
     'windowId' => 'main',

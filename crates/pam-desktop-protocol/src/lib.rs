@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
-pub const PROTOCOL_VERSION: u16 = 4;
+pub const PROTOCOL_VERSION: u16 = 5;
+pub const UPDATE_FEED_VERSION: u16 = 1;
 pub const BOOT_COMMAND: &str = "@pam/boot";
 pub const EVENT_COMMAND: &str = "@pam/event";
 pub const MAIN_WINDOW_ID: &str = "main";
@@ -48,6 +49,10 @@ pub enum ErrorCode {
     ResourceTooLarge = 16,
     NativeOperationFailed = 17,
     InvalidGrant = 18,
+    UpdateDisabled = 19,
+    UpdateUnavailable = 20,
+    UpdateIntegrityFailed = 21,
+    UpdateInstallFailed = 22,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
@@ -80,6 +85,44 @@ pub enum ApplicationCategory {
     Utility = 6,
     Game = 7,
     Education = 8,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, Hash, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum UpdatePolicy {
+    #[default]
+    Manual = 1,
+    Notify = 2,
+    Automatic = 3,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize_repr, Eq, Hash, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum UpdatePlatform {
+    Linux = 1,
+    Windows = 2,
+    MacOs = 3,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize_repr, Eq, Hash, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum UpdateArtifactKind {
+    PortableArchive = 1,
+    NativeInstaller = 2,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize_repr, Eq, Hash, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum UpdateState {
+    Disabled = 1,
+    Idle = 2,
+    Checking = 3,
+    Available = 4,
+    Downloading = 5,
+    Ready = 6,
+    Applying = 7,
+    UpToDate = 8,
+    Failed = 9,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
@@ -344,6 +387,8 @@ pub struct ApplicationManifest {
     pub icon: String,
     #[serde(default)]
     pub bundle_excludes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updates: Option<UpdateConfig>,
 }
 
 impl ApplicationManifest {
@@ -384,7 +429,143 @@ impl ApplicationManifest {
                 ));
             }
         }
+        if let Some(updates) = &self.updates {
+            updates.validate()?;
+        }
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateConfig {
+    pub endpoint: String,
+    pub channel: String,
+    pub public_key: String,
+    pub policy: UpdatePolicy,
+}
+
+impl UpdateConfig {
+    /// Validates the trusted source and Ed25519 verification key used by the
+    /// application updater.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an insecure remote URL, malformed channel, or
+    /// invalid 32-byte lowercase hexadecimal public key.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_update_url(&self.endpoint, "update endpoint")?;
+        validate_identifier(&self.channel, "update channel")?;
+        validate_lower_hex(&self.public_key, 64, "update public key")
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateArtifact {
+    pub platform: UpdatePlatform,
+    pub architecture: String,
+    pub kind: UpdateArtifactKind,
+    pub url: String,
+    pub bytes: u64,
+    pub sha256: String,
+}
+
+impl UpdateArtifact {
+    /// Validates one immutable release artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed target metadata, URL, byte length, or
+    /// SHA-256 digest.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier(&self.architecture, "update architecture")?;
+        validate_update_url(&self.url, "update artifact URL")?;
+        if self.bytes == 0 {
+            return Err("update artifact size must be greater than zero".to_owned());
+        }
+        validate_lower_hex(&self.sha256, 64, "update artifact SHA-256")
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateRelease {
+    pub schema_version: u16,
+    pub application_id: String,
+    pub channel: String,
+    pub version: String,
+    pub published_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes_url: Option<String>,
+    pub artifacts: Vec<UpdateArtifact>,
+}
+
+impl UpdateRelease {
+    /// Validates a signed release payload independently from its signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unsupported feed schema, mismatched identifiers,
+    /// invalid release metadata, or duplicate target artifacts.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version != UPDATE_FEED_VERSION {
+            return Err(format!(
+                "update feed schema {} is unsupported; expected {UPDATE_FEED_VERSION}",
+                self.schema_version
+            ));
+        }
+        validate_application_identifier(&self.application_id)?;
+        validate_identifier(&self.channel, "update channel")?;
+        validate_version(&self.version)?;
+        validate_text(
+            &self.published_at,
+            "update publication timestamp",
+            64,
+            false,
+        )?;
+        if let Some(notes_url) = &self.notes_url {
+            validate_update_url(notes_url, "update notes URL")?;
+        }
+        if self.artifacts.is_empty() {
+            return Err("update release must contain at least one artifact".to_owned());
+        }
+
+        let mut targets = HashSet::with_capacity(self.artifacts.len());
+        for artifact in &self.artifacts {
+            artifact.validate()?;
+            if !targets.insert((
+                artifact.platform,
+                artifact.architecture.as_str(),
+                artifact.kind,
+            )) {
+                return Err(format!(
+                    "update artifact target {:?}/{} ({:?}) is duplicated",
+                    artifact.platform, artifact.architecture, artifact.kind
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SignedUpdateRelease {
+    pub release: UpdateRelease,
+    pub signature: String,
+}
+
+impl SignedUpdateRelease {
+    /// Validates the feed shape before cryptographic verification.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid release data or a malformed Ed25519
+    /// signature.
+    pub fn validate(&self) -> Result<(), String> {
+        self.release.validate()?;
+        validate_lower_hex(&self.signature, 128, "update signature")
     }
 }
 
@@ -608,6 +789,43 @@ fn validate_relative_project_path(value: &str, label: &str) -> Result<(), String
     Ok(())
 }
 
+fn validate_lower_hex(value: &str, expected_bytes: usize, label: &str) -> Result<(), String> {
+    if value.len() != expected_bytes
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(format!(
+            "{label} must contain exactly {expected_bytes} lowercase hexadecimal characters"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_update_url(value: &str, label: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(value).ok();
+    let trusted = parsed.as_ref().is_some_and(|url| {
+        let has_authority = url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.fragment().is_none();
+        let secure = url.scheme() == "https";
+        let loopback = url.scheme() == "http"
+            && url.host().is_some_and(|host| match host {
+                url::Host::Domain(domain) => domain.eq_ignore_ascii_case("localhost"),
+                url::Host::Ipv4(address) => address.is_loopback(),
+                url::Host::Ipv6(address) => address.is_loopback(),
+            });
+        has_authority && (secure || cfg!(debug_assertions) && loopback)
+    });
+    if value.len() > 2048 || value.chars().any(char::is_control) || !trusted {
+        return Err(format!(
+            "{label} must be an HTTPS URL without credentials or fragments (debug builds also permit HTTP loopback)"
+        ));
+    }
+    Ok(())
+}
+
 fn main_window_id() -> String {
     MAIN_WINDOW_ID.to_owned()
 }
@@ -638,6 +856,23 @@ mod tests {
         assert_eq!(ApplicationCategory::Utility as u8, 6);
         assert_eq!(ApplicationCategory::Game as u8, 7);
         assert_eq!(ApplicationCategory::Education as u8, 8);
+        assert_eq!(UpdatePolicy::Manual as u8, 1);
+        assert_eq!(UpdatePolicy::Notify as u8, 2);
+        assert_eq!(UpdatePolicy::Automatic as u8, 3);
+        assert_eq!(UpdatePlatform::Linux as u8, 1);
+        assert_eq!(UpdatePlatform::Windows as u8, 2);
+        assert_eq!(UpdatePlatform::MacOs as u8, 3);
+        assert_eq!(UpdateArtifactKind::PortableArchive as u8, 1);
+        assert_eq!(UpdateArtifactKind::NativeInstaller as u8, 2);
+        assert_eq!(UpdateState::Disabled as u8, 1);
+        assert_eq!(UpdateState::Idle as u8, 2);
+        assert_eq!(UpdateState::Checking as u8, 3);
+        assert_eq!(UpdateState::Available as u8, 4);
+        assert_eq!(UpdateState::Downloading as u8, 5);
+        assert_eq!(UpdateState::Ready as u8, 6);
+        assert_eq!(UpdateState::Applying as u8, 7);
+        assert_eq!(UpdateState::UpToDate as u8, 8);
+        assert_eq!(UpdateState::Failed as u8, 9);
         assert_eq!(FileAccess::Read as u8, 1);
         assert_eq!(FileAccess::Write as u8, 2);
         assert_eq!(FileAccess::ReadWrite as u8, 3);
@@ -779,6 +1014,62 @@ mod tests {
         assert!(capabilities.validate().is_err());
     }
 
+    #[test]
+    fn validates_signed_update_contracts() {
+        let feed = SignedUpdateRelease {
+            release: UpdateRelease {
+                schema_version: UPDATE_FEED_VERSION,
+                application_id: "com.pushin.pam".to_owned(),
+                channel: "stable".to_owned(),
+                version: "0.5.1".to_owned(),
+                published_at: "2026-07-23T14:00:00Z".to_owned(),
+                notes_url: Some("https://pam.pushin.dev/releases/0.5.1".to_owned()),
+                artifacts: vec![UpdateArtifact {
+                    platform: UpdatePlatform::Linux,
+                    architecture: "x86_64".to_owned(),
+                    kind: UpdateArtifactKind::PortableArchive,
+                    url: "https://pam.pushin.dev/releases/pam.tar.gz".to_owned(),
+                    bytes: 42,
+                    sha256: "a".repeat(64),
+                }],
+            },
+            signature: "b".repeat(128),
+        };
+
+        assert!(feed.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_insecure_or_ambiguous_update_contracts() {
+        let mut manifest = fixture_manifest();
+        manifest.updates = Some(UpdateConfig {
+            endpoint: "http://updates.example.com/latest.json".to_owned(),
+            channel: "stable".to_owned(),
+            public_key: "a".repeat(64),
+            policy: UpdatePolicy::Automatic,
+        });
+        assert!(manifest.validate().is_err());
+
+        let mut release = UpdateRelease {
+            schema_version: UPDATE_FEED_VERSION,
+            application_id: "com.pushin.pam".to_owned(),
+            channel: "stable".to_owned(),
+            version: "0.5.1".to_owned(),
+            published_at: "2026-07-23T14:00:00Z".to_owned(),
+            notes_url: None,
+            artifacts: vec![UpdateArtifact {
+                platform: UpdatePlatform::Linux,
+                architecture: "x86_64".to_owned(),
+                kind: UpdateArtifactKind::PortableArchive,
+                url: "https://pam.pushin.dev/releases/pam.tar.gz".to_owned(),
+                bytes: 42,
+                sha256: "a".repeat(64),
+            }],
+        };
+        release.artifacts.push(release.artifacts[0].clone());
+        assert!(release.validate().is_err());
+    }
+
     fn fixture_manifest() -> ApplicationManifest {
         ApplicationManifest {
             identifier: "com.pushin.pam".to_owned(),
@@ -789,6 +1080,7 @@ mod tests {
             category: ApplicationCategory::Development,
             icon: "resources/icon.svg".to_owned(),
             bundle_excludes: vec!["storage/cache".to_owned()],
+            updates: None,
         }
     }
 }

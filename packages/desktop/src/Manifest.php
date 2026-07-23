@@ -20,6 +20,7 @@ final readonly class Manifest
         public ApplicationCategory $category,
         public string $icon,
         public array $bundleExcludes,
+        public ?Updates $updates,
     ) {
         self::assertIdentifier($identifier);
         self::assertText($name, 'The application name', 80);
@@ -55,6 +56,7 @@ final readonly class Manifest
             category: ApplicationCategory::Utility,
             icon: 'resources/icon.svg',
             bundleExcludes: [],
+            updates: null,
         );
     }
 
@@ -69,6 +71,7 @@ final readonly class Manifest
             $this->category,
             $this->icon,
             $this->bundleExcludes,
+            $this->updates,
         );
     }
 
@@ -83,6 +86,7 @@ final readonly class Manifest
             $this->category,
             $this->icon,
             $this->bundleExcludes,
+            $this->updates,
         );
     }
 
@@ -97,6 +101,7 @@ final readonly class Manifest
             $category,
             $this->icon,
             $this->bundleExcludes,
+            $this->updates,
         );
     }
 
@@ -111,6 +116,7 @@ final readonly class Manifest
             $this->category,
             $path,
             $this->bundleExcludes,
+            $this->updates,
         );
     }
 
@@ -125,6 +131,37 @@ final readonly class Manifest
             $this->category,
             $this->icon,
             array_values(array_merge($this->bundleExcludes, $paths)),
+            $this->updates,
+        );
+    }
+
+    public function updates(Updates $updates): self
+    {
+        return new self(
+            $this->identifier,
+            $this->name,
+            $this->version,
+            $this->description,
+            $this->publisher,
+            $this->category,
+            $this->icon,
+            $this->bundleExcludes,
+            $updates,
+        );
+    }
+
+    public function withoutUpdates(): self
+    {
+        return new self(
+            $this->identifier,
+            $this->name,
+            $this->version,
+            $this->description,
+            $this->publisher,
+            $this->category,
+            $this->icon,
+            $this->bundleExcludes,
+            null,
         );
     }
 
@@ -137,7 +174,8 @@ final readonly class Manifest
      *     publisher: string,
      *     category: int,
      *     icon: string,
-     *     bundleExcludes: list<string>
+     *     bundleExcludes: list<string>,
+     *     updates: null|array{endpoint: string, channel: string, publicKey: string, policy: int}
      * }
      */
     public function toArray(): array
@@ -151,6 +189,7 @@ final readonly class Manifest
             'category' => $this->category->value,
             'icon' => $this->icon,
             'bundleExcludes' => $this->bundleExcludes,
+            'updates' => $this->updates?->toArray(),
         ];
     }
 

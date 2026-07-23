@@ -24,4 +24,8 @@ enum ErrorCode: int
     case ResourceTooLarge = 16;
     case NativeOperationFailed = 17;
     case InvalidGrant = 18;
+    case UpdateDisabled = 19;
+    case UpdateUnavailable = 20;
+    case UpdateIntegrityFailed = 21;
+    case UpdateInstallFailed = 22;
 }

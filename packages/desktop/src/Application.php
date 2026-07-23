@@ -11,7 +11,7 @@ use Throwable;
 
 final class Application
 {
-    public const PROTOCOL_VERSION = 4;
+    public const PROTOCOL_VERSION = 5;
     public const BOOT_COMMAND = '@pam/boot';
     public const EVENT_COMMAND = '@pam/event';
     public const MAX_MESSAGE_BYTES = 1_048_576;

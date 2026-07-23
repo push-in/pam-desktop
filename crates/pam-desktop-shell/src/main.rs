@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod event_hub;
@@ -13,6 +15,7 @@ mod native;
 mod packager;
 mod project;
 mod runtime;
+mod updater;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod watcher;
@@ -79,6 +82,9 @@ fn run() -> Result<(), String> {
             run_desktop(Project::discover(&project)?, false)
         }
         "build" => run_build(&executable, arguments.collect()),
+        "update-key" => run_update_key(&arguments.collect::<Vec<_>>()),
+        "publish-update" => run_publish_update(arguments.collect()),
+        "apply-update" => updater::apply(updater::ApplyOptions::parse(arguments)?),
         "doctor" => {
             let project = arguments
                 .next()
@@ -87,6 +93,37 @@ fn run() -> Result<(), String> {
         }
         unknown => Err(format!("unknown command {unknown:?}")),
     }
+}
+
+fn run_update_key(arguments: &[std::ffi::OsString]) -> Result<(), String> {
+    let path = match arguments {
+        [flag, path] if flag == "--output" || flag == "-o" => PathBuf::from(path),
+        _ => {
+            return Err("usage: pam-desktop update-key --output <private-key-file>".to_owned());
+        }
+    };
+    let public_key = updater::generate_key(&path)?;
+    println!("[ok] Private update key: {}", path.display());
+    println!("[ok] Public update key: {public_key}");
+    Ok(())
+}
+
+fn run_publish_update(mut arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
+    let has_project = arguments.first().is_some_and(|argument| {
+        argument
+            .to_str()
+            .is_some_and(|argument| !argument.starts_with('-'))
+    });
+    let project = if has_project {
+        PathBuf::from(arguments.remove(0))
+    } else {
+        PathBuf::from(".")
+    };
+    let options = updater::PublishOptions::parse(arguments)?;
+    let runtime = DesktopRuntime::prepare(Project::discover(&project)?)?;
+    let output = updater::publish_feed(&runtime.bootstrap().manifest, options)?;
+    println!("[ok] Signed update feed: {}", output.display());
+    Ok(())
 }
 
 fn run_build(
@@ -143,6 +180,14 @@ fn run_doctor(path: &std::path::Path) -> Result<(), String> {
         "[ok] Package: category={}, icon={}",
         manifest.category as u8, manifest.icon
     );
+    if let Some(updates) = &manifest.updates {
+        println!(
+            "[ok] Updates: policy={}, channel={}, endpoint={}",
+            updates.policy as u8, updates.channel, updates.endpoint
+        );
+    } else {
+        println!("[ok] Updates: disabled");
+    }
     println!(
         "[ok] Filesystem roots: {} ({})",
         capabilities.filesystem_roots.len(),
@@ -191,7 +236,9 @@ fn print_engine_diagnostic() {
 
 fn print_usage(executable: &std::ffi::OsStr) {
     println!(
-        "Usage: {} dev [directory]\n       {} run [directory]\n       {} build [directory] [options]\n       {} doctor [directory]\n       {} --version",
+        "Usage: {} dev [directory]\n       {} run [directory]\n       {} build [directory] [options]\n       {} update-key --output <private-key-file>\n       {} publish-update [directory] [options]\n       {} doctor [directory]\n       {} --version",
+        executable.to_string_lossy(),
+        executable.to_string_lossy(),
         executable.to_string_lossy(),
         executable.to_string_lossy(),
         executable.to_string_lossy(),

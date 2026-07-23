@@ -30,6 +30,7 @@ servo-engine = [
 arboard.workspace = true
 axum.workspace = true
 cap-std.workspace = true
+ed25519-dalek.workspace = true
 euclid = { workspace = true, optional = true }
 getrandom.workspace = true
 # Compatibility pins for Servo 0.4; see the workspace manifest.
@@ -45,6 +46,7 @@ sha2.workspace = true
 servo = { workspace = true, optional = true }
 tokio.workspace = true
 tracing = { workspace = true, optional = true }
+ureq.workspace = true
 url = { workspace = true, optional = true }
 winit.workspace = true
 

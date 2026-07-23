@@ -363,6 +363,7 @@ impl ApplicationHandler<HostEvent> for Application {
                 }
             }
             HostEvent::Dialog(request) => show_dialog(request),
+            HostEvent::Exit => event_loop.exit(),
         }
     }
 

@@ -7,7 +7,7 @@
 A direct Servo host for building native desktop applications whose application
 logic remains elegant, typed PHP.
 
-![Version](https://img.shields.io/badge/version-0.4.0-68ded2?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.5.0-68ded2?style=flat-square)
 ![Status](https://img.shields.io/badge/status-alpha-f59e0b?style=flat-square)
 ![Servo](https://img.shields.io/badge/Servo-0.4.0-5b50d6?style=flat-square)
 ![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?style=flat-square&logo=php&logoColor=white)
@@ -22,7 +22,7 @@ Pam Desktop is intentionally separate from the Pam server core. This repository
 owns the native window, Servo integration, secure local bridge, shared protocol,
 and the `pam/desktop` Composer package. Pam remains the PHP worker runtime.
 
-Version 0.4 adds a distributable Linux application contract:
+Version 0.5 adds signed multi-platform distribution and updates:
 
 - local HTML, CSS, JavaScript and assets rendered directly by Servo;
 - explicit commands and bidirectional events through `window.pam`;
@@ -39,6 +39,14 @@ Version 0.4 adds a distributable Linux application contract:
   vendored application code and per-file SHA-256 integrity metadata;
 - portable `.tar.gz` distribution, per-user install/uninstall scripts and
   optional native `.deb` packages;
+- native launchers and portable archives on Linux, Windows and macOS;
+- native MSIX and DMG packaging with Authenticode or hardened-runtime signing;
+- optional Apple notarization and stapling;
+- an immutable PHP update policy with pinned Ed25519 public keys;
+- signed multi-platform feeds, bounded HTTPS downloads, exact size/SHA-256
+  verification and atomic install with one-version rollback;
+- frozen `pam.updater` status, check, download and install operations plus
+  notify/automatic background policies;
 - one supervised Pam worker with bounded, versioned JSON-lines messages;
 - a random loopback gateway with origin and token enforcement;
 - no Node runtime and no unrestricted ambient native API.
@@ -88,7 +96,7 @@ $app = Application::create(
         ->size(1120, 720)
         ->minimumSize(720, 520)
         ->theme(WindowTheme::Dark),
-    manifest: Manifest::create('com.pushin.my-app', 'My desktop app', '0.4.0')
+    manifest: Manifest::create('com.pushin.my-app', 'My desktop app', '0.5.0')
         ->description('A PHP-first native desktop application.')
         ->publisher('My team')
         ->category(ApplicationCategory::Development),
@@ -149,6 +157,11 @@ const selected = await window.pam.dialog.openFile({
 if (selected) {
     console.log(await window.pam.fs.readText(selected));
 }
+
+const update = await window.pam.updater.check();
+if (update.state === 4) {
+    await window.pam.updater.download();
+}
 ```
 
 `window.pam.emit(name, payload, options)` sends a typed application event to
@@ -162,7 +175,7 @@ returns an opaque `grantId`, never the ambient filesystem path. Read the
 [Capabilities guide](docs/capabilities.md) for the complete frontend API,
 integer contracts and limits.
 
-## Package for Linux
+## Package and update
 
 The application manifest stays beside windows and capabilities in PHP. Build
 the default directory and portable archive atomically:
@@ -175,14 +188,46 @@ Additional formats and output control:
 
 ```bash
 pam desktop build . --output dist --format deb
+pam desktop build . --format native --sign # DMG on macOS, MSIX on Windows
 pam desktop build . --format all --force
 ```
 
-The portable archive contains `install.sh` and `uninstall.sh` for a per-user
-installation. Debian packaging requires `dpkg-deb`. Every bundle contains a
+Linux portable archives contain `install.sh` and `uninstall.sh` for a per-user
+installation. Debian packaging requires `dpkg-deb`; macOS/Windows native
+packaging uses `--format native`. Every runtime bundle contains a
 `manifest.json` with protocol, application, runtime and target metadata plus
 the byte size and SHA-256 digest of every shipped file. See the
 [Linux distribution guide](docs/distribution.md).
+
+Updates remain disabled unless PHP pins the feed and Ed25519 public key:
+
+```php
+use Pam\Desktop\UpdatePolicy;
+use Pam\Desktop\Updates;
+
+$manifest = Manifest::create('com.pushin.my-app', 'My desktop app', '0.5.0')
+    ->updates(
+        Updates::from(
+            'https://updates.example.com/my-app/stable.json',
+            '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        )->policy(UpdatePolicy::Notify),
+    );
+```
+
+Generate the offline signing seed once, keep it outside the repository, then
+publish a feed from already-built artifacts:
+
+```bash
+pam desktop update-key --output ~/.config/pam/keys/my-app.key
+pam desktop publish-update . \
+  --key ~/.config/pam/keys/my-app.key \
+  --output dist/stable.json \
+  --published-at 2026-07-23T14:00:00Z \
+  --artifact linux,x86_64,portable,dist/my-app.tar.gz,https://cdn.example.com/my-app.tar.gz
+```
+
+The private seed is created with owner-only permissions and is never embedded
+in PHP or printed. See the [Updates and signing guide](docs/updates.md).
 
 ## Build the host
 
@@ -217,7 +262,8 @@ packages/
 docs/
 ├── architecture.md        process, security and extension boundaries
 ├── capabilities.md        PHP policy and frontend native APIs
-└── distribution.md        Linux bundles, manifests and installers
+├── distribution.md        Linux, Windows and macOS packages
+└── updates.md             signing, feeds and atomic automatic updates
 ```
 
 Read [Architecture](docs/architecture.md) before expanding native capabilities.
@@ -241,7 +287,7 @@ composer validate --strict packages/desktop/composer.json
 | **0.2** | **Events, deadlines, cancellation, crash recovery, multiple windows and hot reload — implemented** |
 | **0.3** | **Authorized filesystem, dialogs, clipboard, notifications and drag and drop — implemented** |
 | **0.4** | **Self-contained Linux build, icons, manifest and installers — implemented** |
-| 0.5 | Windows and macOS, signing and automatic updates |
+| **0.5** | **Windows and macOS, signing and automatic updates — implemented** |
 | 0.6 | PHP/Rust plugins, menus, tray, global shortcuts and background jobs |
 | 1.0 | Stable API, compatibility suite and multi-platform distribution |
 

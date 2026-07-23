@@ -7,6 +7,7 @@ pub enum HostEvent {
     ServoWake,
     ApplyEffects(Vec<Effect>),
     ReloadViews,
-    Reconfigure(Bootstrap),
+    Reconfigure(Box<Bootstrap>),
     Dialog(DialogRequest),
+    Exit,
 }

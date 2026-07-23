@@ -14,14 +14,22 @@ use Pam\Desktop\ClientEvent;
 use Pam\Desktop\CommandContext;
 use Pam\Desktop\CommandResult;
 use Pam\Desktop\Manifest;
+use Pam\Desktop\UpdatePolicy;
+use Pam\Desktop\Updates;
 use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
 
 $app = Application::create(
     window: Window::create('My application')->size(1120, 720),
-    manifest: Manifest::create('com.example.my-app', 'My application', '0.4.0')
+    manifest: Manifest::create('com.example.my-app', 'My application', '0.5.0')
         ->publisher('Example')
-        ->category(ApplicationCategory::Development),
+        ->category(ApplicationCategory::Development)
+        ->updates(
+            Updates::from(
+                'https://updates.example.com/my-app/stable.json',
+                str_repeat('a', 64),
+            )->policy(UpdatePolicy::Notify),
+        ),
 )
     ->window(
         'settings',
@@ -46,9 +54,10 @@ $app->command('greet', static function (CommandContext $command): CommandResult 
 $app->run();
 ```
 
-Protocol 4 supports named windows, JavaScript-to-PHP event handlers,
+Protocol 5 supports named windows, JavaScript-to-PHP event handlers,
 PHP-to-JavaScript events, targeted effects, bounded command timeouts, explicit
-native capabilities and typed application distribution metadata. Protocol
+native capabilities, typed application distribution metadata and immutable
+signed-update policy. Protocol
 discriminators, statuses, categories, effect kinds, themes and errors are
 sequential integer-backed enums. Application command and event names remain
 explicit strings chosen by the application.

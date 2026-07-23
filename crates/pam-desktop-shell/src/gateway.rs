@@ -30,6 +30,7 @@ use crate::native::{
     NotificationRequest,
 };
 use crate::project::Project;
+use crate::updater::{UpdateError, UpdateSnapshot, Updater};
 use crate::watcher::{ChangeKind, ProjectWatcher};
 use crate::worker::{CancellationToken, WorkerRequestError, WorkerSupervisor};
 
@@ -65,6 +66,7 @@ impl Gateway {
         let url = format!("http://127.0.0.1:{}/", address.port());
         let token = secure_token()?;
         let native = NativeServices::prepare(project.root(), &bootstrap.capabilities)?;
+        let updater = Updater::prepare(&bootstrap.manifest);
 
         let state = GatewayState {
             project: project.clone(),
@@ -77,6 +79,7 @@ impl Gateway {
             events: EventHub::default(),
             event_proxy,
             native: Arc::new(RwLock::new(Arc::new(native))),
+            updater: Arc::new(RwLock::new(updater)),
         };
         let router = Router::new()
             .route("/", get(serve_main))
@@ -90,6 +93,10 @@ impl Gateway {
             .route("/_pam/dialog", post(dialog))
             .route("/_pam/clipboard", post(clipboard))
             .route("/_pam/notification", post(notification))
+            .route("/_pam/update/status", post(update_status))
+            .route("/_pam/update/check", post(update_check))
+            .route("/_pam/update/download", post(update_download))
+            .route("/_pam/update/install", post(update_install))
             .route("/{*path}", get(serve_asset))
             .with_state(state.clone());
         let (shutdown, receiver) = oneshot::channel();
@@ -132,6 +139,7 @@ impl Gateway {
         } else {
             None
         };
+        start_update_policy(&state);
 
         Ok(Self {
             url,
@@ -247,6 +255,7 @@ struct GatewayState {
     events: EventHub,
     event_proxy: EventLoopProxy<HostEvent>,
     native: Arc<RwLock<Arc<NativeServices>>>,
+    updater: Arc<RwLock<Updater>>,
 }
 
 impl GatewayState {
@@ -294,6 +303,13 @@ impl GatewayState {
             .clone()
     }
 
+    fn updater(&self) -> Updater {
+        self.updater
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     fn reload(&self, kind: ChangeKind) {
         match kind {
             ChangeKind::Assets => {
@@ -326,9 +342,15 @@ impl GatewayState {
                             .bootstrap
                             .write()
                             .unwrap_or_else(std::sync::PoisonError::into_inner) = bootstrap.clone();
+                        *self
+                            .updater
+                            .write()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                            Updater::prepare(&bootstrap.manifest);
                         let _ = self
                             .event_proxy
-                            .send_event(HostEvent::Reconfigure(bootstrap));
+                            .send_event(HostEvent::Reconfigure(Box::new(bootstrap)));
+                        start_update_policy(self);
                         self.events.publish(ClientEvent {
                             name: "pam.dev.reloaded".to_owned(),
                             payload: serde_json::json!({"kind": 2}),
@@ -388,6 +410,12 @@ struct CancelRequest {
 #[serde(rename_all = "camelCase")]
 struct EventPollRequest {
     after: u64,
+    window_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateBridgeRequest {
     window_id: String,
 }
 
@@ -759,6 +787,183 @@ async fn notification(
     }
     let native = state.native_services();
     native_task(tokio::task::spawn_blocking(move || native.notify(&request)).await)
+}
+
+async fn update_status(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateBridgeRequest>,
+) -> Response<Body> {
+    if let Some(response) = authorize_update_request(&state, &headers, &request) {
+        return response;
+    }
+    native_success(serde_json::to_value(state.updater().snapshot()).unwrap_or(Value::Null))
+}
+
+async fn update_check(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateBridgeRequest>,
+) -> Response<Body> {
+    update_operation(state, headers, request, Updater::check).await
+}
+
+async fn update_download(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateBridgeRequest>,
+) -> Response<Body> {
+    update_operation(state, headers, request, Updater::download).await
+}
+
+async fn update_install(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateBridgeRequest>,
+) -> Response<Body> {
+    if let Some(response) = authorize_update_request(&state, &headers, &request) {
+        return response;
+    }
+    let updater = state.updater();
+    match tokio::task::spawn_blocking(move || updater.install()).await {
+        Ok(Ok(snapshot)) => {
+            publish_update_snapshot(&state.events, "pam.update.applying", &snapshot);
+            let proxy = state.event_proxy.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                let _ = proxy.send_event(HostEvent::Exit);
+            });
+            update_success(snapshot)
+        }
+        Ok(Err(error)) => update_failure(&error),
+        Err(error) => update_failure(&UpdateError {
+            code: ErrorCode::UpdateInstallFailed,
+            message: format!("The update install task failed: {error}"),
+        }),
+    }
+}
+
+async fn update_operation(
+    state: GatewayState,
+    headers: HeaderMap,
+    request: UpdateBridgeRequest,
+    operation: fn(&Updater) -> Result<UpdateSnapshot, UpdateError>,
+) -> Response<Body> {
+    if let Some(response) = authorize_update_request(&state, &headers, &request) {
+        return response;
+    }
+    let updater = state.updater();
+    match tokio::task::spawn_blocking(move || operation(&updater)).await {
+        Ok(Ok(snapshot)) => {
+            publish_update_snapshot(&state.events, "pam.update.changed", &snapshot);
+            update_success(snapshot)
+        }
+        Ok(Err(error)) => update_failure(&error),
+        Err(error) => update_failure(&UpdateError {
+            code: ErrorCode::NativeOperationFailed,
+            message: format!("The update task failed: {error}"),
+        }),
+    }
+}
+
+fn authorize_update_request(
+    state: &GatewayState,
+    headers: &HeaderMap,
+    request: &UpdateBridgeRequest,
+) -> Option<Response<Body>> {
+    if !authorized(state, headers) {
+        return Some(unauthorized_response());
+    }
+    if !state.has_window(&request.window_id) {
+        return Some(client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The update source window is invalid.",
+        ));
+    }
+    None
+}
+
+fn update_success(snapshot: UpdateSnapshot) -> Response<Body> {
+    match serde_json::to_value(snapshot) {
+        Ok(value) => native_success(value),
+        Err(error) => client_failure(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ErrorCode::Internal,
+            &format!("Cannot encode update state: {error}"),
+        ),
+    }
+}
+
+fn update_failure(error: &UpdateError) -> Response<Body> {
+    let status = match error.code {
+        ErrorCode::UpdateDisabled => StatusCode::FORBIDDEN,
+        ErrorCode::UpdateUnavailable => StatusCode::NOT_FOUND,
+        ErrorCode::UpdateIntegrityFailed => StatusCode::BAD_GATEWAY,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    client_failure(status, error.code, &error.message)
+}
+
+fn start_update_policy(state: &GatewayState) {
+    let updater = state.updater();
+    let Some(policy) = updater.policy() else {
+        return;
+    };
+    if policy == pam_desktop_protocol::UpdatePolicy::Manual {
+        return;
+    }
+    let events = state.events.clone();
+    let event_proxy = state.event_proxy.clone();
+    let _ = std::thread::Builder::new()
+        .name("pam-desktop-updater".to_owned())
+        .spawn(move || match updater.check() {
+            Ok(snapshot) => {
+                publish_update_snapshot(&events, "pam.update.changed", &snapshot);
+                if policy == pam_desktop_protocol::UpdatePolicy::Automatic
+                    && snapshot.state == pam_desktop_protocol::UpdateState::Available
+                {
+                    match updater.download() {
+                        Ok(snapshot) => {
+                            publish_update_snapshot(&events, "pam.update.ready", &snapshot);
+                            match updater.install() {
+                                Ok(snapshot) => {
+                                    publish_update_snapshot(
+                                        &events,
+                                        "pam.update.applying",
+                                        &snapshot,
+                                    );
+                                    std::thread::sleep(Duration::from_millis(150));
+                                    let _ = event_proxy.send_event(HostEvent::Exit);
+                                }
+                                Err(error) => publish_update_error(&events, &error),
+                            }
+                        }
+                        Err(error) => publish_update_error(&events, &error),
+                    }
+                }
+            }
+            Err(error) => publish_update_error(&events, &error),
+        });
+}
+
+fn publish_update_snapshot(events: &EventHub, name: &str, snapshot: &UpdateSnapshot) {
+    events.publish(ClientEvent {
+        name: name.to_owned(),
+        payload: serde_json::to_value(snapshot).unwrap_or(Value::Null),
+        window_id: None,
+    });
+}
+
+fn publish_update_error(events: &EventHub, error: &UpdateError) {
+    events.publish(ClientEvent {
+        name: "pam.update.error".to_owned(),
+        payload: serde_json::json!({
+            "code": error.code as u16,
+            "message": error.message,
+        }),
+        window_id: None,
+    });
 }
 
 async fn dialog(
@@ -1222,6 +1427,13 @@ const BRIDGE_SCRIPT: &str = r#"
         },
     });
 
+    const updater = Object.freeze({
+        status: () => request("/_pam/update/status", {}),
+        check: () => request("/_pam/update/check", {}),
+        download: () => request("/_pam/update/download", {}),
+        install: () => request("/_pam/update/install", {}),
+    });
+
     const on = (name, listener) => {
         if (typeof name !== "string" || typeof listener !== "function") {
             throw new TypeError("Pam event listeners require a name and function.");
@@ -1272,6 +1484,7 @@ const BRIDGE_SCRIPT: &str = r#"
             invoke,
             notification,
             on,
+            updater,
             windowId,
         }),
     });
@@ -1305,7 +1518,9 @@ mod tests {
         assert!(BRIDGE_SCRIPT.contains("const dialog = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const clipboard = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const notification = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const updater = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("value: Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("fs: filesystem,"));
+        assert!(BRIDGE_SCRIPT.contains("updater,"));
     }
 }

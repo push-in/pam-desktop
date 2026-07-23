@@ -1,0 +1,81 @@
+name: Release host
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            archive: tar
+          - os: macos-15
+            target: aarch64-apple-darwin
+            archive: tar
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+          target: ${{ matrix.target }}
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev libfontconfig1-dev pkg-config
+      - name: macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install fontconfig freetype pkg-config
+      - name: Build production host
+        run: cargo build --locked --release -p pam-desktop --target ${{ matrix.target }}
+      - name: Ad-hoc sign macOS host
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --options runtime --sign - target/${{ matrix.target }}/release/pam-desktop
+          codesign --force --options runtime --sign - target/${{ matrix.target }}/release/pam-desktop-launcher
+      - name: Package Unix host
+        if: matrix.archive == 'tar'
+        shell: bash
+        run: |
+          mkdir -p staging
+          cp target/${{ matrix.target }}/release/pam-desktop staging/
+          cp target/${{ matrix.target }}/release/pam-desktop-launcher staging/
+          tar -C staging -czf pam-desktop-${{ github.ref_name }}-${{ matrix.target }}.tar.gz .
+      - name: Package Windows host
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path staging
+          Copy-Item target/${{ matrix.target }}/release/pam-desktop.exe staging/
+          Copy-Item target/${{ matrix.target }}/release/pam-desktop-launcher.exe staging/
+          Compress-Archive -Path staging/* -DestinationPath pam-desktop-${{ github.ref_name }}-${{ matrix.target }}.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pam-desktop-${{ matrix.target }}
+          path: pam-desktop-${{ github.ref_name }}-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

@@ -350,7 +350,7 @@ mod tests {
             thread::sleep(Duration::from_millis(40));
             cancelling_token.cancel();
         });
-        let cancelled = supervisor.request(
+        let cancelled_result = supervisor.request(
             "slow",
             MAIN_WINDOW_ID,
             Value::Null,
@@ -358,7 +358,10 @@ mod tests {
             &cancellation,
         );
         canceller.join().expect("canceller should finish");
-        assert!(matches!(cancelled, Err(WorkerRequestError::Cancelled)));
+        assert!(matches!(
+            cancelled_result,
+            Err(WorkerRequestError::Cancelled)
+        ));
         assert_eq!(supervisor.generation(), 3);
         assert_success(supervisor.request(
             "ok",
@@ -432,17 +435,17 @@ while IFS= read -r line; do
     id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
     case "$line" in
         *'"command":"@pam/boot"'*)
-            printf '{"version":4,"id":%s,"kind":2,"status":1,"payload":{"manifest":{"identifier":"com.pushin.test","name":"Test","version":"0.4.0","description":"","publisher":"Pushin","category":1,"icon":"resources/icon.svg","bundleExcludes":[]},"windows":[{"id":"main","entry":"resources/index.html","title":"Test","width":800,"height":600,"minWidth":320,"minHeight":240,"resizable":true,"visible":true,"theme":3}],"commandTimeoutMs":30000,"capabilities":{}},"effects":[],"events":[]}\n' "$id"
+            printf '{"version":5,"id":%s,"kind":2,"status":1,"payload":{"manifest":{"identifier":"com.pushin.test","name":"Test","version":"0.5.0","description":"","publisher":"Pushin","category":1,"icon":"resources/icon.svg","bundleExcludes":[],"updates":null},"windows":[{"id":"main","entry":"resources/index.html","title":"Test","width":800,"height":600,"minWidth":320,"minHeight":240,"resizable":true,"visible":true,"theme":3}],"commandTimeoutMs":30000,"capabilities":{}},"effects":[],"events":[]}\n' "$id"
             ;;
         *'"command":"slow"'*)
             sleep 1
-            printf '{"version":4,"id":%s,"kind":2,"status":1,"payload":null,"effects":[],"events":[]}\n' "$id"
+            printf '{"version":5,"id":%s,"kind":2,"status":1,"payload":null,"effects":[],"events":[]}\n' "$id"
             ;;
         *'"command":"crash"'*)
             exit 9
             ;;
         *)
-            printf '{"version":4,"id":%s,"kind":2,"status":1,"payload":{"recovered":true},"effects":[],"events":[]}\n' "$id"
+            printf '{"version":5,"id":%s,"kind":2,"status":1,"payload":{"recovered":true},"effects":[],"events":[]}\n' "$id"
             ;;
     esac
 done

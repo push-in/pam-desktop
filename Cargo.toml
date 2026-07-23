@@ -6,7 +6,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Pushin <engineering@pushin.com.br>"]
@@ -17,6 +17,8 @@ repository = "https://github.com/push-in/pam-desktop"
 arboard = { version = "3.6.1", default-features = false }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 cap-std = "4.0.2"
+# Servo 0.4 pins the compatible Dalek release candidate transitively.
+ed25519-dalek = { version = "=3.0.0-rc.1", default-features = false, features = ["fast", "signature", "zeroize"] }
 euclid = "0.22.14"
 getrandom = "0.3.4"
 # Servo 0.4's tested lock uses these prerelease-compatible versions. Keeping
@@ -35,6 +37,7 @@ sha2 = "0.10.9"
 servo = { version = "=0.4.0", default-features = false, features = ["baked-in-resources", "clipboard", "js_jit"] }
 tokio = { version = "1.53.1", features = ["fs", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1.44"
+ureq = { version = "3.3.0", default-features = false, features = ["json", "rustls"] }
 url = "2.5.8"
 winit = "0.30.13"
 

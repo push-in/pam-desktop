@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.5.0
+
+- Added protocol 5 update configuration with integer-backed policy, platform,
+  artifact-kind and lifecycle-state enums.
+- Added immutable PHP `Updates` configuration with pinned HTTPS feed, channel,
+  Ed25519 public key and manual, notify or automatic policy.
+- Added the frozen `pam.updater` API and background feed checks/downloads.
+- Added strict typed feed parsing, canonical Ed25519 verification, bounded
+  HTTPS transport, signed byte lengths and SHA-256 artifact verification.
+- Added detached update application with parent-process coordination, complete
+  bundle verification, atomic directory swap, rollback and relaunch.
+- Added owner-only update-key generation and deterministic multi-platform feed
+  publication without exposing the private seed.
+- Added a native launcher for Windows and macOS bundles.
+- Added cross-platform portable ZIP packaging, macOS `.app`/DMG metadata,
+  Windows MSIX metadata and platform icon generation.
+- Added hardened-runtime codesigning, optional Apple notarization/stapling and
+  certificate-store Authenticode signing.
+- Added Linux, macOS and Windows CI contracts and tagged host release builds.
+
 ## 0.4.0
 
 - Added protocol 4 application manifests with validated reverse-DNS identity,
