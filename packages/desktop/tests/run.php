@@ -12,11 +12,13 @@ spl_autoload_register(static function (string $class): void {
 });
 
 use Pam\Desktop\Application;
+use Pam\Desktop\Capabilities;
 use Pam\Desktop\ClientEvent;
 use Pam\Desktop\CommandContext;
 use Pam\Desktop\CommandResult;
 use Pam\Desktop\EffectKind;
 use Pam\Desktop\EventContext;
+use Pam\Desktop\FileSystemRoot;
 use Pam\Desktop\ResponseStatus;
 use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
@@ -43,6 +45,14 @@ $application = Application::create(
             ->minimumSize(640, 480)
             ->visible(false),
     )
+    ->capabilities(
+        Capabilities::none()
+            ->filesystem(FileSystemRoot::readWrite('data', 'storage'))
+            ->dialogs()
+            ->clipboard()
+            ->notifications()
+            ->dragAndDrop(),
+    )
     ->commandTimeout(12_000);
 
 $application->command(
@@ -67,7 +77,7 @@ $application->on(
 );
 
 $boot = $application->dispatch([
-    'version' => 2,
+    'version' => 3,
     'id' => 1,
     'kind' => 1,
     'windowId' => 'main',
@@ -79,9 +89,15 @@ expect($boot['payload']['windows'][0]['theme'] === 3, 'The dark theme must be se
 expect($boot['payload']['windows'][0]['width'] === 1024, 'The configured width should be retained.');
 expect($boot['payload']['windows'][1]['id'] === 'settings', 'The child window should be registered.');
 expect($boot['payload']['commandTimeoutMs'] === 12_000, 'The timeout should be serialized.');
+expect($boot['payload']['capabilities']['filesystemRoots'][0]['name'] === 'data', 'The root should be named.');
+expect($boot['payload']['capabilities']['filesystemRoots'][0]['access'] === 3, 'ReadWrite must be integer 3.');
+expect($boot['payload']['capabilities']['dialogs'] === true, 'Dialogs should be enabled explicitly.');
+expect($boot['payload']['capabilities']['clipboardRead'] === true, 'Clipboard read should be enabled.');
+expect($boot['payload']['capabilities']['notifications'] === true, 'Notifications should be enabled.');
+expect($boot['payload']['capabilities']['dragAndDrop'] === true, 'Drag and drop should be enabled.');
 
 $greeting = $application->dispatch([
-    'version' => 2,
+    'version' => 3,
     'id' => 2,
     'kind' => 1,
     'windowId' => 'main',
@@ -94,7 +110,7 @@ expect($greeting['effects'][0]['windowId'] === 'main', 'Effects should target a 
 expect($greeting['events'][0]['name'] === 'greeting.completed', 'Client events should be emitted.');
 
 $event = $application->dispatch([
-    'version' => 2,
+    'version' => 3,
     'id' => 3,
     'kind' => 1,
     'windowId' => 'main',
@@ -109,7 +125,7 @@ expect($event['effects'][0]['kind'] === EffectKind::SetWindowVisible->value, 'Ev
 expect($event['effects'][0]['windowId'] === 'settings', 'Event effects should target child windows.');
 
 $missing = $application->dispatch([
-    'version' => 2,
+    'version' => 3,
     'id' => 4,
     'kind' => 1,
     'windowId' => 'main',

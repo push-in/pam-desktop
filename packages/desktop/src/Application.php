@@ -11,7 +11,7 @@ use Throwable;
 
 final class Application
 {
-    public const PROTOCOL_VERSION = 2;
+    public const PROTOCOL_VERSION = 3;
     public const BOOT_COMMAND = '@pam/boot';
     public const EVENT_COMMAND = '@pam/event';
     public const MAX_MESSAGE_BYTES = 1_048_576;
@@ -29,9 +29,12 @@ final class Application
 
     private int $commandTimeoutMilliseconds = 30_000;
 
+    private Capabilities $capabilities;
+
     private function __construct(Window $window)
     {
         $this->windows = ['main' => $window];
+        $this->capabilities = Capabilities::none();
     }
 
     public static function create(Window $window): self
@@ -70,6 +73,13 @@ final class Application
         }
 
         $this->commandTimeoutMilliseconds = $milliseconds;
+
+        return $this;
+    }
+
+    public function capabilities(Capabilities $capabilities): self
+    {
+        $this->capabilities = $capabilities;
 
         return $this;
     }
@@ -199,6 +209,7 @@ final class Application
                     array_values($this->windows),
                 ),
                 'commandTimeoutMs' => $this->commandTimeoutMilliseconds,
+                'capabilities' => $this->capabilities->toArray(),
             ]);
         }
 

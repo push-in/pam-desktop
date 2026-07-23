@@ -7,7 +7,7 @@
 A direct Servo host for building native desktop applications whose application
 logic remains elegant, typed PHP.
 
-![Version](https://img.shields.io/badge/version-0.2.0-68ded2?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.3.0-68ded2?style=flat-square)
 ![Status](https://img.shields.io/badge/status-alpha-f59e0b?style=flat-square)
 ![Servo](https://img.shields.io/badge/Servo-0.4.0-5b50d6?style=flat-square)
 ![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?style=flat-square&logo=php&logoColor=white)
@@ -22,7 +22,7 @@ Pam Desktop is intentionally separate from the Pam server core. This repository
 owns the native window, Servo integration, secure local bridge, shared protocol,
 and the `pam/desktop` Composer package. Pam remains the PHP worker runtime.
 
-Version 0.2 establishes the first resilient application contract:
+Version 0.3 establishes a capability-safe native application contract:
 
 - local HTML, CSS, JavaScript and assets rendered directly by Servo;
 - explicit commands and bidirectional events through `window.pam`;
@@ -30,6 +30,9 @@ Version 0.2 establishes the first resilient application contract:
 - multiple independent Servo/Winit windows with targeted effects;
 - typed, immutable window configuration, events and effects in PHP;
 - development hot reload for assets, PHP and Composer changes;
+- PHP-declared filesystem roots with read/write policy;
+- native dialogs, clipboard and notifications behind independent permissions;
+- opaque, process-lifetime grants for selected and dropped files;
 - one supervised Pam worker with bounded, versioned JSON-lines messages;
 - a random loopback gateway with origin and token enforcement;
 - no Node runtime and no unrestricted ambient native API.
@@ -49,8 +52,10 @@ pam desktop dev .
 ```
 
 The generated Hello World demonstrates commands, PHP-to-JavaScript events,
-timeouts, hot-reload status and a second Runtime Inspector window. The public
-experience stays under `pam desktop`; `pam-desktop` is the internal host binary.
+timeouts, hot-reload status, a second Runtime Inspector window and a Native Lab
+for authorized filesystem, dialogs, clipboard, notifications and dropped
+files. The public experience stays under `pam desktop`; `pam-desktop` is the
+internal host binary.
 
 Application code stays compact:
 
@@ -60,9 +65,11 @@ Application code stays compact:
 declare(strict_types=1);
 
 use Pam\Desktop\Application;
+use Pam\Desktop\Capabilities;
 use Pam\Desktop\ClientEvent;
 use Pam\Desktop\CommandContext;
 use Pam\Desktop\CommandResult;
+use Pam\Desktop\FileSystemRoot;
 use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
 use Pam\Desktop\WindowTheme;
@@ -78,6 +85,14 @@ $app = Application::create(
         Window::create('Settings')
             ->entry('resources/settings.html')
             ->visible(false),
+    )
+    ->capabilities(
+        Capabilities::none()
+            ->filesystem(FileSystemRoot::readWrite('data', __DIR__.'/storage'))
+            ->dialogs()
+            ->clipboard()
+            ->notifications()
+            ->dragAndDrop(),
     )
     ->commandTimeout(10_000);
 
@@ -109,12 +124,30 @@ const result = await window.pam.invoke(
     { timeout: 5_000 },
 );
 console.log(result.message);
+
+await window.pam.fs.writeText(
+    { root: "data", path: "greeting.txt" },
+    result.message,
+);
+
+const selected = await window.pam.dialog.openFile({
+    filters: [{ name: "Text", extensions: ["txt", "md"] }],
+});
+if (selected) {
+    console.log(await window.pam.fs.readText(selected));
+}
 ```
 
 `window.pam.emit(name, payload, options)` sends a typed application event to
 PHP. Both `invoke` and `emit` accept `timeout` and `signal`; cancellation is
 forwarded to the host, the compromised worker is terminated, and a fresh worker
 is prepared for the next request without replaying the interrupted command.
+
+Native capabilities default to disabled. Files outside named roots are exposed
+only after an explicit operating-system dialog or drag and drop. The host
+returns an opaque `grantId`, never the ambient filesystem path. Read the
+[Capabilities guide](docs/capabilities.md) for the complete frontend API,
+integer contracts and limits.
 
 ## Build the host
 
@@ -147,7 +180,8 @@ crates/
 packages/
 └── desktop/               public PHP application API and worker loop
 docs/
-└── architecture.md        process, security and extension boundaries
+├── architecture.md        process, security and extension boundaries
+└── capabilities.md        PHP policy and frontend native APIs
 ```
 
 Read [Architecture](docs/architecture.md) before expanding native capabilities.
@@ -169,7 +203,7 @@ composer validate --strict packages/desktop/composer.json
 | Version | Delivery |
 | --- | --- |
 | **0.2** | **Events, deadlines, cancellation, crash recovery, multiple windows and hot reload — implemented** |
-| 0.3 | Authorized filesystem, dialogs, clipboard, notifications and drag and drop |
+| **0.3** | **Authorized filesystem, dialogs, clipboard, notifications and drag and drop — implemented** |
 | 0.4 | Self-contained Linux build, icons, manifest and installers |
 | 0.5 | Windows and macOS, signing and automatic updates |
 | 0.6 | PHP/Rust plugins, menus, tray, global shortcuts and background jobs |

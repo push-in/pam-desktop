@@ -14,8 +14,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use getrandom::fill;
 use pam_desktop_protocol::{
-    Bootstrap, ClientEvent, EVENT_COMMAND, ErrorCode, MAIN_WINDOW_ID, MAX_COMMAND_TIMEOUT_MS,
-    MIN_COMMAND_TIMEOUT_MS, ResponseEnvelope, ResponseStatus, validate_identifier,
+    Bootstrap, ClientEvent, DialogKind, EVENT_COMMAND, ErrorCode, FileAccess, FileEntryKind,
+    MAIN_WINDOW_ID, MAX_COMMAND_TIMEOUT_MS, MIN_COMMAND_TIMEOUT_MS, ResponseEnvelope,
+    ResponseStatus, validate_identifier,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,6 +25,10 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::event_hub::{EventHub, PublishedEvent};
 use crate::host_event::HostEvent;
+use crate::native::{
+    ClipboardRequest, DialogBridgeRequest, DialogRequest, FileRequest, NativeError, NativeServices,
+    NotificationRequest,
+};
 use crate::project::Project;
 use crate::watcher::{ChangeKind, ProjectWatcher};
 use crate::worker::{CancellationToken, WorkerRequestError, WorkerSupervisor};
@@ -33,6 +38,7 @@ const EVENT_POLL_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct Gateway {
     url: String,
+    state: GatewayState,
     shutdown: Option<oneshot::Sender<()>>,
     thread: Option<JoinHandle<()>>,
     watcher: Option<ProjectWatcher>,
@@ -58,6 +64,7 @@ impl Gateway {
             .map_err(|error| format!("cannot read desktop gateway address: {error}"))?;
         let url = format!("http://127.0.0.1:{}/", address.port());
         let token = secure_token()?;
+        let native = NativeServices::prepare(project.root(), &bootstrap.capabilities)?;
 
         let state = GatewayState {
             project: project.clone(),
@@ -69,6 +76,7 @@ impl Gateway {
             cancellations: Arc::new(Mutex::new(HashMap::new())),
             events: EventHub::default(),
             event_proxy,
+            native: Arc::new(RwLock::new(Arc::new(native))),
         };
         let router = Router::new()
             .route("/", get(serve_main))
@@ -78,6 +86,10 @@ impl Gateway {
             .route("/_pam/emit", post(emit))
             .route("/_pam/cancel", post(cancel))
             .route("/_pam/events", post(events))
+            .route("/_pam/fs", post(filesystem))
+            .route("/_pam/dialog", post(dialog))
+            .route("/_pam/clipboard", post(clipboard))
+            .route("/_pam/notification", post(notification))
             .route("/{*path}", get(serve_asset))
             .with_state(state.clone());
         let (shutdown, receiver) = oneshot::channel();
@@ -112,7 +124,7 @@ impl Gateway {
             .map_err(|error| format!("cannot start desktop gateway thread: {error}"))?;
 
         let watcher = if watch {
-            let watcher_state = state;
+            let watcher_state = state.clone();
             Some(ProjectWatcher::start(
                 project.root().to_path_buf(),
                 move |kind| watcher_state.reload(kind),
@@ -123,6 +135,7 @@ impl Gateway {
 
         Ok(Self {
             url,
+            state,
             shutdown: Some(shutdown),
             thread: Some(thread),
             watcher,
@@ -137,6 +150,76 @@ impl Gateway {
     pub fn window_url(&self, window_id: &str) -> Result<String, String> {
         validate_identifier(window_id, "window")?;
         Ok(format!("{}_pam/window/{window_id}", self.url))
+    }
+
+    pub fn drag_hover(&self, window_id: &str, path: &Path) {
+        if !self.state.has_window(window_id) {
+            return;
+        }
+        let native = self.state.native_services();
+        if !native.drag_and_drop_enabled() {
+            return;
+        }
+        let Ok(metadata) = std::fs::symlink_metadata(path) else {
+            return;
+        };
+        if metadata.file_type().is_symlink() {
+            return;
+        }
+        let kind = if metadata.is_file() {
+            FileEntryKind::File
+        } else if metadata.is_dir() {
+            FileEntryKind::Directory
+        } else {
+            return;
+        };
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        self.state.events.publish(ClientEvent {
+            name: "pam.drag.enter".to_owned(),
+            payload: serde_json::json!({"name": name, "kind": kind}),
+            window_id: Some(window_id.to_owned()),
+        });
+    }
+
+    pub fn drag_drop(&self, window_id: &str, path: &Path) {
+        if !self.state.has_window(window_id) {
+            return;
+        }
+        let native = self.state.native_services();
+        if !native.drag_and_drop_enabled() {
+            return;
+        }
+        match native.grant_path(path, FileAccess::Read) {
+            Ok(file) => self.state.events.publish(ClientEvent {
+                name: "pam.drag.drop".to_owned(),
+                payload: serde_json::json!({"files": [file]}),
+                window_id: Some(window_id.to_owned()),
+            }),
+            Err(error) => self.state.events.publish(ClientEvent {
+                name: "pam.drag.error".to_owned(),
+                payload: serde_json::json!({
+                    "code": error.code as u16,
+                    "message": error.message,
+                }),
+                window_id: Some(window_id.to_owned()),
+            }),
+        }
+    }
+
+    pub fn drag_leave(&self, window_id: &str) {
+        if !self.state.has_window(window_id)
+            || !self.state.native_services().drag_and_drop_enabled()
+        {
+            return;
+        }
+        self.state.events.publish(ClientEvent {
+            name: "pam.drag.leave".to_owned(),
+            payload: Value::Null,
+            window_id: Some(window_id.to_owned()),
+        });
     }
 }
 
@@ -163,6 +246,7 @@ struct GatewayState {
     cancellations: Arc<Mutex<HashMap<RequestKey, CancellationToken>>>,
     events: EventHub,
     event_proxy: EventLoopProxy<HostEvent>,
+    native: Arc<RwLock<Arc<NativeServices>>>,
 }
 
 impl GatewayState {
@@ -203,6 +287,13 @@ impl GatewayState {
         }
     }
 
+    fn native_services(&self) -> Arc<NativeServices> {
+        self.native
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     fn reload(&self, kind: ChangeKind) {
         match kind {
             ChangeKind::Assets => {
@@ -221,10 +312,16 @@ impl GatewayState {
                     .and_then(|mut supervisor| supervisor.restart())
                     .and_then(|bootstrap| {
                         self.project.validate_bootstrap(&bootstrap)?;
-                        Ok(bootstrap)
+                        let native =
+                            NativeServices::prepare(self.project.root(), &bootstrap.capabilities)?;
+                        Ok((bootstrap, native))
                     });
                 match result {
-                    Ok(bootstrap) => {
+                    Ok((bootstrap, native)) => {
+                        *self
+                            .native
+                            .write()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(native);
                         *self
                             .bootstrap
                             .write()
@@ -607,6 +704,171 @@ async fn events(
     json_response(StatusCode::OK, &EventPollResponse { cursor, events })
 }
 
+async fn filesystem(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<FileRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The filesystem source window is invalid.",
+        );
+    }
+    let native = state.native_services();
+    native_task(tokio::task::spawn_blocking(move || native.filesystem(&request)).await)
+}
+
+async fn clipboard(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<ClipboardRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The clipboard source window is invalid.",
+        );
+    }
+    let native = state.native_services();
+    native_task(tokio::task::spawn_blocking(move || native.clipboard(&request)).await)
+}
+
+async fn notification(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<NotificationRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The notification source window is invalid.",
+        );
+    }
+    let native = state.native_services();
+    native_task(tokio::task::spawn_blocking(move || native.notify(&request)).await)
+}
+
+async fn dialog(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<DialogBridgeRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The dialog source window is invalid.",
+        );
+    }
+    let native = state.native_services();
+    let access = match native.validate_dialog(&request) {
+        Ok(access) => access,
+        Err(error) => return native_failure(error),
+    };
+    let kind = request.kind;
+    let (reply, receiver) = oneshot::channel();
+    let event = HostEvent::Dialog(DialogRequest {
+        kind,
+        title: request.title,
+        file_name: request.file_name,
+        filters: request.filters,
+        reply,
+    });
+    if state.event_proxy.send_event(event).is_err() {
+        return native_failure(NativeError {
+            code: ErrorCode::NativeOperationFailed,
+            message: "The native event loop is unavailable for this dialog.".to_owned(),
+        });
+    }
+    let paths = match receiver.await {
+        Ok(Ok(paths)) => paths,
+        Ok(Err(message)) => {
+            return native_failure(NativeError {
+                code: ErrorCode::NativeOperationFailed,
+                message,
+            });
+        }
+        Err(_) => {
+            return native_failure(NativeError {
+                code: ErrorCode::NativeOperationFailed,
+                message: "The native dialog closed without a result.".to_owned(),
+            });
+        }
+    };
+    let files = match native.grant_paths(paths, access) {
+        Ok(files) => files,
+        Err(error) => return native_failure(error),
+    };
+    let data = match kind {
+        DialogKind::OpenFiles => serde_json::to_value(files),
+        DialogKind::OpenFile | DialogKind::SaveFile | DialogKind::OpenDirectory => files
+            .into_iter()
+            .next()
+            .map_or(Ok(Value::Null), serde_json::to_value),
+    };
+    match data {
+        Ok(data) => native_success(data),
+        Err(error) => native_failure(NativeError {
+            code: ErrorCode::Internal,
+            message: format!("Cannot encode the dialog result: {error}"),
+        }),
+    }
+}
+
+fn native_task(
+    result: Result<Result<Value, NativeError>, tokio::task::JoinError>,
+) -> Response<Body> {
+    match result {
+        Ok(Ok(data)) => native_success(data),
+        Ok(Err(error)) => native_failure(error),
+        Err(error) => native_failure(NativeError {
+            code: ErrorCode::NativeOperationFailed,
+            message: format!("The native operation task failed: {error}"),
+        }),
+    }
+}
+
+fn native_success(data: Value) -> Response<Body> {
+    json_response(
+        StatusCode::OK,
+        &InvokeResponse {
+            ok: true,
+            data,
+            error: None,
+        },
+    )
+}
+
+fn native_failure(error: NativeError) -> Response<Body> {
+    let NativeError { code, message } = error;
+    let status = match code {
+        ErrorCode::CapabilityDisabled | ErrorCode::PermissionDenied | ErrorCode::InvalidGrant => {
+            StatusCode::FORBIDDEN
+        }
+        ErrorCode::ResourceNotFound => StatusCode::NOT_FOUND,
+        ErrorCode::ResourceTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+        ErrorCode::InvalidMessage | ErrorCode::InvalidPayload => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    client_failure(status, code, &message)
+}
+
 fn authorized(state: &GatewayState, headers: &HeaderMap) -> bool {
     let origin_matches = headers
         .get(ORIGIN)
@@ -847,6 +1109,119 @@ const BRIDGE_SCRIPT: &str = r#"
         return request("/_pam/emit", { name, payload }, options);
     };
 
+    const normalizeTarget = (target) => {
+        if (target === null || typeof target !== "object" || Array.isArray(target)) {
+            throw new TypeError("Pam filesystem targets must be objects.");
+        }
+        const root = typeof target.root === "string" ? target.root : null;
+        const grantId = typeof target.grantId === "string" ? target.grantId : null;
+        if ((root === null) === (grantId === null)) {
+            throw new TypeError("Pam filesystem targets require exactly one root or grantId.");
+        }
+        const path = target.path ?? "";
+        if (typeof path !== "string") {
+            throw new TypeError("Pam filesystem target paths must be strings.");
+        }
+        return { root, grantId, path };
+    };
+
+    const nativeOptions = (options) => ({
+        signal: options?.signal,
+        timeout: options?.timeout,
+    });
+
+    const filesystem = Object.freeze({
+        readText: async (target, options = {}) => {
+            const data = await request("/_pam/fs", {
+                operation: 1,
+                target: normalizeTarget(target),
+                content: null,
+            }, nativeOptions(options));
+            return data.text;
+        },
+        writeText: async (target, content, options = {}) => {
+            if (typeof content !== "string") {
+                throw new TypeError("Pam filesystem text writes require a string.");
+            }
+            return request("/_pam/fs", {
+                operation: 2,
+                target: normalizeTarget(target),
+                content,
+            }, nativeOptions(options));
+        },
+        list: (target, options = {}) => request("/_pam/fs", {
+            operation: 3,
+            target: normalizeTarget(target),
+            content: null,
+        }, nativeOptions(options)),
+        metadata: (target, options = {}) => request("/_pam/fs", {
+            operation: 4,
+            target: normalizeTarget(target),
+            content: null,
+        }, nativeOptions(options)),
+        createDirectory: (target, options = {}) => request("/_pam/fs", {
+            operation: 5,
+            target: normalizeTarget(target),
+            content: null,
+        }, nativeOptions(options)),
+    });
+
+    const dialogRequest = (kind, options = {}) => {
+        if (options === null || typeof options !== "object" || Array.isArray(options)) {
+            throw new TypeError("Pam dialog options must be an object.");
+        }
+        return request("/_pam/dialog", {
+            kind,
+            title: options.title ?? null,
+            fileName: options.fileName ?? null,
+            filters: options.filters ?? [],
+            access: options.access ?? null,
+        });
+    };
+
+    const dialog = Object.freeze({
+        openFile: (options = {}) => dialogRequest(1, options),
+        openFiles: (options = {}) => dialogRequest(2, options),
+        saveFile: (options = {}) => dialogRequest(3, options),
+        openDirectory: (options = {}) => dialogRequest(4, options),
+    });
+
+    const clipboard = Object.freeze({
+        readText: async (options = {}) => {
+            const data = await request("/_pam/clipboard", {
+                operation: 1,
+                text: null,
+            }, nativeOptions(options));
+            return data.text;
+        },
+        writeText: (text, options = {}) => {
+            if (typeof text !== "string") {
+                throw new TypeError("Pam clipboard writes require a string.");
+            }
+            return request("/_pam/clipboard", {
+                operation: 2,
+                text,
+            }, nativeOptions(options));
+        },
+        clear: (options = {}) => request("/_pam/clipboard", {
+            operation: 3,
+            text: null,
+        }, nativeOptions(options)),
+    });
+
+    const notification = Object.freeze({
+        show: (options) => {
+            if (options === null || typeof options !== "object" || Array.isArray(options)) {
+                throw new TypeError("Pam notifications require an options object.");
+            }
+            return request("/_pam/notification", {
+                title: options.title,
+                body: options.body ?? "",
+                urgency: options.urgency ?? 2,
+            }, nativeOptions(options));
+        },
+    });
+
     const on = (name, listener) => {
         if (typeof name !== "string" || typeof listener !== "function") {
             throw new TypeError("Pam event listeners require a name and function.");
@@ -889,7 +1264,16 @@ const BRIDGE_SCRIPT: &str = r#"
         configurable: false,
         enumerable: true,
         writable: false,
-        value: Object.freeze({ emit, invoke, on, windowId }),
+        value: Object.freeze({
+            clipboard,
+            dialog,
+            emit,
+            fs: filesystem,
+            invoke,
+            notification,
+            on,
+            windowId,
+        }),
     });
     void poll();
 })();
@@ -913,5 +1297,15 @@ mod tests {
         assert!(constant_time_eq(b"same", b"same"));
         assert!(!constant_time_eq(b"same", b"diff"));
         assert!(!constant_time_eq(b"short", b"longer"));
+    }
+
+    #[test]
+    fn publishes_the_native_capability_surface_as_frozen_namespaces() {
+        assert!(BRIDGE_SCRIPT.contains("const filesystem = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const dialog = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const clipboard = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const notification = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("value: Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("fs: filesystem,"));
     }
 }

@@ -7,6 +7,9 @@ mod gateway;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod host_event;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod native;
 mod project;
 mod runtime;
 #[cfg(feature = "gateway")]
@@ -87,6 +90,25 @@ fn run() -> Result<(), String> {
             println!(
                 "[ok] Command timeout: {} ms",
                 runtime.bootstrap().command_timeout_ms
+            );
+            let capabilities = &runtime.bootstrap().capabilities;
+            println!(
+                "[ok] Filesystem roots: {} ({})",
+                capabilities.filesystem_roots.len(),
+                capabilities
+                    .filesystem_roots
+                    .iter()
+                    .map(|root| format!("{}:{}", root.name, root.access as u8))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            println!(
+                "[ok] Native capabilities: dialogs={}, clipboard-read={}, clipboard-write={}, notifications={}, drag-and-drop={}",
+                capabilities.dialogs,
+                capabilities.clipboard_read,
+                capabilities.clipboard_write,
+                capabilities.notifications,
+                capabilities.drag_and_drop,
             );
             println!(
                 "[ok] PHP worker generation: {}",

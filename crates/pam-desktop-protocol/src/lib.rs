@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 pub const BOOT_COMMAND: &str = "@pam/boot";
 pub const EVENT_COMMAND: &str = "@pam/event";
 pub const MAIN_WINDOW_ID: &str = "main";
@@ -42,6 +42,12 @@ pub enum ErrorCode {
     RequestTimedOut = 10,
     RequestCancelled = 11,
     WorkerCrashed = 12,
+    CapabilityDisabled = 13,
+    PermissionDenied = 14,
+    ResourceNotFound = 15,
+    ResourceTooLarge = 16,
+    NativeOperationFailed = 17,
+    InvalidGrant = 18,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
@@ -60,6 +66,69 @@ pub enum WindowTheme {
     System = 1,
     Light = 2,
     Dark = 3,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum FileAccess {
+    Read = 1,
+    Write = 2,
+    ReadWrite = 3,
+}
+
+impl FileAccess {
+    #[must_use]
+    pub const fn can_read(self) -> bool {
+        matches!(self, Self::Read | Self::ReadWrite)
+    }
+
+    #[must_use]
+    pub const fn can_write(self) -> bool {
+        matches!(self, Self::Write | Self::ReadWrite)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum FileEntryKind {
+    File = 1,
+    Directory = 2,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum DialogKind {
+    OpenFile = 1,
+    OpenFiles = 2,
+    SaveFile = 3,
+    OpenDirectory = 4,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum FileOperation {
+    ReadText = 1,
+    WriteText = 2,
+    List = 3,
+    Metadata = 4,
+    CreateDirectory = 5,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum ClipboardOperation {
+    ReadText = 1,
+    WriteText = 2,
+    Clear = 3,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum NotificationUrgency {
+    Low = 1,
+    #[default]
+    Normal = 2,
+    Critical = 3,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -133,6 +202,12 @@ impl ResponseEnvelope {
         }
     }
 
+    /// Validates that this worker response matches its host request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when protocol version, message kind, request identity,
+    /// or failure payload is inconsistent.
     pub fn validate_for(&self, request_id: u64) -> Result<(), String> {
         if self.version != PROTOCOL_VERSION {
             return Err(format!(
@@ -184,6 +259,11 @@ pub struct ClientEvent {
 }
 
 impl ClientEvent {
+    /// Validates event and optional target window identifiers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when either identifier violates the protocol grammar.
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier(&self.name, "event")?;
         if let Some(window_id) = &self.window_id {
@@ -198,9 +278,17 @@ impl ClientEvent {
 pub struct Bootstrap {
     pub windows: Vec<WindowConfig>,
     pub command_timeout_ms: u64,
+    #[serde(default)]
+    pub capabilities: NativeCapabilities,
 }
 
 impl Bootstrap {
+    /// Validates the complete application bootstrap contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid windows, deadlines, duplicate identifiers,
+    /// missing main window, or malformed native capabilities.
     pub fn validate(&self) -> Result<(), String> {
         if self.windows.is_empty() {
             return Err("desktop applications must register at least one window".to_owned());
@@ -223,6 +311,75 @@ impl Bootstrap {
                 "desktop applications must register the {MAIN_WINDOW_ID:?} window"
             ));
         }
+        self.capabilities.validate()?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent capability switches intentionally serialize as booleans"
+)]
+pub struct NativeCapabilities {
+    #[serde(default)]
+    pub filesystem_roots: Vec<FileSystemRootConfig>,
+    #[serde(default)]
+    pub dialogs: bool,
+    #[serde(default)]
+    pub clipboard_read: bool,
+    #[serde(default)]
+    pub clipboard_write: bool,
+    #[serde(default)]
+    pub notifications: bool,
+    #[serde(default)]
+    pub drag_and_drop: bool,
+}
+
+impl NativeCapabilities {
+    /// Validates named filesystem roots and uniqueness.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a root contract is malformed or duplicated.
+    pub fn validate(&self) -> Result<(), String> {
+        let mut names = HashSet::with_capacity(self.filesystem_roots.len());
+        for root in &self.filesystem_roots {
+            root.validate()?;
+            if !names.insert(root.name.as_str()) {
+                return Err(format!(
+                    "filesystem root identifier {:?} is duplicated",
+                    root.name
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSystemRootConfig {
+    pub name: String,
+    pub path: String,
+    pub access: FileAccess,
+}
+
+impl FileSystemRootConfig {
+    /// Validates the filesystem root identifier and configured path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the identifier or path is invalid.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier(&self.name, "filesystem root")?;
+        if self.path.trim().is_empty() || self.path.contains('\0') {
+            return Err(format!(
+                "filesystem root {:?} must declare a non-empty path",
+                self.name
+            ));
+        }
         Ok(())
     }
 }
@@ -243,6 +400,12 @@ pub struct WindowConfig {
 }
 
 impl WindowConfig {
+    /// Validates a native window contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unsafe entries, invalid identifiers, empty titles,
+    /// or dimensions below the supported minimum.
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier(&self.id, "window")?;
         let entry = Path::new(&self.entry);
@@ -270,6 +433,12 @@ impl WindowConfig {
     }
 }
 
+/// Validates a protocol identifier.
+///
+/// # Errors
+///
+/// Returns an error unless the value begins with an ASCII letter and contains
+/// at most 64 permitted ASCII identifier characters.
 pub fn validate_identifier(value: &str, label: &str) -> Result<(), String> {
     let mut characters = value.chars();
     let Some(first) = characters.next() else {
@@ -309,6 +478,26 @@ mod tests {
         assert_eq!(EffectKind::SetWindowVisible as u16, 2);
         assert_eq!(EffectKind::CloseWindow as u16, 3);
         assert_eq!(EffectKind::FocusWindow as u16, 4);
+        assert_eq!(FileAccess::Read as u8, 1);
+        assert_eq!(FileAccess::Write as u8, 2);
+        assert_eq!(FileAccess::ReadWrite as u8, 3);
+        assert_eq!(FileEntryKind::File as u8, 1);
+        assert_eq!(FileEntryKind::Directory as u8, 2);
+        assert_eq!(DialogKind::OpenFile as u8, 1);
+        assert_eq!(DialogKind::OpenFiles as u8, 2);
+        assert_eq!(DialogKind::SaveFile as u8, 3);
+        assert_eq!(DialogKind::OpenDirectory as u8, 4);
+        assert_eq!(FileOperation::ReadText as u8, 1);
+        assert_eq!(FileOperation::WriteText as u8, 2);
+        assert_eq!(FileOperation::List as u8, 3);
+        assert_eq!(FileOperation::Metadata as u8, 4);
+        assert_eq!(FileOperation::CreateDirectory as u8, 5);
+        assert_eq!(ClipboardOperation::ReadText as u8, 1);
+        assert_eq!(ClipboardOperation::WriteText as u8, 2);
+        assert_eq!(ClipboardOperation::Clear as u8, 3);
+        assert_eq!(NotificationUrgency::Low as u8, 1);
+        assert_eq!(NotificationUrgency::Normal as u8, 2);
+        assert_eq!(NotificationUrgency::Critical as u8, 3);
     }
 
     #[test]
@@ -376,8 +565,41 @@ mod tests {
                 },
             ],
             command_timeout_ms: 30_000,
+            capabilities: NativeCapabilities {
+                filesystem_roots: vec![FileSystemRootConfig {
+                    name: "data".to_owned(),
+                    path: "storage".to_owned(),
+                    access: FileAccess::ReadWrite,
+                }],
+                dialogs: true,
+                clipboard_read: true,
+                clipboard_write: true,
+                notifications: true,
+                drag_and_drop: true,
+            },
         };
 
         assert!(bootstrap.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_duplicate_filesystem_capabilities() {
+        let capabilities = NativeCapabilities {
+            filesystem_roots: vec![
+                FileSystemRootConfig {
+                    name: "data".to_owned(),
+                    path: "storage".to_owned(),
+                    access: FileAccess::Read,
+                },
+                FileSystemRootConfig {
+                    name: "data".to_owned(),
+                    path: "cache".to_owned(),
+                    access: FileAccess::Write,
+                },
+            ],
+            ..NativeCapabilities::default()
+        };
+
+        assert!(capabilities.validate().is_err());
     }
 }

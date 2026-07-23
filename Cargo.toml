@@ -6,7 +6,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Pushin <engineering@pushin.com.br>"]
@@ -14,7 +14,9 @@ license = "MIT"
 repository = "https://github.com/push-in/pam-desktop"
 
 [workspace.dependencies]
+arboard = { version = "3.6.1", default-features = false }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+cap-std = "4.0.2"
 euclid = "0.22.14"
 getrandom = "0.3.4"
 # Servo 0.4's tested lock uses these prerelease-compatible versions. Keeping
@@ -23,6 +25,8 @@ getrandom = "0.3.4"
 mozjs = "=0.17.0"
 pam-desktop-protocol = { path = "crates/pam-desktop-protocol" }
 primeorder = "=0.14.0-rc.14"
+notify-rust = "=4.16.1"
+rfd = "0.17.2"
 rustls = { version = "0.23.41", default-features = false, features = ["aws-lc-rs", "logging", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

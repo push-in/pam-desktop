@@ -27,6 +27,7 @@ use winit::window::{Theme, Window, WindowId};
 
 use crate::gateway::Gateway;
 use crate::host_event::HostEvent;
+use crate::native::show_dialog;
 use crate::runtime::DesktopRuntime;
 
 pub fn run(runtime: DesktopRuntime) -> Result<(), String> {
@@ -361,6 +362,7 @@ impl ApplicationHandler<HostEvent> for Application {
                     eprintln!("pam-desktop: cannot apply hot reload: {error}");
                 }
             }
+            HostEvent::Dialog(request) => show_dialog(request),
         }
     }
 
@@ -420,6 +422,9 @@ impl ApplicationHandler<HostEvent> for Application {
                         window.modifiers.get(),
                     )));
             }
+            WindowEvent::HoveredFile(path) => state.gateway.drag_hover(&window.id, &path),
+            WindowEvent::DroppedFile(path) => state.gateway.drag_drop(&window.id, &path),
+            WindowEvent::HoveredFileCancelled => state.gateway.drag_leave(&window.id),
             _ => {}
         }
     }

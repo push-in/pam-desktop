@@ -18,4 +18,10 @@ enum ErrorCode: int
     case RequestTimedOut = 10;
     case RequestCancelled = 11;
     case WorkerCrashed = 12;
+    case CapabilityDisabled = 13;
+    case PermissionDenied = 14;
+    case ResourceNotFound = 15;
+    case ResourceTooLarge = 16;
+    case NativeOperationFailed = 17;
+    case InvalidGrant = 18;
 }
