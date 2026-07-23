@@ -18,6 +18,12 @@
     "config": {
         "platform-check": true,
         "sort-packages": true
+    },
+    "scripts": {
+        "analyse": "phpstan analyse --configuration=phpstan.neon.dist",
+        "test": "php tests/run.php"
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^2.2"
     }
 }
-

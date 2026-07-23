@@ -1,24 +1,23 @@
 use pam_desktop_protocol::Bootstrap;
 
 use crate::project::Project;
-use crate::worker::WorkerClient;
+use crate::worker::WorkerSupervisor;
 
 pub struct DesktopRuntime {
     project: Project,
-    _worker: WorkerClient,
+    supervisor: WorkerSupervisor,
     bootstrap: Bootstrap,
 }
 
 impl DesktopRuntime {
     pub fn prepare(project: Project) -> Result<Self, String> {
-        let mut worker = WorkerClient::spawn(&project)?;
-        let bootstrap = worker.boot()?;
-        bootstrap.window.validate()?;
-        project.resolve_entry(&bootstrap.entry)?;
+        let supervisor = WorkerSupervisor::start(project.clone())?;
+        let bootstrap = supervisor.bootstrap().clone();
+        project.validate_bootstrap(&bootstrap)?;
 
         Ok(Self {
             project,
-            _worker: worker,
+            supervisor,
             bootstrap,
         })
     }
@@ -30,11 +29,18 @@ impl DesktopRuntime {
 
     #[must_use]
     pub fn entry(&self) -> std::path::PathBuf {
-        self.project.root().join(&self.bootstrap.entry)
+        self.project
+            .resolve_entry(&self.bootstrap.windows[0].entry)
+            .expect("the bootstrap entry was validated during preparation")
+    }
+
+    #[must_use]
+    pub fn worker_generation(&self) -> u64 {
+        self.supervisor.generation()
     }
 
     #[cfg(feature = "servo-engine")]
-    pub fn into_parts(self) -> (Project, WorkerClient, Bootstrap) {
-        (self.project, self._worker, self.bootstrap)
+    pub fn into_parts(self) -> (Project, WorkerSupervisor, Bootstrap) {
+        (self.project, self.supervisor, self.bootstrap)
     }
 }

@@ -9,6 +9,7 @@ use InvalidArgumentException;
 final readonly class Window
 {
     private function __construct(
+        public string $entry,
         public string $title,
         public int $width,
         public int $height,
@@ -18,6 +19,15 @@ final readonly class Window
         public bool $visible,
         public WindowTheme $theme,
     ) {
+        if (
+            $entry === ''
+            || str_starts_with($entry, '/')
+            || preg_match('~(^|[\\\\/])\.\.([\\\\/]|$)~', $entry) === 1
+        ) {
+            throw new InvalidArgumentException(
+                'The desktop entry must be a relative path inside the project.',
+            );
+        }
         if (trim($title) === '') {
             throw new InvalidArgumentException('The window title cannot be empty.');
         }
@@ -36,6 +46,7 @@ final readonly class Window
     public static function create(string $title): self
     {
         return new self(
+            entry: 'resources/index.html',
             title: $title,
             width: 1120,
             height: 720,
@@ -47,9 +58,25 @@ final readonly class Window
         );
     }
 
+    public function entry(string $entry): self
+    {
+        return new self(
+            entry: $entry,
+            title: $this->title,
+            width: $this->width,
+            height: $this->height,
+            minWidth: $this->minWidth,
+            minHeight: $this->minHeight,
+            resizable: $this->resizable,
+            visible: $this->visible,
+            theme: $this->theme,
+        );
+    }
+
     public function size(int $width, int $height): self
     {
         return new self(
+            entry: $this->entry,
             title: $this->title,
             width: $width,
             height: $height,
@@ -64,6 +91,7 @@ final readonly class Window
     public function minimumSize(int $width, int $height): self
     {
         return new self(
+            entry: $this->entry,
             title: $this->title,
             width: $this->width,
             height: $this->height,
@@ -78,6 +106,7 @@ final readonly class Window
     public function resizable(bool $resizable = true): self
     {
         return new self(
+            entry: $this->entry,
             title: $this->title,
             width: $this->width,
             height: $this->height,
@@ -92,6 +121,7 @@ final readonly class Window
     public function visible(bool $visible = true): self
     {
         return new self(
+            entry: $this->entry,
             title: $this->title,
             width: $this->width,
             height: $this->height,
@@ -106,6 +136,7 @@ final readonly class Window
     public function theme(WindowTheme $theme): self
     {
         return new self(
+            entry: $this->entry,
             title: $this->title,
             width: $this->width,
             height: $this->height,
@@ -119,6 +150,8 @@ final readonly class Window
 
     /**
      * @return array{
+     *     id: string,
+     *     entry: string,
      *     title: string,
      *     width: int,
      *     height: int,
@@ -129,9 +162,13 @@ final readonly class Window
      *     theme: int
      * }
      */
-    public function toArray(): array
+    public function toArray(string $id = 'main'): array
     {
+        Identifier::assert($id, 'The window identifier');
+
         return [
+            'id' => $id,
+            'entry' => $this->entry,
             'title' => $this->title,
             'width' => $this->width,
             'height' => $this->height,
@@ -143,4 +180,3 @@ final readonly class Window
         ];
     }
 }
-

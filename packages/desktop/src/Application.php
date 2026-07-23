@@ -5,40 +5,73 @@ declare(strict_types=1);
 namespace Pam\Desktop;
 
 use Closure;
-use InvalidArgumentException;
 use JsonException;
 use RuntimeException;
 use Throwable;
 
 final class Application
 {
-    public const PROTOCOL_VERSION = 1;
+    public const PROTOCOL_VERSION = 2;
     public const BOOT_COMMAND = '@pam/boot';
+    public const EVENT_COMMAND = '@pam/event';
     public const MAX_MESSAGE_BYTES = 1_048_576;
+    public const MIN_COMMAND_TIMEOUT_MS = 100;
+    public const MAX_COMMAND_TIMEOUT_MS = 120_000;
+
+    /** @var array<string, Window> */
+    private array $windows;
 
     /** @var array<string, Closure(CommandContext): mixed> */
     private array $commands = [];
 
-    private function __construct(
-        private readonly Window $window,
-        private readonly string $entry,
-    ) {
-        if (
-            $entry === ''
-            || str_starts_with($entry, '/')
-            || preg_match('~(^|[\\\\/])\.\.([\\\\/]|$)~', $entry) === 1
-        ) {
-            throw new InvalidArgumentException(
-                'The desktop entry must be a relative path inside the project.',
-            );
-        }
+    /** @var array<string, Closure(EventContext): mixed> */
+    private array $eventHandlers = [];
+
+    private int $commandTimeoutMilliseconds = 30_000;
+
+    private function __construct(Window $window)
+    {
+        $this->windows = ['main' => $window];
     }
 
-    public static function create(
-        Window $window,
-        string $entry = 'resources/index.html',
-    ): self {
-        return new self($window, $entry);
+    public static function create(Window $window): self
+    {
+        return new self($window);
+    }
+
+    public function window(string $id, Window $window): self
+    {
+        Identifier::assert($id, 'The window identifier');
+        if ($id === 'main') {
+            throw new RuntimeException('The main window is configured through Application::create().');
+        }
+        if (isset($this->windows[$id])) {
+            throw new RuntimeException("Window {$id} is already registered.");
+        }
+
+        $this->windows[$id] = $window;
+
+        return $this;
+    }
+
+    public function commandTimeout(int $milliseconds): self
+    {
+        if (
+            $milliseconds < self::MIN_COMMAND_TIMEOUT_MS
+            || $milliseconds > self::MAX_COMMAND_TIMEOUT_MS
+        ) {
+            throw new RuntimeException(
+                sprintf(
+                    'The command timeout must be between %d and %d milliseconds.',
+                    self::MIN_COMMAND_TIMEOUT_MS,
+                    self::MAX_COMMAND_TIMEOUT_MS,
+                ),
+            );
+        }
+
+        $this->commandTimeoutMilliseconds = $milliseconds;
+
+        return $this;
     }
 
     /**
@@ -46,17 +79,27 @@ final class Application
      */
     public function command(string $name, Closure $handler): self
     {
-        if (preg_match('/^[a-z][a-z0-9._-]{0,63}$/i', $name) !== 1) {
-            throw new InvalidArgumentException(
-                'Command names must begin with a letter and contain at most 64 letters, numbers, dots, dashes, or underscores.',
-            );
-        }
-
+        Identifier::assert($name, 'The command name');
         if (isset($this->commands[$name])) {
-            throw new InvalidArgumentException("Command {$name} is already registered.");
+            throw new RuntimeException("Command {$name} is already registered.");
         }
 
         $this->commands[$name] = $handler;
+
+        return $this;
+    }
+
+    /**
+     * @param Closure(EventContext): mixed $handler
+     */
+    public function on(string $name, Closure $handler): self
+    {
+        Identifier::assert($name, 'The event name');
+        if (isset($this->eventHandlers[$name])) {
+            throw new RuntimeException("Event {$name} already has a handler.");
+        }
+
+        $this->eventHandlers[$name] = $handler;
 
         return $this;
     }
@@ -101,7 +144,19 @@ final class Application
             return $this->failure(0, ErrorCode::InvalidMessage, 'The IPC message must be an object.');
         }
 
-        return $this->dispatch($message);
+        $object = [];
+        foreach ($message as $key => $value) {
+            if (!is_string($key)) {
+                return $this->failure(
+                    0,
+                    ErrorCode::InvalidMessage,
+                    'The IPC message must be a JSON object.',
+                );
+            }
+            $object[$key] = $value;
+        }
+
+        return $this->dispatch($object);
     }
 
     /**
@@ -126,6 +181,11 @@ final class Application
             return $this->failure($id, ErrorCode::InvalidMessage, 'The IPC request envelope is invalid.');
         }
 
+        $windowId = $message['windowId'] ?? null;
+        if (!is_string($windowId) || !isset($this->windows[$windowId])) {
+            return $this->failure($id, ErrorCode::InvalidMessage, 'The source window is invalid.');
+        }
+
         $command = $message['command'] ?? null;
         if (!is_string($command) || $command === '') {
             return $this->failure($id, ErrorCode::InvalidMessage, 'The IPC command is missing.');
@@ -133,9 +193,17 @@ final class Application
 
         if ($command === self::BOOT_COMMAND) {
             return $this->success($id, [
-                'entry' => $this->entry,
-                'window' => $this->window->toArray(),
+                'windows' => array_map(
+                    static fn (string $windowId, Window $window): array => $window->toArray($windowId),
+                    array_keys($this->windows),
+                    array_values($this->windows),
+                ),
+                'commandTimeoutMs' => $this->commandTimeoutMilliseconds,
             ]);
+        }
+
+        if ($command === self::EVENT_COMMAND) {
+            return $this->dispatchEvent($id, $windowId, $message['payload'] ?? null);
         }
 
         $handler = $this->commands[$command] ?? null;
@@ -147,12 +215,57 @@ final class Application
             );
         }
 
-        try {
-            $result = $handler(new CommandContext(
+        return $this->invoke(
+            id: $id,
+            handler: $handler,
+            context: new CommandContext(
                 id: $id,
                 name: $command,
+                windowId: $windowId,
                 payload: $message['payload'] ?? null,
-            ));
+            ),
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function dispatchEvent(int $id, string $windowId, mixed $payload): array
+    {
+        if (!is_array($payload) || !is_string($payload['name'] ?? null)) {
+            return $this->failure($id, ErrorCode::InvalidPayload, 'The event envelope is invalid.');
+        }
+
+        $name = $payload['name'];
+        $handler = $this->eventHandlers[$name] ?? null;
+        if ($handler === null) {
+            return $this->failure(
+                $id,
+                ErrorCode::UnknownEvent,
+                "The event {$name} has no registered handler.",
+            );
+        }
+
+        return $this->invoke(
+            id: $id,
+            handler: $handler,
+            context: new EventContext(
+                id: $id,
+                name: $name,
+                windowId: $windowId,
+                payload: $payload['payload'] ?? null,
+            ),
+        );
+    }
+
+    /**
+     * @param Closure(CommandContext): mixed|Closure(EventContext): mixed $handler
+     * @return array<string, mixed>
+     */
+    private function invoke(int $id, Closure $handler, CommandContext|EventContext $context): array
+    {
+        try {
+            $result = $handler($context);
         } catch (Throwable $error) {
             return $this->failure($id, ErrorCode::HandlerFailed, $error->getMessage());
         }
@@ -165,15 +278,21 @@ final class Application
             id: $id,
             payload: $result->payload,
             effects: $result->effects,
+            events: $result->events,
         );
     }
 
     /**
      * @param list<Effect> $effects
+     * @param list<ClientEvent> $events
      * @return array<string, mixed>
      */
-    private function success(int $id, mixed $payload, array $effects = []): array
-    {
+    private function success(
+        int $id,
+        mixed $payload,
+        array $effects = [],
+        array $events = [],
+    ): array {
         return [
             'version' => self::PROTOCOL_VERSION,
             'id' => $id,
@@ -184,6 +303,10 @@ final class Application
                 static fn (Effect $effect): array => $effect->toArray(),
                 $effects,
             ),
+            'events' => array_map(
+                static fn (ClientEvent $event): array => $event->toArray(),
+                $events,
+            ),
         ];
     }
 
@@ -193,7 +316,7 @@ final class Application
     private function failure(int $id, ErrorCode $code, string $message): array
     {
         if ($message === '') {
-            throw new RuntimeException('Protocol errors must include a message.');
+            $message = 'The PHP handler failed without an error message.';
         }
 
         return [
@@ -203,6 +326,7 @@ final class Application
             'status' => ResponseStatus::Failure->value,
             'payload' => null,
             'effects' => [],
+            'events' => [],
             'error' => [
                 'code' => $code->value,
                 'message' => $message,
@@ -210,4 +334,3 @@ final class Application
         ];
     }
 }
-

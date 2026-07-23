@@ -1,8 +1,11 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use euclid::Scale;
-use pam_desktop_protocol::{Effect, EffectKind, WindowConfig, WindowTheme};
+use pam_desktop_protocol::{
+    Bootstrap, Effect, EffectKind, MAIN_WINDOW_ID, WindowConfig, WindowTheme,
+};
 use servo::{
     Code, DevicePoint, EventLoopWaker, InputEvent, Key, KeyState, KeyboardEvent, Location,
     Modifiers, MouseButton as ServoMouseButton, MouseButtonAction, MouseButtonEvent,
@@ -20,7 +23,7 @@ use winit::keyboard::{
     Key as WinitKey, KeyCode, ModifiersState, NamedKey as WinitNamedKey, PhysicalKey,
 };
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use winit::window::{Theme, Window};
+use winit::window::{Theme, Window, WindowId};
 
 use crate::gateway::Gateway;
 use crate::host_event::HostEvent;
@@ -29,65 +32,34 @@ use crate::runtime::DesktopRuntime;
 pub fn run(runtime: DesktopRuntime) -> Result<(), String> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    let (project, worker, bootstrap) = runtime.into_parts();
-    let entry = project.resolve_entry(&bootstrap.entry)?;
+    let (project, supervisor, bootstrap) = runtime.into_parts();
     let event_loop = EventLoop::with_user_event()
         .build()
         .map_err(|error| format!("cannot create desktop event loop: {error}"))?;
-    let gateway = Gateway::start(&project, &entry, worker, event_loop.create_proxy())?;
-    let url = Url::parse(gateway.url())
-        .map_err(|error| format!("cannot parse desktop gateway URL: {error}"))?;
-    let mut application = Application::new(&event_loop, bootstrap.window, url, gateway);
+    let gateway = Gateway::start(
+        &project,
+        supervisor,
+        bootstrap.clone(),
+        event_loop.create_proxy(),
+        true,
+    )?;
+    let mut application = Application::new(&event_loop, bootstrap, gateway);
 
     event_loop
         .run_app(&mut application)
         .map_err(|error| format!("desktop event loop failed: {error}"))
 }
 
-struct AppState {
+struct DesktopWindow {
+    id: String,
     window: Window,
-    servo: Servo,
     rendering_context: Rc<WindowRenderingContext>,
-    webviews: RefCell<Vec<WebView>>,
+    webview: WebView,
     mouse_position: Cell<DevicePoint>,
     modifiers: Cell<ModifiersState>,
-    allowed_origin: String,
-    _gateway: Gateway,
 }
 
-impl AppState {
-    fn with_webview(&self, operation: impl FnOnce(&WebView)) {
-        if let Some(webview) = self.webviews.borrow().last() {
-            operation(webview);
-        }
-    }
-
-    fn apply_effects(&self, event_loop: &ActiveEventLoop, effects: Vec<Effect>) {
-        for effect in effects {
-            match effect.kind {
-                EffectKind::SetWindowTitle => {
-                    if let Some(title) = effect
-                        .payload
-                        .get("title")
-                        .and_then(serde_json::Value::as_str)
-                    {
-                        self.window.set_title(title);
-                    }
-                }
-                EffectKind::SetWindowVisible => {
-                    if let Some(visible) = effect
-                        .payload
-                        .get("visible")
-                        .and_then(serde_json::Value::as_bool)
-                    {
-                        self.window.set_visible(visible);
-                    }
-                }
-                EffectKind::CloseWindow => event_loop.exit(),
-            }
-        }
-    }
-
+impl DesktopWindow {
     fn handle_mouse_button(&self, button: MouseButton, state: ElementState) {
         let button = match button {
             MouseButton::Left => ServoMouseButton::Left,
@@ -101,21 +73,19 @@ impl AppState {
             ElementState::Pressed => MouseButtonAction::Down,
             ElementState::Released => MouseButtonAction::Up,
         };
-        self.with_webview(|webview| {
-            webview.notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
+        self.webview
+            .notify_input_event(InputEvent::MouseButton(MouseButtonEvent::new(
                 action,
                 button,
                 self.mouse_position.get().into(),
             )));
-        });
     }
 
     fn handle_mouse_move(&self, position: PhysicalPosition<f64>) {
         let point = DevicePoint::new(engine_float(position.x), engine_float(position.y));
         self.mouse_position.set(point);
-        self.with_webview(|webview| {
-            webview.notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(point.into())));
-        });
+        self.webview
+            .notify_input_event(InputEvent::MouseMove(MouseMoveEvent::new(point.into())));
     }
 
     fn handle_wheel(&self, delta: MouseScrollDelta) {
@@ -123,8 +93,8 @@ impl AppState {
             MouseScrollDelta::LineDelta(x, y) => (f64::from(x) * 76.0, f64::from(y) * 76.0),
             MouseScrollDelta::PixelDelta(delta) => (delta.x, delta.y),
         };
-        self.with_webview(|webview| {
-            webview.notify_input_event(InputEvent::Wheel(WheelEvent::new(
+        self.webview
+            .notify_input_event(InputEvent::Wheel(WheelEvent::new(
                 WheelDelta {
                     x,
                     y,
@@ -133,17 +103,191 @@ impl AppState {
                 },
                 self.mouse_position.get().into(),
             )));
-        });
+    }
+}
+
+struct AppState {
+    servo: Servo,
+    windows: RefCell<HashMap<WindowId, DesktopWindow>>,
+    allowed_origin: String,
+    gateway: Gateway,
+}
+
+impl AppState {
+    fn configure(
+        self: &Rc<Self>,
+        event_loop: &ActiveEventLoop,
+        bootstrap: &Bootstrap,
+    ) -> Result<(), String> {
+        let mut next = HashMap::with_capacity(bootstrap.windows.len());
+        for config in &bootstrap.windows {
+            let desktop_window = self.create_window(event_loop, config)?;
+            next.insert(desktop_window.window.id(), desktop_window);
+        }
+        self.windows.replace(next);
+        Ok(())
+    }
+
+    fn create_window(
+        self: &Rc<Self>,
+        event_loop: &ActiveEventLoop,
+        config: &WindowConfig,
+    ) -> Result<DesktopWindow, String> {
+        let attributes = Window::default_attributes()
+            .with_title(config.title.clone())
+            .with_inner_size(LogicalSize::new(config.width, config.height))
+            .with_min_inner_size(LogicalSize::new(config.min_width, config.min_height))
+            .with_resizable(config.resizable)
+            .with_visible(config.visible)
+            .with_theme(window_theme(config.theme));
+        let window = event_loop
+            .create_window(attributes)
+            .map_err(|error| format!("cannot create window {:?}: {error}", config.id))?;
+        let display_handle = event_loop
+            .display_handle()
+            .map_err(|error| format!("desktop event loop has no display handle: {error}"))?;
+        let window_handle = window
+            .window_handle()
+            .map_err(|error| format!("window {:?} has no native handle: {error}", config.id))?;
+        let rendering_context = Rc::new(
+            WindowRenderingContext::new(display_handle, window_handle, window.inner_size())
+                .map_err(|error| {
+                    format!(
+                        "Servo cannot create the rendering context for {:?}: {error:?}",
+                        config.id,
+                    )
+                })?,
+        );
+        let _ = rendering_context.make_current();
+        let url = Url::parse(&self.gateway.window_url(&config.id)?)
+            .map_err(|error| format!("cannot create URL for window {:?}: {error}", config.id))?;
+        let webview = WebViewBuilder::new(&self.servo, rendering_context.clone())
+            .url(url)
+            .hidpi_scale_factor(Scale::new(engine_float(window.scale_factor())))
+            .delegate(self.clone())
+            .build();
+        if config.visible {
+            webview.show();
+        } else {
+            webview.hide();
+        }
+        if config.id == MAIN_WINDOW_ID {
+            webview.focus();
+        }
+
+        Ok(DesktopWindow {
+            id: config.id.clone(),
+            window,
+            rendering_context,
+            webview,
+            mouse_position: Cell::new(DevicePoint::default()),
+            modifiers: Cell::new(ModifiersState::empty()),
+        })
+    }
+
+    fn window_id_for_webview(&self, webview: &WebView) -> Option<WindowId> {
+        self.windows
+            .borrow()
+            .iter()
+            .find_map(|(window_id, window)| (&window.webview == webview).then_some(*window_id))
+    }
+
+    fn with_webview_window(&self, webview: &WebView, operation: impl FnOnce(&DesktopWindow)) {
+        let Some(window_id) = self.window_id_for_webview(webview) else {
+            return;
+        };
+        if let Some(window) = self.windows.borrow().get(&window_id) {
+            operation(window);
+        }
+    }
+
+    fn target_window_id(&self, application_id: &str) -> Option<WindowId> {
+        self.windows
+            .borrow()
+            .iter()
+            .find_map(|(window_id, window)| (window.id == application_id).then_some(*window_id))
+    }
+
+    fn apply_effects(&self, event_loop: &ActiveEventLoop, effects: Vec<Effect>) {
+        for effect in effects {
+            let Some(window_id) = self.target_window_id(&effect.window_id) else {
+                warn!(
+                    window = effect.window_id,
+                    "ignored effect for unknown window"
+                );
+                continue;
+            };
+            match effect.kind {
+                EffectKind::SetWindowTitle => {
+                    if let Some(title) = effect
+                        .payload
+                        .get("title")
+                        .and_then(serde_json::Value::as_str)
+                        && let Some(window) = self.windows.borrow().get(&window_id)
+                    {
+                        window.window.set_title(title);
+                    }
+                }
+                EffectKind::SetWindowVisible => {
+                    if let Some(visible) = effect
+                        .payload
+                        .get("visible")
+                        .and_then(serde_json::Value::as_bool)
+                        && let Some(window) = self.windows.borrow().get(&window_id)
+                    {
+                        window.window.set_visible(visible);
+                        if visible {
+                            window.webview.show();
+                        } else {
+                            window.webview.hide();
+                        }
+                    }
+                }
+                EffectKind::CloseWindow => {
+                    if effect.window_id == MAIN_WINDOW_ID || self.windows.borrow().len() == 1 {
+                        event_loop.exit();
+                    } else {
+                        self.windows.borrow_mut().remove(&window_id);
+                    }
+                }
+                EffectKind::FocusWindow => {
+                    if let Some(window) = self.windows.borrow().get(&window_id) {
+                        window.window.set_visible(true);
+                        window.webview.show();
+                        window.webview.focus();
+                        window.window.focus_window();
+                    }
+                }
+            }
+        }
+    }
+
+    fn reload_views(&self) {
+        for window in self.windows.borrow().values() {
+            window.webview.reload();
+        }
+    }
+
+    fn close_requested(&self, event_loop: &ActiveEventLoop, window_id: WindowId) {
+        let close_application =
+            self.windows.borrow().get(&window_id).is_none_or(|window| {
+                window.id == MAIN_WINDOW_ID || self.windows.borrow().len() == 1
+            });
+        if close_application {
+            event_loop.exit();
+        } else {
+            self.windows.borrow_mut().remove(&window_id);
+        }
     }
 }
 
 impl WebViewDelegate for AppState {
-    fn notify_new_frame_ready(&self, _webview: WebView) {
-        self.window.request_redraw();
+    fn notify_new_frame_ready(&self, webview: WebView) {
+        self.with_webview_window(&webview, |window| window.window.request_redraw());
     }
 
-    fn notify_animating_changed(&self, _webview: WebView, _animating: bool) {
-        self.window.request_redraw();
+    fn notify_animating_changed(&self, webview: WebView, _animating: bool) {
+        self.with_webview_window(&webview, |window| window.window.request_redraw());
     }
 
     fn request_navigation(&self, _webview: WebView, request: NavigationRequest) {
@@ -162,22 +306,15 @@ enum Application {
 
 struct InitialState {
     waker: Waker,
-    window: WindowConfig,
-    url: Url,
+    bootstrap: Bootstrap,
     gateway: Option<Gateway>,
 }
 
 impl Application {
-    fn new(
-        event_loop: &EventLoop<HostEvent>,
-        window: WindowConfig,
-        url: Url,
-        gateway: Gateway,
-    ) -> Self {
+    fn new(event_loop: &EventLoop<HostEvent>, bootstrap: Bootstrap, gateway: Gateway) -> Self {
         Self::Initial(Box::new(InitialState {
             waker: Waker(event_loop.create_proxy()),
-            window,
-            url,
+            bootstrap,
             gateway: Some(gateway),
         }))
     }
@@ -188,33 +325,6 @@ impl ApplicationHandler<HostEvent> for Application {
         let Self::Initial(initial) = self else {
             return;
         };
-        let attributes = Window::default_attributes()
-            .with_title(initial.window.title.clone())
-            .with_inner_size(LogicalSize::new(
-                initial.window.width,
-                initial.window.height,
-            ))
-            .with_min_inner_size(LogicalSize::new(
-                initial.window.min_width,
-                initial.window.min_height,
-            ))
-            .with_resizable(initial.window.resizable)
-            .with_visible(initial.window.visible)
-            .with_theme(window_theme(initial.window.theme));
-        let window = event_loop
-            .create_window(attributes)
-            .expect("validated window configuration should create a window");
-        let display_handle = event_loop
-            .display_handle()
-            .expect("desktop event loop should expose its display");
-        let window_handle = window
-            .window_handle()
-            .expect("desktop window should expose its handle");
-        let rendering_context = Rc::new(
-            WindowRenderingContext::new(display_handle, window_handle, window.inner_size())
-                .expect("Servo should create a rendering context for the desktop window"),
-        );
-        let _ = rendering_context.make_current();
         let servo = ServoBuilder::default()
             .event_loop_waker(Box::new(initial.waker.clone()))
             .build();
@@ -223,26 +333,18 @@ impl ApplicationHandler<HostEvent> for Application {
             .gateway
             .take()
             .expect("desktop gateway should only be consumed once");
-        let allowed_origin = origin(&initial.url);
-
+        let allowed_origin = gateway.url().trim_end_matches('/').to_owned();
         let state = Rc::new(AppState {
-            window,
             servo,
-            rendering_context,
-            webviews: RefCell::new(Vec::new()),
-            mouse_position: Cell::new(DevicePoint::default()),
-            modifiers: Cell::new(ModifiersState::empty()),
+            windows: RefCell::new(HashMap::new()),
             allowed_origin,
-            _gateway: gateway,
+            gateway,
         });
-        let webview = WebViewBuilder::new(&state.servo, state.rendering_context.clone())
-            .url(initial.url.clone())
-            .hidpi_scale_factor(Scale::new(engine_float(state.window.scale_factor())))
-            .delegate(state.clone())
-            .build();
-        webview.focus();
-        webview.show();
-        state.webviews.borrow_mut().push(webview);
+        if let Err(error) = state.configure(event_loop, &initial.bootstrap) {
+            eprintln!("pam-desktop: {error}");
+            event_loop.exit();
+            return;
+        }
         *self = Self::Running(state);
     }
 
@@ -253,13 +355,19 @@ impl ApplicationHandler<HostEvent> for Application {
         match event {
             HostEvent::ServoWake => state.servo.spin_event_loop(),
             HostEvent::ApplyEffects(effects) => state.apply_effects(event_loop, effects),
+            HostEvent::ReloadViews => state.reload_views(),
+            HostEvent::Reconfigure(bootstrap) => {
+                if let Err(error) = state.configure(event_loop, &bootstrap) {
+                    eprintln!("pam-desktop: cannot apply hot reload: {error}");
+                }
+            }
         }
     }
 
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: winit::window::WindowId,
+        window_id: WindowId,
         event: WindowEvent,
     ) {
         let Self::Running(state) = self else {
@@ -267,43 +375,50 @@ impl ApplicationHandler<HostEvent> for Application {
         };
         state.servo.spin_event_loop();
 
+        if matches!(event, WindowEvent::CloseRequested) {
+            state.close_requested(event_loop, window_id);
+            return;
+        }
+        let windows = state.windows.borrow();
+        let Some(window) = windows.get(&window_id) else {
+            return;
+        };
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
-                state.with_webview(WebView::paint);
-                state.rendering_context.present();
+                window.webview.paint();
+                window.rendering_context.present();
             }
-            WindowEvent::Resized(size) => state.with_webview(|webview| webview.resize(size)),
+            WindowEvent::Resized(size) => window.webview.resize(size),
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                state.with_webview(|webview| {
-                    webview.set_hidpi_scale_factor(Scale::new(engine_float(scale_factor)));
-                    webview.resize(state.window.inner_size());
-                });
+                window
+                    .webview
+                    .set_hidpi_scale_factor(Scale::new(engine_float(scale_factor)));
+                window.webview.resize(window.window.inner_size());
             }
-            WindowEvent::Focused(true) => state.with_webview(WebView::focus),
-            WindowEvent::Focused(false) => state.with_webview(WebView::blur),
-            WindowEvent::CursorMoved { position, .. } => state.handle_mouse_move(position),
+            WindowEvent::Focused(true) => window.webview.focus(),
+            WindowEvent::Focused(false) => window.webview.blur(),
+            WindowEvent::CursorMoved { position, .. } => window.handle_mouse_move(position),
             WindowEvent::CursorLeft { .. } => {
-                state.with_webview(|webview| {
-                    webview.notify_input_event(InputEvent::MouseLeftViewport(
+                window
+                    .webview
+                    .notify_input_event(InputEvent::MouseLeftViewport(
                         MouseLeftViewportEvent::default(),
                     ));
-                });
             }
             WindowEvent::MouseInput {
                 state: button_state,
                 button,
                 ..
-            } => state.handle_mouse_button(button, button_state),
-            WindowEvent::MouseWheel { delta, .. } => state.handle_wheel(delta),
-            WindowEvent::ModifiersChanged(modifiers) => state.modifiers.set(modifiers.state()),
+            } => window.handle_mouse_button(button, button_state),
+            WindowEvent::MouseWheel { delta, .. } => window.handle_wheel(delta),
+            WindowEvent::ModifiersChanged(modifiers) => window.modifiers.set(modifiers.state()),
             WindowEvent::KeyboardInput { event, .. } => {
-                state.with_webview(|webview| {
-                    webview.notify_input_event(InputEvent::Keyboard(keyboard_event(
+                window
+                    .webview
+                    .notify_input_event(InputEvent::Keyboard(keyboard_event(
                         &event,
-                        state.modifiers.get(),
+                        window.modifiers.get(),
                     )));
-                });
             }
             _ => {}
         }
@@ -313,14 +428,13 @@ impl ApplicationHandler<HostEvent> for Application {
         let Self::Running(state) = self else {
             return;
         };
-        let animating = state
-            .webviews
-            .borrow()
-            .last()
-            .is_some_and(WebView::animating);
+        let windows = state.windows.borrow();
+        let animating = windows.values().any(|window| window.webview.animating());
         if animating {
             state.servo.spin_event_loop();
-            state.window.request_redraw();
+            for window in windows.values().filter(|window| window.webview.animating()) {
+                window.window.request_redraw();
+            }
             event_loop.set_control_flow(ControlFlow::Poll);
         } else {
             event_loop.set_control_flow(ControlFlow::Wait);
@@ -402,8 +516,6 @@ fn named_key(key: WinitNamedKey) -> NamedKey {
 
 #[allow(clippy::cast_possible_truncation)]
 fn engine_float(value: f64) -> f32 {
-    // Servo's device geometry is f32 while Winit reports coordinates and
-    // scale factors as f64. Window-sized values are safely representable.
     value as f32
 }
 

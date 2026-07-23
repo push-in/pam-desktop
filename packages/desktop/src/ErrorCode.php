@@ -14,5 +14,8 @@ enum ErrorCode: int
     case WorkerUnavailable = 6;
     case Unauthorized = 7;
     case Internal = 8;
+    case UnknownEvent = 9;
+    case RequestTimedOut = 10;
+    case RequestCancelled = 11;
+    case WorkerCrashed = 12;
 }
-

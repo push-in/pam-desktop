@@ -8,23 +8,35 @@ use InvalidArgumentException;
 
 final class WindowEffect
 {
-    public static function title(string $title): Effect
+    public static function title(string $title, string $windowId = 'main'): Effect
     {
         if (trim($title) === '') {
             throw new InvalidArgumentException('The window title cannot be empty.');
         }
 
-        return new Effect(EffectKind::SetWindowTitle, ['title' => $title]);
+        return new Effect(
+            kind: EffectKind::SetWindowTitle,
+            windowId: $windowId,
+            payload: ['title' => $title],
+        );
     }
 
-    public static function visible(bool $visible): Effect
+    public static function visible(bool $visible, string $windowId = 'main'): Effect
     {
-        return new Effect(EffectKind::SetWindowVisible, ['visible' => $visible]);
+        return new Effect(
+            kind: EffectKind::SetWindowVisible,
+            windowId: $windowId,
+            payload: ['visible' => $visible],
+        );
     }
 
-    public static function close(): Effect
+    public static function close(string $windowId = 'main'): Effect
     {
-        return new Effect(EffectKind::CloseWindow);
+        return new Effect(EffectKind::CloseWindow, $windowId);
+    }
+
+    public static function focus(string $windowId = 'main'): Effect
+    {
+        return new Effect(EffectKind::FocusWindow, $windowId);
     }
 }
-

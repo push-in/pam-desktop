@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pam\Desktop;
 
-final readonly class CommandContext
+final readonly class EventContext
 {
     public function __construct(
         public int $id,

@@ -7,7 +7,8 @@
 A direct Servo host for building native desktop applications whose application
 logic remains elegant, typed PHP.
 
-![Status](https://img.shields.io/badge/status-experimental-f59e0b?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.2.0-68ded2?style=flat-square)
+![Status](https://img.shields.io/badge/status-alpha-f59e0b?style=flat-square)
 ![Servo](https://img.shields.io/badge/Servo-0.4.0-5b50d6?style=flat-square)
 ![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?style=flat-square&logo=php&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-1.88%2B-000000?style=flat-square&logo=rust&logoColor=white)
@@ -21,11 +22,14 @@ Pam Desktop is intentionally separate from the Pam server core. This repository
 owns the native window, Servo integration, secure local bridge, shared protocol,
 and the `pam/desktop` Composer package. Pam remains the PHP worker runtime.
 
-The first contract is deliberately small:
+Version 0.2 establishes the first resilient application contract:
 
 - local HTML, CSS, JavaScript and assets rendered directly by Servo;
-- explicit JavaScript-to-PHP commands through `window.pam.invoke`;
-- typed, immutable window configuration and effects in PHP;
+- explicit commands and bidirectional events through `window.pam`;
+- timeouts, `AbortSignal` cancellation, crash detection and worker recovery;
+- multiple independent Servo/Winit windows with targeted effects;
+- typed, immutable window configuration, events and effects in PHP;
+- development hot reload for assets, PHP and Composer changes;
 - one supervised Pam worker with bounded, versioned JSON-lines messages;
 - a random loopback gateway with origin and token enforcement;
 - no Node runtime and no unrestricted ambient native API.
@@ -40,13 +44,13 @@ From a Pam checkout that has this repository beside it:
 ```bash
 pam init hello-desktop --template desktop
 cd hello-desktop
-pam-desktop doctor .
-pam-desktop dev .
+pam desktop doctor .
+pam desktop dev .
 ```
 
-The generated Hello World demonstrates the complete round trip: a Servo-rendered
-form invokes `greet`, PHP returns a payload and a typed window-title effect, and
-the Rust host applies both without exposing a generic native bridge.
+The generated Hello World demonstrates commands, PHP-to-JavaScript events,
+timeouts, hot-reload status and a second Runtime Inspector window. The public
+experience stays under `pam desktop`; `pam-desktop` is the internal host binary.
 
 Application code stays compact:
 
@@ -56,6 +60,7 @@ Application code stays compact:
 declare(strict_types=1);
 
 use Pam\Desktop\Application;
+use Pam\Desktop\ClientEvent;
 use Pam\Desktop\CommandContext;
 use Pam\Desktop\CommandResult;
 use Pam\Desktop\Window;
@@ -67,13 +72,25 @@ $app = Application::create(
         ->size(1120, 720)
         ->minimumSize(720, 520)
         ->theme(WindowTheme::Dark),
-);
+)
+    ->window(
+        'settings',
+        Window::create('Settings')
+            ->entry('resources/settings.html')
+            ->visible(false),
+    )
+    ->commandTimeout(10_000);
 
 $app->command('greet', static function (CommandContext $command): CommandResult {
     $name = $command->string('name', 'mundo');
 
     return CommandResult::success(['message' => "Olá, {$name}."])
-        ->effect(WindowEffect::title("Olá, {$name}"));
+        ->effect(WindowEffect::title("Olá, {$name}", $command->windowId))
+        ->event(new ClientEvent(
+            name: 'greeting.completed',
+            payload: ['name' => $name],
+            windowId: $command->windowId,
+        ));
 });
 
 $app->run();
@@ -82,9 +99,22 @@ $app->run();
 In the trusted local frontend:
 
 ```js
-const result = await window.pam.invoke("greet", { name: "David" });
+window.pam.on("greeting.completed", ({ name }) => {
+    console.log(`Event received for ${name}`);
+});
+
+const result = await window.pam.invoke(
+    "greet",
+    { name: "David" },
+    { timeout: 5_000 },
+);
 console.log(result.message);
 ```
+
+`window.pam.emit(name, payload, options)` sends a typed application event to
+PHP. Both `invoke` and `emit` accept `timeout` and `signal`; cancellation is
+forwarded to the host, the compromised worker is terminated, and a fresh worker
+is prepared for the next request without replaying the interrupted command.
 
 ## Build the host
 
@@ -103,8 +133,10 @@ Install a development binary:
 cargo install --locked --path crates/pam-desktop-shell
 ```
 
-Pam and `pam-desktop` must both be available on `PATH`. For a custom Pam binary,
-set `PAM_BINARY=/absolute/path/to/pam`.
+Pam and the internal `pam-desktop` host must both be available on `PATH` or
+installed beside each other. `pam desktop` locates the host and passes its own
+absolute path as `PAM_BINARY`. Development overrides remain available through
+`PAM_DESKTOP_BINARY` and `PAM_BINARY`.
 
 ## Repository map
 
@@ -127,9 +159,21 @@ cargo fmt --all -- --check
 cargo test --locked -p pam-desktop-protocol
 cargo test --locked -p pam-desktop --no-default-features --features gateway
 cargo check --locked -p pam-desktop
-php packages/desktop/tests/run.php
+composer test --working-dir=packages/desktop
+composer analyse --working-dir=packages/desktop
 composer validate --strict packages/desktop/composer.json
 ```
+
+## Roadmap
+
+| Version | Delivery |
+| --- | --- |
+| **0.2** | **Events, deadlines, cancellation, crash recovery, multiple windows and hot reload — implemented** |
+| 0.3 | Authorized filesystem, dialogs, clipboard, notifications and drag and drop |
+| 0.4 | Self-contained Linux build, icons, manifest and installers |
+| 0.5 | Windows and macOS, signing and automatic updates |
+| 0.6 | PHP/Rust plugins, menus, tray, global shortcuts and background jobs |
+| 1.0 | Stable API, compatibility suite and multi-platform distribution |
 
 ## License
 

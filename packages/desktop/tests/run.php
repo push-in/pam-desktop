@@ -12,9 +12,11 @@ spl_autoload_register(static function (string $class): void {
 });
 
 use Pam\Desktop\Application;
+use Pam\Desktop\ClientEvent;
 use Pam\Desktop\CommandContext;
 use Pam\Desktop\CommandResult;
 use Pam\Desktop\EffectKind;
+use Pam\Desktop\EventContext;
 use Pam\Desktop\ResponseStatus;
 use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
@@ -32,7 +34,16 @@ $application = Application::create(
         ->size(1024, 680)
         ->minimumSize(640, 480)
         ->theme(WindowTheme::Dark),
-);
+)
+    ->window(
+        'settings',
+        Window::create('Settings')
+            ->entry('resources/settings.html')
+            ->size(720, 520)
+            ->minimumSize(640, 480)
+            ->visible(false),
+    )
+    ->commandTimeout(12_000);
 
 $application->command(
     'greet',
@@ -40,35 +51,68 @@ $application->command(
         $name = $command->string('name', 'world');
 
         return CommandResult::success(['message' => "Hello, {$name}!"])
-            ->effect(WindowEffect::title("Hello, {$name}"));
+            ->effect(WindowEffect::title("Hello, {$name}"))
+            ->event(new ClientEvent('greeting.completed', [
+                'name' => $name,
+                'sourceWindow' => $command->windowId,
+            ]));
     },
 );
 
+$application->on(
+    'settings.open',
+    static fn (EventContext $event): CommandResult => CommandResult::success([
+        'sourceWindow' => $event->windowId,
+    ])->effect(WindowEffect::visible(true, 'settings')),
+);
+
 $boot = $application->dispatch([
-    'version' => 1,
+    'version' => 2,
     'id' => 1,
     'kind' => 1,
+    'windowId' => 'main',
     'command' => '@pam/boot',
     'payload' => null,
 ]);
 expect($boot['status'] === ResponseStatus::Success->value, 'Boot should succeed.');
-expect($boot['payload']['window']['theme'] === 3, 'The dark theme must be serialized as integer 3.');
-expect($boot['payload']['window']['width'] === 1024, 'The configured width should be retained.');
+expect($boot['payload']['windows'][0]['theme'] === 3, 'The dark theme must be serialized as integer 3.');
+expect($boot['payload']['windows'][0]['width'] === 1024, 'The configured width should be retained.');
+expect($boot['payload']['windows'][1]['id'] === 'settings', 'The child window should be registered.');
+expect($boot['payload']['commandTimeoutMs'] === 12_000, 'The timeout should be serialized.');
 
 $greeting = $application->dispatch([
-    'version' => 1,
+    'version' => 2,
     'id' => 2,
     'kind' => 1,
+    'windowId' => 'main',
     'command' => 'greet',
     'payload' => ['name' => 'David'],
 ]);
 expect($greeting['payload']['message'] === 'Hello, David!', 'The handler should receive typed payload data.');
 expect($greeting['effects'][0]['kind'] === EffectKind::SetWindowTitle->value, 'The title effect should be emitted.');
+expect($greeting['effects'][0]['windowId'] === 'main', 'Effects should target a window explicitly.');
+expect($greeting['events'][0]['name'] === 'greeting.completed', 'Client events should be emitted.');
 
-$missing = $application->dispatch([
-    'version' => 1,
+$event = $application->dispatch([
+    'version' => 2,
     'id' => 3,
     'kind' => 1,
+    'windowId' => 'main',
+    'command' => '@pam/event',
+    'payload' => [
+        'name' => 'settings.open',
+        'payload' => null,
+    ],
+]);
+expect($event['status'] === ResponseStatus::Success->value, 'Registered events should succeed.');
+expect($event['effects'][0]['kind'] === EffectKind::SetWindowVisible->value, 'Events may produce effects.');
+expect($event['effects'][0]['windowId'] === 'settings', 'Event effects should target child windows.');
+
+$missing = $application->dispatch([
+    'version' => 2,
+    'id' => 4,
+    'kind' => 1,
+    'windowId' => 'main',
     'command' => 'missing',
     'payload' => null,
 ]);

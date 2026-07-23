@@ -1,11 +1,17 @@
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod event_hub;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod gateway;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod host_event;
 mod project;
 mod runtime;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod watcher;
 mod worker;
 
 #[cfg(feature = "servo-engine")]
@@ -67,7 +73,25 @@ fn run() -> Result<(), String> {
                 pam_desktop_protocol::PROTOCOL_VERSION
             );
             println!("[ok] Entry: {}", runtime.entry().display());
-            println!("[ok] Window: {}", runtime.bootstrap().window.title);
+            println!(
+                "[ok] Windows: {} ({})",
+                runtime.bootstrap().windows.len(),
+                runtime
+                    .bootstrap()
+                    .windows
+                    .iter()
+                    .map(|window| window.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            println!(
+                "[ok] Command timeout: {} ms",
+                runtime.bootstrap().command_timeout_ms
+            );
+            println!(
+                "[ok] PHP worker generation: {}",
+                runtime.worker_generation()
+            );
             print_engine_diagnostic();
             Ok(())
         }

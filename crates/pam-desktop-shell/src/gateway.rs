@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::{Path as AxumPath, State};
@@ -11,43 +13,41 @@ use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use getrandom::fill;
-use pam_desktop_protocol::ResponseStatus;
+use pam_desktop_protocol::{
+    Bootstrap, ClientEvent, EVENT_COMMAND, ErrorCode, MAIN_WINDOW_ID, MAX_COMMAND_TIMEOUT_MS,
+    MIN_COMMAND_TIMEOUT_MS, ResponseEnvelope, ResponseStatus, validate_identifier,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::oneshot;
 use winit::event_loop::EventLoopProxy;
 
+use crate::event_hub::{EventHub, PublishedEvent};
 use crate::host_event::HostEvent;
 use crate::project::Project;
-use crate::worker::WorkerClient;
+use crate::watcher::{ChangeKind, ProjectWatcher};
+use crate::worker::{CancellationToken, WorkerRequestError, WorkerSupervisor};
 
 const BRIDGE_HEADER: &str = "x-pam-bridge";
+const EVENT_POLL_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct Gateway {
     url: String,
     shutdown: Option<oneshot::Sender<()>>,
     thread: Option<JoinHandle<()>>,
+    watcher: Option<ProjectWatcher>,
 }
 
 impl Gateway {
     pub fn start(
         project: &Project,
-        entry: &Path,
-        worker: WorkerClient,
+        supervisor: WorkerSupervisor,
+        bootstrap: Bootstrap,
         event_proxy: EventLoopProxy<HostEvent>,
+        watch: bool,
     ) -> Result<Self, String> {
-        let public_root = entry
-            .parent()
-            .ok_or_else(|| "desktop entry has no parent directory".to_owned())?
-            .to_path_buf();
-        let index_name = entry
-            .file_name()
-            .ok_or_else(|| "desktop entry has no filename".to_owned())?
-            .to_os_string();
-        if !public_root.starts_with(project.root()) {
-            return Err("desktop public directory escapes the project".to_owned());
-        }
-
+        project.validate_bootstrap(&bootstrap)?;
+        let public_root = project.public_root()?;
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
             .map_err(|error| format!("cannot bind desktop gateway: {error}"))?;
         listener
@@ -60,19 +60,26 @@ impl Gateway {
         let token = secure_token()?;
 
         let state = GatewayState {
+            project: project.clone(),
             public_root,
-            index_name,
             origin: url.trim_end_matches('/').to_owned(),
             token,
-            worker: Arc::new(Mutex::new(worker)),
+            bootstrap: Arc::new(RwLock::new(bootstrap)),
+            supervisor: Arc::new(Mutex::new(supervisor)),
+            cancellations: Arc::new(Mutex::new(HashMap::new())),
+            events: EventHub::default(),
             event_proxy,
         };
         let router = Router::new()
-            .route("/", get(serve_index))
+            .route("/", get(serve_main))
+            .route("/_pam/window/{window}", get(serve_window))
             .route("/_pam/bridge.js", get(serve_bridge))
             .route("/_pam/invoke", post(invoke))
+            .route("/_pam/emit", post(emit))
+            .route("/_pam/cancel", post(cancel))
+            .route("/_pam/events", post(events))
             .route("/{*path}", get(serve_asset))
-            .with_state(state);
+            .with_state(state.clone());
         let (shutdown, receiver) = oneshot::channel();
         let thread = std::thread::Builder::new()
             .name("pam-desktop-gateway".to_owned())
@@ -104,10 +111,21 @@ impl Gateway {
             })
             .map_err(|error| format!("cannot start desktop gateway thread: {error}"))?;
 
+        let watcher = if watch {
+            let watcher_state = state;
+            Some(ProjectWatcher::start(
+                project.root().to_path_buf(),
+                move |kind| watcher_state.reload(kind),
+            )?)
+        } else {
+            None
+        };
+
         Ok(Self {
             url,
             shutdown: Some(shutdown),
             thread: Some(thread),
+            watcher,
         })
     }
 
@@ -115,10 +133,16 @@ impl Gateway {
     pub fn url(&self) -> &str {
         &self.url
     }
+
+    pub fn window_url(&self, window_id: &str) -> Result<String, String> {
+        validate_identifier(window_id, "window")?;
+        Ok(format!("{}_pam/window/{window_id}", self.url))
+    }
 }
 
 impl Drop for Gateway {
     fn drop(&mut self) {
+        self.watcher.take();
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
@@ -130,20 +154,144 @@ impl Drop for Gateway {
 
 #[derive(Clone)]
 struct GatewayState {
+    project: Project,
     public_root: PathBuf,
-    index_name: std::ffi::OsString,
     origin: String,
     token: String,
-    worker: Arc<Mutex<WorkerClient>>,
+    bootstrap: Arc<RwLock<Bootstrap>>,
+    supervisor: Arc<Mutex<WorkerSupervisor>>,
+    cancellations: Arc<Mutex<HashMap<RequestKey, CancellationToken>>>,
+    events: EventHub,
     event_proxy: EventLoopProxy<HostEvent>,
+}
+
+impl GatewayState {
+    fn has_window(&self, window_id: &str) -> bool {
+        self.bootstrap
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .windows
+            .iter()
+            .any(|window| window.id == window_id)
+    }
+
+    fn default_timeout_ms(&self) -> u64 {
+        self.bootstrap
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .command_timeout_ms
+    }
+
+    fn window_entry(&self, window_id: &str) -> Option<String> {
+        self.bootstrap
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .windows
+            .iter()
+            .find(|window| window.id == window_id)
+            .map(|window| window.entry.clone())
+    }
+
+    fn process_response(&self, response: &ResponseEnvelope) {
+        if !response.effects.is_empty() {
+            let _ = self
+                .event_proxy
+                .send_event(HostEvent::ApplyEffects(response.effects.clone()));
+        }
+        for event in &response.events {
+            self.events.publish(event.clone());
+        }
+    }
+
+    fn reload(&self, kind: ChangeKind) {
+        match kind {
+            ChangeKind::Assets => {
+                let _ = self.event_proxy.send_event(HostEvent::ReloadViews);
+                self.events.publish(ClientEvent {
+                    name: "pam.dev.reloaded".to_owned(),
+                    payload: serde_json::json!({"kind": 1}),
+                    window_id: None,
+                });
+            }
+            ChangeKind::Runtime => {
+                let result = self
+                    .supervisor
+                    .lock()
+                    .map_err(|_| "PHP worker supervisor lock is poisoned".to_owned())
+                    .and_then(|mut supervisor| supervisor.restart())
+                    .and_then(|bootstrap| {
+                        self.project.validate_bootstrap(&bootstrap)?;
+                        Ok(bootstrap)
+                    });
+                match result {
+                    Ok(bootstrap) => {
+                        *self
+                            .bootstrap
+                            .write()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = bootstrap.clone();
+                        let _ = self
+                            .event_proxy
+                            .send_event(HostEvent::Reconfigure(bootstrap));
+                        self.events.publish(ClientEvent {
+                            name: "pam.dev.reloaded".to_owned(),
+                            payload: serde_json::json!({"kind": 2}),
+                            window_id: None,
+                        });
+                    }
+                    Err(error) => {
+                        eprintln!("pam-desktop: hot reload failed: {error}");
+                        self.events.publish(ClientEvent {
+                            name: "pam.dev.error".to_owned(),
+                            payload: serde_json::json!({"message": error}),
+                            window_id: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct RequestKey {
+    window_id: String,
+    request_id: u64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InvokeRequest {
+    request_id: u64,
     command: String,
+    window_id: String,
+    timeout_ms: Option<u64>,
     #[serde(default)]
     payload: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EmitRequest {
+    request_id: u64,
+    name: String,
+    window_id: String,
+    timeout_ms: Option<u64>,
+    #[serde(default)]
+    payload: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CancelRequest {
+    request_id: u64,
+    window_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EventPollRequest {
+    after: u64,
+    window_id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -156,13 +304,46 @@ struct InvokeResponse {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct CancelResponse {
+    cancelled: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EventPollResponse {
+    cursor: u64,
+    events: Vec<PublishedEvent>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ClientError {
     code: u16,
     message: String,
 }
 
-async fn serve_index(State(state): State<GatewayState>) -> Response<Body> {
-    serve_file(&state, Path::new(&state.index_name)).await
+async fn serve_main(State(state): State<GatewayState>) -> Response<Body> {
+    serve_window_entry(&state, MAIN_WINDOW_ID).await
+}
+
+async fn serve_window(
+    State(state): State<GatewayState>,
+    AxumPath(window): AxumPath<String>,
+) -> Response<Body> {
+    serve_window_entry(&state, &window).await
+}
+
+async fn serve_window_entry(state: &GatewayState, window_id: &str) -> Response<Body> {
+    let Some(entry) = state.window_entry(window_id) else {
+        return plain_response(StatusCode::NOT_FOUND, "Not found");
+    };
+    let Ok(resolved) = state.project.resolve_entry(&entry) else {
+        return plain_response(StatusCode::NOT_FOUND, "Not found");
+    };
+    let Ok(relative) = resolved.strip_prefix(&state.public_root) else {
+        return plain_response(StatusCode::NOT_FOUND, "Not found");
+    };
+    serve_file(state, relative).await
 }
 
 async fn serve_asset(
@@ -189,8 +370,11 @@ async fn serve_file(state: &GatewayState, relative: &Path) -> Response<Body> {
     let Ok(contents) = tokio::fs::read(&resolved).await else {
         return plain_response(StatusCode::NOT_FOUND, "Not found");
     };
-    let content_type = content_type(&resolved);
-    secure_response(StatusCode::OK, content_type, Body::from(contents))
+    secure_response(
+        StatusCode::OK,
+        content_type(&resolved),
+        Body::from(contents),
+    )
 }
 
 async fn serve_bridge(State(state): State<GatewayState>) -> Response<Body> {
@@ -210,67 +394,145 @@ async fn invoke(
     Json(request): Json<InvokeRequest>,
 ) -> Response<Body> {
     if !authorized(&state, &headers) {
-        return json_response(
-            StatusCode::FORBIDDEN,
-            &InvokeResponse {
-                ok: false,
-                data: Value::Null,
-                error: Some(ClientError {
-                    code: 7,
-                    message: "The desktop bridge rejected this origin or token.".to_owned(),
-                }),
-            },
+        return unauthorized_response();
+    }
+    if validate_identifier(&request.command, "command").is_err() {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The command name is invalid.",
         );
     }
-    if !valid_command(&request.command) {
-        return json_response(
+    execute_request(
+        state,
+        request.request_id,
+        request.window_id,
+        request.timeout_ms,
+        request.command,
+        request.payload,
+    )
+    .await
+}
+
+async fn emit(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<EmitRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if validate_identifier(&request.name, "event").is_err() {
+        return client_failure(
             StatusCode::BAD_REQUEST,
-            &InvokeResponse {
-                ok: false,
-                data: Value::Null,
-                error: Some(ClientError {
-                    code: 1,
-                    message: "The command name is invalid.".to_owned(),
-                }),
-            },
+            ErrorCode::InvalidMessage,
+            "The event name is invalid.",
+        );
+    }
+    execute_request(
+        state,
+        request.request_id,
+        request.window_id,
+        request.timeout_ms,
+        EVENT_COMMAND.to_owned(),
+        serde_json::json!({
+            "name": request.name,
+            "payload": request.payload,
+        }),
+    )
+    .await
+}
+
+async fn execute_request(
+    state: GatewayState,
+    request_id: u64,
+    window_id: String,
+    timeout_ms: Option<u64>,
+    command: String,
+    payload: Value,
+) -> Response<Body> {
+    if request_id == 0 || !state.has_window(&window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The bridge request identity is invalid.",
+        );
+    }
+    let timeout_ms = timeout_ms.unwrap_or_else(|| state.default_timeout_ms());
+    if !(MIN_COMMAND_TIMEOUT_MS..=MAX_COMMAND_TIMEOUT_MS).contains(&timeout_ms) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidPayload,
+            "The command timeout is outside the allowed range.",
         );
     }
 
-    let worker = state.worker.clone();
-    let response = tokio::task::spawn_blocking(move || {
-        let mut worker = worker
+    let key = RequestKey {
+        window_id: window_id.clone(),
+        request_id,
+    };
+    let cancellation = CancellationToken::default();
+    {
+        let mut cancellations = state
+            .cancellations
             .lock()
-            .map_err(|_| "PHP worker lock is poisoned".to_owned())?;
-        worker.request(request.command, request.payload)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cancellations
+            .insert(key.clone(), cancellation.clone())
+            .is_some()
+        {
+            return client_failure(
+                StatusCode::CONFLICT,
+                ErrorCode::InvalidMessage,
+                "The bridge request identifier is already active.",
+            );
+        }
+    }
+
+    let supervisor = state.supervisor.clone();
+    let response = tokio::task::spawn_blocking(move || {
+        let mut supervisor = supervisor
+            .lock()
+            .map_err(|_| WorkerRequestError::Crashed("worker lock is poisoned".to_owned()))?;
+        supervisor.request(
+            command,
+            window_id,
+            payload,
+            Duration::from_millis(timeout_ms),
+            &cancellation,
+        )
     })
     .await;
+    state
+        .cancellations
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&key);
+
     let response = match response {
         Ok(Ok(response)) => response,
-        Ok(Err(error)) => {
-            return gateway_error(error);
-        }
+        Ok(Err(error)) => return worker_error_response(error),
         Err(error) => {
-            return gateway_error(format!("PHP worker task failed: {error}"));
+            return client_failure(
+                StatusCode::BAD_GATEWAY,
+                ErrorCode::WorkerCrashed,
+                &format!("The PHP worker task failed: {error}"),
+            );
         }
     };
-
-    if !response.effects.is_empty() {
-        let _ = state
-            .event_proxy
-            .send_event(HostEvent::ApplyEffects(response.effects.clone()));
-    }
+    state.process_response(&response);
 
     if response.status == ResponseStatus::Failure {
-        let error = match response.error {
-            Some(error) => ClientError {
+        let error = response.error.map_or(
+            ClientError {
+                code: ErrorCode::Internal as u16,
+                message: "PHP worker returned an unspecified failure".to_owned(),
+            },
+            |error| ClientError {
                 code: error.code as u16,
                 message: error.message,
             },
-            None => ClientError {
-                code: 8,
-                message: "PHP worker returned an unspecified failure".to_owned(),
-            },
-        };
+        );
         return json_response(
             StatusCode::UNPROCESSABLE_ENTITY,
             &InvokeResponse {
@@ -291,6 +553,60 @@ async fn invoke(
     )
 }
 
+async fn cancel(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<CancelRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    let key = RequestKey {
+        window_id: request.window_id,
+        request_id: request.request_id,
+    };
+    let cancellation = state
+        .cancellations
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&key)
+        .cloned();
+    if let Some(cancellation) = &cancellation {
+        cancellation.cancel();
+    }
+    json_response(
+        StatusCode::OK,
+        &CancelResponse {
+            cancelled: cancellation.is_some(),
+        },
+    )
+}
+
+async fn events(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<EventPollRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The event window is invalid.",
+        );
+    }
+    let events = state
+        .events
+        .poll(request.after, &request.window_id, EVENT_POLL_TIMEOUT)
+        .await;
+    let cursor = events
+        .last()
+        .map_or_else(|| state.events.latest_id(), |event| event.id);
+    json_response(StatusCode::OK, &EventPollResponse { cursor, events })
+}
+
 fn authorized(state: &GatewayState, headers: &HeaderMap) -> bool {
     let origin_matches = headers
         .get(ORIGIN)
@@ -304,15 +620,46 @@ fn authorized(state: &GatewayState, headers: &HeaderMap) -> bool {
     origin_matches && token_matches
 }
 
-fn valid_command(command: &str) -> bool {
-    let mut characters = command.chars();
-    let Some(first) = characters.next() else {
-        return false;
-    };
-    first.is_ascii_alphabetic()
-        && command.len() <= 64
-        && characters
-            .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character))
+fn worker_error_response(error: WorkerRequestError) -> Response<Body> {
+    match error {
+        WorkerRequestError::TimedOut => client_failure(
+            StatusCode::REQUEST_TIMEOUT,
+            ErrorCode::RequestTimedOut,
+            "The PHP command exceeded its deadline and the worker was restarted.",
+        ),
+        WorkerRequestError::Cancelled => client_failure(
+            StatusCode::REQUEST_TIMEOUT,
+            ErrorCode::RequestCancelled,
+            "The PHP command was cancelled and the worker was restarted.",
+        ),
+        WorkerRequestError::Crashed(message) => client_failure(
+            StatusCode::BAD_GATEWAY,
+            ErrorCode::WorkerCrashed,
+            &format!("The PHP worker crashed and was recovered: {message}"),
+        ),
+    }
+}
+
+fn unauthorized_response() -> Response<Body> {
+    client_failure(
+        StatusCode::FORBIDDEN,
+        ErrorCode::Unauthorized,
+        "The desktop bridge rejected this origin or token.",
+    )
+}
+
+fn client_failure(status: StatusCode, code: ErrorCode, message: &str) -> Response<Body> {
+    json_response(
+        status,
+        &InvokeResponse {
+            ok: false,
+            data: Value::Null,
+            error: Some(ClientError {
+                code: code as u16,
+                message: message.to_owned(),
+            }),
+        },
+    )
 }
 
 fn secure_token() -> Result<String, String> {
@@ -362,17 +709,6 @@ fn plain_response(status: StatusCode, body: &'static str) -> Response<Body> {
     secure_response(status, "text/plain; charset=utf-8", Body::from(body))
 }
 
-fn gateway_error(message: String) -> Response<Body> {
-    json_response(
-        StatusCode::BAD_GATEWAY,
-        &InvokeResponse {
-            ok: false,
-            data: Value::Null,
-            error: Some(ClientError { code: 6, message }),
-        },
-    )
-}
-
 fn json_response(status: StatusCode, value: &impl Serialize) -> Response<Body> {
     match serde_json::to_vec(value) {
         Ok(body) => secure_response(status, "application/json; charset=utf-8", Body::from(body)),
@@ -409,34 +745,153 @@ const BRIDGE_SCRIPT: &str = r#"
         return;
     }
 
-    const invoke = async (command, payload = null) => {
+    const match = window.location.pathname.match(/^\/_pam\/window\/([A-Za-z][A-Za-z0-9._-]{0,63})$/);
+    const windowId = match?.[1] ?? "main";
+    const listeners = new Map();
+    let nextRequestId = 1;
+    let cursor = 0;
+    let stopped = false;
+
+    const headers = {
+        "Content-Type": "application/json",
+        "X-Pam-Bridge": token,
+    };
+
+    const dispatch = (event) => {
+        const registered = listeners.get(event.name);
+        if (!registered) return;
+        for (const listener of [...registered]) {
+            try {
+                listener(event.payload);
+            } catch (error) {
+                console.error(`Pam event listener failed for ${event.name}`, error);
+            }
+        }
+    };
+
+    const cancelRemote = (requestId) => {
+        void fetch("/_pam/cancel", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ requestId, windowId }),
+        }).catch(() => {});
+    };
+
+    const request = async (endpoint, body, options = {}) => {
+        const requestId = nextRequestId++;
+        const controller = new AbortController();
+        const externalSignal = options.signal;
+        let timedOut = false;
+        const abort = () => {
+            controller.abort();
+            cancelRemote(requestId);
+        };
+        if (externalSignal?.aborted) {
+            const error = new Error("Pam request was cancelled.");
+            error.code = 11;
+            throw error;
+        }
+        externalSignal?.addEventListener("abort", abort, { once: true });
+        const timer = options.timeout == null
+            ? null
+            : setTimeout(() => {
+                timedOut = true;
+                abort();
+            }, options.timeout);
+
+        try {
+            const response = await fetch(endpoint, {
+                method: "POST",
+                headers,
+                signal: controller.signal,
+                body: JSON.stringify({
+                    requestId,
+                    windowId,
+                    timeoutMs: options.timeout ?? null,
+                    ...body,
+                }),
+            });
+            const envelope = await response.json();
+            if (!envelope.ok) {
+                const error = new Error(envelope.error?.message ?? "Pam request failed.");
+                error.code = envelope.error?.code ?? 8;
+                throw error;
+            }
+            return envelope.data;
+        } catch (error) {
+            if (error?.name === "AbortError") {
+                const aborted = new Error(
+                    timedOut ? "Pam request timed out." : "Pam request was cancelled.",
+                );
+                aborted.code = timedOut ? 10 : 11;
+                throw aborted;
+            }
+            throw error;
+        } finally {
+            if (timer !== null) clearTimeout(timer);
+            externalSignal?.removeEventListener("abort", abort);
+        }
+    };
+
+    const invoke = (command, payload = null, options = {}) => {
         if (typeof command !== "string" || command.length === 0) {
             throw new TypeError("Pam command must be a non-empty string.");
         }
-
-        const response = await fetch("/_pam/invoke", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-Pam-Bridge": token,
-            },
-            body: JSON.stringify({ command, payload }),
-        });
-        const envelope = await response.json();
-        if (!envelope.ok) {
-            const error = new Error(envelope.error?.message ?? "Pam command failed.");
-            error.code = envelope.error?.code ?? 8;
-            throw error;
-        }
-        return envelope.data;
+        return request("/_pam/invoke", { command, payload }, options);
     };
+
+    const emit = (name, payload = null, options = {}) => {
+        if (typeof name !== "string" || name.length === 0) {
+            throw new TypeError("Pam event must have a non-empty name.");
+        }
+        return request("/_pam/emit", { name, payload }, options);
+    };
+
+    const on = (name, listener) => {
+        if (typeof name !== "string" || typeof listener !== "function") {
+            throw new TypeError("Pam event listeners require a name and function.");
+        }
+        const registered = listeners.get(name) ?? new Set();
+        registered.add(listener);
+        listeners.set(name, registered);
+        return () => {
+            registered.delete(listener);
+            if (registered.size === 0) listeners.delete(name);
+        };
+    };
+
+    const poll = async () => {
+        while (!stopped) {
+            try {
+                const response = await fetch("/_pam/events", {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({ after: cursor, windowId }),
+                });
+                if (!response.ok) throw new Error(`Pam event poll failed with ${response.status}.`);
+                const envelope = await response.json();
+                cursor = envelope.cursor;
+                for (const event of envelope.events) dispatch(event);
+            } catch (error) {
+                if (!stopped) {
+                    console.warn("Pam event stream reconnecting.", error);
+                    await new Promise((resolve) => setTimeout(resolve, 250));
+                }
+            }
+        }
+    };
+
+    window.addEventListener("beforeunload", () => {
+        stopped = true;
+    }, { once: true });
 
     Object.defineProperty(window, "pam", {
         configurable: false,
         enumerable: true,
         writable: false,
-        value: Object.freeze({ invoke }),
+        value: Object.freeze({ emit, invoke, on, windowId }),
     });
+    void poll();
 })();
 "#;
 
@@ -445,12 +900,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validates_command_names() {
-        assert!(valid_command("greet"));
-        assert!(valid_command("window.set-title"));
-        assert!(!valid_command("@pam/boot"));
-        assert!(!valid_command("../escape"));
-        assert!(!valid_command(""));
+    fn validates_bridge_identifiers() {
+        assert!(validate_identifier("greet", "command").is_ok());
+        assert!(validate_identifier("window.set-title", "command").is_ok());
+        assert!(validate_identifier("@pam/boot", "command").is_err());
+        assert!(validate_identifier("../escape", "command").is_err());
+        assert!(validate_identifier("", "command").is_err());
     }
 
     #[test]

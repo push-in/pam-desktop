@@ -1,6 +1,6 @@
 /target/
+/packages/desktop/vendor/
 /.idea/
 /.vscode/
 *.log
 .DS_Store
-
