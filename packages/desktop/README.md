@@ -9,14 +9,19 @@ process lifecycle.
 <?php
 
 use Pam\Desktop\Application;
+use Pam\Desktop\ApplicationCategory;
 use Pam\Desktop\ClientEvent;
 use Pam\Desktop\CommandContext;
 use Pam\Desktop\CommandResult;
+use Pam\Desktop\Manifest;
 use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
 
 $app = Application::create(
     window: Window::create('My application')->size(1120, 720),
+    manifest: Manifest::create('com.example.my-app', 'My application', '0.4.0')
+        ->publisher('Example')
+        ->category(ApplicationCategory::Development),
 )
     ->window(
         'settings',
@@ -41,11 +46,12 @@ $app->command('greet', static function (CommandContext $command): CommandResult 
 $app->run();
 ```
 
-Protocol 2 supports named windows, JavaScript-to-PHP event handlers with
-`Application::on`, PHP-to-JavaScript `ClientEvent` values, targeted effects and
-bounded command timeouts. Protocol discriminators, statuses, effect kinds,
-themes, and errors are sequential integer-backed enums. Application command and
-event names remain explicit strings chosen by the application.
+Protocol 4 supports named windows, JavaScript-to-PHP event handlers,
+PHP-to-JavaScript events, targeted effects, bounded command timeouts, explicit
+native capabilities and typed application distribution metadata. Protocol
+discriminators, statuses, categories, effect kinds, themes and errors are
+sequential integer-backed enums. Application command and event names remain
+explicit strings chosen by the application.
 
 Validate the package with:
 

@@ -6,7 +6,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Pushin <engineering@pushin.com.br>"]
@@ -31,6 +31,7 @@ rustls = { version = "0.23.41", default-features = false, features = ["aws-lc-rs
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_repr = "0.1.20"
+sha2 = "0.10.9"
 servo = { version = "=0.4.0", default-features = false, features = ["baked-in-resources", "clipboard", "js_jit"] }
 tokio = { version = "1.53.1", features = ["fs", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1.44"

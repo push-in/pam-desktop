@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.4.0
+
+- Added protocol 4 application manifests with validated reverse-DNS identity,
+  portable versions, publisher, description, icon and bundle exclusions.
+- Added sequential integer-backed `ApplicationCategory` contracts in PHP and
+  Rust with Freedesktop and Debian mappings.
+- Added safe PNG/SVG icon validation and generated application metadata.
+- Added `pam desktop run` production mode without the development watcher.
+- Added atomic `pam desktop build` staging with exact-artifact replacement only
+  behind `--force`.
+- Added self-contained Linux directories containing the application, Pam
+  worker, Servo host, isolated `php.ini` and non-glibc runtime libraries.
+- Added materialization of Composer path packages, secret/build exclusions and
+  explicit rejection of unsafe non-vendor symlink escapes.
+- Added deterministic portable `.tar.gz` archives with per-user install and
+  uninstall scripts.
+- Added optional native Debian packages with `/opt`, `/usr/bin`, Freedesktop
+  desktop entry and hicolor icon integration.
+- Added a sorted bundle manifest containing application/runtime/target metadata
+  and SHA-256 integrity records for every shipped file.
+- Updated the Pam starter with a typed 0.4 manifest, custom vector icon and
+  `desktop:build` Composer command.
+
 ## 0.3.0
 
 - Added PHP-declared native capabilities through immutable `Capabilities` and

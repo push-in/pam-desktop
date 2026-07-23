@@ -7,7 +7,7 @@
 A direct Servo host for building native desktop applications whose application
 logic remains elegant, typed PHP.
 
-![Version](https://img.shields.io/badge/version-0.3.0-68ded2?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.4.0-68ded2?style=flat-square)
 ![Status](https://img.shields.io/badge/status-alpha-f59e0b?style=flat-square)
 ![Servo](https://img.shields.io/badge/Servo-0.4.0-5b50d6?style=flat-square)
 ![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?style=flat-square&logo=php&logoColor=white)
@@ -22,7 +22,7 @@ Pam Desktop is intentionally separate from the Pam server core. This repository
 owns the native window, Servo integration, secure local bridge, shared protocol,
 and the `pam/desktop` Composer package. Pam remains the PHP worker runtime.
 
-Version 0.3 establishes a capability-safe native application contract:
+Version 0.4 adds a distributable Linux application contract:
 
 - local HTML, CSS, JavaScript and assets rendered directly by Servo;
 - explicit commands and bidirectional events through `window.pam`;
@@ -33,6 +33,12 @@ Version 0.3 establishes a capability-safe native application contract:
 - PHP-declared filesystem roots with read/write policy;
 - native dialogs, clipboard and notifications behind independent permissions;
 - opaque, process-lifetime grants for selected and dropped files;
+- typed reverse-DNS application manifests, integer-backed categories and
+  validated PNG/SVG icons;
+- atomic self-contained Linux bundles with Pam, PHP libraries, the Servo host,
+  vendored application code and per-file SHA-256 integrity metadata;
+- portable `.tar.gz` distribution, per-user install/uninstall scripts and
+  optional native `.deb` packages;
 - one supervised Pam worker with bounded, versioned JSON-lines messages;
 - a random loopback gateway with origin and token enforcement;
 - no Node runtime and no unrestricted ambient native API.
@@ -49,6 +55,7 @@ pam init hello-desktop --template desktop
 cd hello-desktop
 pam desktop doctor .
 pam desktop dev .
+pam desktop build .
 ```
 
 The generated Hello World demonstrates commands, PHP-to-JavaScript events,
@@ -65,11 +72,13 @@ Application code stays compact:
 declare(strict_types=1);
 
 use Pam\Desktop\Application;
+use Pam\Desktop\ApplicationCategory;
 use Pam\Desktop\Capabilities;
 use Pam\Desktop\ClientEvent;
 use Pam\Desktop\CommandContext;
 use Pam\Desktop\CommandResult;
 use Pam\Desktop\FileSystemRoot;
+use Pam\Desktop\Manifest;
 use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
 use Pam\Desktop\WindowTheme;
@@ -79,6 +88,10 @@ $app = Application::create(
         ->size(1120, 720)
         ->minimumSize(720, 520)
         ->theme(WindowTheme::Dark),
+    manifest: Manifest::create('com.pushin.my-app', 'My desktop app', '0.4.0')
+        ->description('A PHP-first native desktop application.')
+        ->publisher('My team')
+        ->category(ApplicationCategory::Development),
 )
     ->window(
         'settings',
@@ -149,6 +162,28 @@ returns an opaque `grantId`, never the ambient filesystem path. Read the
 [Capabilities guide](docs/capabilities.md) for the complete frontend API,
 integer contracts and limits.
 
+## Package for Linux
+
+The application manifest stays beside windows and capabilities in PHP. Build
+the default directory and portable archive atomically:
+
+```bash
+pam desktop build .
+```
+
+Additional formats and output control:
+
+```bash
+pam desktop build . --output dist --format deb
+pam desktop build . --format all --force
+```
+
+The portable archive contains `install.sh` and `uninstall.sh` for a per-user
+installation. Debian packaging requires `dpkg-deb`. Every bundle contains a
+`manifest.json` with protocol, application, runtime and target metadata plus
+the byte size and SHA-256 digest of every shipped file. See the
+[Linux distribution guide](docs/distribution.md).
+
 ## Build the host
 
 The Rust workspace pins Servo 0.4.0 and carries a committed `Cargo.lock`.
@@ -181,7 +216,8 @@ packages/
 └── desktop/               public PHP application API and worker loop
 docs/
 ├── architecture.md        process, security and extension boundaries
-└── capabilities.md        PHP policy and frontend native APIs
+├── capabilities.md        PHP policy and frontend native APIs
+└── distribution.md        Linux bundles, manifests and installers
 ```
 
 Read [Architecture](docs/architecture.md) before expanding native capabilities.
@@ -204,7 +240,7 @@ composer validate --strict packages/desktop/composer.json
 | --- | --- |
 | **0.2** | **Events, deadlines, cancellation, crash recovery, multiple windows and hot reload — implemented** |
 | **0.3** | **Authorized filesystem, dialogs, clipboard, notifications and drag and drop — implemented** |
-| 0.4 | Self-contained Linux build, icons, manifest and installers |
+| **0.4** | **Self-contained Linux build, icons, manifest and installers — implemented** |
 | 0.5 | Windows and macOS, signing and automatic updates |
 | 0.6 | PHP/Rust plugins, menus, tray, global shortcuts and background jobs |
 | 1.0 | Stable API, compatibility suite and multi-platform distribution |

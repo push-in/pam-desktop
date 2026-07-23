@@ -41,6 +41,7 @@ rfd.workspace = true
 rustls = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 servo = { workspace = true, optional = true }
 tokio.workspace = true
 tracing = { workspace = true, optional = true }

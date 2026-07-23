@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
 
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const PROTOCOL_VERSION: u16 = 4;
 pub const BOOT_COMMAND: &str = "@pam/boot";
 pub const EVENT_COMMAND: &str = "@pam/event";
 pub const MAIN_WINDOW_ID: &str = "main";
@@ -66,6 +66,20 @@ pub enum WindowTheme {
     System = 1,
     Light = 2,
     Dark = 3,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum ApplicationCategory {
+    Development = 1,
+    Productivity = 2,
+    Graphics = 3,
+    AudioVideo = 4,
+    Network = 5,
+    #[default]
+    Utility = 6,
+    Game = 7,
+    Education = 8,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
@@ -276,6 +290,7 @@ impl ClientEvent {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Bootstrap {
+    pub manifest: ApplicationManifest,
     pub windows: Vec<WindowConfig>,
     pub command_timeout_ms: u64,
     #[serde(default)]
@@ -287,9 +302,10 @@ impl Bootstrap {
     ///
     /// # Errors
     ///
-    /// Returns an error for invalid windows, deadlines, duplicate identifiers,
-    /// missing main window, or malformed native capabilities.
+    /// Returns an error for an invalid manifest, windows, deadlines, duplicate
+    /// identifiers, missing main window, or malformed native capabilities.
     pub fn validate(&self) -> Result<(), String> {
+        self.manifest.validate()?;
         if self.windows.is_empty() {
             return Err("desktop applications must register at least one window".to_owned());
         }
@@ -312,6 +328,62 @@ impl Bootstrap {
             ));
         }
         self.capabilities.validate()?;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplicationManifest {
+    pub identifier: String,
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub publisher: String,
+    pub category: ApplicationCategory,
+    pub icon: String,
+    #[serde(default)]
+    pub bundle_excludes: Vec<String>,
+}
+
+impl ApplicationManifest {
+    /// Validates distributable application identity, presentation and bundle
+    /// exclusions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a field cannot be represented safely in Linux
+    /// application metadata or refers outside the project.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_application_identifier(&self.identifier)?;
+        validate_text(&self.name, "application name", 80, false)?;
+        validate_version(&self.version)?;
+        validate_text(&self.description, "application description", 256, true)?;
+        validate_text(&self.publisher, "application publisher", 128, false)?;
+        validate_relative_project_path(&self.icon, "application icon")?;
+        let extension = Path::new(&self.icon)
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(str::to_ascii_lowercase);
+        if !matches!(extension.as_deref(), Some("png" | "svg")) {
+            return Err("application icon must be a PNG or SVG project asset".to_owned());
+        }
+
+        let mut excludes = HashSet::with_capacity(self.bundle_excludes.len());
+        for path in &self.bundle_excludes {
+            validate_relative_project_path(path, "bundle exclusion")?;
+            if !excludes.insert(path.as_str()) {
+                return Err(format!("bundle exclusion {path:?} is duplicated"));
+            }
+            if matches!(
+                path.as_str(),
+                "app.php" | "composer.json" | "composer.lock" | "resources" | "vendor"
+            ) {
+                return Err(format!(
+                    "required desktop project path {path:?} cannot be excluded"
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -456,6 +528,86 @@ pub fn validate_identifier(value: &str, label: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_application_identifier(value: &str) -> Result<(), String> {
+    if value.len() > 155 || value.split('.').count() < 2 {
+        return Err(
+            "application identifier must be a reverse-DNS name of at most 155 bytes".to_owned(),
+        );
+    }
+    for segment in value.split('.') {
+        let mut characters = segment.chars();
+        let Some(first) = characters.next() else {
+            return Err("application identifier cannot contain empty segments".to_owned());
+        };
+        if !first.is_ascii_lowercase()
+            || !characters.all(|character| {
+                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+            })
+        {
+            return Err(
+                "application identifier segments must begin with a lowercase letter and contain lowercase letters, numbers, or dashes"
+                    .to_owned(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_text(
+    value: &str,
+    label: &str,
+    maximum_bytes: usize,
+    allow_empty: bool,
+) -> Result<(), String> {
+    if (!allow_empty && value.trim().is_empty())
+        || value.len() > maximum_bytes
+        || value
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '\n' | '\r'))
+    {
+        return Err(format!(
+            "{label} must contain {} through {maximum_bytes} printable UTF-8 bytes",
+            usize::from(!allow_empty)
+        ));
+    }
+    Ok(())
+}
+
+fn validate_version(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .bytes()
+            .next()
+            .is_some_and(|character| character.is_ascii_digit())
+        || !value.bytes().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, b'.' | b'+' | b'-' | b'~')
+        })
+    {
+        return Err(
+            "application version must begin with a number and contain at most 64 ASCII letters, numbers, dots, pluses, dashes, or tildes"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_relative_project_path(value: &str, label: &str) -> Result<(), String> {
+    let path = Path::new(value);
+    if value.is_empty()
+        || value.contains('\0')
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(format!(
+            "{label} must be a relative path inside the project"
+        ));
+    }
+    Ok(())
+}
+
 fn main_window_id() -> String {
     MAIN_WINDOW_ID.to_owned()
 }
@@ -478,6 +630,14 @@ mod tests {
         assert_eq!(EffectKind::SetWindowVisible as u16, 2);
         assert_eq!(EffectKind::CloseWindow as u16, 3);
         assert_eq!(EffectKind::FocusWindow as u16, 4);
+        assert_eq!(ApplicationCategory::Development as u8, 1);
+        assert_eq!(ApplicationCategory::Productivity as u8, 2);
+        assert_eq!(ApplicationCategory::Graphics as u8, 3);
+        assert_eq!(ApplicationCategory::AudioVideo as u8, 4);
+        assert_eq!(ApplicationCategory::Network as u8, 5);
+        assert_eq!(ApplicationCategory::Utility as u8, 6);
+        assert_eq!(ApplicationCategory::Game as u8, 7);
+        assert_eq!(ApplicationCategory::Education as u8, 8);
         assert_eq!(FileAccess::Read as u8, 1);
         assert_eq!(FileAccess::Write as u8, 2);
         assert_eq!(FileAccess::ReadWrite as u8, 3);
@@ -538,6 +698,7 @@ mod tests {
     #[test]
     fn validates_multi_window_bootstrap_contracts() {
         let bootstrap = Bootstrap {
+            manifest: fixture_manifest(),
             windows: vec![
                 WindowConfig {
                     id: MAIN_WINDOW_ID.to_owned(),
@@ -583,6 +744,21 @@ mod tests {
     }
 
     #[test]
+    fn rejects_an_unsafe_application_manifest() {
+        let mut manifest = fixture_manifest();
+        manifest.identifier = "com.Pushin.Pam".to_owned();
+        assert!(manifest.validate().is_err());
+
+        manifest = fixture_manifest();
+        manifest.icon = "../icon.svg".to_owned();
+        assert!(manifest.validate().is_err());
+
+        manifest = fixture_manifest();
+        manifest.bundle_excludes = vec!["vendor".to_owned()];
+        assert!(manifest.validate().is_err());
+    }
+
+    #[test]
     fn rejects_duplicate_filesystem_capabilities() {
         let capabilities = NativeCapabilities {
             filesystem_roots: vec![
@@ -601,5 +777,18 @@ mod tests {
         };
 
         assert!(capabilities.validate().is_err());
+    }
+
+    fn fixture_manifest() -> ApplicationManifest {
+        ApplicationManifest {
+            identifier: "com.pushin.pam".to_owned(),
+            name: "Pam".to_owned(),
+            version: "0.4.0".to_owned(),
+            description: "A typed PHP desktop application.".to_owned(),
+            publisher: "Pushin".to_owned(),
+            category: ApplicationCategory::Development,
+            icon: "resources/icon.svg".to_owned(),
+            bundle_excludes: vec!["storage/cache".to_owned()],
+        }
     }
 }

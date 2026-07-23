@@ -28,6 +28,11 @@ impl DesktopRuntime {
     }
 
     #[must_use]
+    pub fn project(&self) -> &Project {
+        &self.project
+    }
+
+    #[must_use]
     pub fn entry(&self) -> std::path::PathBuf {
         self.project
             .resolve_entry(&self.bootstrap.windows[0].entry)

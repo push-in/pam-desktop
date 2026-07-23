@@ -4856,7 +4856,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "arboard",
  "axum",
@@ -4872,6 +4872,7 @@ dependencies = [
  "serde",
  "serde_json",
  "servo",
+ "sha2 0.10.9",
  "tokio",
  "tracing",
  "url",
@@ -4880,7 +4881,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-protocol"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",

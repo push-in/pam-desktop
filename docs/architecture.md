@@ -28,7 +28,7 @@ Winit ─ Servo ─ loopback gateway
    `vendor/autoload.php`.
 2. Start `pam exec app.php` with piped standard input and output.
 3. Send the reserved `@pam/boot` request and validate all returned window,
-   entry, command-timeout and native-capability contracts.
+   application-manifest, entry, command-timeout and native-capability contracts.
 4. Bind an ephemeral port on `127.0.0.1`, generate a 256-bit bridge token, and
    start the local gateway.
 5. Open each declared filesystem root once as a capability-scoped directory;
@@ -76,14 +76,16 @@ All coded variants are sequential integers:
 | dialog kind | `1` open file through `4` open directory |
 | clipboard operation | `1` read, `2` write, `3` clear |
 | notification urgency | `1` low, `2` normal, `3` critical |
+| application category | `1` development through `8` education |
 
 Command names are application-owned strings because they are identifiers, not
 stored domain variants. They must begin with a letter, contain only ASCII
 letters, digits, dots, dashes or underscores, and remain at most 64 bytes.
 
-Protocol 3 adds immutable native-capability policy to the bootstrap and
-sequential integer contracts for filesystem, dialogs, clipboard and
-notifications. The version is validated on every response. A mismatched
+Protocol 4 adds immutable application identity and distribution metadata to the
+bootstrap. Protocol 3 introduced native-capability policy and the sequential
+integer contracts for filesystem, dialogs, clipboard and notifications. The
+version is validated on every response. A mismatched
 version, message kind, request ID, malformed payload, oversized line, or failure
 without an error stops that invocation explicitly.
 
@@ -117,7 +119,7 @@ not as arbitrary code execution.
 
 ## Concurrency and failure
 
-Protocol 3 serializes commands through one worker mutex. This gives
+Protocol 4 serializes commands through one worker mutex. This gives
 deterministic PHP state and avoids pretending that a single Zend runtime is
 parallel. Axum handles transport concurrently, while blocking worker I/O runs
 outside Tokio's async workers.
@@ -140,6 +142,26 @@ Hot-reloading PHP capability policy prepares a complete replacement native
 service before it becomes visible. A successful replacement expires old file
 grants and atomically swaps the authorized roots; invalid roots keep the current
 application alive and emit `pam.dev.error`.
+
+## Distribution boundary
+
+`pam desktop build` boots the same PHP application and validates the same
+protocol contract used at runtime. It then stages the project in a random
+directory under the selected output, materializes Composer package symlinks,
+rejects non-vendor symlink escapes, omits secrets and configured exclusions,
+and copies the exact `pam-desktop` and Pam worker binaries.
+
+`ldd` is applied only to those trusted binaries. Non-glibc runtime libraries
+are copied beside them, while the launcher fixes `PAM_BINARY`, `PHPRC`,
+`PHP_INI_SCAN_DIR` and `LD_LIBRARY_PATH` before starting production `run` mode
+without the development watcher. A minimal bundled `php.ini` prevents host
+machine scan directories from changing the worker.
+
+The staged bundle receives a Freedesktop entry, validated icon, user installer,
+uninstaller and a sorted integrity manifest. Archive metadata uses
+`SOURCE_DATE_EPOCH` (or zero) for reproducibility. Existing artifacts are never
+removed unless the caller explicitly passes `--force`; publication is a rename
+from the completed staging directory.
 
 ## Extension rules
 

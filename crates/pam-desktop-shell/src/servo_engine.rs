@@ -30,7 +30,7 @@ use crate::host_event::HostEvent;
 use crate::native::show_dialog;
 use crate::runtime::DesktopRuntime;
 
-pub fn run(runtime: DesktopRuntime) -> Result<(), String> {
+pub fn run(runtime: DesktopRuntime, watch: bool) -> Result<(), String> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let (project, supervisor, bootstrap) = runtime.into_parts();
@@ -42,7 +42,7 @@ pub fn run(runtime: DesktopRuntime) -> Result<(), String> {
         supervisor,
         bootstrap.clone(),
         event_loop.create_proxy(),
-        true,
+        watch,
     )?;
     let mut application = Application::new(&event_loop, bootstrap, gateway);
 

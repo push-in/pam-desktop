@@ -11,7 +11,7 @@ use Throwable;
 
 final class Application
 {
-    public const PROTOCOL_VERSION = 3;
+    public const PROTOCOL_VERSION = 4;
     public const BOOT_COMMAND = '@pam/boot';
     public const EVENT_COMMAND = '@pam/event';
     public const MAX_MESSAGE_BYTES = 1_048_576;
@@ -31,15 +31,18 @@ final class Application
 
     private Capabilities $capabilities;
 
-    private function __construct(Window $window)
+    private function __construct(
+        private readonly Manifest $manifest,
+        Window $window,
+    )
     {
         $this->windows = ['main' => $window];
         $this->capabilities = Capabilities::none();
     }
 
-    public static function create(Window $window): self
+    public static function create(Window $window, Manifest $manifest): self
     {
-        return new self($window);
+        return new self($manifest, $window);
     }
 
     public function window(string $id, Window $window): self
@@ -203,6 +206,7 @@ final class Application
 
         if ($command === self::BOOT_COMMAND) {
             return $this->success($id, [
+                'manifest' => $this->manifest->toArray(),
                 'windows' => array_map(
                     static fn (string $windowId, Window $window): array => $window->toArray($windowId),
                     array_keys($this->windows),
