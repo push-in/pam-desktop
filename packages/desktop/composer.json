@@ -1,0 +1,23 @@
+{
+    "name": "pam/desktop",
+    "description": "Elegant PHP-first desktop applications powered by Pam, Rust, and Servo.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pam\\Desktop\\": "src/"
+        }
+    },
+    "support": {
+        "issues": "https://github.com/push-in/pam-desktop/issues",
+        "source": "https://github.com/push-in/pam-desktop"
+    },
+    "config": {
+        "platform-check": true,
+        "sort-packages": true
+    }
+}
+

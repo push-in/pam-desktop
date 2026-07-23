@@ -1,0 +1,47 @@
+[workspace]
+members = [
+    "crates/pam-desktop-protocol",
+    "crates/pam-desktop-shell",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Pushin <engineering@pushin.com.br>"]
+license = "MIT"
+repository = "https://github.com/push-in/pam-desktop"
+
+[workspace.dependencies]
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+euclid = "0.22.14"
+getrandom = "0.3.4"
+# Servo 0.4's tested lock uses these prerelease-compatible versions. Keeping
+# them exact prevents Cargo from selecting later semver-compatible releases
+# that currently fail together.
+mozjs = "=0.17.0"
+pam-desktop-protocol = { path = "crates/pam-desktop-protocol" }
+primeorder = "=0.14.0-rc.14"
+rustls = { version = "0.23.41", default-features = false, features = ["aws-lc-rs", "logging", "std", "tls12"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+serde_repr = "0.1.20"
+servo = { version = "=0.4.0", default-features = false, features = ["baked-in-resources", "clipboard", "js_jit"] }
+tokio = { version = "1.53.1", features = ["fs", "macros", "net", "rt-multi-thread", "sync"] }
+tracing = "0.1.44"
+url = "2.5.8"
+winit = "0.30.13"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "deny"
+pedantic = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = "symbols"

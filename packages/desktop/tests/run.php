@@ -1,0 +1,78 @@
+<?php
+
+declare(strict_types=1);
+
+spl_autoload_register(static function (string $class): void {
+    $prefix = 'Pam\\Desktop\\';
+    if (!str_starts_with($class, $prefix)) {
+        return;
+    }
+
+    require __DIR__.'/../src/'.str_replace('\\', '/', substr($class, strlen($prefix))).'.php';
+});
+
+use Pam\Desktop\Application;
+use Pam\Desktop\CommandContext;
+use Pam\Desktop\CommandResult;
+use Pam\Desktop\EffectKind;
+use Pam\Desktop\ResponseStatus;
+use Pam\Desktop\Window;
+use Pam\Desktop\WindowEffect;
+use Pam\Desktop\WindowTheme;
+
+function expect(bool $condition, string $message): void
+{
+    if (!$condition) {
+        throw new RuntimeException($message);
+    }
+}
+
+$application = Application::create(
+    Window::create('Pam Desktop')
+        ->size(1024, 680)
+        ->minimumSize(640, 480)
+        ->theme(WindowTheme::Dark),
+);
+
+$application->command(
+    'greet',
+    static function (CommandContext $command): CommandResult {
+        $name = $command->string('name', 'world');
+
+        return CommandResult::success(['message' => "Hello, {$name}!"])
+            ->effect(WindowEffect::title("Hello, {$name}"));
+    },
+);
+
+$boot = $application->dispatch([
+    'version' => 1,
+    'id' => 1,
+    'kind' => 1,
+    'command' => '@pam/boot',
+    'payload' => null,
+]);
+expect($boot['status'] === ResponseStatus::Success->value, 'Boot should succeed.');
+expect($boot['payload']['window']['theme'] === 3, 'The dark theme must be serialized as integer 3.');
+expect($boot['payload']['window']['width'] === 1024, 'The configured width should be retained.');
+
+$greeting = $application->dispatch([
+    'version' => 1,
+    'id' => 2,
+    'kind' => 1,
+    'command' => 'greet',
+    'payload' => ['name' => 'David'],
+]);
+expect($greeting['payload']['message'] === 'Hello, David!', 'The handler should receive typed payload data.');
+expect($greeting['effects'][0]['kind'] === EffectKind::SetWindowTitle->value, 'The title effect should be emitted.');
+
+$missing = $application->dispatch([
+    'version' => 1,
+    'id' => 3,
+    'kind' => 1,
+    'command' => 'missing',
+    'payload' => null,
+]);
+expect($missing['status'] === ResponseStatus::Failure->value, 'Unknown commands should fail.');
+expect($missing['error']['code'] === 3, 'UnknownCommand must remain integer 3.');
+
+echo "pam/desktop protocol tests passed\n";
