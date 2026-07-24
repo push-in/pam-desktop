@@ -10,13 +10,12 @@ permissions:
 jobs:
   build:
     name: x86_64-unknown-linux-gnu
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.88"
-          target: x86_64-unknown-linux-gnu
       - uses: shivammathur/setup-php@v2
         with:
           php-version: "8.4"
@@ -26,20 +25,24 @@ jobs:
       - name: Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang jq libclang-dev libfontconfig1-dev pkg-config
+          sudo apt-get install -y clang-18 jq libclang-18-dev libfontconfig1-dev pkg-config
       - name: Build production host
-        run: cargo build --locked --release -p pam-desktop --target x86_64-unknown-linux-gnu
+        env:
+          CC: clang-18
+          CXX: clang++-18
+          LIBCLANG_PATH: /usr/lib/llvm-18/lib
+        run: cargo build --locked --release -p pam-desktop
       - name: Package and verify reproducible Linux host
         run: |
           version=${GITHUB_REF_NAME#v}
           source_epoch=$(git log -1 --format=%ct)
           mkdir -p dist verification
           SOURCE_DATE_EPOCH="${source_epoch}" scripts/package-host-linux.sh \
-            target/x86_64-unknown-linux-gnu/release \
+            target/release \
             dist \
             "${version}"
           SOURCE_DATE_EPOCH="${source_epoch}" scripts/package-host-linux.sh \
-            target/x86_64-unknown-linux-gnu/release \
+            target/release \
             verification \
             "${version}"
           cmp \

@@ -1,0 +1,137 @@
+#!/bin/sh
+
+set -eu
+
+VERSION='1.0.2'
+TARGET='x86_64-unknown-linux-gnu'
+REPOSITORY='push-in/pam-desktop'
+ARCHIVE="pam-desktop-${VERSION}-${TARGET}.tar.gz"
+RELEASE_URL="https://github.com/${REPOSITORY}/releases/download/v${VERSION}"
+
+fail()
+{
+    printf 'pam-desktop: %s\n' "$1" >&2
+    exit 1
+}
+
+[ "$(uname -s)" = 'Linux' ] || fail 'the desktop host currently supports Linux only'
+case "$(uname -m)" in
+    x86_64|amd64) ;;
+    *) fail "unsupported architecture; expected x86_64 for ${TARGET}" ;;
+esac
+
+CACHE_HOME=${XDG_CACHE_HOME:-"${HOME:?HOME must be set}/.cache"}
+HOST_ROOT="${PAM_DESKTOP_CACHE_DIR:-"${CACHE_HOME}/pam-desktop"}"
+HOST_DIRECTORY="${HOST_ROOT}/${VERSION}/${TARGET}"
+HOST_BINARY="${HOST_DIRECTORY}/bin/pam-desktop"
+LOCK_DIRECTORY="${HOST_ROOT}/.install-${VERSION}-${TARGET}.lock"
+
+case "$HOST_ROOT" in
+    /*) ;;
+    *) fail 'the cache directory must be absolute' ;;
+esac
+case "$HOST_ROOT" in
+    */../*|*/..|*/./*|*/.) fail 'the cache directory must not contain dot segments' ;;
+esac
+
+if [ -x "$HOST_BINARY" ]; then
+    exec "$HOST_BINARY" "$@"
+fi
+
+command -v tar >/dev/null 2>&1 || fail 'tar is required to install the desktop host'
+if command -v curl >/dev/null 2>&1; then
+    DOWNLOAD='curl'
+elif command -v wget >/dev/null 2>&1; then
+    DOWNLOAD='wget'
+else
+    fail 'curl or wget is required for the first desktop host download'
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+    CHECKSUM='sha256sum'
+elif command -v shasum >/dev/null 2>&1; then
+    CHECKSUM='shasum'
+else
+    fail 'sha256sum or shasum is required to verify the desktop host'
+fi
+
+mkdir -p "$HOST_ROOT"
+if ! mkdir "$LOCK_DIRECTORY" 2>/dev/null; then
+    attempts=0
+    while [ "$attempts" -lt 120 ] && [ ! -x "$HOST_BINARY" ]
+    do
+        attempts=$((attempts + 1))
+        sleep 1
+    done
+    [ -x "$HOST_BINARY" ] \
+        || fail "another installation is still running; remove ${LOCK_DIRECTORY} if it is stale"
+    exec "$HOST_BINARY" "$@"
+fi
+
+WORK_DIRECTORY=$(mktemp -d "${HOST_ROOT}/.download-${VERSION}.XXXXXX")
+cleanup()
+{
+    rm -rf "$WORK_DIRECTORY"
+    rmdir "$LOCK_DIRECTORY" 2>/dev/null || true
+}
+trap cleanup EXIT HUP INT TERM
+
+printf 'pam-desktop: downloading verified host %s...\n' "$VERSION" >&2
+if [ "$DOWNLOAD" = 'curl' ]; then
+    curl --fail --location --silent --show-error \
+        --output "${WORK_DIRECTORY}/${ARCHIVE}" \
+        "${RELEASE_URL}/${ARCHIVE}" \
+        || fail "host ${VERSION} is not available yet; retry in a moment"
+    curl --fail --location --silent --show-error \
+        --output "${WORK_DIRECTORY}/${ARCHIVE}.sha256" \
+        "${RELEASE_URL}/${ARCHIVE}.sha256" \
+        || fail "cannot download the host checksum"
+else
+    wget --quiet --output-document="${WORK_DIRECTORY}/${ARCHIVE}" \
+        "${RELEASE_URL}/${ARCHIVE}" \
+        || fail "host ${VERSION} is not available yet; retry in a moment"
+    wget --quiet --output-document="${WORK_DIRECTORY}/${ARCHIVE}.sha256" \
+        "${RELEASE_URL}/${ARCHIVE}.sha256" \
+        || fail "cannot download the host checksum"
+fi
+
+(
+    cd "$WORK_DIRECTORY"
+    if [ "$CHECKSUM" = 'sha256sum' ]; then
+        sha256sum --check "${ARCHIVE}.sha256"
+    else
+        expected=$(cut -d ' ' -f 1 "${ARCHIVE}.sha256")
+        actual=$(shasum -a 256 "$ARCHIVE" | cut -d ' ' -f 1)
+        [ "$actual" = "$expected" ] || fail 'host checksum verification failed'
+    fi
+) >&2
+
+tar -tzf "${WORK_DIRECTORY}/${ARCHIVE}" | while IFS= read -r member
+do
+    case "$member" in
+        /*|../*|*/../*|*/..) fail "unsafe archive member: ${member}" ;;
+    esac
+done
+tar -xzf "${WORK_DIRECTORY}/${ARCHIVE}" -C "$WORK_DIRECTORY"
+
+PACKAGE_DIRECTORY="${WORK_DIRECTORY}/pam-desktop-${VERSION}-${TARGET}"
+[ -x "${PACKAGE_DIRECTORY}/bin/pam-desktop" ] \
+    || fail 'the verified archive does not contain the desktop host'
+[ "$("${PACKAGE_DIRECTORY}/bin/pam-desktop" --version)" = "pam-desktop ${VERSION}" ] \
+    || fail 'the downloaded desktop host reports an unexpected version'
+
+STAGING="${HOST_ROOT}/.host-${VERSION}-${TARGET}-$$"
+mkdir -p "$STAGING"
+cp -R "${PACKAGE_DIRECTORY}/." "$STAGING/"
+mkdir -p "$(dirname "$HOST_DIRECTORY")"
+if [ -e "$HOST_DIRECTORY" ]; then
+    rm -rf "$STAGING"
+else
+    mv "$STAGING" "$HOST_DIRECTORY"
+fi
+
+trap - EXIT HUP INT TERM
+rm -rf "$WORK_DIRECTORY"
+rmdir "$LOCK_DIRECTORY"
+
+printf 'pam-desktop: host %s ready.\n' "$VERSION" >&2
+exec "$HOST_BINARY" "$@"

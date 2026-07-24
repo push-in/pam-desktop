@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.2
+
+- Added a Composer vendor binary that downloads the matching native desktop host
+  on first use, verifies its SHA-256 checksum and reuses the cached installation.
+- Removed the need for a separate manual `pam-desktop` installation when a project
+  is created with Composer.
+- Updated the production Linux build to Clang 18 on Ubuntu 24.04.
+
 ## 1.0.1
 
 - Published the PHP application API as `pushinbr/pam-desktop` from the

@@ -11,6 +11,9 @@
             "Pam\\Desktop\\": "src/"
         }
     },
+    "bin": [
+        "bin/pam-desktop"
+    ],
     "support": {
         "issues": "https://github.com/push-in/pam-desktop/issues",
         "source": "https://github.com/push-in/pam-desktop"
