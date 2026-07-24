@@ -124,6 +124,14 @@ impl AppState {
         event_loop: &ActiveEventLoop,
         bootstrap: &Bootstrap,
     ) -> Result<(), String> {
+        // Surfman creates an EGL connection for every window rendering context.
+        // On some GLVND/NVIDIA stacks, creating replacement contexts before
+        // dropping the old ones lets the old connection's eglTerminate invalidate
+        // the newly-created contexts because both resolve to the same EGLDisplay.
+        // Fully release the previous generation before initializing the next one.
+        let previous = self.windows.replace(HashMap::new());
+        drop(previous);
+
         let mut next = HashMap::with_capacity(bootstrap.windows.len());
         for config in &bootstrap.windows {
             let desktop_window = self.create_window(event_loop, config)?;
@@ -163,7 +171,12 @@ impl AppState {
                     )
                 })?,
         );
-        let _ = rendering_context.make_current();
+        rendering_context.make_current().map_err(|error| {
+            format!(
+                "Servo cannot activate the rendering context for {:?}: {error:?}",
+                config.id,
+            )
+        })?;
         let url = Url::parse(&self.gateway.window_url(&config.id)?)
             .map_err(|error| format!("cannot create URL for window {:?}: {error}", config.id))?;
         let webview = WebViewBuilder::new(&self.servo, rendering_context.clone())
