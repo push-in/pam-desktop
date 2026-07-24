@@ -285,4 +285,4 @@ expect($plugin['payload']['window'] === 'main', 'PHP plugins should register app
 $shellEffect = ShellEffect::menuChecked('background', false)->toArray();
 expect($shellEffect['kind'] === 6, 'Menu checked effects must use integer kind 6.');
 
-echo "pam/desktop protocol tests passed\n";
+echo "pushinbr/pam-desktop protocol tests passed\n";

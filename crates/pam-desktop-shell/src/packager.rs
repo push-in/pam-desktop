@@ -2125,7 +2125,11 @@ mod tests {
         assert!(bundle.join("bin/pam").is_file());
         assert!(bundle.join("bin/hello").is_file());
         assert!(bundle.join("app/vendor/autoload.php").is_file());
-        assert!(!bundle.join("app/vendor/pam/desktop/vendor").exists());
+        assert!(
+            !bundle
+                .join("app/vendor/pushinbr/pam-desktop/vendor")
+                .exists()
+        );
         assert!(
             !fs::read_to_string(bundle.join("app/composer.json"))
                 .expect("bundled Composer manifest should be readable")
@@ -2207,7 +2211,7 @@ mod tests {
             let output = project.join("artifacts");
             fs::create_dir_all(project.join("resources")).expect("resources should be created");
             fs::create_dir_all(project.join("vendor")).expect("vendor should be created");
-            fs::create_dir_all(project.join("vendor/pam/desktop/vendor"))
+            fs::create_dir_all(project.join("vendor/pushinbr/pam-desktop/vendor"))
                 .expect("nested package vendor should be created");
             fs::create_dir_all(project.join("storage/cache")).expect("cache should be created");
             fs::create_dir(&output).expect("output should be created");
@@ -2219,13 +2223,13 @@ mod tests {
             .expect("composer should be written");
             fs::write(
                 project.join("composer.lock"),
-                "{\"packages\":[{\"name\":\"pam/desktop\",\"dist\":{\"type\":\"path\",\"url\":\"/private/source\"},\"transport-options\":{\"symlink\":true}}],\"packages-dev\":[]}\n",
+                "{\"packages\":[{\"name\":\"pushinbr/pam-desktop\",\"dist\":{\"type\":\"path\",\"url\":\"/private/source\"},\"transport-options\":{\"symlink\":true}}],\"packages-dev\":[]}\n",
             )
             .expect("composer lock should be written");
             fs::write(project.join("vendor/autoload.php"), "<?php\n")
                 .expect("autoload should be written");
             fs::write(
-                project.join("vendor/pam/desktop/vendor/dev-only.php"),
+                project.join("vendor/pushinbr/pam-desktop/vendor/dev-only.php"),
                 "<?php\n",
             )
             .expect("nested package dependency should be written");

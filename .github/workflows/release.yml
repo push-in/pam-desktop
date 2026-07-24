@@ -17,6 +17,12 @@ jobs:
         with:
           toolchain: "1.88"
           target: x86_64-unknown-linux-gnu
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          coverage: none
+      - name: Validate the public Composer package
+        run: composer validate --strict composer.json
       - name: Linux build dependencies
         run: |
           sudo apt-get update

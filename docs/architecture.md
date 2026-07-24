@@ -22,7 +22,7 @@ Winit ─ Servo ─ loopback gateway
   │ typed effects / bounded JSON lines
   ▼
 Pam worker
-PHP 8.4 + pam/desktop app
+PHP 8.4 + pushinbr/pam-desktop app
 ```
 
 `pam desktop dev .` delegates to the internal host, which performs these steps:

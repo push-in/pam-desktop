@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+- Published the PHP application API as `pushinbr/pam-desktop` from the
+  repository root so public `pam init --template desktop` projects resolve
+  without custom Composer repositories.
+- Updated packaged vendor-path handling and compatibility fixtures for the
+  organization-owned Composer coordinate.
+
 ## 1.0.0
 
 - Declared public API version `1` while retaining worker protocol `6` and Rust

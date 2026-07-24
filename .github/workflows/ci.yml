@@ -37,6 +37,7 @@ jobs:
             "${RUNNER_TEMP}/host-two/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
           scripts/test-host-archive.sh \
             "${RUNNER_TEMP}/host-one/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
+      - run: composer validate --strict composer.json
       - run: composer install --working-dir=packages/desktop --no-interaction --prefer-dist
       - run: composer validate --strict packages/desktop/composer.json
       - run: composer test --working-dir=packages/desktop

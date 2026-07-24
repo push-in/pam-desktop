@@ -20,7 +20,7 @@ logic remains elegant, typed PHP.
 
 Pam Desktop is intentionally separate from the Pam server core. This repository
 owns the native window, Servo integration, secure local bridge, shared protocol,
-and the `pam/desktop` Composer package. Pam remains the PHP worker runtime.
+and the `pushinbr/pam-desktop` Composer package. Pam remains the PHP worker runtime.
 
 Version 1.0 freezes the public PHP, JavaScript and Rust plugin APIs and turns
 the Linux host into a reproducible, verifiable release:

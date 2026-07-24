@@ -1,4 +1,4 @@
-# pam/desktop
+# pushinbr/pam-desktop
 
 The PHP application model for Pam Desktop. It owns windows, commands, events,
 jobs, plugins, native-shell policy, typed effects, payload validation and the
