@@ -72,18 +72,26 @@ constant Pam\Desktop\BackgroundJob::MAX_INTERVAL_MS=86400000
 constant Pam\Desktop\BackgroundJob::MIN_INTERVAL_MS=1000
 method Pam\Desktop\Accelerator::assert static ($accelerator:string):void
 method Pam\Desktop\Application::capabilities ($capabilities:Pam\Desktop\Capabilities):self
+method Pam\Desktop\Application::category ($category:Pam\Desktop\ApplicationCategory):self
 method Pam\Desktop\Application::command ($name:string,$handler:Closure):self
 method Pam\Desktop\Application::commandTimeout ($milliseconds:int):self
 method Pam\Desktop\Application::create static ($window:Pam\Desktop\Window,$manifest:Pam\Desktop\Manifest):self
+method Pam\Desktop\Application::description ($description:string):self
 method Pam\Desktop\Application::dispatch ($message:array):array
+method Pam\Desktop\Application::excludeFromBundle (...$paths:string):self
 method Pam\Desktop\Application::handleLine ($line:string):array
+method Pam\Desktop\Application::icon ($path:string):self
 method Pam\Desktop\Application::job ($id:string,$job:Pam\Desktop\BackgroundJob,$handler:Closure):self
+method Pam\Desktop\Application::make static ($id:string,$name:string,$version:string="1.0.0",$window:?Pam\Desktop\Window=null):self
 method Pam\Desktop\Application::on ($name:string,$handler:Closure):self
 method Pam\Desktop\Application::plugin ($plugin:Pam\Desktop\Plugin):self
+method Pam\Desktop\Application::publisher ($publisher:string):self
 method Pam\Desktop\Application::run ():never
 method Pam\Desktop\Application::rustPlugin ($plugin:Pam\Desktop\RustPlugin):self
 method Pam\Desktop\Application::shell ($shell:Pam\Desktop\Shell):self
+method Pam\Desktop\Application::updates ($updates:Pam\Desktop\Updates):self
 method Pam\Desktop\Application::window ($id:string,$window:Pam\Desktop\Window):self
+method Pam\Desktop\Application::withoutUpdates ():self
 method Pam\Desktop\ApplicationCategory::cases static ():array
 method Pam\Desktop\ApplicationCategory::from static ($value:string|int):static
 method Pam\Desktop\ApplicationCategory::tryFrom static ($value:string|int):?static
@@ -193,6 +201,7 @@ method Pam\Desktop\Updates::policy ($policy:Pam\Desktop\UpdatePolicy):self
 method Pam\Desktop\Updates::toArray ():array
 method Pam\Desktop\Window::create static ($title:string):self
 method Pam\Desktop\Window::entry ($entry:string):self
+method Pam\Desktop\Window::load ($path:string):self
 method Pam\Desktop\Window::minimumSize ($width:int,$height:int):self
 method Pam\Desktop\Window::resizable ($resizable:bool=true):self
 method Pam\Desktop\Window::size ($width:int,$height:int):self

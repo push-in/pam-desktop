@@ -15,7 +15,6 @@ use Pam\Desktop\CommandContext;
 use Pam\Desktop\CommandResult;
 use Pam\Desktop\GlobalShortcut;
 use Pam\Desktop\JobContext;
-use Pam\Desktop\Manifest;
 use Pam\Desktop\Menu;
 use Pam\Desktop\MenuItem;
 use Pam\Desktop\Shell;
@@ -24,12 +23,15 @@ use Pam\Desktop\TrayCloseBehavior;
 use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
 
-$app = Application::create(
-    window: Window::create('My application')->size(1120, 720),
-    manifest: Manifest::create('com.example.my-app', 'My application', '1.0.0')
-        ->publisher('Example')
-        ->category(ApplicationCategory::Development),
+$app = Application::make(
+    id: 'com.example.my-app',
+    name: 'My application',
+    window: Window::create('My application')
+        ->load('resources/index.html')
+        ->size(1120, 720),
 )
+    ->publisher('Example')
+    ->category(ApplicationCategory::Development)
     ->shell(
         Shell::none()
             ->menu(Menu::create(

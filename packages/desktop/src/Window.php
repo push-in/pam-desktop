@@ -73,6 +73,11 @@ final readonly class Window
         );
     }
 
+    public function load(string $path): self
+    {
+        return $this->entry($path);
+    }
+
     public function size(int $width, int $height): self
     {
         return new self(

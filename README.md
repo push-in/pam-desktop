@@ -102,7 +102,6 @@ use Pam\Desktop\CommandContext;
 use Pam\Desktop\CommandResult;
 use Pam\Desktop\FileSystemRoot;
 use Pam\Desktop\GlobalShortcut;
-use Pam\Desktop\Manifest;
 use Pam\Desktop\Menu;
 use Pam\Desktop\MenuItem;
 use Pam\Desktop\Shell;
@@ -112,20 +111,23 @@ use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
 use Pam\Desktop\WindowTheme;
 
-$app = Application::create(
+$app = Application::make(
+    id: 'com.pushin.my-app',
+    name: 'My desktop app',
+    version: '1.0.0',
     window: Window::create('My desktop app')
+        ->load('resources/index.html')
         ->size(1120, 720)
         ->minimumSize(720, 520)
         ->theme(WindowTheme::Dark),
-    manifest: Manifest::create('com.pushin.my-app', 'My desktop app', '1.0.0')
-        ->description('A PHP-first native desktop application.')
-        ->publisher('My team')
-        ->category(ApplicationCategory::Development),
 )
+    ->description('A PHP-first native desktop application.')
+    ->publisher('My team')
+    ->category(ApplicationCategory::Development)
     ->window(
         'settings',
         Window::create('Settings')
-            ->entry('resources/settings.html')
+            ->load('resources/settings.html')
             ->visible(false),
     )
     ->capabilities(
@@ -246,6 +248,7 @@ the byte size and SHA-256 digest of every shipped file. See the
 Updates remain disabled unless PHP pins the feed and Ed25519 public key:
 
 ```php
+use Pam\Desktop\Manifest;
 use Pam\Desktop\UpdatePolicy;
 use Pam\Desktop\Updates;
 

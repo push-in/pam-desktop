@@ -48,10 +48,9 @@ final class Application
     private Shell $shell;
 
     private function __construct(
-        private readonly Manifest $manifest,
+        private Manifest $manifest,
         Window $window,
-    )
-    {
+    ) {
         $this->windows = ['main' => $window];
         $this->capabilities = Capabilities::none();
         $this->shell = Shell::none();
@@ -60,6 +59,67 @@ final class Application
     public static function create(Window $window, Manifest $manifest): self
     {
         return new self($manifest, $window);
+    }
+
+    public static function make(
+        string $id,
+        string $name,
+        string $version = '1.0.0',
+        ?Window $window = null,
+    ): self {
+        return new self(
+            manifest: Manifest::create($id, $name, $version),
+            window: $window ?? Window::create($name),
+        );
+    }
+
+    public function description(string $description): self
+    {
+        $this->manifest = $this->manifest->description($description);
+
+        return $this;
+    }
+
+    public function publisher(string $publisher): self
+    {
+        $this->manifest = $this->manifest->publisher($publisher);
+
+        return $this;
+    }
+
+    public function category(ApplicationCategory $category): self
+    {
+        $this->manifest = $this->manifest->category($category);
+
+        return $this;
+    }
+
+    public function icon(string $path): self
+    {
+        $this->manifest = $this->manifest->icon($path);
+
+        return $this;
+    }
+
+    public function excludeFromBundle(string ...$paths): self
+    {
+        $this->manifest = $this->manifest->excludeFromBundle(...$paths);
+
+        return $this;
+    }
+
+    public function updates(Updates $updates): self
+    {
+        $this->manifest = $this->manifest->updates($updates);
+
+        return $this;
+    }
+
+    public function withoutUpdates(): self
+    {
+        $this->manifest = $this->manifest->withoutUpdates();
+
+        return $this;
     }
 
     public function window(string $id, Window $window): self

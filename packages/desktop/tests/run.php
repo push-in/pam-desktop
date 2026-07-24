@@ -50,6 +50,33 @@ function expect(bool $condition, string $message): void
 expect(Application::API_VERSION === 1, 'The stable PHP API version should be 1.');
 expect(Application::PROTOCOL_VERSION === 6, 'The stable PHP protocol should remain version 6.');
 
+$elegantApplication = Application::make(
+    id: 'com.pushin.elegant',
+    name: 'Elegant Desktop',
+    version: '1.2.3',
+    window: Window::create('Elegant Desktop')
+        ->load('resources/app.html')
+        ->size(960, 640),
+)
+    ->description('A concise PHP-first desktop application.')
+    ->publisher('Pushin')
+    ->category(ApplicationCategory::Development)
+    ->icon('resources/app.svg')
+    ->excludeFromBundle('storage/cache');
+
+$elegantBoot = $elegantApplication->dispatch([
+    'version' => 6,
+    'id' => 1,
+    'kind' => 1,
+    'windowId' => 'main',
+    'command' => '@pam/boot',
+    'payload' => null,
+]);
+expect($elegantBoot['payload']['manifest']['identifier'] === 'com.pushin.elegant', 'The concise factory should configure the application ID.');
+expect($elegantBoot['payload']['manifest']['name'] === 'Elegant Desktop', 'The concise factory should configure the application name.');
+expect($elegantBoot['payload']['manifest']['description'] === 'A concise PHP-first desktop application.', 'Application metadata should remain fluent.');
+expect($elegantBoot['payload']['windows'][0]['entry'] === 'resources/app.html', 'Window::load() should configure the entry document.');
+
 try {
     Shell::none()
         ->menu(Menu::create('orphan', 'Orphan', MenuItem::command('show', 'Show')))
