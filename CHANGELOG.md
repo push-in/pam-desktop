@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.4
+
+- Forced bindgen and mozangle to use the Clang 18 executable and resource
+  headers together on the GLIBC 2.35 build runner.
+
 ## 1.0.3
 
 - Restored the GLIBC 2.35 build baseline for compatibility with Ubuntu 22.04,

@@ -32,12 +32,20 @@ jobs:
           chmod 0755 "${RUNNER_TEMP}/llvm.sh"
           sudo "${RUNNER_TEMP}/llvm.sh" 18
           sudo apt-get install -y libclang-18-dev
+          echo "/usr/lib/llvm-18/bin" >> "${GITHUB_PATH}"
       - name: Build production host
         env:
           CC: clang-18
           CXX: clang++-18
+          CLANG_PATH: /usr/bin/clang-18
           LIBCLANG_PATH: /usr/lib/llvm-18/lib
-        run: cargo build --locked --release -p pam-desktop
+        run: |
+          clang --version
+          case "$(clang -print-resource-dir)" in
+            /usr/lib/llvm-18/lib/clang/*) ;;
+            *) exit 1 ;;
+          esac
+          cargo build --locked --release -p pam-desktop
       - name: Package and verify reproducible Linux host
         run: |
           version=${GITHUB_REF_NAME#v}
