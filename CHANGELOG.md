@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.3
+
+- Restored the GLIBC 2.35 build baseline for compatibility with Ubuntu 22.04,
+  Pop!_OS 22.04 and newer Linux distributions.
+- Kept Clang 18 for the Servo build without raising the runtime GLIBC baseline.
+
 ## 1.0.2
 
 - Added a Composer vendor binary that downloads the matching native desktop host

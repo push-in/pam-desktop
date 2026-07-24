@@ -10,7 +10,7 @@ permissions:
 jobs:
   build:
     name: x86_64-unknown-linux-gnu
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -25,7 +25,13 @@ jobs:
       - name: Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 jq libclang-18-dev libfontconfig1-dev pkg-config
+          sudo apt-get install -y curl jq libfontconfig1-dev pkg-config
+          curl --fail --location --silent --show-error \
+            --output "${RUNNER_TEMP}/llvm.sh" \
+            https://apt.llvm.org/llvm.sh
+          chmod 0755 "${RUNNER_TEMP}/llvm.sh"
+          sudo "${RUNNER_TEMP}/llvm.sh" 18
+          sudo apt-get install -y libclang-18-dev
       - name: Build production host
         env:
           CC: clang-18
