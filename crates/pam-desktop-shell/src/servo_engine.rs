@@ -55,9 +55,9 @@ pub fn run(runtime: DesktopRuntime, watch: bool) -> Result<(), String> {
 
 struct DesktopWindow {
     id: String,
-    window: Window,
-    rendering_context: Rc<WindowRenderingContext>,
     webview: WebView,
+    rendering_context: Rc<WindowRenderingContext>,
+    window: Window,
     mouse_position: Cell<DevicePoint>,
     modifiers: Cell<ModifiersState>,
 }
@@ -195,9 +195,9 @@ impl AppState {
 
         Ok(DesktopWindow {
             id: config.id.clone(),
-            window,
-            rendering_context,
             webview,
+            rendering_context,
+            window,
             mouse_position: Cell::new(DevicePoint::default()),
             modifiers: Cell::new(ModifiersState::empty()),
         })
@@ -321,7 +321,14 @@ impl AppState {
         if close_application {
             event_loop.exit();
         } else {
-            self.windows.borrow_mut().remove(&window_id);
+            // Keep Servo's WebView and EGL/surfman context alive for the
+            // process lifetime. Dropping and recreating a secondary window can
+            // invalidate the shared EGL display on GLVND/NVIDIA stacks.
+            if let Some(window) = self.windows.borrow().get(&window_id) {
+                window.webview.blur();
+                window.webview.hide();
+                window.window.set_visible(false);
+            }
         }
     }
 }
