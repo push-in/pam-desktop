@@ -16,7 +16,7 @@ jobs:
     outputs:
       rebuild: ${{ steps.native.outputs.rebuild }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - id: native
@@ -41,7 +41,7 @@ jobs:
     name: x86_64-unknown-linux-gnu
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.88"
