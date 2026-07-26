@@ -6,6 +6,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   native-changes:
@@ -26,7 +28,8 @@ jobs:
             echo "rebuild=true" >> "${GITHUB_OUTPUT}"
           elif git diff --quiet "${previous_tag}" "${GITHUB_SHA}" -- \
             Cargo.toml Cargo.lock crates compat/rust-plugin-v1 \
-            scripts/package-host-linux.sh scripts/test-host-archive.sh; then
+            scripts/package-host-linux.sh scripts/test-host-archive.sh \
+            .github/workflows/release.yml; then
             echo "rebuild=false" >> "${GITHUB_OUTPUT}"
           else
             echo "rebuild=true" >> "${GITHUB_OUTPUT}"
@@ -93,6 +96,10 @@ jobs:
             "verification/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
           scripts/test-host-archive.sh \
             "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
+      - name: Attest reproducible Linux host archive
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/*.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: pam-desktop-x86_64-unknown-linux-gnu

@@ -7,7 +7,7 @@
 A direct Servo host for building native desktop applications whose application
 logic remains elegant, typed PHP.
 
-![Version](https://img.shields.io/badge/version-1.0.0-68ded2?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.1.2-68ded2?style=flat-square)
 ![Status](https://img.shields.io/badge/Linux-stable-22c55e?style=flat-square)
 ![Servo](https://img.shields.io/badge/Servo-0.4.0-5b50d6?style=flat-square)
 ![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?style=flat-square&logo=php&logoColor=white)

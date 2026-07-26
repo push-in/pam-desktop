@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.1.2
+
+- Added GitHub artifact provenance for the byte-reproducible Linux x86-64 host
+  archive.
+- Made release-workflow changes participate in native-host change detection so
+  supply-chain changes cannot produce an API-only release without assets.
+- Updated the public version record and completed the missing 1.0.5–1.1.1
+  changelog history.
+
+## 1.1.1
+
+- Preserved secondary Servo WebViews and rendering contexts when their native
+  close control is used, preventing shared EGL display invalidation on
+  GLVND/NVIDIA systems.
+
+## 1.1.0
+
+- Added the concise `Application::make(...)`, `Window::load(...)`, and
+  `Window::defaults(...)` DSL while preserving the complete stable API 1
+  compatibility surface.
+
+## 1.0.5
+
+- Released old Servo window generations before hot-reload replacements are
+  created so an old EGL connection cannot invalidate a new shared display.
+
 ## 1.0.4
 
 - Forced bindgen and mozangle to use the Clang 18 executable and resource
