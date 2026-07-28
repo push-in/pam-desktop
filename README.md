@@ -7,12 +7,20 @@
 A direct Servo host for building native desktop applications whose application
 logic remains elegant, typed PHP.
 
+[![Documentation](https://img.shields.io/badge/docs-desktop-5b50d6?style=flat-square)](https://push-in.github.io/pam-docs/desktop/overview/)
 ![Version](https://img.shields.io/badge/version-1.1.2-68ded2?style=flat-square)
 ![Status](https://img.shields.io/badge/Linux-stable-22c55e?style=flat-square)
 ![Servo](https://img.shields.io/badge/Servo-0.4.0-5b50d6?style=flat-square)
 ![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?style=flat-square&logo=php&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-1.88%2B-000000?style=flat-square&logo=rust&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)
+
+**[Documentation](https://push-in.github.io/pam-docs/desktop/overview/) ·
+[Capabilities](https://push-in.github.io/pam-docs/desktop/capabilities/) ·
+[Security](https://push-in.github.io/pam-docs/desktop/security/) ·
+[Distribution](https://push-in.github.io/pam-docs/desktop/distribution/) ·
+[Plugins](https://push-in.github.io/pam-docs/desktop/plugins/) ·
+[Contributing](https://push-in.github.io/pam-docs/community/contributing/)**
 
 </div>
 
@@ -21,6 +29,17 @@ logic remains elegant, typed PHP.
 Pam Desktop is intentionally separate from the Pam server core. This repository
 owns the native window, Servo integration, secure local bridge, shared protocol,
 and the `pushinbr/pam-desktop` Composer package. Pam remains the PHP worker runtime.
+
+It is a desktop stack with an opinion: PHP should own application logic, Rust
+should own the security and process boundary, and Servo should render the local
+experience directly. No Electron-sized Node runtime, no ambient filesystem
+access, and no pretending that a browser tab is an application architecture.
+
+PAM Desktop pairs expressive authoring with explicit native authority:
+capabilities default to off, commands are registered deliberately, file access
+uses named roots or opaque grants, plugins run behind versioned contracts, and
+releases carry integrity metadata. It is built to feel powerful without making
+the security model vague.
 
 Version 1.0 freezes the public PHP, JavaScript and Rust plugin APIs and turns
 the Linux host into a reproducible, verifiable release:
