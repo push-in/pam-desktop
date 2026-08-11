@@ -110,88 +110,65 @@ for authorized filesystem, dialogs, clipboard, notifications and dropped
 files. The public experience stays under `pam desktop`; `pam-desktop` is the
 internal host binary.
 
-Application code stays compact:
+Application code reads like application code—not a serialized host manifest:
 
 ```php
 <?php
 
 declare(strict_types=1);
 
-use Pam\Desktop\Application;
-use Pam\Desktop\ApplicationCategory;
-use Pam\Desktop\Capabilities;
-use Pam\Desktop\ClientEvent;
-use Pam\Desktop\CommandContext;
-use Pam\Desktop\CommandResult;
-use Pam\Desktop\FileSystemRoot;
-use Pam\Desktop\GlobalShortcut;
-use Pam\Desktop\Menu;
-use Pam\Desktop\MenuItem;
-use Pam\Desktop\Shell;
-use Pam\Desktop\Tray;
-use Pam\Desktop\TrayCloseBehavior;
-use Pam\Desktop\Window;
-use Pam\Desktop\WindowEffect;
+namespace App;
+
+use Pam\Desktop\App;
+use Pam\Desktop\Attributes\Command;
+use Pam\Desktop\Attributes\Desktop;
+use Pam\Desktop\Events;
+use Pam\Desktop\WindowHandle;
 use Pam\Desktop\WindowTheme;
 
-$app = Application::make(
+#[Desktop(
     id: 'com.pushin.my-app',
     name: 'My desktop app',
     version: '1.0.0',
-    window: Window::create('My desktop app')
-        ->load('resources/index.html')
-        ->size(1120, 720)
-        ->minimumSize(720, 520)
-        ->theme(WindowTheme::Dark),
-)
-    ->description('A PHP-first native desktop application.')
-    ->publisher('My team')
-    ->category(ApplicationCategory::Development)
-    ->window(
-        'settings',
-        Window::create('Settings')
-            ->load('resources/settings.html')
-            ->visible(false),
-    )
-    ->capabilities(
-        Capabilities::none()
-            ->filesystem(FileSystemRoot::readWrite('data', __DIR__.'/storage'))
-            ->dialogs()
-            ->clipboard()
-            ->notifications()
-            ->dragAndDrop(),
-    )
-    ->shell(
-        Shell::none()
-            ->menu(Menu::create(
-                'app',
-                'Application',
-                MenuItem::command('show', 'Show window', 'CmdOrCtrl+Shift+KeyP'),
-                MenuItem::separator(),
-                MenuItem::command('quit', 'Quit'),
-            ))
-            ->tray(
-                Tray::create('app', 'My desktop app')
-                    ->closeBehavior(TrayCloseBehavior::Hide),
-            )
-            ->shortcut(GlobalShortcut::create('show', 'CmdOrCtrl+Shift+KeyP')),
-    )
-    ->commandTimeout(10_000);
+    description: 'A PHP-first native desktop application.',
+    theme: WindowTheme::Dark,
+)]
+final class MyApp extends App
+{
+    #[Command]
+    public function greet(
+        WindowHandle $window,
+        Events $events,
+        string $name = 'mundo',
+    ): array {
+        $window->title("Olá, {$name}");
+        $events->emit(new GreetingCompleted($name));
 
-$app->command('greet', static function (CommandContext $command): CommandResult {
-    $name = $command->string('name', 'mundo');
+        return ['message' => "Olá, {$name}."];
+    }
+}
 
-    return CommandResult::success(['message' => "Olá, {$name}."])
-        ->effect(WindowEffect::title("Olá, {$name}", $command->windowId))
-        ->event(new ClientEvent(
-            name: 'greeting.completed',
-            payload: ['name' => $name],
-            windowId: $command->windowId,
-        ));
-});
-
-$app->run();
+final readonly class GreetingCompleted
+{
+    public function __construct(public string $name) {}
+}
 ```
+
+The entry point is one line:
+
+```php
+App\MyApp::run();
+```
+
+`#[Command]` maps payload fields to typed parameters, resolves application
+services from the container, collects native effects, derives typed event
+names, and normalizes ordinary PHP return values. There is no context parsing,
+effect tree, or protocol envelope on the happy path.
+
+Need complete control? The immutable `Application`, `Manifest`, `Window`,
+`Capabilities`, `Shell`, and `CommandResult` builders remain the stable
+low-level API. The convention layer compiles into those same contracts; it is
+not a second runtime.
 
 In the trusted local frontend:
 
@@ -357,11 +334,13 @@ compat/
 └── rust-plugin-v1/        Rust SDK compile-compatibility consumer
 docs/
 ├── architecture.md        process, security and extension boundaries
+├── authoring.md           convention-first applications and DI
 ├── background-jobs.md     supervised PHP scheduling and lifecycle events
 ├── capabilities.md        PHP policy and frontend native APIs
 ├── database.md            capability-scoped native SQLite
 ├── distribution.md        Linux bundles, archives and Debian packages
 ├── desktop-portals.md     user-mediated URI, screenshot and PDF integration
+├── declarative-windows-and-menus.md typed windows and action menus
 ├── file-watching.md       capability-scoped change notifications
 ├── http.md                confined native HTTPS transport
 ├── lifecycle.md           single instance, deep links and associations
@@ -372,6 +351,7 @@ docs/
 ├── plugins.md             PHP composition and process-isolated Rust SDK
 ├── streaming.md           backpressured binary file streams
 ├── stability.md           1.x support, SemVer and compatibility policy
+├── typed-commands.md       method/class commands, DTOs and typed events
 └── updates.md             signing, feeds and atomic automatic updates
 packaging/linux/            rootless host installation templates
 scripts/                    reproducible Linux host packaging and verification

@@ -12,10 +12,21 @@ spl_autoload_register(static function (string $class): void {
 });
 
 use Pam\Desktop\Application;
+use Pam\Desktop\App;
 use Pam\Desktop\ApplicationCategory;
+use Pam\Desktop\Attributes\Command as CommandAttribute;
+use Pam\Desktop\Attributes\Desktop as DesktopAttribute;
+use Pam\Desktop\Attributes\Menu as MenuAttribute;
+use Pam\Desktop\Attributes\MenuItem as MenuItemAttribute;
+use Pam\Desktop\Attributes\MenuSeparator;
+use Pam\Desktop\Attributes\Listen;
+use Pam\Desktop\Attributes\Window as WindowAttribute;
 use Pam\Desktop\BackgroundJob;
 use Pam\Desktop\Capabilities;
 use Pam\Desktop\Database;
+use Pam\Desktop\Desktop;
+use Pam\Desktop\DesktopWindow;
+use Pam\Desktop\Events;
 use Pam\Desktop\ClientEvent;
 use Pam\Desktop\CommandContext;
 use Pam\Desktop\CommandExecution;
@@ -44,6 +55,146 @@ use Pam\Desktop\Updates;
 use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
 use Pam\Desktop\WindowTheme;
+use Pam\Desktop\WindowHandle;
+
+final readonly class GreetingService
+{
+    public function message(string $name): string
+    {
+        return "Hello, {$name}!";
+    }
+}
+
+final readonly class GreetingCompleted
+{
+    public function __construct(public string $name)
+    {
+    }
+}
+
+enum ExportFormat: int
+{
+    case Pdf = 1;
+    case Html = 2;
+}
+
+final readonly class DocumentData
+{
+    public function __construct(
+        public int $id,
+        public string $title,
+    ) {
+    }
+}
+
+#[WindowAttribute(
+    name: 'settings',
+    title: 'Settings',
+    page: 'resources/settings.html',
+)]
+final readonly class SettingsWindow extends DesktopWindow
+{
+}
+
+#[MenuAttribute(
+    id: 'app',
+    label: 'Convention Desktop',
+    close: TrayCloseBehavior::Hide,
+)]
+final class ConventionMenu
+{
+    #[MenuItemAttribute('Show window', shortcut: 'CmdOrCtrl+Shift+KeyP')]
+    public function show(WindowHandle $window): void
+    {
+        $window->show()->focus();
+    }
+
+    #[MenuSeparator]
+    public function separator(): void
+    {
+    }
+
+    #[MenuItemAttribute('Background mode', checkbox: true)]
+    public function background(): void
+    {
+    }
+
+    #[MenuItemAttribute('Quit')]
+    public function quit(): null
+    {
+        return null;
+    }
+}
+
+#[DesktopAttribute(
+    id: 'com.pushin.convention',
+    name: 'Convention Desktop',
+    version: '2.0.0',
+    description: 'Convention-first desktop application.',
+    category: ApplicationCategory::Development,
+    theme: WindowTheme::Dark,
+)]
+final class ConventionApp extends App
+{
+    public function __construct(private readonly GreetingService $greetings)
+    {
+    }
+
+    protected function configure(Desktop $desktop): void
+    {
+        $desktop
+            ->permissions(static fn ($permissions) => $permissions
+                ->filesystem('data', 'storage', read: true, write: true)
+                ->dialogs()
+                ->clipboard()
+                ->notifications())
+            ->timeout(10_000);
+    }
+
+    protected function windows(): array
+    {
+        return [SettingsWindow::class];
+    }
+
+    protected function menus(): array
+    {
+        return [ConventionMenu::class];
+    }
+
+    #[CommandAttribute]
+    public function greet(
+        WindowHandle $window,
+        Events $events,
+        string $name = 'world',
+    ): array {
+        $window->title("Hello, {$name}");
+        $events->emit(new GreetingCompleted($name));
+
+        return ['message' => $this->greetings->message($name)];
+    }
+
+    #[CommandAttribute]
+    public function openSettings(SettingsWindow $settings): void
+    {
+        $settings->show()->focus();
+    }
+
+    #[CommandAttribute('documents.describe')]
+    public function describeDocument(DocumentData $document, ExportFormat $format): array
+    {
+        return [
+            'id' => $document->id,
+            'title' => $document->title,
+            'format' => $format->value,
+        ];
+    }
+
+    #[Listen('editor.changed')]
+    public function editorChanged(string $documentId, WindowHandle $window): void
+    {
+        $window->title("Editing {$documentId}");
+    }
+}
 
 function expect(bool $condition, string $message): void
 {
@@ -54,6 +205,83 @@ function expect(bool $condition, string $message): void
 
 expect(Application::API_VERSION === 1, 'The stable PHP API version should be 1.');
 expect(Application::PROTOCOL_VERSION === 6, 'The stable PHP protocol should remain version 6.');
+
+$conventionApplication = ConventionApp::application();
+$conventionBoot = $conventionApplication->dispatch([
+    'version' => 6,
+    'id' => 100,
+    'kind' => 1,
+    'windowId' => 'main',
+    'command' => '@pam/boot',
+    'payload' => null,
+]);
+expect($conventionBoot['payload']['manifest']['identifier'] === 'com.pushin.convention', 'The #[Desktop] attribute should define the manifest.');
+expect($conventionBoot['payload']['windows'][0]['entry'] === 'resources/index.html', 'The convention-first app should use the conventional entry page.');
+expect($conventionBoot['payload']['windows'][1]['id'] === 'settings', 'Attributed windows should be discovered.');
+expect($conventionBoot['payload']['commands'][0]['name'] === 'greet', 'Attributed methods should become commands.');
+expect($conventionBoot['payload']['shell']['tray']['closeBehavior'] === 2, 'Attributed menus should configure the tray.');
+expect($conventionBoot['payload']['shell']['shortcuts'][0]['id'] === 'show', 'Menu shortcuts should become native shortcuts.');
+expect($conventionBoot['payload']['shell']['menus'][0]['items'][2]['kind'] === 2, 'Attributed menu checkboxes should retain their kind when unchecked.');
+
+$conventionGreeting = $conventionApplication->dispatch([
+    'version' => 6,
+    'id' => 101,
+    'kind' => 1,
+    'windowId' => 'main',
+    'command' => 'greet',
+    'payload' => ['name' => 'David'],
+]);
+expect($conventionGreeting['payload']['message'] === 'Hello, David!', 'Typed command arguments and constructor DI should resolve.');
+expect($conventionGreeting['effects'][0]['payload']['title'] === 'Hello, David', 'Window handles should collect native effects.');
+expect($conventionGreeting['events'][0]['name'] === 'greeting.completed', 'Event object names should derive from their classes.');
+
+$defaultGreeting = $conventionApplication->dispatch([
+    'version' => 6,
+    'id' => 104,
+    'kind' => 1,
+    'windowId' => 'main',
+    'command' => 'greet',
+    'payload' => [],
+]);
+expect($defaultGreeting['payload']['message'] === 'Hello, world!', 'PHP defaults should apply to omitted payload fields.');
+
+$openSettings = $conventionApplication->dispatch([
+    'version' => 6,
+    'id' => 102,
+    'kind' => 1,
+    'windowId' => 'main',
+    'command' => 'open.settings',
+    'payload' => null,
+]);
+expect($openSettings['effects'][0]['windowId'] === 'settings', 'Typed window classes should target their declared windows.');
+expect($openSettings['effects'][1]['kind'] === EffectKind::FocusWindow->value, 'Typed window methods should collect ordered effects.');
+
+$typedEvent = $conventionApplication->dispatch([
+    'version' => 6,
+    'id' => 103,
+    'kind' => 1,
+    'windowId' => 'main',
+    'command' => '@pam/event',
+    'payload' => [
+        'name' => 'editor.changed',
+        'payload' => ['documentId' => 'document-42'],
+    ],
+]);
+expect($typedEvent['effects'][0]['payload']['title'] === 'Editing document-42', 'Attributed listeners should bind typed event payloads.');
+
+$typedDocument = $conventionApplication->dispatch([
+    'version' => 6,
+    'id' => 105,
+    'kind' => 1,
+    'windowId' => 'main',
+    'command' => 'documents.describe',
+    'payload' => [
+        'document' => ['id' => 42, 'title' => 'Roadmap'],
+        'format' => 1,
+    ],
+]);
+expect($typedDocument['payload']['id'] === 42, 'Nested command objects should hydrate typed DTOs.');
+expect($typedDocument['payload']['format'] === 1, 'Integer-backed enums should bind through from().');
 
 $elegantApplication = Application::make(
     id: 'com.pushin.elegant',

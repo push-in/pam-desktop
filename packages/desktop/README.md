@@ -5,65 +5,40 @@ jobs, plugins, native-shell policy, typed effects, payload validation and the
 versioned worker loop. The Rust host owns Servo, operating-system handles,
 security boundaries, plugin processes and lifecycle.
 
+The default authoring model follows PAM Native: declare the application once,
+write commands as ordinary typed methods, and inject only the services a use
+case needs.
+
 ```php
 <?php
 
-use Pam\Desktop\Application;
-use Pam\Desktop\ApplicationCategory;
-use Pam\Desktop\BackgroundJob;
-use Pam\Desktop\CommandContext;
-use Pam\Desktop\CommandResult;
-use Pam\Desktop\GlobalShortcut;
-use Pam\Desktop\JobContext;
-use Pam\Desktop\Menu;
-use Pam\Desktop\MenuItem;
-use Pam\Desktop\Shell;
-use Pam\Desktop\Tray;
-use Pam\Desktop\TrayCloseBehavior;
-use Pam\Desktop\Window;
-use Pam\Desktop\WindowEffect;
+use Pam\Desktop\App;
+use Pam\Desktop\Attributes\Command;
+use Pam\Desktop\Attributes\Desktop;
+use Pam\Desktop\Events;
+use Pam\Desktop\WindowHandle;
 
-$app = Application::make(
-    id: 'com.example.my-app',
-    name: 'My application',
-    window: Window::create('My application')
-        ->load('resources/index.html')
-        ->size(1120, 720),
-)
-    ->publisher('Example')
-    ->category(ApplicationCategory::Development)
-    ->shell(
-        Shell::none()
-            ->menu(Menu::create(
-                'application',
-                'Application',
-                MenuItem::command('show', 'Show', 'CmdOrCtrl+Shift+KeyP'),
-                MenuItem::separator(),
-                MenuItem::command('quit', 'Quit'),
-            ))
-            ->tray(
-                Tray::create('application', 'My application')
-                    ->closeBehavior(TrayCloseBehavior::Hide),
-            )
-            ->shortcut(GlobalShortcut::create('show', 'CmdOrCtrl+Shift+KeyP')),
-    )
-    ->commandTimeout(10_000);
+#[Desktop(id: 'com.example.my-app', name: 'My application')]
+final class MyApp extends App
+{
+    #[Command]
+    public function greet(
+        WindowHandle $window,
+        Events $events,
+        string $name = 'world',
+    ): array {
+        $window->title("Hello, {$name}");
+        $events->emit('greeting.completed', compact('name'));
 
-$app->command('greet', static function (CommandContext $command): CommandResult {
-    $name = $command->string('name', 'world');
+        return ['message' => "Hello, {$name}!"];
+    }
+}
 
-    return CommandResult::success(['message' => "Hello, {$name}!"])
-        ->effect(WindowEffect::title("Hello, {$name}", $command->windowId));
-});
-
-$app->job(
-    'heartbeat',
-    BackgroundJob::every(30_000)->timeout(3_000),
-    static fn (JobContext $job): array => ['runId' => $job->runId],
-);
-
-$app->run();
+MyApp::run();
 ```
+
+The immutable builders shown in previous releases remain supported as the
+advanced API and compile to the same protocol.
 
 Protocol 6 supports:
 

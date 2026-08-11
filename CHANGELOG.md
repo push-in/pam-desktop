@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add the convention-first `App` authoring layer aligned with PAM Native:
+  `#[Desktop]`, typed `#[Command]` methods and invokable classes, constructor
+  injection, DTO hydration, integer-backed enum binding and ordinary PHP
+  return normalization.
+- Add invocation-scoped `WindowHandle`, `Windows`, typed `DesktopWindow`,
+  `Events` and `ApplicationControl` services that collect native effects and
+  event objects without exposing host handles or protocol envelopes.
+- Add declarative `#[Window]`, `#[Menu]`, `#[MenuItem]`, `#[MenuSeparator]` and
+  `#[Listen]` discovery while preserving the immutable API 1 builders as the
+  advanced layer.
+- Add focused authoring, typed-command, window and menu documentation plus a
+  convention-first README quick start.
+
 - Add capability-scoped, backpressured binary read/write streams without
   base64 payload expansion.
 - Add capability-scoped native HTTPS with named origins, path confinement,

@@ -80,15 +80,20 @@ function propertySignature(ReflectionClass $class, ReflectionProperty $property)
     );
 }
 
-$sourceFiles = glob(dirname(__DIR__).'/src/*.php');
-if ($sourceFiles === false) {
-    throw new RuntimeException('Could not discover the public PHP API sources.');
+$sourceRoot = dirname(__DIR__).'/src';
+$sourceFiles = [];
+$iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($sourceRoot));
+foreach ($iterator as $sourceFile) {
+    if ($sourceFile->isFile() && $sourceFile->getExtension() === 'php') {
+        $sourceFiles[] = $sourceFile->getPathname();
+    }
 }
+sort($sourceFiles, SORT_STRING);
 
 $surface = [];
 foreach ($sourceFiles as $sourceFile) {
-    $name = pathinfo($sourceFile, PATHINFO_FILENAME);
-    $className = 'Pam\\Desktop\\'.$name;
+    $relative = substr($sourceFile, strlen($sourceRoot) + 1, -4);
+    $className = 'Pam\\Desktop\\'.str_replace(DIRECTORY_SEPARATOR, '\\', $relative);
     if (
         !class_exists($className)
         && !interface_exists($className)
@@ -161,6 +166,13 @@ $contractPath = dirname(__DIR__, 3).'/compat/php-api-v1.txt';
 $expected = is_file($contractPath) ? file_get_contents($contractPath) : false;
 
 if ($expected !== $actual) {
+    if (getenv('PAM_UPDATE_COMPATIBILITY') === '1') {
+        if (file_put_contents($contractPath, $actual) === false) {
+            throw new RuntimeException('Could not update the PHP API compatibility snapshot.');
+        }
+        fwrite(STDOUT, "PHP API v1 compatibility contract updated.\n");
+        exit(0);
+    }
     fwrite(
         STDERR,
         "The PHP API v1 surface changed. Review it and update compat/php-api-v1.txt intentionally.\n\n".
