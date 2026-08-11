@@ -16,6 +16,9 @@ logic remains elegant, typed PHP.
 ![License](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)
 
 **[Documentation](https://push-in.github.io/pam-docs/desktop/overview/) ·
+[5-minute tutorial](https://push-in.github.io/pam-docs/desktop/quickstart/) ·
+[Cookbook](https://push-in.github.io/pam-docs/desktop/cookbook/) ·
+[vs Electron](https://push-in.github.io/pam-docs/desktop/electron-comparison/) ·
 [Capabilities](https://push-in.github.io/pam-docs/desktop/capabilities/) ·
 [Security](https://push-in.github.io/pam-docs/desktop/security/) ·
 [Distribution](https://push-in.github.io/pam-docs/desktop/distribution/) ·
@@ -159,6 +162,13 @@ The entry point is one line:
 ```php
 App\MyApp::run();
 ```
+
+New to the stack? The
+**[five-minute Notes tutorial](https://push-in.github.io/pam-docs/desktop/quickstart/)**
+walks from scaffold to typed command, injected service, frontend event, native
+window effect and portable Linux package. The
+**[desktop mental model](https://push-in.github.io/pam-docs/desktop/mental-model/)**
+then explains exactly what PHP, Servo, Rust and the PAM worker each own.
 
 `#[Command]` maps payload fields to typed parameters, resolves application
 services from the container, collects native effects, derives typed event
