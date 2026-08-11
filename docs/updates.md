@@ -53,7 +53,7 @@ Build artifacts on their native hosts, collect them in the trusted release job,
 then sign one feed containing every target:
 
 ```bash
-pam desktop publish-update . \
+pam desktop publish-update \
   --key /secure/my-app-update.key \
   --output dist/stable.json \
   --published-at 2026-07-23T14:00:00Z \

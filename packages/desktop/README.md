@@ -71,8 +71,8 @@ Rust extensions use the separate `pam-desktop-plugin` SDK and never load a
 dynamic-library ABI into the Servo host. Create one with:
 
 ```bash
-pam desktop plugin new system.info .
-pam desktop plugin build system.info .
+pam desktop plugin new system.info
+pam desktop plugin build system.info
 ```
 
 Validate the package with:

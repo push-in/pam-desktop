@@ -61,8 +61,8 @@ throws, Pam removes the incomplete plugin declaration and fails boot.
 Create a process-isolated plugin inside an application:
 
 ```bash
-pam desktop plugin new system.info .
-pam desktop plugin build system.info .
+pam desktop plugin new system.info
+pam desktop plugin build system.info
 ```
 
 The first command creates `plugins/system.info`; the second performs a locked

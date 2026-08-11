@@ -102,9 +102,9 @@ From a Pam checkout that has this repository beside it:
 ```bash
 pam init hello-desktop --template desktop
 cd hello-desktop
-pam desktop doctor .
-pam desktop dev .
-pam desktop build .
+pam desktop doctor
+pam desktop dev
+pam desktop build
 ```
 
 The generated Hello World demonstrates commands, PHP-to-JavaScript events,
@@ -248,14 +248,14 @@ The application manifest stays beside windows and capabilities in PHP. Build
 the default directory and portable archive atomically:
 
 ```bash
-pam desktop build .
+pam desktop build
 ```
 
 Additional formats and output control:
 
 ```bash
-pam desktop build . --output dist --format deb
-pam desktop build . --format all --force
+pam desktop build --output dist --format deb
+pam desktop build --format all --force
 ```
 
 Linux portable archives contain `install.sh` and `uninstall.sh` for a per-user
@@ -286,7 +286,7 @@ publish a feed from already-built artifacts:
 
 ```bash
 pam desktop update-key --output ~/.config/pam/keys/my-app.key
-pam desktop publish-update . \
+pam desktop publish-update \
   --key ~/.config/pam/keys/my-app.key \
   --output dist/stable.json \
   --published-at 2026-07-23T14:00:00Z \

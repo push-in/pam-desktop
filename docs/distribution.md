@@ -36,10 +36,10 @@ repository locations are removed after their packages are materialized.
 
 ```bash
 # Unpacked Linux bundle + update-ready portable archive
-pam desktop build .
+pam desktop build
 
-pam desktop build . --format deb
-pam desktop build . --output artifacts --format all
+pam desktop build --format deb
+pam desktop build --output artifacts --format all
 ```
 
 Existing destinations cause a failure. Pass `--force` only to replace those

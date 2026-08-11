@@ -25,7 +25,7 @@ Pam worker
 PHP 8.4 + pushinbr/pam-desktop app
 ```
 
-`pam desktop dev .` delegates to the internal host, which performs these steps:
+`pam desktop dev` delegates to the internal host, which performs these steps:
 
 1. Resolve the project root and require `app.php`, `composer.json`, and
    `vendor/autoload.php`.
