@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.2.1
+
+- Align the Rust workspace, packaged host and Composer launcher on version
+  1.2.1 after the additive 1.2.0 PHP API publication.
+
 - Add the convention-first `App` authoring layer aligned with PAM Native:
   `#[Desktop]`, typed `#[Command]` methods and invokable classes, constructor
   injection, DTO hydration, integer-backed enum binding and ordinary PHP

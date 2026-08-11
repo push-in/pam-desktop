@@ -4,7 +4,7 @@ set -eu
 
 # The native host has its own release cadence. Composer API releases can keep
 # using this verified engine without rebuilding Servo.
-HOST_VERSION='1.1.0'
+HOST_VERSION='1.2.1'
 TARGET='x86_64-unknown-linux-gnu'
 REPOSITORY='push-in/pam-desktop'
 ARCHIVE="pam-desktop-${HOST_VERSION}-${TARGET}.tar.gz"

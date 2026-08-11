@@ -5111,7 +5111,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop"
-version = "1.1.2"
+version = "1.2.1"
 dependencies = [
  "arboard",
  "ashpd",
@@ -5147,7 +5147,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-plugin"
-version = "1.1.2"
+version = "1.2.1"
 dependencies = [
  "pam-desktop-protocol",
  "serde_json",
@@ -5155,7 +5155,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-protocol"
-version = "1.1.2"
+version = "1.2.1"
 dependencies = [
  "serde",
  "serde_json",
