@@ -16,12 +16,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
+use crate::database::{DatabaseRequest, DatabaseServices};
+use crate::http_client::{HttpRequest, HttpServices};
+use crate::process_runner::{ProcessRequest, ProcessServices};
+
 const MAX_TEXT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CLIPBOARD_BYTES: usize = 1024 * 1024;
 const MAX_NOTIFICATION_TITLE_BYTES: usize = 256;
 const MAX_NOTIFICATION_BODY_BYTES: usize = 4 * 1024;
 const MAX_DIALOG_FILTERS: usize = 16;
 const MAX_DIALOG_EXTENSIONS: usize = 32;
+pub const MAX_STREAM_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,21 +109,21 @@ pub struct NativeError {
 }
 
 impl NativeError {
-    fn disabled(capability: &str) -> Self {
+    pub(crate) fn disabled(capability: impl std::fmt::Display) -> Self {
         Self {
             code: ErrorCode::CapabilityDisabled,
             message: format!("The {capability} capability is not enabled by the PHP application."),
         }
     }
 
-    fn invalid(message: impl Into<String>) -> Self {
+    pub(crate) fn invalid(message: impl Into<String>) -> Self {
         Self {
             code: ErrorCode::InvalidPayload,
             message: message.into(),
         }
     }
 
-    fn permission(message: impl Into<String>) -> Self {
+    pub(crate) fn permission(message: impl Into<String>) -> Self {
         Self {
             code: ErrorCode::PermissionDenied,
             message: message.into(),
@@ -144,10 +149,17 @@ impl NativeError {
         }
     }
 
-    fn native(context: &str, error: impl std::fmt::Display) -> Self {
+    pub(crate) fn native(context: &str, error: impl std::fmt::Display) -> Self {
         Self {
             code: ErrorCode::NativeOperationFailed,
             message: format!("{context}: {error}"),
+        }
+    }
+
+    pub(crate) fn too_large(message: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::ResourceTooLarge,
+            message: message.into(),
         }
     }
 }
@@ -157,6 +169,9 @@ pub struct NativeServices {
     roots: HashMap<String, AuthorizedRoot>,
     grants: Mutex<HashMap<String, FileGrant>>,
     clipboard: Mutex<Option<Clipboard>>,
+    databases: DatabaseServices,
+    http: HttpServices,
+    processes: ProcessServices,
 }
 
 impl NativeServices {
@@ -197,6 +212,7 @@ impl NativeServices {
                 AuthorizedRoot {
                     directory: Arc::new(directory),
                     access: config.access,
+                    path: canonical,
                 },
             );
         }
@@ -206,12 +222,82 @@ impl NativeServices {
             roots,
             grants: Mutex::new(HashMap::new()),
             clipboard: Mutex::new(None),
+            databases: DatabaseServices::prepare(project_root, &capabilities.databases)?,
+            http: HttpServices::prepare(&capabilities.http_origins)?,
+            processes: ProcessServices::prepare(project_root, &capabilities.processes)?,
         })
+    }
+
+    #[must_use]
+    pub fn secrets_enabled(&self) -> bool {
+        self.capabilities.secrets
+    }
+
+    #[must_use]
+    pub fn desktop_portal_enabled(&self) -> bool {
+        self.capabilities.desktop_portal
     }
 
     #[must_use]
     pub fn drag_and_drop_enabled(&self) -> bool {
         self.capabilities.drag_and_drop
+    }
+
+    pub fn database(&self, request: &DatabaseRequest) -> Result<Value, NativeError> {
+        self.databases.dispatch(request)
+    }
+
+    pub fn system_information(&self) -> Result<Value, NativeError> {
+        if !self.capabilities.system_information {
+            return Err(NativeError::disabled("system information"));
+        }
+        serde_json::to_value(crate::system_info::snapshot())
+            .map_err(|error| NativeError::native("Cannot encode system information", error))
+    }
+
+    pub fn http(&self, request: &HttpRequest) -> Result<Value, NativeError> {
+        self.http.dispatch(request)
+    }
+
+    pub fn process(&self, request: &ProcessRequest) -> Result<Value, NativeError> {
+        serde_json::to_value(self.processes.execute(request)?)
+            .map_err(|error| NativeError::native("Cannot encode process result", error))
+    }
+
+    pub fn watch_path(&self, target: &FileTarget) -> Result<PathBuf, NativeError> {
+        let Some(root_name) = &target.root else {
+            return Err(NativeError::invalid(
+                "File watches require a named filesystem root.",
+            ));
+        };
+        if target.grant_id.is_some() {
+            return Err(NativeError::invalid(
+                "File watches cannot combine root and grantId.",
+            ));
+        }
+        validate_relative_path(&target.path)?;
+        let root = self
+            .roots
+            .get(root_name)
+            .ok_or_else(|| NativeError::permission("The filesystem root is not authorized."))?;
+        if !root.access.can_read() {
+            return Err(NativeError::permission("File watches require read access."));
+        }
+        let candidate = root.path.join(&target.path);
+        let canonical = candidate
+            .canonicalize()
+            .map_err(|error| NativeError::io("Cannot resolve watched path", &error))?;
+        if !canonical.starts_with(&root.path) {
+            return Err(NativeError::permission(
+                "The watched path escapes its authorized root.",
+            ));
+        }
+        let metadata = std::fs::symlink_metadata(&candidate)
+            .map_err(|error| NativeError::io("Cannot inspect watched path", &error))?;
+        if metadata.file_type().is_symlink() {
+            return Err(NativeError::permission("Symbolic links cannot be watched."));
+        }
+        Ok(canonical)
     }
 
     pub fn filesystem(&self, request: &FileRequest) -> Result<Value, NativeError> {
@@ -223,6 +309,48 @@ impl NativeServices {
             FileOperation::Metadata => Self::metadata(&target),
             FileOperation::CreateDirectory => Self::create_directory(&target),
         }
+    }
+
+    pub fn open_read_stream(
+        &self,
+        target: &FileTarget,
+    ) -> Result<(std::fs::File, u64), NativeError> {
+        let target = self.resolve(target)?;
+        target.require_read()?;
+        let metadata = target.metadata()?;
+        if !metadata.is_file() {
+            return Err(NativeError::invalid(
+                "Streaming reads require a regular file.",
+            ));
+        }
+        if metadata.len() > MAX_STREAM_BYTES {
+            return Err(NativeError::too_large(format!(
+                "Streaming files are limited to {MAX_STREAM_BYTES} bytes."
+            )));
+        }
+        let file = target
+            .directory
+            .open(&target.relative)
+            .map_err(|error| NativeError::io("Cannot open the streaming file", &error))?;
+        Ok((file.into_std(), metadata.len()))
+    }
+
+    pub fn open_write_stream(&self, target: &FileTarget) -> Result<std::fs::File, NativeError> {
+        let target = self.resolve(target)?;
+        target.require_write()?;
+        if target.relative.as_os_str().is_empty() {
+            return Err(NativeError::invalid(
+                "Streaming writes require a non-empty file path.",
+            ));
+        }
+        target.reject_existing_symlink()?;
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        target
+            .directory
+            .open_with(&target.relative, &options)
+            .map(cap_std::fs::File::into_std)
+            .map_err(|error| NativeError::io("Cannot open the streaming destination", &error))
     }
 
     fn read_text(target: &ResolvedTarget) -> Result<Value, NativeError> {
@@ -662,6 +790,7 @@ impl NativeServices {
 struct AuthorizedRoot {
     directory: Arc<Dir>,
     access: FileAccess,
+    path: PathBuf,
 }
 
 #[derive(Clone)]
@@ -923,6 +1052,32 @@ mod tests {
             })
             .expect_err("read-only roots should reject writes");
         assert_eq!(write.code, ErrorCode::PermissionDenied);
+
+        std::fs::remove_dir_all(root).expect("the temporary directory should be removed");
+    }
+
+    #[test]
+    fn opens_capability_scoped_binary_streams() {
+        let root = temporary_directory();
+        let services = services(&root, FileAccess::ReadWrite);
+        let mut writer = services
+            .open_write_stream(&target("payload.bin"))
+            .expect("the streaming destination should open");
+        writer
+            .write_all(&[0, 1, 2, 3, 255])
+            .expect("binary bytes should be written");
+        writer.sync_all().expect("binary bytes should be durable");
+        drop(writer);
+
+        let (mut reader, bytes) = services
+            .open_read_stream(&target("payload.bin"))
+            .expect("the streaming source should open");
+        let mut payload = Vec::new();
+        reader
+            .read_to_end(&mut payload)
+            .expect("binary bytes should be read");
+        assert_eq!(bytes, 5);
+        assert_eq!(payload, [0, 1, 2, 3, 255]);
 
         std::fs::remove_dir_all(root).expect("the temporary directory should be removed");
     }

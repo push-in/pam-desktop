@@ -23,7 +23,8 @@ The complete `Pam\Desktop` namespace is stable in 1.x. The frozen JavaScript
 surface is:
 
 - `apiVersion`, `windowId`, `invoke`, `emit` and `on`;
-- `fs`, `dialog`, `clipboard`, `notification`, `updater` and `plugins`;
+- `fs`, `dialog`, `clipboard`, `notification`, `database`, `system`,
+  `diagnostics`, `updater` and `plugins`;
 - the documented methods, payloads, integer discriminators and error codes
   under those namespaces.
 

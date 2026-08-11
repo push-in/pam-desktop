@@ -13,6 +13,7 @@ use pam_desktop_protocol::{
     RustPluginConfig,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::project::Project;
 use crate::worker::CancellationToken;
@@ -57,6 +58,7 @@ impl PluginSupervisor {
         let mut plugins = HashMap::with_capacity(configs.len());
         for config in configs {
             let executable = project.resolve_plugin_executable(&config.executable)?;
+            verify_integrity(&executable, config)?;
             let slot = PluginSlot::start(project.root(), executable, config.clone())?;
             plugins.insert(config.id.clone(), Mutex::new(slot));
         }
@@ -170,6 +172,7 @@ impl PluginSlot {
 
     fn restart(&mut self) -> Result<(), String> {
         self.client.take();
+        verify_integrity(&self.executable, &self.config)?;
         let mut client = PluginClient::spawn(&self.project_root, &self.executable, &self.config)?;
         let metadata = client.boot()?;
         metadata.validate()?;
@@ -201,6 +204,7 @@ impl PluginClient {
         let mut child = Command::new(executable)
             .args(&config.arguments)
             .current_dir(project_root)
+            .env_clear()
             .env("PAM_DESKTOP_PLUGIN_ID", &config.id)
             .env(
                 "PAM_DESKTOP_PLUGIN_PROTOCOL",
@@ -367,6 +371,26 @@ impl Drop for PluginClient {
     }
 }
 
+fn verify_integrity(executable: &Path, config: &RustPluginConfig) -> Result<(), String> {
+    let Some(expected) = &config.sha256 else {
+        return Ok(());
+    };
+    let bytes = std::fs::read(executable).map_err(|error| {
+        format!(
+            "cannot read Rust plugin {:?} for integrity verification: {error}",
+            config.id
+        )
+    })?;
+    let actual = format!("{:x}", Sha256::digest(bytes));
+    if &actual != expected {
+        return Err(format!(
+            "Rust plugin {:?} failed SHA-256 integrity verification",
+            config.id
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use std::fs;
@@ -384,6 +408,7 @@ mod tests {
             executable: "plugins/fixture".to_owned(),
             arguments: Vec::new(),
             timeout_ms: 1_000,
+            sha256: None,
         };
         let supervisor =
             PluginSupervisor::prepare(&project, &[config]).expect("plugin should start");

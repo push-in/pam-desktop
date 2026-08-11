@@ -965,8 +965,26 @@ fn bundle_icon_path(
 
 fn desktop_entry(manifest: &ApplicationManifest, executable: &str) -> String {
     let category = freedesktop_category(manifest.category);
+    let mime_types = manifest
+        .lifecycle
+        .mime_types
+        .iter()
+        .cloned()
+        .chain(
+            manifest
+                .lifecycle
+                .url_schemes
+                .iter()
+                .map(|scheme| format!("x-scheme-handler/{scheme}")),
+        )
+        .collect::<Vec<_>>();
+    let mime_line = if mime_types.is_empty() {
+        String::new()
+    } else {
+        format!("MimeType={};\n", mime_types.join(";"))
+    };
     format!(
-        "[Desktop Entry]\nType=Application\nVersion=1.5\nName={}\nComment={}\nExec={executable}\nIcon={}\nTerminal=false\nCategories={category};\nStartupWMClass={}\n",
+        "[Desktop Entry]\nType=Application\nVersion=1.5\nName={}\nComment={}\nExec={executable} %U\nIcon={}\nTerminal=false\nCategories={category};\n{mime_line}StartupWMClass={}\n",
         desktop_value(&manifest.name),
         desktop_value(&manifest.description),
         manifest.identifier,
@@ -1011,7 +1029,15 @@ fn write_portable_installer(
         .replace("@APP_ID@", &manifest.identifier)
         .replace("@EXECUTABLE@", executable)
         .replace("@ICON_THEME@", theme)
-        .replace("@ICON_EXTENSION@", &extension);
+        .replace("@ICON_EXTENSION@", &extension)
+        .replace(
+            "@AUTOSTART@",
+            if manifest.lifecycle.autostart {
+                "1"
+            } else {
+                "0"
+            },
+        );
     let path = bundle.join("install.sh");
     fs::write(&path, script)
         .map_err(|error| format!("cannot write portable installer: {error}"))?;
@@ -1049,6 +1075,7 @@ const PORTABLE_INSTALLER: &str = r#"#!/bin/sh
 set -eu
 BUNDLE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 DATA_HOME=${XDG_DATA_HOME:-"$HOME/.local/share"}
+CONFIG_HOME=${XDG_CONFIG_HOME:-"$HOME/.config"}
 BIN_HOME=${XDG_BIN_HOME:-"$HOME/.local/bin"}
 TARGET="$DATA_HOME/pam-desktop/apps/@APP_ID@"
 TEMPORARY="${TARGET}.install-$$"
@@ -1064,13 +1091,17 @@ fi
 rm -rf "$BACKUP"
 ln -sfn "$TARGET/bin/@EXECUTABLE@" "$BIN_HOME/@EXECUTABLE@"
 while IFS= read -r line; do
-    if [ "$line" = "Exec=@PAM_EXEC@" ]; then
-        printf 'Exec=%s\n' "$TARGET/bin/@EXECUTABLE@"
+    if [ "$line" = "Exec=@PAM_EXEC@ %U" ]; then
+        printf 'Exec=%s %%U\n' "$TARGET/bin/@EXECUTABLE@"
     else
         printf '%s\n' "$line"
     fi
 done < "$TARGET/share/applications/@APP_ID@.desktop.in" \
     > "$DATA_HOME/applications/@APP_ID@.desktop"
+if [ "@AUTOSTART@" = "1" ]; then
+    mkdir -p "$CONFIG_HOME/autostart"
+    cp "$DATA_HOME/applications/@APP_ID@.desktop" "$CONFIG_HOME/autostart/@APP_ID@.desktop"
+fi
 cp "$TARGET/share/icons/hicolor/@ICON_THEME@/apps/@APP_ID@.@ICON_EXTENSION@" \
     "$DATA_HOME/icons/hicolor/@ICON_THEME@/apps/@APP_ID@.@ICON_EXTENSION@"
 if command -v update-desktop-database >/dev/null 2>&1; then
@@ -1082,6 +1113,7 @@ printf 'Installed @APP_ID@. Run: %s\n' "$BIN_HOME/@EXECUTABLE@"
 const PORTABLE_UNINSTALLER: &str = r#"#!/bin/sh
 set -eu
 DATA_HOME=${XDG_DATA_HOME:-"$HOME/.local/share"}
+CONFIG_HOME=${XDG_CONFIG_HOME:-"$HOME/.config"}
 BIN_HOME=${XDG_BIN_HOME:-"$HOME/.local/bin"}
 TARGET="$DATA_HOME/pam-desktop/apps/@APP_ID@"
 LINK="$BIN_HOME/@EXECUTABLE@"
@@ -1089,6 +1121,7 @@ if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$TARGET/bin/@EXECUTABLE@" ]; the
     rm -f "$LINK"
 fi
 rm -f "$DATA_HOME/applications/@APP_ID@.desktop"
+rm -f "$CONFIG_HOME/autostart/@APP_ID@.desktop"
 rm -f "$DATA_HOME/icons/hicolor/@ICON_THEME@/apps/@APP_ID@.@ICON_EXTENSION@"
 rm -rf "$TARGET"
 if command -v update-desktop-database >/dev/null 2>&1; then
@@ -2274,6 +2307,7 @@ mod tests {
                     icon: "resources/icon.svg".to_owned(),
                     bundle_excludes: vec!["storage/cache".to_owned()],
                     updates: None,
+                    lifecycle: pam_desktop_protocol::LifecycleConfig::default(),
                 },
                 windows: vec![WindowConfig {
                     id: "main".to_owned(),
@@ -2286,8 +2320,15 @@ mod tests {
                     resizable: true,
                     visible: true,
                     theme: WindowTheme::System,
+                    decorated: true,
+                    transparent: false,
+                    always_on_top: false,
+                    maximized: false,
+                    fullscreen: false,
                 }],
                 command_timeout_ms: 30_000,
+                parallel_worker_count: 2,
+                commands: Vec::new(),
                 capabilities: NativeCapabilities::default(),
                 shell: pam_desktop_protocol::ShellConfig::default(),
                 background_jobs: Vec::new(),

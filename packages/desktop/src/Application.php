@@ -26,6 +26,9 @@ final class Application
     /** @var array<string, Closure(CommandContext): mixed> */
     private array $commands = [];
 
+    /** @var array<string, CommandExecution> */
+    private array $commandExecutions = [];
+
     /** @var array<string, Closure(EventContext): mixed> */
     private array $eventHandlers = [];
 
@@ -42,6 +45,8 @@ final class Application
     private array $phpPlugins = [];
 
     private int $commandTimeoutMilliseconds = 30_000;
+
+    private int $parallelWorkerCount = 2;
 
     private Capabilities $capabilities;
 
@@ -122,6 +127,13 @@ final class Application
         return $this;
     }
 
+    public function lifecycle(Lifecycle $lifecycle): self
+    {
+        $this->manifest = $this->manifest->lifecycle($lifecycle);
+
+        return $this;
+    }
+
     public function window(string $id, Window $window): self
     {
         Identifier::assert($id, 'The window identifier');
@@ -153,6 +165,16 @@ final class Application
         }
 
         $this->commandTimeoutMilliseconds = $milliseconds;
+
+        return $this;
+    }
+
+    public function parallelWorkers(int $workers): self
+    {
+        if ($workers < 1 || $workers > 16) {
+            throw new RuntimeException('The parallel worker count must be between 1 and 16.');
+        }
+        $this->parallelWorkerCount = $workers;
 
         return $this;
     }
@@ -217,7 +239,11 @@ final class Application
     /**
      * @param Closure(CommandContext): mixed $handler
      */
-    public function command(string $name, Closure $handler): self
+    public function command(
+        string $name,
+        Closure $handler,
+        CommandExecution $execution = CommandExecution::Stateful,
+    ): self
     {
         Identifier::assert($name, 'The command name');
         if (isset($this->commands[$name])) {
@@ -225,6 +251,7 @@ final class Application
         }
 
         $this->commands[$name] = $handler;
+        $this->commandExecutions[$name] = $execution;
 
         return $this;
     }
@@ -340,6 +367,15 @@ final class Application
                     array_values($this->windows),
                 ),
                 'commandTimeoutMs' => $this->commandTimeoutMilliseconds,
+                'parallelWorkerCount' => $this->parallelWorkerCount,
+                'commands' => array_map(
+                    static fn (string $name, CommandExecution $execution): array => [
+                        'name' => $name,
+                        'execution' => $execution->value,
+                    ],
+                    array_keys($this->commandExecutions),
+                    array_values($this->commandExecutions),
+                ),
                 'capabilities' => $this->capabilities->toArray(),
                 'shell' => $this->shell->toArray(),
                 'backgroundJobs' => array_map(

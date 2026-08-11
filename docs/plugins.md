@@ -77,6 +77,7 @@ use Pam\Desktop\RustPlugin;
 
 $app->rustPlugin(
     RustPlugin::executable('system.info', 'plugins/bin/system.info')
+        ->integrity('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')
         ->timeout(5_000),
 );
 ```
@@ -155,12 +156,14 @@ For each configured plugin, the host:
 
 1. resolves a regular executable below the project while rejecting `.git`,
    `.pam`, `dist`, `node_modules`, `target`, parent traversal, and symlinks;
-2. starts the process with piped standard input/output;
-3. performs a protocol-1 boot handshake and validates its exact metadata;
-4. serializes calls per plugin, enforces the declared export list, one-megabyte
+2. verifies the optional pinned SHA-256 before initial start and every restart;
+3. starts the process with an empty inherited environment and piped standard
+   input/output, exposing only documented `PAM_DESKTOP_*` variables;
+4. performs a protocol-1 boot handshake and validates its exact metadata;
+5. serializes calls per plugin, enforces the declared export list, one-megabyte
    message limit, timeout, and cancellation;
-5. terminates a timed-out, cancelled, malformed, or crashed process;
-6. prepares a fresh process for the next call without replaying the interrupted
+6. terminates a timed-out, cancelled, malformed, or crashed process;
+7. prepares a fresh process for the next call without replaying the interrupted
    command.
 
 The no-replay rule is intentional: a failed command may already have performed

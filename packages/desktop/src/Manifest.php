@@ -21,6 +21,7 @@ final readonly class Manifest
         public string $icon,
         public array $bundleExcludes,
         public ?Updates $updates,
+        public Lifecycle $lifecycle,
     ) {
         self::assertIdentifier($identifier);
         self::assertText($name, 'The application name', 80);
@@ -57,6 +58,7 @@ final readonly class Manifest
             icon: 'resources/icon.svg',
             bundleExcludes: [],
             updates: null,
+            lifecycle: Lifecycle::none(),
         );
     }
 
@@ -72,6 +74,7 @@ final readonly class Manifest
             $this->icon,
             $this->bundleExcludes,
             $this->updates,
+            $this->lifecycle,
         );
     }
 
@@ -87,6 +90,7 @@ final readonly class Manifest
             $this->icon,
             $this->bundleExcludes,
             $this->updates,
+            $this->lifecycle,
         );
     }
 
@@ -102,6 +106,7 @@ final readonly class Manifest
             $this->icon,
             $this->bundleExcludes,
             $this->updates,
+            $this->lifecycle,
         );
     }
 
@@ -117,6 +122,7 @@ final readonly class Manifest
             $path,
             $this->bundleExcludes,
             $this->updates,
+            $this->lifecycle,
         );
     }
 
@@ -132,6 +138,7 @@ final readonly class Manifest
             $this->icon,
             array_values(array_merge($this->bundleExcludes, $paths)),
             $this->updates,
+            $this->lifecycle,
         );
     }
 
@@ -147,6 +154,7 @@ final readonly class Manifest
             $this->icon,
             $this->bundleExcludes,
             $updates,
+            $this->lifecycle,
         );
     }
 
@@ -162,6 +170,23 @@ final readonly class Manifest
             $this->icon,
             $this->bundleExcludes,
             null,
+            $this->lifecycle,
+        );
+    }
+
+    public function lifecycle(Lifecycle $lifecycle): self
+    {
+        return new self(
+            $this->identifier,
+            $this->name,
+            $this->version,
+            $this->description,
+            $this->publisher,
+            $this->category,
+            $this->icon,
+            $this->bundleExcludes,
+            $this->updates,
+            $lifecycle,
         );
     }
 
@@ -175,7 +200,8 @@ final readonly class Manifest
      *     category: int,
      *     icon: string,
      *     bundleExcludes: list<string>,
-     *     updates: null|array{endpoint: string, channel: string, publicKey: string, policy: int}
+     *     updates: null|array{endpoint: string, channel: string, publicKey: string, policy: int},
+     *     lifecycle: array{urlSchemes: list<string>, mimeTypes: list<string>, autostart: bool}
      * }
      */
     public function toArray(): array
@@ -190,6 +216,7 @@ final readonly class Manifest
             'icon' => $this->icon,
             'bundleExcludes' => $this->bundleExcludes,
             'updates' => $this->updates?->toArray(),
+            'lifecycle' => $this->lifecycle->toArray(),
         ];
     }
 

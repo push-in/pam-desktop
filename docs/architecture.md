@@ -88,7 +88,7 @@ All coded variants are sequential integers:
 | message kind | `1` request, `2` response |
 | response status | `1` success, `2` failure |
 | window theme | `1` system, `2` light, `3` dark |
-| effect kind | `1` title through `7` tray visibility |
+| effect kind | `1` title through `10` window stacking |
 | error code | `1` through `26`, defined by `ErrorCode` |
 | file access | `1` read, `2` write, `3` read-write |
 | file entry kind | `1` file, `2` directory |
@@ -105,6 +105,11 @@ All coded variants are sequential integers:
 | tray close behavior | `1` exit, `2` hide |
 | shortcut state | `1` pressed, `2` released |
 | job overlap policy | `1` skip, `2` wait |
+| command execution | `1` stateful, `2` parallel, `3` background |
+| database access | `1` read, `2` read-write |
+| database operation | `1` query, `2` execute, `3` transaction |
+| connectivity state | `1` offline, `2` online |
+| power state | `1` unknown through `4` full |
 
 Command names are application-owned strings because they are identifiers, not
 stored domain variants. They must begin with a letter, contain only ASCII
@@ -151,11 +156,13 @@ not as arbitrary code execution.
 
 ## Concurrency and failure
 
-Protocol 6 serializes commands, PHP events and background jobs through one
-worker mutex. This gives
-deterministic PHP state and avoids pretending that a single Zend runtime is
-parallel. Axum handles transport concurrently, while blocking worker I/O runs
-outside Tokio's async workers.
+Protocol 6 serializes stateful commands, PHP events and scheduled jobs through
+the primary worker mutex. Explicit parallel and background command metadata can
+route independent handlers through a lazy, bounded pool of supervised PHP
+workers. This preserves deterministic application state without forcing CPU or
+blocking work into the stateful lane. Axum handles transport concurrently,
+while blocking worker I/O and SQLite operations run outside Tokio's async
+workers.
 
 Each request has a bounded deadline and a cancellation token. If a deadline
 expires, the caller aborts, the PHP worker exits, emits invalid output, or

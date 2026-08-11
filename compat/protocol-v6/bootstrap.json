@@ -7,7 +7,12 @@
     "publisher": "Pushin",
     "category": 1,
     "icon": "resources/icon.svg",
-    "bundleExcludes": []
+    "bundleExcludes": [],
+    "lifecycle": {
+      "urlSchemes": [],
+      "mimeTypes": [],
+      "autostart": false
+    }
   },
   "windows": [
     {
@@ -20,10 +25,17 @@
       "minHeight": 480,
       "resizable": true,
       "visible": true,
-      "theme": 3
+      "theme": 3,
+      "decorated": true,
+      "transparent": false,
+      "alwaysOnTop": false,
+      "maximized": false,
+      "fullscreen": false
     }
   ],
   "commandTimeoutMs": 10000,
+  "parallelWorkerCount": 2,
+  "commands": [],
   "capabilities": {
     "filesystemRoots": [
       {
@@ -36,7 +48,13 @@
     "clipboardRead": true,
     "clipboardWrite": true,
     "notifications": true,
-    "dragAndDrop": true
+    "dragAndDrop": true,
+    "databases": [],
+    "systemInformation": false,
+    "httpOrigins": [],
+    "secrets": false,
+    "processes": [],
+    "desktopPortal": false
   },
   "shell": {
     "menus": [

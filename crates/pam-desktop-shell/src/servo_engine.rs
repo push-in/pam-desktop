@@ -23,15 +23,21 @@ use winit::keyboard::{
     Key as WinitKey, KeyCode, ModifiersState, NamedKey as WinitNamedKey, PhysicalKey,
 };
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use winit::window::{Theme, Window, WindowId};
+use winit::window::{Fullscreen, Theme, Window, WindowId, WindowLevel};
 
 use crate::gateway::Gateway;
 use crate::host_event::HostEvent;
+use crate::lifecycle::InstanceGuard;
 use crate::native::show_dialog;
 use crate::native_shell::NativeShell;
 use crate::runtime::DesktopRuntime;
 
-pub fn run(runtime: DesktopRuntime, watch: bool) -> Result<(), String> {
+pub fn run(
+    runtime: DesktopRuntime,
+    watch: bool,
+    mut instance: InstanceGuard,
+    initial_arguments: Vec<String>,
+) -> Result<(), String> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let (project, supervisor, bootstrap) = runtime.into_parts();
@@ -46,11 +52,28 @@ pub fn run(runtime: DesktopRuntime, watch: bool) -> Result<(), String> {
         event_loop.create_proxy(),
         watch,
     )?;
+    let events = gateway.event_hub();
+    if !initial_arguments.is_empty() {
+        events.publish(pam_desktop_protocol::ClientEvent {
+            name: "pam.lifecycle.opened".to_owned(),
+            payload: serde_json::json!({"arguments": initial_arguments}),
+            window_id: None,
+        });
+    }
+    instance.listen(move |activation| {
+        events.publish(pam_desktop_protocol::ClientEvent {
+            name: "pam.lifecycle.second-instance".to_owned(),
+            payload: serde_json::json!({"arguments": activation.arguments}),
+            window_id: None,
+        });
+    })?;
     let mut application = Application::new(&event_loop, bootstrap, gateway);
 
     event_loop
         .run_app(&mut application)
-        .map_err(|error| format!("desktop event loop failed: {error}"))
+        .map_err(|error| format!("desktop event loop failed: {error}"))?;
+    drop(instance);
+    Ok(())
 }
 
 struct DesktopWindow {
@@ -152,7 +175,16 @@ impl AppState {
             .with_min_inner_size(LogicalSize::new(config.min_width, config.min_height))
             .with_resizable(config.resizable)
             .with_visible(config.visible)
-            .with_theme(window_theme(config.theme));
+            .with_theme(window_theme(config.theme))
+            .with_decorations(config.decorated)
+            .with_transparent(config.transparent)
+            .with_window_level(if config.always_on_top {
+                WindowLevel::AlwaysOnTop
+            } else {
+                WindowLevel::Normal
+            })
+            .with_maximized(config.maximized)
+            .with_fullscreen(config.fullscreen.then(|| Fullscreen::Borderless(None)));
         let window = event_loop
             .create_window(attributes)
             .map_err(|error| format!("cannot create window {:?}: {error}", config.id))?;
@@ -282,6 +314,42 @@ impl AppState {
                         window.webview.show();
                         window.webview.focus();
                         window.window.focus_window();
+                    }
+                }
+                EffectKind::SetWindowFullscreen => {
+                    if let Some(fullscreen) = effect
+                        .payload
+                        .get("fullscreen")
+                        .and_then(serde_json::Value::as_bool)
+                        && let Some(window) = self.windows.borrow().get(&window_id)
+                    {
+                        window
+                            .window
+                            .set_fullscreen(fullscreen.then(|| Fullscreen::Borderless(None)));
+                    }
+                }
+                EffectKind::SetWindowMaximized => {
+                    if let Some(maximized) = effect
+                        .payload
+                        .get("maximized")
+                        .and_then(serde_json::Value::as_bool)
+                        && let Some(window) = self.windows.borrow().get(&window_id)
+                    {
+                        window.window.set_maximized(maximized);
+                    }
+                }
+                EffectKind::SetWindowAlwaysOnTop => {
+                    if let Some(always_on_top) = effect
+                        .payload
+                        .get("alwaysOnTop")
+                        .and_then(serde_json::Value::as_bool)
+                        && let Some(window) = self.windows.borrow().get(&window_id)
+                    {
+                        window.window.set_window_level(if always_on_top {
+                            WindowLevel::AlwaysOnTop
+                        } else {
+                            WindowLevel::Normal
+                        });
                     }
                 }
                 EffectKind::SetMenuItemEnabled

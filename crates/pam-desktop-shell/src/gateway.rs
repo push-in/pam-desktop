@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
+use axum::extract::Request;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::header::{
     CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, ORIGIN, X_CONTENT_TYPE_OPTIONS,
@@ -12,26 +14,36 @@ use axum::http::header::{
 use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use base64::Engine;
+use futures_util::StreamExt;
 use getrandom::fill;
 use pam_desktop_protocol::{
-    Bootstrap, ClientEvent, DialogKind, EVENT_COMMAND, ErrorCode, FileAccess, FileEntryKind,
-    MAIN_WINDOW_ID, MAX_COMMAND_TIMEOUT_MS, MIN_COMMAND_TIMEOUT_MS, ResponseEnvelope,
-    ResponseStatus, validate_identifier,
+    Bootstrap, ClientEvent, CommandExecution, DialogKind, EVENT_COMMAND, ErrorCode, FileAccess,
+    FileEntryKind, MAIN_WINDOW_ID, MAX_COMMAND_TIMEOUT_MS, MIN_COMMAND_TIMEOUT_MS,
+    ResponseEnvelope, ResponseStatus, validate_identifier,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
+use tokio_util::io::ReaderStream;
 use winit::event_loop::EventLoopProxy;
 
+use crate::database::DatabaseRequest;
+use crate::desktop_portal::DesktopPortalRequest;
 use crate::event_hub::{EventHub, PublishedEvent};
+use crate::file_watch::{FileWatchManager, FileWatchRequest};
 use crate::host_event::HostEvent;
+use crate::http_client::HttpRequest;
 use crate::native::{
-    ClipboardRequest, DialogBridgeRequest, DialogRequest, FileRequest, NativeError, NativeServices,
-    NotificationRequest,
+    ClipboardRequest, DialogBridgeRequest, DialogRequest, FileRequest, MAX_STREAM_BYTES,
+    NativeError, NativeServices, NotificationRequest,
 };
 use crate::plugin::{PluginError, PluginSupervisor};
+use crate::process_runner::ProcessRequest;
 use crate::project::Project;
 use crate::scheduler::BackgroundScheduler;
+use crate::secret_store::SecretRequest;
 use crate::updater::{UpdateError, UpdateSnapshot, Updater};
 use crate::watcher::{ChangeKind, ProjectWatcher};
 use crate::worker::{CancellationToken, WorkerRequestError, WorkerSupervisor};
@@ -48,6 +60,10 @@ pub struct Gateway {
 }
 
 impl Gateway {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "gateway startup keeps atomic service assembly and route registration together"
+    )]
     pub fn start(
         project: &Project,
         supervisor: WorkerSupervisor,
@@ -72,6 +88,8 @@ impl Gateway {
         let plugins = PluginSupervisor::prepare(project, &bootstrap.rust_plugins)?;
         let background_jobs = bootstrap.background_jobs.clone();
 
+        let parallel_workers =
+            WorkerPool::prepare(&supervisor, requested_parallel_count(&bootstrap))?;
         let state = GatewayState {
             project: project.clone(),
             public_root,
@@ -79,6 +97,7 @@ impl Gateway {
             token,
             bootstrap: Arc::new(RwLock::new(bootstrap)),
             supervisor: Arc::new(Mutex::new(supervisor)),
+            parallel_workers: Arc::new(RwLock::new(Arc::new(parallel_workers))),
             cancellations: Arc::new(Mutex::new(HashMap::new())),
             events: EventHub::default(),
             event_proxy,
@@ -86,20 +105,36 @@ impl Gateway {
             updater: Arc::new(RwLock::new(updater)),
             plugins: Arc::new(RwLock::new(Arc::new(plugins))),
             scheduler: Arc::new(Mutex::new(None)),
+            metrics: Arc::new(GatewayMetrics::default()),
+            file_watches: Arc::new(FileWatchManager::new()),
+            development: watch,
         };
         state.replace_scheduler(&background_jobs)?;
         let router = Router::new()
             .route("/", get(serve_main))
             .route("/_pam/window/{window}", get(serve_window))
             .route("/_pam/bridge.js", get(serve_bridge))
+            .route("/_pam/inspector", get(serve_inspector))
+            .route("/_pam/inspector.css", get(serve_inspector_css))
+            .route("/_pam/inspector.js", get(serve_inspector_js))
             .route("/_pam/invoke", post(invoke))
             .route("/_pam/emit", post(emit))
             .route("/_pam/cancel", post(cancel))
             .route("/_pam/events", post(events))
             .route("/_pam/fs", post(filesystem))
+            .route("/_pam/fs/read-stream", post(filesystem_read_stream))
+            .route("/_pam/fs/write-stream", post(filesystem_write_stream))
             .route("/_pam/dialog", post(dialog))
             .route("/_pam/clipboard", post(clipboard))
             .route("/_pam/notification", post(notification))
+            .route("/_pam/database", post(database))
+            .route("/_pam/system", post(system_information))
+            .route("/_pam/http", post(http_request))
+            .route("/_pam/secrets", post(secrets))
+            .route("/_pam/process", post(process))
+            .route("/_pam/fs/watch", post(file_watch))
+            .route("/_pam/portal", post(desktop_portal))
+            .route("/_pam/diagnostics", post(diagnostics))
             .route("/_pam/update/status", post(update_status))
             .route("/_pam/update/check", post(update_check))
             .route("/_pam/update/download", post(update_download))
@@ -246,6 +281,11 @@ impl Gateway {
         });
         self.state.dispatch_php_event(name, payload);
     }
+
+    #[must_use]
+    pub fn event_hub(&self) -> EventHub {
+        self.state.events.clone()
+    }
 }
 
 impl Drop for Gateway {
@@ -273,6 +313,7 @@ struct GatewayState {
     token: String,
     bootstrap: Arc<RwLock<Bootstrap>>,
     supervisor: Arc<Mutex<WorkerSupervisor>>,
+    parallel_workers: Arc<RwLock<Arc<WorkerPool>>>,
     cancellations: Arc<Mutex<HashMap<RequestKey, CancellationToken>>>,
     events: EventHub,
     event_proxy: EventLoopProxy<HostEvent>,
@@ -280,9 +321,28 @@ struct GatewayState {
     updater: Arc<RwLock<Updater>>,
     plugins: Arc<RwLock<Arc<PluginSupervisor>>>,
     scheduler: Arc<Mutex<Option<BackgroundScheduler>>>,
+    metrics: Arc<GatewayMetrics>,
+    file_watches: Arc<FileWatchManager>,
+    development: bool,
 }
 
 impl GatewayState {
+    fn command_execution(&self, name: &str) -> CommandExecution {
+        self.bootstrap
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .commands
+            .iter()
+            .find(|command| command.name == name)
+            .map_or(CommandExecution::Stateful, |command| command.execution)
+    }
+
+    fn parallel_workers(&self) -> Arc<WorkerPool> {
+        self.parallel_workers
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
     fn has_window(&self, window_id: &str) -> bool {
         self.bootstrap
             .read()
@@ -297,6 +357,15 @@ impl GatewayState {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .command_timeout_ms
+    }
+
+    fn application_id(&self) -> String {
+        self.bootstrap
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .manifest
+            .identifier
+            .clone()
     }
 
     fn window_entry(&self, window_id: &str) -> Option<String> {
@@ -432,10 +501,20 @@ impl GatewayState {
                             NativeServices::prepare(self.project.root(), &bootstrap.capabilities)?;
                         let plugins =
                             PluginSupervisor::prepare(&self.project, &bootstrap.rust_plugins)?;
-                        Ok((bootstrap, native, plugins))
+                        let parallel = self
+                            .supervisor
+                            .lock()
+                            .map_err(|_| "PHP worker supervisor lock is poisoned".to_owned())
+                            .and_then(|supervisor| {
+                                WorkerPool::prepare(
+                                    &supervisor,
+                                    requested_parallel_count(&bootstrap),
+                                )
+                            })?;
+                        Ok((bootstrap, native, plugins, parallel))
                     });
                 match result {
-                    Ok((bootstrap, native, plugins)) => {
+                    Ok((bootstrap, native, plugins, parallel)) => {
                         *self
                             .native
                             .write()
@@ -453,6 +532,11 @@ impl GatewayState {
                             .plugins
                             .write()
                             .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(plugins);
+                        *self
+                            .parallel_workers
+                            .write()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                            Arc::new(parallel);
                         if let Err(error) = self.replace_scheduler(&bootstrap.background_jobs) {
                             eprintln!("pam-desktop: cannot reload background scheduler: {error}");
                         }
@@ -477,6 +561,82 @@ impl GatewayState {
                 }
             }
         }
+    }
+}
+
+struct WorkerPool {
+    workers: Vec<Mutex<WorkerSupervisor>>,
+    next: AtomicUsize,
+}
+
+#[derive(Default)]
+struct GatewayMetrics {
+    total_commands: std::sync::atomic::AtomicU64,
+    failed_commands: std::sync::atomic::AtomicU64,
+    active_commands: std::sync::atomic::AtomicU64,
+    total_command_nanoseconds: std::sync::atomic::AtomicU64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosticsSnapshot {
+    total_commands: u64,
+    failed_commands: u64,
+    active_commands: u64,
+    average_command_microseconds: u64,
+    primary_worker_generation: u64,
+    parallel_workers: usize,
+    event_cursor: u64,
+}
+
+fn requested_parallel_count(bootstrap: &Bootstrap) -> u8 {
+    if bootstrap
+        .commands
+        .iter()
+        .any(|command| command.execution != CommandExecution::Stateful)
+    {
+        bootstrap.parallel_worker_count
+    } else {
+        0
+    }
+}
+
+impl WorkerPool {
+    fn prepare(supervisor: &WorkerSupervisor, count: u8) -> Result<Self, String> {
+        let mut workers = Vec::with_capacity(usize::from(count));
+        for _ in 0..count {
+            workers.push(Mutex::new(supervisor.fork()?));
+        }
+        Ok(Self {
+            workers,
+            next: AtomicUsize::new(0),
+        })
+    }
+
+    fn request(
+        &self,
+        command: String,
+        window_id: String,
+        payload: Value,
+        timeout: Duration,
+        cancellation: &CancellationToken,
+    ) -> Result<ResponseEnvelope, WorkerRequestError> {
+        if self.workers.is_empty() {
+            return Err(WorkerRequestError::Crashed(
+                "parallel worker pool is not configured".to_owned(),
+            ));
+        }
+        let index = self.next.fetch_add(1, Ordering::Relaxed) % self.workers.len();
+        self.workers[index]
+            .lock()
+            .map_err(|_| {
+                WorkerRequestError::Crashed("parallel worker lock is poisoned".to_owned())
+            })?
+            .request(command, window_id, payload, timeout, cancellation)
+    }
+
+    fn len(&self) -> usize {
+        self.workers.len()
     }
 }
 
@@ -526,6 +686,13 @@ struct EventPollRequest {
 #[serde(rename_all = "camelCase")]
 struct UpdateBridgeRequest {
     window_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StreamReadRequest {
+    window_id: String,
+    target: crate::native::FileTarget,
 }
 
 #[derive(Debug, Deserialize)]
@@ -634,6 +801,51 @@ async fn serve_bridge(State(state): State<GatewayState>) -> Response<Body> {
     )
 }
 
+async fn serve_inspector(State(state): State<GatewayState>) -> Response<Body> {
+    if !state.development {
+        return secure_response(
+            StatusCode::NOT_FOUND,
+            "text/plain; charset=utf-8",
+            Body::from("Not found"),
+        );
+    }
+    secure_response(
+        StatusCode::OK,
+        "text/html; charset=utf-8",
+        Body::from(INSPECTOR_HTML),
+    )
+}
+
+async fn serve_inspector_css(State(state): State<GatewayState>) -> Response<Body> {
+    if !state.development {
+        return secure_response(
+            StatusCode::NOT_FOUND,
+            "text/plain; charset=utf-8",
+            Body::from("Not found"),
+        );
+    }
+    secure_response(
+        StatusCode::OK,
+        "text/css; charset=utf-8",
+        Body::from(INSPECTOR_CSS),
+    )
+}
+
+async fn serve_inspector_js(State(state): State<GatewayState>) -> Response<Body> {
+    if !state.development {
+        return secure_response(
+            StatusCode::NOT_FOUND,
+            "text/plain; charset=utf-8",
+            Body::from("Not found"),
+        );
+    }
+    secure_response(
+        StatusCode::OK,
+        "text/javascript; charset=utf-8",
+        Body::from(INSPECTOR_JS),
+    )
+}
+
 async fn invoke(
     State(state): State<GatewayState>,
     headers: HeaderMap,
@@ -689,6 +901,10 @@ async fn emit(
     .await
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "request lifecycle keeps validation, cancellation, metrics and response normalization auditable"
+)]
 async fn execute_request(
     state: GatewayState,
     request_id: u64,
@@ -735,20 +951,43 @@ async fn execute_request(
         }
     }
 
+    let execution = state.command_execution(&command);
+    let started = Instant::now();
+    state.metrics.total_commands.fetch_add(1, Ordering::Relaxed);
+    state
+        .metrics
+        .active_commands
+        .fetch_add(1, Ordering::Relaxed);
     let supervisor = state.supervisor.clone();
-    let response = tokio::task::spawn_blocking(move || {
-        let mut supervisor = supervisor
+    let parallel_workers = state.parallel_workers();
+    let response = tokio::task::spawn_blocking(move || match execution {
+        CommandExecution::Stateful => supervisor
             .lock()
-            .map_err(|_| WorkerRequestError::Crashed("worker lock is poisoned".to_owned()))?;
-        supervisor.request(
+            .map_err(|_| WorkerRequestError::Crashed("worker lock is poisoned".to_owned()))?
+            .request(
+                command,
+                window_id,
+                payload,
+                Duration::from_millis(timeout_ms),
+                &cancellation,
+            ),
+        CommandExecution::Parallel | CommandExecution::Background => parallel_workers.request(
             command,
             window_id,
             payload,
             Duration::from_millis(timeout_ms),
             &cancellation,
-        )
+        ),
     })
     .await;
+    state
+        .metrics
+        .active_commands
+        .fetch_sub(1, Ordering::Relaxed);
+    state.metrics.total_command_nanoseconds.fetch_add(
+        u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        Ordering::Relaxed,
+    );
     state
         .cancellations
         .lock()
@@ -757,8 +996,18 @@ async fn execute_request(
 
     let response = match response {
         Ok(Ok(response)) => response,
-        Ok(Err(error)) => return worker_error_response(error),
+        Ok(Err(error)) => {
+            state
+                .metrics
+                .failed_commands
+                .fetch_add(1, Ordering::Relaxed);
+            return worker_error_response(error);
+        }
         Err(error) => {
+            state
+                .metrics
+                .failed_commands
+                .fetch_add(1, Ordering::Relaxed);
             return client_failure(
                 StatusCode::BAD_GATEWAY,
                 ErrorCode::WorkerCrashed,
@@ -769,6 +1018,10 @@ async fn execute_request(
     state.process_response(&response);
 
     if response.status == ResponseStatus::Failure {
+        state
+            .metrics
+            .failed_commands
+            .fetch_add(1, Ordering::Relaxed);
         let error = response.error.map_or(
             ClientError {
                 code: ErrorCode::Internal as u16,
@@ -872,6 +1125,162 @@ async fn filesystem(
     native_task(tokio::task::spawn_blocking(move || native.filesystem(&request)).await)
 }
 
+async fn filesystem_read_stream(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<StreamReadRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The streaming source window is invalid.",
+        );
+    }
+    let native = state.native_services();
+    let opened =
+        tokio::task::spawn_blocking(move || native.open_read_stream(&request.target)).await;
+    let (file, bytes) = match opened {
+        Ok(Ok(opened)) => opened,
+        Ok(Err(error)) => return native_failure(error),
+        Err(error) => {
+            return native_failure(NativeError {
+                code: ErrorCode::NativeOperationFailed,
+                message: format!("The streaming read task failed: {error}"),
+            });
+        }
+    };
+    let stream = ReaderStream::with_capacity(tokio::fs::File::from_std(file), 64 * 1024);
+    let mut response = secure_response(
+        StatusCode::OK,
+        "application/octet-stream",
+        Body::from_stream(stream),
+    );
+    if let Ok(length) = HeaderValue::from_str(&bytes.to_string()) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_LENGTH, length);
+    }
+    response
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "stream validation and bounded backpressure handling remain together for security review"
+)]
+async fn filesystem_write_stream(
+    State(state): State<GatewayState>,
+    request: Request,
+) -> Response<Body> {
+    let (parts, body) = request.into_parts();
+    if !authorized(&state, &parts.headers) {
+        return unauthorized_response();
+    }
+    let Some(window_id) = parts
+        .headers
+        .get("x-pam-window")
+        .and_then(|value| value.to_str().ok())
+    else {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The streaming write window is missing.",
+        );
+    };
+    if !state.has_window(window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The streaming write window is invalid.",
+        );
+    }
+    let Some(encoded_target) = parts
+        .headers
+        .get("x-pam-stream-target")
+        .and_then(|value| value.to_str().ok())
+    else {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidPayload,
+            "The streaming write target is missing.",
+        );
+    };
+    let Some(target) = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded_target)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<crate::native::FileTarget>(&bytes).ok())
+    else {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidPayload,
+            "The streaming write target is malformed.",
+        );
+    };
+    if parts
+        .headers
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_some_and(|bytes| bytes > MAX_STREAM_BYTES)
+    {
+        return client_failure(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            ErrorCode::ResourceTooLarge,
+            "The streaming write exceeds the four-gibibyte limit.",
+        );
+    }
+    let native = state.native_services();
+    let opened = tokio::task::spawn_blocking(move || native.open_write_stream(&target)).await;
+    let file = match opened {
+        Ok(Ok(file)) => file,
+        Ok(Err(error)) => return native_failure(error),
+        Err(error) => {
+            return native_failure(NativeError {
+                code: ErrorCode::NativeOperationFailed,
+                message: format!("The streaming write task failed: {error}"),
+            });
+        }
+    };
+    let mut file = tokio::fs::File::from_std(file);
+    let mut stream = body.into_data_stream();
+    let mut written = 0_u64;
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                return native_failure(NativeError {
+                    code: ErrorCode::NativeOperationFailed,
+                    message: format!("Cannot read the streaming request body: {error}"),
+                });
+            }
+        };
+        written = written.saturating_add(chunk.len() as u64);
+        if written > MAX_STREAM_BYTES {
+            return client_failure(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                ErrorCode::ResourceTooLarge,
+                "The streaming write exceeds the four-gibibyte limit.",
+            );
+        }
+        if let Err(error) = file.write_all(&chunk).await {
+            return native_failure(NativeError {
+                code: ErrorCode::NativeOperationFailed,
+                message: format!("Cannot write the streaming destination: {error}"),
+            });
+        }
+    }
+    if let Err(error) = file.flush().await {
+        return native_failure(NativeError {
+            code: ErrorCode::NativeOperationFailed,
+            message: format!("Cannot flush the streaming destination: {error}"),
+        });
+    }
+    native_success(serde_json::json!({"bytesWritten": written}))
+}
+
 async fn clipboard(
     State(state): State<GatewayState>,
     headers: HeaderMap,
@@ -908,6 +1317,192 @@ async fn notification(
     }
     let native = state.native_services();
     native_task(tokio::task::spawn_blocking(move || native.notify(&request)).await)
+}
+
+async fn database(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<DatabaseRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The database source window is invalid.",
+        );
+    }
+    let native = state.native_services();
+    native_task(tokio::task::spawn_blocking(move || native.database(&request)).await)
+}
+
+async fn system_information(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateBridgeRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The system information source window is invalid.",
+        );
+    }
+    let native = state.native_services();
+    native_task(tokio::task::spawn_blocking(move || native.system_information()).await)
+}
+
+async fn http_request(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<HttpRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The native HTTP source window is invalid.",
+        );
+    }
+    let native = state.native_services();
+    native_task(tokio::task::spawn_blocking(move || native.http(&request)).await)
+}
+
+async fn secrets(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<SecretRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The secret source window is invalid.",
+        );
+    }
+    if !state.native_services().secrets_enabled() {
+        return native_failure(NativeError::disabled("secrets"));
+    }
+    match crate::secret_store::execute(&state.application_id(), &request).await {
+        Ok(response) => match serde_json::to_value(response) {
+            Ok(value) => native_success(value),
+            Err(error) => native_failure(NativeError::native("Cannot encode secret result", error)),
+        },
+        Err(error) => native_failure(error),
+    }
+}
+
+async fn process(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<ProcessRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The process source window is invalid.",
+        );
+    }
+    let native = state.native_services();
+    native_task(tokio::task::spawn_blocking(move || native.process(&request)).await)
+}
+
+async fn file_watch(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<FileWatchRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The file watch source window is invalid.",
+        );
+    }
+    let native = state.native_services();
+    match state
+        .file_watches
+        .dispatch(&native, &state.events, &request)
+    {
+        Ok(()) => native_success(Value::Null),
+        Err(error) => native_failure(error),
+    }
+}
+
+async fn desktop_portal(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<DesktopPortalRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The desktop portal source window is invalid.",
+        );
+    }
+    let native = state.native_services();
+    match crate::desktop_portal::execute(&native, &request).await {
+        Ok(value) => native_success(value),
+        Err(error) => native_failure(error),
+    }
+}
+
+async fn diagnostics(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<UpdateBridgeRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The diagnostics source window is invalid.",
+        );
+    }
+    let total = state.metrics.total_commands.load(Ordering::Relaxed);
+    let nanos = state
+        .metrics
+        .total_command_nanoseconds
+        .load(Ordering::Relaxed);
+    let snapshot = DiagnosticsSnapshot {
+        total_commands: total,
+        failed_commands: state.metrics.failed_commands.load(Ordering::Relaxed),
+        active_commands: state.metrics.active_commands.load(Ordering::Relaxed),
+        average_command_microseconds: nanos.checked_div(total).unwrap_or(0) / 1_000,
+        primary_worker_generation: state
+            .supervisor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .generation(),
+        parallel_workers: state.parallel_workers().len(),
+        event_cursor: state.events.latest_id(),
+    };
+    native_success(serde_json::to_value(snapshot).unwrap_or(Value::Null))
 }
 
 async fn update_status(
@@ -1419,6 +2014,14 @@ fn secure_response(status: StatusCode, content_type: &'static str, body: Body) -
     response
 }
 
+const INSPECTOR_HTML: &str = r##"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pam Desktop Inspector</title><link rel="stylesheet" href="/_pam/inspector.css"><script defer src="/_pam/bridge.js"></script><script defer src="/_pam/inspector.js"></script></head>
+<body><a class="skip" href="#metrics">Skip to metrics</a><header><div><p class="eyebrow">PAM DESKTOP · DEVELOPMENT</p><h1>Runtime Inspector</h1><p id="status" role="status" aria-live="polite">Connecting to the native host…</p></div><button id="refresh" type="button">Refresh now</button></header><main id="metrics" tabindex="-1"><section class="grid" aria-label="Runtime metrics"><article><span>Total commands</span><strong id="total">—</strong></article><article><span>Active now</span><strong id="active">—</strong></article><article><span>Failures</span><strong id="failed">—</strong></article><article><span>Average host time</span><strong id="average">—</strong></article><article><span>Worker generation</span><strong id="generation">—</strong></article><article><span>Parallel workers</span><strong id="workers">—</strong></article><article><span>Event cursor</span><strong id="cursor">—</strong></article></section><section class="note"><h2>Privacy boundary</h2><p>This inspector reads bounded aggregate counters only. Payloads, paths, SQL, secrets and bridge credentials are never collected.</p></section></main></body></html>"##;
+
+const INSPECTOR_CSS: &str = r":root{color-scheme:dark;--bg:#0f172a;--surface:#172033;--surface-2:#1e293b;--text:#f8fafc;--muted:#cbd5e1;--border:#475569;--accent:#22c55e;--danger:#fb7185;--ring:#86efac;font-family:Inter,ui-sans-serif,system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 80% 0,#1e293b 0,transparent 38%),var(--bg);color:var(--text);padding:clamp(20px,4vw,56px)}header,main{max-width:1120px;margin-inline:auto}header{display:flex;align-items:end;justify-content:space-between;gap:24px;margin-bottom:32px}.eyebrow{color:var(--accent);font:600 12px/1.5 ui-monospace,monospace;letter-spacing:.12em;margin:0 0 8px}h1{font-size:clamp(30px,5vw,52px);line-height:1.05;letter-spacing:-.04em;margin:0}#status{color:var(--muted);margin:12px 0 0;line-height:1.5}button{min-height:44px;padding:0 18px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);color:var(--text);font:600 14px/1 system-ui;cursor:pointer;transition:background-color .18s ease,border-color .18s ease}button:hover{background:#334155;border-color:#64748b}button:focus-visible,.skip:focus-visible{outline:3px solid var(--ring);outline-offset:3px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.grid article,.note{border:1px solid var(--border);border-radius:14px;background:color-mix(in srgb,var(--surface) 94%,transparent);box-shadow:0 14px 40px #02061740}.grid article{min-height:132px;padding:20px;display:flex;flex-direction:column;justify-content:space-between}.grid span{color:var(--muted);font-size:13px;line-height:1.4}.grid strong{font:650 clamp(24px,4vw,38px)/1 ui-monospace,monospace;font-variant-numeric:tabular-nums}.grid article[data-error=true] strong{color:var(--danger)}.note{padding:22px;margin-top:12px}.note h2{font-size:16px;margin:0 0 8px}.note p{max-width:72ch;color:var(--muted);line-height:1.65;margin:0}.skip{position:fixed;left:16px;top:16px;transform:translateY(-160%);background:var(--text);color:var(--bg);padding:12px 16px;border-radius:8px;z-index:10}.skip:focus{transform:none}@media(max-width:820px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){body{padding:20px}header{align-items:stretch;flex-direction:column}.grid{grid-template-columns:1fr}.grid article{min-height:112px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}";
+
+const INSPECTOR_JS: &str = r##"(() => {"use strict";const ids={total:"totalCommands",active:"activeCommands",failed:"failedCommands",average:"averageCommandMicroseconds",generation:"primaryWorkerGeneration",workers:"parallelWorkers",cursor:"eventCursor"};const status=document.querySelector("#status");const refresh=document.querySelector("#refresh");let pending=false;const render=async()=>{if(pending)return;pending=true;refresh.disabled=true;try{const data=await window.pam.diagnostics.snapshot();for(const [id,key] of Object.entries(ids)){const node=document.getElementById(id);const value=data[key];node.textContent=id==="average"?`${Number(value).toLocaleString()} µs`:Number(value).toLocaleString();if(id==="failed")node.parentElement.dataset.error=String(value>0)}status.textContent=`Live · updated ${new Date().toLocaleTimeString()}`}catch(error){status.textContent=`Inspector unavailable · ${error.message}`}finally{pending=false;refresh.disabled=false}};refresh.addEventListener("click",render);render();setInterval(render,1000)})();"##;
+
 const BRIDGE_SCRIPT: &str = r#"
 (() => {
     "use strict";
@@ -1552,6 +2155,23 @@ const BRIDGE_SCRIPT: &str = r#"
         timeout: options?.timeout,
     });
 
+    const encodeStreamTarget = (target) => {
+        const bytes = new TextEncoder().encode(JSON.stringify(normalizeTarget(target)));
+        let binary = "";
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+    };
+
+    const nativeEnvelope = async (response) => {
+        const envelope = await response.json();
+        if (!envelope.ok) {
+            const error = new Error(envelope.error?.message ?? "Pam native request failed.");
+            error.code = envelope.error?.code ?? 8;
+            throw error;
+        }
+        return envelope.data;
+    };
+
     const filesystem = Object.freeze({
         readText: async (target, options = {}) => {
             const data = await request("/_pam/fs", {
@@ -1586,6 +2206,45 @@ const BRIDGE_SCRIPT: &str = r#"
             target: normalizeTarget(target),
             content: null,
         }, nativeOptions(options)),
+        openRead: async (target, options = {}) => {
+            const response = await fetch("/_pam/fs/read-stream", {
+                method: "POST",
+                headers,
+                signal: options.signal,
+                body: JSON.stringify({ windowId, target: normalizeTarget(target) }),
+            });
+            if (!response.ok) return nativeEnvelope(response);
+            return Object.freeze({
+                size: Number(response.headers.get("content-length") ?? 0),
+                stream: response.body,
+            });
+        },
+        writeStream: async (target, source, options = {}) => {
+            if (!(source instanceof Blob) && !(source instanceof ArrayBuffer) && !ArrayBuffer.isView(source)
+                && !(source instanceof ReadableStream)) {
+                throw new TypeError("Pam streaming writes require a Blob, ArrayBuffer, typed array, or ReadableStream.");
+            }
+            const streamHeaders = {
+                ...headers,
+                "X-Pam-Window": windowId,
+                "X-Pam-Stream-Target": encodeStreamTarget(target),
+                "Content-Type": "application/octet-stream",
+            };
+            const init = {
+                method: "POST",
+                headers: streamHeaders,
+                signal: options.signal,
+                body: source,
+            };
+            if (source instanceof ReadableStream) init.duplex = "half";
+            return nativeEnvelope(await fetch("/_pam/fs/write-stream", init));
+        },
+        watch: async (watchId, target, options = {}) => {
+            await request("/_pam/fs/watch", { operation: 1, watchId, target }, nativeOptions(options));
+            return Object.freeze({
+                close: () => request("/_pam/fs/watch", { operation: 2, watchId }, nativeOptions({})),
+            });
+        },
     });
 
     const dialogRequest = (kind, options = {}) => {
@@ -1642,6 +2301,114 @@ const BRIDGE_SCRIPT: &str = r#"
                 urgency: options.urgency ?? 2,
             }, nativeOptions(options));
         },
+    });
+
+    const normalizeDatabaseParameters = (parameters) => {
+        if (!Array.isArray(parameters)) {
+            throw new TypeError("Pam database parameters must be an array.");
+        }
+        return parameters;
+    };
+
+    const database = Object.freeze({
+        query: async (name, sql, parameters = [], options = {}) => {
+            if (typeof name !== "string" || typeof sql !== "string") {
+                throw new TypeError("Pam database queries require a database name and SQL string.");
+            }
+            const data = await request("/_pam/database", {
+                database: name,
+                operation: 1,
+                sql,
+                parameters: normalizeDatabaseParameters(parameters),
+                statements: [],
+            }, nativeOptions(options));
+            return data.rows;
+        },
+        execute: (name, sql, parameters = [], options = {}) => request("/_pam/database", {
+            database: name,
+            operation: 2,
+            sql,
+            parameters: normalizeDatabaseParameters(parameters),
+            statements: [],
+        }, nativeOptions(options)),
+        transaction: (name, statements, options = {}) => {
+            if (!Array.isArray(statements)) {
+                throw new TypeError("Pam database transactions require an array of statements.");
+            }
+            return request("/_pam/database", {
+                database: name,
+                operation: 3,
+                sql: "",
+                parameters: [],
+                statements,
+            }, nativeOptions(options));
+        },
+    });
+
+    const system = Object.freeze({
+        snapshot: (options = {}) => request("/_pam/system", {}, nativeOptions(options)),
+    });
+
+    const http = Object.freeze({
+        request: (origin, options = {}) => {
+            if (typeof origin !== "string" || origin.length === 0) {
+                throw new TypeError("Pam HTTP requests require a declared origin name.");
+            }
+            if (options === null || typeof options !== "object" || Array.isArray(options)) {
+                throw new TypeError("Pam HTTP request options must be an object.");
+            }
+            return request("/_pam/http", {
+                origin,
+                method: options.method ?? 1,
+                path: options.path ?? "/",
+                headers: options.headers ?? {},
+                body: options.body ?? "",
+            }, nativeOptions(options));
+        },
+    });
+
+    const diagnostics = Object.freeze({
+        snapshot: (options = {}) => request("/_pam/diagnostics", {}, nativeOptions(options)),
+    });
+
+    const secrets = Object.freeze({
+        get: (key, options = {}) => request("/_pam/secrets", {
+            operation: 1,
+            key,
+        }, nativeOptions(options)).then((result) => result.value),
+        set: (key, value, options = {}) => request("/_pam/secrets", {
+            operation: 2,
+            key,
+            value,
+        }, nativeOptions(options)),
+        delete: (key, options = {}) => request("/_pam/secrets", {
+            operation: 3,
+            key,
+        }, nativeOptions(options)),
+    });
+
+    const process = Object.freeze({
+        run: (command, options = {}) => {
+            if (typeof command !== "string" || command.length === 0) {
+                throw new TypeError("Pam process.run requires an authorized command name.");
+            }
+            return request("/_pam/process", {
+                command,
+                arguments: options.arguments ?? [],
+                stdin: options.stdin ?? "",
+                timeoutMs: options.timeout ?? 30_000,
+            }, nativeOptions(options));
+        },
+    });
+
+    const portal = Object.freeze({
+        open: (url, options = {}) => request("/_pam/portal", { operation: 1, url }, nativeOptions(options)),
+        screenshot: (options = {}) => request("/_pam/portal", { operation: 2 }, nativeOptions(options)),
+        printPdf: (target, options = {}) => request("/_pam/portal", {
+            operation: 3,
+            target: normalizeTarget(target),
+            title: options.title ?? "Pam Desktop",
+        }, nativeOptions(options)),
     });
 
     const updater = Object.freeze({
@@ -1712,13 +2479,20 @@ const BRIDGE_SCRIPT: &str = r#"
         value: Object.freeze({
             apiVersion: 1,
             clipboard,
+            database,
+            diagnostics,
             dialog,
             emit,
             fs: filesystem,
+            http,
             invoke,
             notification,
             on,
             plugins,
+            portal,
+            process,
+            secrets,
+            system,
             updater,
             windowId,
         }),
@@ -1753,11 +2527,20 @@ mod tests {
         assert!(BRIDGE_SCRIPT.contains("const dialog = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const clipboard = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const notification = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const database = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const system = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const http = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const secrets = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const process = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const portal = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const diagnostics = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const updater = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const plugins = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("value: Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("apiVersion: 1,"));
         assert!(BRIDGE_SCRIPT.contains("fs: filesystem,"));
+        assert!(BRIDGE_SCRIPT.contains("openRead: async (target, options = {})"));
+        assert!(BRIDGE_SCRIPT.contains("writeStream: async (target, source, options = {})"));
         assert!(BRIDGE_SCRIPT.contains("updater,"));
         assert!(BRIDGE_SCRIPT.contains("plugins,"));
     }

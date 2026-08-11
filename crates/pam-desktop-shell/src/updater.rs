@@ -1786,6 +1786,7 @@ mod tests {
                 public_key,
                 policy: UpdatePolicy::Manual,
             }),
+            lifecycle: pam_desktop_protocol::LifecycleConfig::default(),
         }
     }
 

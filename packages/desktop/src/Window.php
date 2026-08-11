@@ -18,6 +18,11 @@ final readonly class Window
         public bool $resizable,
         public bool $visible,
         public WindowTheme $theme,
+        public bool $decorated,
+        public bool $transparent,
+        public bool $alwaysOnTop,
+        public bool $maximized,
+        public bool $fullscreen,
     ) {
         if (
             $entry === ''
@@ -55,6 +60,11 @@ final readonly class Window
             resizable: true,
             visible: true,
             theme: WindowTheme::System,
+            decorated: true,
+            transparent: false,
+            alwaysOnTop: false,
+            maximized: false,
+            fullscreen: false,
         );
     }
 
@@ -70,6 +80,11 @@ final readonly class Window
             resizable: $this->resizable,
             visible: $this->visible,
             theme: $this->theme,
+            decorated: $this->decorated,
+            transparent: $this->transparent,
+            alwaysOnTop: $this->alwaysOnTop,
+            maximized: $this->maximized,
+            fullscreen: $this->fullscreen,
         );
     }
 
@@ -90,6 +105,11 @@ final readonly class Window
             resizable: $this->resizable,
             visible: $this->visible,
             theme: $this->theme,
+            decorated: $this->decorated,
+            transparent: $this->transparent,
+            alwaysOnTop: $this->alwaysOnTop,
+            maximized: $this->maximized,
+            fullscreen: $this->fullscreen,
         );
     }
 
@@ -105,6 +125,11 @@ final readonly class Window
             resizable: $this->resizable,
             visible: $this->visible,
             theme: $this->theme,
+            decorated: $this->decorated,
+            transparent: $this->transparent,
+            alwaysOnTop: $this->alwaysOnTop,
+            maximized: $this->maximized,
+            fullscreen: $this->fullscreen,
         );
     }
 
@@ -120,6 +145,11 @@ final readonly class Window
             resizable: $resizable,
             visible: $this->visible,
             theme: $this->theme,
+            decorated: $this->decorated,
+            transparent: $this->transparent,
+            alwaysOnTop: $this->alwaysOnTop,
+            maximized: $this->maximized,
+            fullscreen: $this->fullscreen,
         );
     }
 
@@ -135,6 +165,11 @@ final readonly class Window
             resizable: $this->resizable,
             visible: $visible,
             theme: $this->theme,
+            decorated: $this->decorated,
+            transparent: $this->transparent,
+            alwaysOnTop: $this->alwaysOnTop,
+            maximized: $this->maximized,
+            fullscreen: $this->fullscreen,
         );
     }
 
@@ -150,6 +185,61 @@ final readonly class Window
             resizable: $this->resizable,
             visible: $this->visible,
             theme: $theme,
+            decorated: $this->decorated,
+            transparent: $this->transparent,
+            alwaysOnTop: $this->alwaysOnTop,
+            maximized: $this->maximized,
+            fullscreen: $this->fullscreen,
+        );
+    }
+
+    public function decorated(bool $decorated = true): self
+    {
+        return $this->appearance(decorated: $decorated);
+    }
+
+    public function transparent(bool $transparent = true): self
+    {
+        return $this->appearance(transparent: $transparent);
+    }
+
+    public function alwaysOnTop(bool $alwaysOnTop = true): self
+    {
+        return $this->appearance(alwaysOnTop: $alwaysOnTop);
+    }
+
+    public function maximized(bool $maximized = true): self
+    {
+        return $this->appearance(maximized: $maximized);
+    }
+
+    public function fullscreen(bool $fullscreen = true): self
+    {
+        return $this->appearance(fullscreen: $fullscreen);
+    }
+
+    private function appearance(
+        ?bool $decorated = null,
+        ?bool $transparent = null,
+        ?bool $alwaysOnTop = null,
+        ?bool $maximized = null,
+        ?bool $fullscreen = null,
+    ): self {
+        return new self(
+            entry: $this->entry,
+            title: $this->title,
+            width: $this->width,
+            height: $this->height,
+            minWidth: $this->minWidth,
+            minHeight: $this->minHeight,
+            resizable: $this->resizable,
+            visible: $this->visible,
+            theme: $this->theme,
+            decorated: $decorated ?? $this->decorated,
+            transparent: $transparent ?? $this->transparent,
+            alwaysOnTop: $alwaysOnTop ?? $this->alwaysOnTop,
+            maximized: $maximized ?? $this->maximized,
+            fullscreen: $fullscreen ?? $this->fullscreen,
         );
     }
 
@@ -164,7 +254,12 @@ final readonly class Window
      *     minHeight: int,
      *     resizable: bool,
      *     visible: bool,
-     *     theme: int
+     *     theme: int,
+     *     decorated: bool,
+     *     transparent: bool,
+     *     alwaysOnTop: bool,
+     *     maximized: bool,
+     *     fullscreen: bool
      * }
      */
     public function toArray(string $id = 'main'): array
@@ -182,6 +277,11 @@ final readonly class Window
             'resizable' => $this->resizable,
             'visible' => $this->visible,
             'theme' => $this->theme->value,
+            'decorated' => $this->decorated,
+            'transparent' => $this->transparent,
+            'alwaysOnTop' => $this->alwaysOnTop,
+            'maximized' => $this->maximized,
+            'fullscreen' => $this->fullscreen,
         ];
     }
 }

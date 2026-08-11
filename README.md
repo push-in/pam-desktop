@@ -52,6 +52,10 @@ the Linux host into a reproducible, verifiable release:
 - development hot reload for assets, PHP and Composer changes;
 - PHP-declared filesystem roots with read/write policy;
 - native dialogs, clipboard and notifications behind independent permissions;
+- capability-scoped SQLite with bundled engine, WAL, prepared parameters and atomic transactions;
+- authenticated binary file streaming with browser backpressure and no base64 expansion;
+- lazy supervised PHP worker pools for explicitly parallel or background commands;
+- privacy-bounded Linux system, memory, network, power and battery snapshots;
 - opaque, process-lifetime grants for selected and dropped files;
 - typed reverse-DNS application manifests, integer-backed categories and
   validated PNG/SVG icons;
@@ -236,6 +240,16 @@ returns an opaque `grantId`, never the ambient filesystem path. Read the
 [Capabilities guide](docs/capabilities.md) for the complete frontend API,
 integer contracts and limits.
 
+For data-intensive applications, continue with [Native SQLite](docs/database.md),
+[binary streaming](docs/streaming.md), [native HTTP](docs/http.md), [Linux secrets](docs/secrets.md),
+[authorized processes](docs/processes.md),
+[file watching](docs/file-watching.md), [Linux desktop portals](docs/desktop-portals.md),
+[command execution lanes](docs/execution.md),
+[Linux system information](docs/system-information.md),
+the [native windows guide](docs/windows.md), [Linux lifecycle](docs/lifecycle.md) and the
+[runtime diagnostics guide](docs/diagnostics.md), then enforce the
+[performance engineering contract](docs/performance.md).
+
 Native shell events use the same ordered channel: `pam.menu.selected`,
 `pam.tray.activated`, and `pam.shortcut.changed`. Continue with the
 [Native shell guide](docs/native-shell.md), [Background jobs guide](docs/background-jobs.md),
@@ -345,9 +359,18 @@ docs/
 ├── architecture.md        process, security and extension boundaries
 ├── background-jobs.md     supervised PHP scheduling and lifecycle events
 ├── capabilities.md        PHP policy and frontend native APIs
+├── database.md            capability-scoped native SQLite
 ├── distribution.md        Linux bundles, archives and Debian packages
+├── desktop-portals.md     user-mediated URI, screenshot and PDF integration
+├── file-watching.md       capability-scoped change notifications
+├── http.md                confined native HTTPS transport
+├── lifecycle.md           single instance, deep links and associations
 ├── native-shell.md        menus, tray, global shortcuts and shell effects
+├── performance.md         budgets, benchmark harness and release tuning
+├── processes.md           allowlisted process execution without a shell
+├── secrets.md             encrypted Linux Secret Service integration
 ├── plugins.md             PHP composition and process-isolated Rust SDK
+├── streaming.md           backpressured binary file streams
 ├── stability.md           1.x support, SemVer and compatibility policy
 └── updates.md             signing, feeds and atomic automatic updates
 packaging/linux/            rootless host installation templates

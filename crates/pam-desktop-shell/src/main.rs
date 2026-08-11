@@ -2,13 +2,28 @@
 
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod database;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod desktop_portal;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod event_hub;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod file_watch;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod gateway;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod host_event;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod http_client;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod lifecycle;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod native;
@@ -20,11 +35,20 @@ mod packager;
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod plugin;
 mod plugin_scaffold;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod process_runner;
 mod project;
 mod runtime;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod scheduler;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod secret_store;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod system_info;
 mod updater;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
@@ -83,12 +107,6 @@ fn run() -> Result<(), String> {
             let project = arguments
                 .next()
                 .map_or_else(|| PathBuf::from("."), PathBuf::from);
-            if let Some(unknown) = arguments.next() {
-                return Err(format!(
-                    "unexpected argument for run: {}",
-                    unknown.to_string_lossy()
-                ));
-            }
             run_desktop(Project::discover(&project)?, false)
         }
         "build" => run_build(&executable, arguments.collect()),
@@ -271,7 +289,14 @@ fn run_doctor(path: &std::path::Path) -> Result<(), String> {
 
 #[cfg(feature = "servo-engine")]
 fn run_desktop(project: Project, watch: bool) -> Result<(), String> {
-    servo_engine::run(DesktopRuntime::prepare(project)?, watch)
+    let runtime = DesktopRuntime::prepare(project)?;
+    let arguments = std::env::args().skip(3).collect::<Vec<_>>();
+    match lifecycle::InstanceGuard::acquire(&runtime.bootstrap().manifest.identifier, &arguments)? {
+        lifecycle::Instance::Forwarded => Ok(()),
+        lifecycle::Instance::Primary(instance) => {
+            servo_engine::run(runtime, watch, instance, arguments)
+        }
+    }
 }
 
 #[cfg(not(feature = "servo-engine"))]

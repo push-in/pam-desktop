@@ -39,4 +39,31 @@ final class WindowEffect
     {
         return new Effect(EffectKind::FocusWindow, $windowId);
     }
+
+    public static function fullscreen(bool $fullscreen = true, string $windowId = 'main'): Effect
+    {
+        return new Effect(
+            EffectKind::SetWindowFullscreen,
+            $windowId,
+            ['fullscreen' => $fullscreen],
+        );
+    }
+
+    public static function maximized(bool $maximized = true, string $windowId = 'main'): Effect
+    {
+        return new Effect(
+            EffectKind::SetWindowMaximized,
+            $windowId,
+            ['maximized' => $maximized],
+        );
+    }
+
+    public static function alwaysOnTop(bool $alwaysOnTop = true, string $windowId = 'main'): Effect
+    {
+        return new Effect(
+            EffectKind::SetWindowAlwaysOnTop,
+            $windowId,
+            ['alwaysOnTop' => $alwaysOnTop],
+        );
+    }
 }

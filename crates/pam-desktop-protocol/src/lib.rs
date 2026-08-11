@@ -73,6 +73,9 @@ pub enum EffectKind {
     SetMenuItemEnabled = 5,
     SetMenuItemChecked = 6,
     SetTrayVisible = 7,
+    SetWindowFullscreen = 8,
+    SetWindowMaximized = 9,
+    SetWindowAlwaysOnTop = 10,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
@@ -229,6 +232,191 @@ pub enum NotificationUrgency {
     #[default]
     Normal = 2,
     Critical = 3,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum DatabaseAccess {
+    Read = 1,
+    ReadWrite = 2,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum DatabaseOperation {
+    Query = 1,
+    Execute = 2,
+    Transaction = 3,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum ConnectivityState {
+    #[default]
+    Offline = 1,
+    Online = 2,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum PowerState {
+    #[default]
+    Unknown = 1,
+    Charging = 2,
+    Discharging = 3,
+    Full = 4,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum CommandExecution {
+    #[default]
+    Stateful = 1,
+    Parallel = 2,
+    Background = 3,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum HttpMethod {
+    #[default]
+    Get = 1,
+    Post = 2,
+    Put = 3,
+    Patch = 4,
+    Delete = 5,
+    Head = 6,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, PartialEq, Eq, Serialize_repr)]
+#[repr(u8)]
+pub enum SecretOperation {
+    #[default]
+    Read = 1,
+    Write = 2,
+    Delete = 3,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, PartialEq, Eq, Serialize_repr)]
+#[repr(u8)]
+pub enum ProcessArgumentPolicy {
+    #[default]
+    Fixed = 1,
+    Append = 2,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, PartialEq, Eq, Serialize_repr)]
+#[repr(u8)]
+pub enum FileWatchOperation {
+    #[default]
+    Start = 1,
+    Stop = 2,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, PartialEq, Eq, Serialize_repr)]
+#[repr(u8)]
+pub enum DesktopPortalOperation {
+    #[default]
+    OpenUri = 1,
+    Screenshot = 2,
+    PrintPdf = 3,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProcessCommandConfig {
+    pub name: String,
+    pub executable: String,
+    #[serde(default)]
+    pub arguments: Vec<String>,
+    pub argument_policy: ProcessArgumentPolicy,
+}
+
+impl ProcessCommandConfig {
+    /// Validates an allowlisted bundled process declaration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid name, path, or fixed argument list.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier(&self.name, "process command")?;
+        validate_relative_project_path(&self.executable, "process executable")?;
+        if self.arguments.len() > 32
+            || self
+                .arguments
+                .iter()
+                .any(|argument| argument.len() > 1_024 || argument.contains('\0'))
+        {
+            return Err(format!(
+                "process command {:?} has invalid fixed arguments",
+                self.name
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommandConfig {
+    pub name: String,
+    pub execution: CommandExecution,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DatabaseConfig {
+    pub name: String,
+    pub path: String,
+    pub access: DatabaseAccess,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HttpOriginConfig {
+    pub name: String,
+    pub origin: String,
+}
+
+impl HttpOriginConfig {
+    /// Validates a named, credential-free HTTPS origin.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid identifier or unsafe URL.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier(&self.name, "HTTP origin")?;
+        let url = url::Url::parse(&self.origin)
+            .map_err(|error| format!("HTTP origin {:?} is invalid: {error}", self.name))?;
+        if url.scheme() != "https"
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(format!(
+                "HTTP origin {:?} must be a credential-free HTTPS URL without query or fragment",
+                self.name
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl DatabaseConfig {
+    /// Validates the database identity and project-relative path contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid identifier, empty path, or NUL byte.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier(&self.name, "database")?;
+        if self.path.is_empty() || self.path.contains('\0') {
+            return Err(format!("database {:?} has an invalid path", self.name));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -529,6 +717,10 @@ pub struct Bootstrap {
     pub manifest: ApplicationManifest,
     pub windows: Vec<WindowConfig>,
     pub command_timeout_ms: u64,
+    #[serde(default = "default_parallel_worker_count")]
+    pub parallel_worker_count: u8,
+    #[serde(default)]
+    pub commands: Vec<CommandConfig>,
     #[serde(default)]
     pub capabilities: NativeCapabilities,
     #[serde(default)]
@@ -557,6 +749,19 @@ impl Bootstrap {
             return Err(format!(
                 "command timeout must be between {MIN_COMMAND_TIMEOUT_MS} and {MAX_COMMAND_TIMEOUT_MS} milliseconds"
             ));
+        }
+        if !(1..=16).contains(&self.parallel_worker_count) {
+            return Err("parallel worker count must be between 1 and 16".to_owned());
+        }
+        let mut commands = HashSet::with_capacity(self.commands.len());
+        for command in &self.commands {
+            validate_identifier(&command.name, "command")?;
+            if !commands.insert(command.name.as_str()) {
+                return Err(format!(
+                    "command identifier {:?} is duplicated",
+                    command.name
+                ));
+            }
         }
 
         let mut identifiers = HashSet::with_capacity(self.windows.len());
@@ -606,6 +811,10 @@ impl Bootstrap {
     }
 }
 
+const fn default_parallel_worker_count() -> u8 {
+    2
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplicationManifest {
@@ -620,6 +829,70 @@ pub struct ApplicationManifest {
     pub bundle_excludes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updates: Option<UpdateConfig>,
+    #[serde(default)]
+    pub lifecycle: LifecycleConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LifecycleConfig {
+    #[serde(default)]
+    pub url_schemes: Vec<String>,
+    #[serde(default)]
+    pub mime_types: Vec<String>,
+    #[serde(default)]
+    pub autostart: bool,
+}
+
+impl LifecycleConfig {
+    /// Validates Linux URL schemes and MIME associations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed or duplicated associations.
+    pub fn validate(&self) -> Result<(), String> {
+        let mut values = HashSet::new();
+        for scheme in &self.url_schemes {
+            let valid = (2..=32).contains(&scheme.len())
+                && scheme.bytes().enumerate().all(|(index, byte)| {
+                    if index == 0 {
+                        byte.is_ascii_lowercase()
+                    } else {
+                        byte.is_ascii_lowercase()
+                            || byte.is_ascii_digit()
+                            || matches!(byte, b'+' | b'.' | b'-')
+                    }
+                });
+            if !valid || !values.insert(format!("scheme:{scheme}")) {
+                return Err(format!(
+                    "application URL scheme {scheme:?} is invalid or duplicated"
+                ));
+            }
+        }
+        for mime in &self.mime_types {
+            let Some((kind, subtype)) = mime.split_once('/') else {
+                return Err(format!("application MIME type {mime:?} is invalid"));
+            };
+            let valid_part = |part: &str| {
+                !part.is_empty()
+                    && part.len() <= 64
+                    && part.bytes().all(|byte| {
+                        byte.is_ascii_lowercase()
+                            || byte.is_ascii_digit()
+                            || matches!(
+                                byte,
+                                b'!' | b'#' | b'$' | b'&' | b'^' | b'_' | b'.' | b'+' | b'-'
+                            )
+                    })
+            };
+            if !valid_part(kind) || !valid_part(subtype) || !values.insert(format!("mime:{mime}")) {
+                return Err(format!(
+                    "application MIME type {mime:?} is invalid or duplicated"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl ApplicationManifest {
@@ -663,6 +936,7 @@ impl ApplicationManifest {
         if let Some(updates) = &self.updates {
             updates.validate()?;
         }
+        self.lifecycle.validate()?;
         Ok(())
     }
 }
@@ -819,6 +1093,18 @@ pub struct NativeCapabilities {
     pub notifications: bool,
     #[serde(default)]
     pub drag_and_drop: bool,
+    #[serde(default)]
+    pub databases: Vec<DatabaseConfig>,
+    #[serde(default)]
+    pub system_information: bool,
+    #[serde(default)]
+    pub http_origins: Vec<HttpOriginConfig>,
+    #[serde(default)]
+    pub secrets: bool,
+    #[serde(default)]
+    pub processes: Vec<ProcessCommandConfig>,
+    #[serde(default)]
+    pub desktop_portal: bool,
 }
 
 impl NativeCapabilities {
@@ -835,6 +1121,33 @@ impl NativeCapabilities {
                 return Err(format!(
                     "filesystem root identifier {:?} is duplicated",
                     root.name
+                ));
+            }
+        }
+        for database in &self.databases {
+            database.validate()?;
+            if !names.insert(database.name.as_str()) {
+                return Err(format!(
+                    "native resource identifier {:?} is duplicated",
+                    database.name
+                ));
+            }
+        }
+        for origin in &self.http_origins {
+            origin.validate()?;
+            if !names.insert(origin.name.as_str()) {
+                return Err(format!(
+                    "native resource identifier {:?} is duplicated",
+                    origin.name
+                ));
+            }
+        }
+        for process in &self.processes {
+            process.validate()?;
+            if !names.insert(process.name.as_str()) {
+                return Err(format!(
+                    "native resource identifier {:?} is duplicated",
+                    process.name
                 ));
             }
         }
@@ -1099,6 +1412,8 @@ pub struct RustPluginConfig {
     #[serde(default)]
     pub arguments: Vec<String>,
     pub timeout_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
 }
 
 impl RustPluginConfig {
@@ -1130,6 +1445,9 @@ impl RustPluginConfig {
                 "Rust plugin {:?} timeout must be between {MIN_COMMAND_TIMEOUT_MS} and {MAX_COMMAND_TIMEOUT_MS} milliseconds",
                 self.id
             ));
+        }
+        if let Some(digest) = &self.sha256 {
+            validate_lower_hex(digest, 64, "Rust plugin SHA-256 digest")?;
         }
         Ok(())
     }
@@ -1163,6 +1481,10 @@ impl FileSystemRootConfig {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent native window attributes intentionally serialize as booleans"
+)]
 pub struct WindowConfig {
     pub id: String,
     pub entry: String,
@@ -1174,6 +1496,16 @@ pub struct WindowConfig {
     pub resizable: bool,
     pub visible: bool,
     pub theme: WindowTheme,
+    #[serde(default = "default_true")]
+    pub decorated: bool,
+    #[serde(default)]
+    pub transparent: bool,
+    #[serde(default)]
+    pub always_on_top: bool,
+    #[serde(default)]
+    pub maximized: bool,
+    #[serde(default)]
+    pub fullscreen: bool,
 }
 
 impl WindowConfig {
@@ -1483,6 +1815,11 @@ mod tests {
             resizable: true,
             visible: true,
             theme: WindowTheme::System,
+            decorated: true,
+            transparent: false,
+            always_on_top: false,
+            maximized: false,
+            fullscreen: false,
         };
 
         assert!(invalid.validate().is_err());
@@ -1521,6 +1858,11 @@ mod tests {
                     resizable: true,
                     visible: true,
                     theme: WindowTheme::System,
+                    decorated: true,
+                    transparent: false,
+                    always_on_top: false,
+                    maximized: false,
+                    fullscreen: false,
                 },
                 WindowConfig {
                     id: "settings".to_owned(),
@@ -1533,9 +1875,16 @@ mod tests {
                     resizable: true,
                     visible: false,
                     theme: WindowTheme::Dark,
+                    decorated: true,
+                    transparent: false,
+                    always_on_top: false,
+                    maximized: false,
+                    fullscreen: false,
                 },
             ],
             command_timeout_ms: 30_000,
+            parallel_worker_count: 2,
+            commands: Vec::new(),
             capabilities: NativeCapabilities {
                 filesystem_roots: vec![FileSystemRootConfig {
                     name: "data".to_owned(),
@@ -1547,6 +1896,12 @@ mod tests {
                 clipboard_write: true,
                 notifications: true,
                 drag_and_drop: true,
+                databases: Vec::new(),
+                system_information: false,
+                http_origins: Vec::new(),
+                secrets: false,
+                processes: Vec::new(),
+                desktop_portal: false,
             },
             shell: ShellConfig::default(),
             background_jobs: Vec::new(),
@@ -1628,6 +1983,7 @@ mod tests {
             executable: "plugins/bin/system".to_owned(),
             arguments: vec!["--quiet".to_owned()],
             timeout_ms: 5_000,
+            sha256: None,
         };
         assert!(plugin.validate().is_ok());
 
@@ -1815,6 +2171,7 @@ mod tests {
             icon: "resources/icon.svg".to_owned(),
             bundle_excludes: vec!["storage/cache".to_owned()],
             updates: None,
+            lifecycle: LifecycleConfig::default(),
         }
     }
 }

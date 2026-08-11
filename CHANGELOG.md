@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+- Add capability-scoped, backpressured binary read/write streams without
+  base64 payload expansion.
+- Add capability-scoped native HTTPS with named origins, path confinement,
+  bounded bodies, strict headers and integer method contracts.
+- Harden Rust sidecars with optional SHA-256 pinning on every start and a clean
+  inherited environment.
+- Add Linux single-instance activation, deep-link/file forwarding, MIME and URL
+  associations, and opt-in XDG autostart packaging.
+- Add capability-gated Linux Secret Service storage with encrypted D-Bus
+  sessions, application scoping and bounded UTF-8 values.
+- Add manifest-allowlisted bundled process execution with integer argument
+  policy, empty environments, bounded concurrent I/O and hard timeouts.
+- Add capability-scoped public file watching and direct XDG portal integration
+  for URI opening, interactive screenshots and native PDF printing.
+- Add a development-only responsive runtime Inspector with accessible live
+  aggregate metrics and no sensitive payload collection.
+
+- Added capability-scoped native SQLite with a bundled engine, prepared
+  parameters, WAL, foreign keys, bounded queries and atomic transactions.
+- Added explicit stateful, parallel and background PHP command execution lanes
+  backed by a lazy supervised worker pool.
+- Added privacy-bounded Linux system snapshots for CPU, memory, uptime,
+  connectivity, power and battery state.
+- Added decorated, transparent, always-on-top, maximized and fullscreen window
+  policy plus typed runtime effects for fullscreen, maximization and stacking.
+- Added authenticated runtime diagnostics and a reproducible bridge benchmark
+  harness.
+- Expanded architecture, capability, database, execution, diagnostics, window,
+  system-information and performance documentation.
+
 ## 1.1.2
 
 - Added GitHub artifact provenance for the byte-reproducible Linux x86-64 host

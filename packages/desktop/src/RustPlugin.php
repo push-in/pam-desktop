@@ -16,6 +16,7 @@ final readonly class RustPlugin
         public string $executable,
         public array $arguments,
         public int $timeoutMilliseconds,
+        public ?string $sha256,
     ) {
         Identifier::assert($id, 'The Rust plugin identifier');
         self::assertProjectPath($executable);
@@ -43,7 +44,7 @@ final readonly class RustPlugin
 
     public static function executable(string $id, string $path): self
     {
-        return new self($id, $path, [], 30_000);
+        return new self($id, $path, [], 30_000, null);
     }
 
     public function arguments(string ...$arguments): self
@@ -53,6 +54,7 @@ final readonly class RustPlugin
             $this->executable,
             array_values($arguments),
             $this->timeoutMilliseconds,
+            $this->sha256,
         );
     }
 
@@ -63,11 +65,27 @@ final readonly class RustPlugin
             $this->executable,
             $this->arguments,
             $milliseconds,
+            $this->sha256,
+        );
+    }
+
+    public function integrity(string $sha256): self
+    {
+        if (preg_match('/\A[0-9a-f]{64}\z/D', $sha256) !== 1) {
+            throw new InvalidArgumentException('Rust plugin integrity must be a lowercase SHA-256 digest.');
+        }
+
+        return new self(
+            $this->id,
+            $this->executable,
+            $this->arguments,
+            $this->timeoutMilliseconds,
+            $sha256,
         );
     }
 
     /**
-     * @return array{id: string, executable: string, arguments: list<string>, timeoutMs: int}
+     * @return array{id: string, executable: string, arguments: list<string>, timeoutMs: int, sha256: null|string}
      */
     public function toArray(): array
     {
@@ -76,6 +94,7 @@ final readonly class RustPlugin
             'executable' => $this->executable,
             'arguments' => $this->arguments,
             'timeoutMs' => $this->timeoutMilliseconds,
+            'sha256' => $this->sha256,
         ];
     }
 

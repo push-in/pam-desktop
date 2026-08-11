@@ -13,4 +13,7 @@ enum EffectKind: int
     case SetMenuItemEnabled = 5;
     case SetMenuItemChecked = 6;
     case SetTrayVisible = 7;
+    case SetWindowFullscreen = 8;
+    case SetWindowMaximized = 9;
+    case SetWindowAlwaysOnTop = 10;
 }

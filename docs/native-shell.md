@@ -125,3 +125,6 @@ the application usable.
 With close behavior `Hide`, closing the main window hides it while the tray
 remains active. Use a menu item or global shortcut that returns
 `WindowEffect::visible(true)` and `WindowEffect::focus()` to restore it.
+
+Window chrome, transparency, fullscreen, maximization and stacking belong to
+the window contract rather than the tray/menu shell. See [Native windows](windows.md).

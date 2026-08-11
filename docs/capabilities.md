@@ -8,7 +8,10 @@ receives a generic native bridge.
 
 ```php
 use Pam\Desktop\Capabilities;
+use Pam\Desktop\Database;
 use Pam\Desktop\FileSystemRoot;
+use Pam\Desktop\HttpOrigin;
+use Pam\Desktop\ProcessCommand;
 
 $app->capabilities(
     Capabilities::none()
@@ -19,7 +22,13 @@ $app->capabilities(
         ->dialogs()
         ->clipboard(read: true, write: true)
         ->notifications()
-        ->dragAndDrop(),
+        ->dragAndDrop()
+        ->database(Database::readWrite('app', 'storage/app.sqlite'))
+        ->systemInformation()
+        ->http(HttpOrigin::allow('api', 'https://api.example.com/v1'))
+        ->secrets()
+        ->process(ProcessCommand::executable('thumbnailer', 'bin/thumbnailer'))
+        ->desktopPortal(),
 );
 ```
 
@@ -57,6 +66,11 @@ returned or opened by the bridge. Directory entries contain `name`, relative
 
 Every method except dialogs accepts an optional `{ timeout, signal }` argument
 with the same client-side behavior as application commands.
+
+Binary data uses `pam.fs.openRead()` and `pam.fs.writeStream()` instead of the
+bounded JSON text methods. A named-root watcher uses `pam.fs.watch()` and emits
+`pam.fs.changed`. See [Binary streaming](streaming.md) and
+[File watching](file-watching.md).
 
 ## Dialogs and grants
 
@@ -145,3 +159,21 @@ pam.on("pam.drag.error", ({ code, message }) => {
 Dropped files and directories receive read-only grants targeted to the Winit
 window under the cursor. Hover events expose only the display name and integer
 kind; ambient paths never enter JavaScript.
+
+## Specialized namespaces
+
+SQLite databases and system inspection have their own capability gates and
+frozen frontend namespaces. They do not inherit filesystem authority. The same
+rule applies to named native HTTPS origins, Secret Service keys, allowlisted
+processes and user-mediated XDG portals. See:
+
+- [Native SQLite](database.md)
+- [System information](system-information.md)
+- [Native HTTP](http.md)
+- [Linux secrets](secrets.md)
+- [Authorized processes](processes.md)
+- [Linux desktop portals](desktop-portals.md)
+
+Lifecycle declarations are packaging/runtime policy rather than a renderer
+capability; see [Linux lifecycle](lifecycle.md). Hardware and long-lived media
+sessions belong in [process-isolated plugins](plugins.md).

@@ -6,11 +6,19 @@ case Pam\Desktop\ApplicationCategory::Graphics=3
 case Pam\Desktop\ApplicationCategory::Network=5
 case Pam\Desktop\ApplicationCategory::Productivity=2
 case Pam\Desktop\ApplicationCategory::Utility=6
+case Pam\Desktop\CommandExecution::Background=3
+case Pam\Desktop\CommandExecution::Parallel=2
+case Pam\Desktop\CommandExecution::Stateful=1
+case Pam\Desktop\DatabaseAccess::Read=1
+case Pam\Desktop\DatabaseAccess::ReadWrite=2
 case Pam\Desktop\EffectKind::CloseWindow=3
 case Pam\Desktop\EffectKind::FocusWindow=4
 case Pam\Desktop\EffectKind::SetMenuItemChecked=6
 case Pam\Desktop\EffectKind::SetMenuItemEnabled=5
 case Pam\Desktop\EffectKind::SetTrayVisible=7
+case Pam\Desktop\EffectKind::SetWindowAlwaysOnTop=10
+case Pam\Desktop\EffectKind::SetWindowFullscreen=8
+case Pam\Desktop\EffectKind::SetWindowMaximized=9
 case Pam\Desktop\EffectKind::SetWindowTitle=1
 case Pam\Desktop\EffectKind::SetWindowVisible=2
 case Pam\Desktop\ErrorCode::BackgroundJobFailed=26
@@ -50,6 +58,8 @@ case Pam\Desktop\MenuItemKind::Separator=3
 case Pam\Desktop\MenuItemKind::Submenu=4
 case Pam\Desktop\MessageKind::Request=1
 case Pam\Desktop\MessageKind::Response=2
+case Pam\Desktop\ProcessArgumentPolicy::Append=2
+case Pam\Desktop\ProcessArgumentPolicy::Fixed=1
 case Pam\Desktop\ResponseStatus::Failure=2
 case Pam\Desktop\ResponseStatus::Success=1
 case Pam\Desktop\TrayCloseBehavior::Exit=1
@@ -73,7 +83,7 @@ constant Pam\Desktop\BackgroundJob::MIN_INTERVAL_MS=1000
 method Pam\Desktop\Accelerator::assert static ($accelerator:string):void
 method Pam\Desktop\Application::capabilities ($capabilities:Pam\Desktop\Capabilities):self
 method Pam\Desktop\Application::category ($category:Pam\Desktop\ApplicationCategory):self
-method Pam\Desktop\Application::command ($name:string,$handler:Closure):self
+method Pam\Desktop\Application::command ($name:string,$handler:Closure,$execution:Pam\Desktop\CommandExecution=Pam\Desktop\CommandExecution::Stateful):self
 method Pam\Desktop\Application::commandTimeout ($milliseconds:int):self
 method Pam\Desktop\Application::create static ($window:Pam\Desktop\Window,$manifest:Pam\Desktop\Manifest):self
 method Pam\Desktop\Application::description ($description:string):self
@@ -82,8 +92,10 @@ method Pam\Desktop\Application::excludeFromBundle (...$paths:string):self
 method Pam\Desktop\Application::handleLine ($line:string):array
 method Pam\Desktop\Application::icon ($path:string):self
 method Pam\Desktop\Application::job ($id:string,$job:Pam\Desktop\BackgroundJob,$handler:Closure):self
+method Pam\Desktop\Application::lifecycle ($lifecycle:Pam\Desktop\Lifecycle):self
 method Pam\Desktop\Application::make static ($id:string,$name:string,$version:string="1.0.0",$window:?Pam\Desktop\Window=null):self
 method Pam\Desktop\Application::on ($name:string,$handler:Closure):self
+method Pam\Desktop\Application::parallelWorkers ($workers:int):self
 method Pam\Desktop\Application::plugin ($plugin:Pam\Desktop\Plugin):self
 method Pam\Desktop\Application::publisher ($publisher:string):self
 method Pam\Desktop\Application::run ():never
@@ -102,11 +114,17 @@ method Pam\Desktop\BackgroundJob::runOnStart ():self
 method Pam\Desktop\BackgroundJob::timeout ($milliseconds:int):self
 method Pam\Desktop\BackgroundJob::toArray ($id:string):array
 method Pam\Desktop\Capabilities::clipboard ($read:bool=true,$write:bool=true):self
+method Pam\Desktop\Capabilities::database (...$databases:Pam\Desktop\Database):self
+method Pam\Desktop\Capabilities::desktopPortal ($enabled:bool=true):self
 method Pam\Desktop\Capabilities::dialogs ($enabled:bool=true):self
 method Pam\Desktop\Capabilities::dragAndDrop ($enabled:bool=true):self
 method Pam\Desktop\Capabilities::filesystem (...$roots:Pam\Desktop\FileSystemRoot):self
+method Pam\Desktop\Capabilities::http (...$origins:Pam\Desktop\HttpOrigin):self
 method Pam\Desktop\Capabilities::none static ():self
 method Pam\Desktop\Capabilities::notifications ($enabled:bool=true):self
+method Pam\Desktop\Capabilities::process (...$commands:Pam\Desktop\ProcessCommand):self
+method Pam\Desktop\Capabilities::secrets ($enabled:bool=true):self
+method Pam\Desktop\Capabilities::systemInformation ($enabled:bool=true):self
 method Pam\Desktop\Capabilities::toArray ():array
 method Pam\Desktop\ClientEvent::__construct ($name:string,$payload:mixed=null,$windowId:?string=null):-
 method Pam\Desktop\ClientEvent::to ($windowId:string):self
@@ -115,9 +133,18 @@ method Pam\Desktop\CommandContext::__construct ($id:int,$name:string,$windowId:s
 method Pam\Desktop\CommandContext::boolean ($key:string,$default:?bool=null):?bool
 method Pam\Desktop\CommandContext::integer ($key:string,$default:?int=null):?int
 method Pam\Desktop\CommandContext::string ($key:string,$default:?string=null):?string
+method Pam\Desktop\CommandExecution::cases static ():array
+method Pam\Desktop\CommandExecution::from static ($value:string|int):static
+method Pam\Desktop\CommandExecution::tryFrom static ($value:string|int):?static
 method Pam\Desktop\CommandResult::effect ($effect:Pam\Desktop\Effect):self
 method Pam\Desktop\CommandResult::event ($event:Pam\Desktop\ClientEvent):self
 method Pam\Desktop\CommandResult::success static ($payload:mixed=null):self
+method Pam\Desktop\Database::read static ($name:string,$path:string):self
+method Pam\Desktop\Database::readWrite static ($name:string,$path:string):self
+method Pam\Desktop\Database::toArray ():array
+method Pam\Desktop\DatabaseAccess::cases static ():array
+method Pam\Desktop\DatabaseAccess::from static ($value:string|int):static
+method Pam\Desktop\DatabaseAccess::tryFrom static ($value:string|int):?static
 method Pam\Desktop\Effect::__construct ($kind:Pam\Desktop\EffectKind,$windowId:string="main",$payload:array=[]):-
 method Pam\Desktop\Effect::toArray ():array
 method Pam\Desktop\EffectKind::cases static ():array
@@ -139,16 +166,24 @@ method Pam\Desktop\FileSystemRoot::toArray ():array
 method Pam\Desktop\FileSystemRoot::write static ($name:string,$path:string):self
 method Pam\Desktop\GlobalShortcut::create static ($id:string,$accelerator:string):self
 method Pam\Desktop\GlobalShortcut::toArray ():array
+method Pam\Desktop\HttpOrigin::allow static ($name:string,$origin:string):self
+method Pam\Desktop\HttpOrigin::toArray ():array
 method Pam\Desktop\Identifier::assert static ($value:string,$label:string):void
 method Pam\Desktop\JobContext::__construct ($requestId:int,$id:string,$runId:int,$startedAtMilliseconds:int):-
 method Pam\Desktop\JobOverlapPolicy::cases static ():array
 method Pam\Desktop\JobOverlapPolicy::from static ($value:string|int):static
 method Pam\Desktop\JobOverlapPolicy::tryFrom static ($value:string|int):?static
+method Pam\Desktop\Lifecycle::autostart ($enabled:bool=true):self
+method Pam\Desktop\Lifecycle::files (...$mimeTypes:string):self
+method Pam\Desktop\Lifecycle::none static ():self
+method Pam\Desktop\Lifecycle::schemes (...$schemes:string):self
+method Pam\Desktop\Lifecycle::toArray ():array
 method Pam\Desktop\Manifest::category ($category:Pam\Desktop\ApplicationCategory):self
 method Pam\Desktop\Manifest::create static ($identifier:string,$name:string,$version:string):self
 method Pam\Desktop\Manifest::description ($description:string):self
 method Pam\Desktop\Manifest::excludeFromBundle (...$paths:string):self
 method Pam\Desktop\Manifest::icon ($path:string):self
+method Pam\Desktop\Manifest::lifecycle ($lifecycle:Pam\Desktop\Lifecycle):self
 method Pam\Desktop\Manifest::publisher ($publisher:string):self
 method Pam\Desktop\Manifest::toArray ():array
 method Pam\Desktop\Manifest::updates ($updates:Pam\Desktop\Updates):self
@@ -171,11 +206,19 @@ method Pam\Desktop\MessageKind::from static ($value:string|int):static
 method Pam\Desktop\MessageKind::tryFrom static ($value:string|int):?static
 method Pam\Desktop\Plugin::identifier ():string
 method Pam\Desktop\Plugin::register ($application:Pam\Desktop\Application):void
+method Pam\Desktop\ProcessArgumentPolicy::cases static ():array
+method Pam\Desktop\ProcessArgumentPolicy::from static ($value:string|int):static
+method Pam\Desktop\ProcessArgumentPolicy::tryFrom static ($value:string|int):?static
+method Pam\Desktop\ProcessCommand::allowArguments ($enabled:bool=true):self
+method Pam\Desktop\ProcessCommand::arguments (...$arguments:string):self
+method Pam\Desktop\ProcessCommand::executable static ($name:string,$path:string):self
+method Pam\Desktop\ProcessCommand::toArray ():array
 method Pam\Desktop\ResponseStatus::cases static ():array
 method Pam\Desktop\ResponseStatus::from static ($value:string|int):static
 method Pam\Desktop\ResponseStatus::tryFrom static ($value:string|int):?static
 method Pam\Desktop\RustPlugin::arguments (...$arguments:string):self
 method Pam\Desktop\RustPlugin::executable static ($id:string,$path:string):self
+method Pam\Desktop\RustPlugin::integrity ($sha256:string):self
 method Pam\Desktop\RustPlugin::timeout ($milliseconds:int):self
 method Pam\Desktop\RustPlugin::toArray ():array
 method Pam\Desktop\Shell::menu (...$menus:Pam\Desktop\Menu):self
@@ -199,17 +242,25 @@ method Pam\Desktop\Updates::channel ($channel:string):self
 method Pam\Desktop\Updates::from static ($endpoint:string,$publicKey:string):self
 method Pam\Desktop\Updates::policy ($policy:Pam\Desktop\UpdatePolicy):self
 method Pam\Desktop\Updates::toArray ():array
+method Pam\Desktop\Window::alwaysOnTop ($alwaysOnTop:bool=true):self
 method Pam\Desktop\Window::create static ($title:string):self
+method Pam\Desktop\Window::decorated ($decorated:bool=true):self
 method Pam\Desktop\Window::entry ($entry:string):self
+method Pam\Desktop\Window::fullscreen ($fullscreen:bool=true):self
 method Pam\Desktop\Window::load ($path:string):self
+method Pam\Desktop\Window::maximized ($maximized:bool=true):self
 method Pam\Desktop\Window::minimumSize ($width:int,$height:int):self
 method Pam\Desktop\Window::resizable ($resizable:bool=true):self
 method Pam\Desktop\Window::size ($width:int,$height:int):self
 method Pam\Desktop\Window::theme ($theme:Pam\Desktop\WindowTheme):self
 method Pam\Desktop\Window::toArray ($id:string="main"):array
+method Pam\Desktop\Window::transparent ($transparent:bool=true):self
 method Pam\Desktop\Window::visible ($visible:bool=true):self
+method Pam\Desktop\WindowEffect::alwaysOnTop static ($alwaysOnTop:bool=true,$windowId:string="main"):Pam\Desktop\Effect
 method Pam\Desktop\WindowEffect::close static ($windowId:string="main"):Pam\Desktop\Effect
 method Pam\Desktop\WindowEffect::focus static ($windowId:string="main"):Pam\Desktop\Effect
+method Pam\Desktop\WindowEffect::fullscreen static ($fullscreen:bool=true,$windowId:string="main"):Pam\Desktop\Effect
+method Pam\Desktop\WindowEffect::maximized static ($maximized:bool=true,$windowId:string="main"):Pam\Desktop\Effect
 method Pam\Desktop\WindowEffect::title static ($title:string,$windowId:string="main"):Pam\Desktop\Effect
 method Pam\Desktop\WindowEffect::visible static ($visible:bool,$windowId:string="main"):Pam\Desktop\Effect
 method Pam\Desktop\WindowTheme::cases static ():array
@@ -223,10 +274,16 @@ property Pam\Desktop\BackgroundJob::$overlapPolicy readonly:Pam\Desktop\JobOverl
 property Pam\Desktop\BackgroundJob::$timeoutMilliseconds readonly:int
 property Pam\Desktop\Capabilities::$clipboardReadEnabled readonly:bool
 property Pam\Desktop\Capabilities::$clipboardWriteEnabled readonly:bool
+property Pam\Desktop\Capabilities::$databases readonly:array
+property Pam\Desktop\Capabilities::$desktopPortalEnabled readonly:bool
 property Pam\Desktop\Capabilities::$dialogsEnabled readonly:bool
 property Pam\Desktop\Capabilities::$dragAndDropEnabled readonly:bool
 property Pam\Desktop\Capabilities::$filesystemRoots readonly:array
+property Pam\Desktop\Capabilities::$httpOrigins readonly:array
 property Pam\Desktop\Capabilities::$notificationsEnabled readonly:bool
+property Pam\Desktop\Capabilities::$processes readonly:array
+property Pam\Desktop\Capabilities::$secretsEnabled readonly:bool
+property Pam\Desktop\Capabilities::$systemInformationEnabled readonly:bool
 property Pam\Desktop\ClientEvent::$name readonly:string
 property Pam\Desktop\ClientEvent::$payload readonly:mixed
 property Pam\Desktop\ClientEvent::$windowId readonly:?string
@@ -234,9 +291,16 @@ property Pam\Desktop\CommandContext::$id readonly:int
 property Pam\Desktop\CommandContext::$name readonly:string
 property Pam\Desktop\CommandContext::$payload readonly:mixed
 property Pam\Desktop\CommandContext::$windowId readonly:string
+property Pam\Desktop\CommandExecution::$name readonly:string
+property Pam\Desktop\CommandExecution::$value readonly:int
 property Pam\Desktop\CommandResult::$effects readonly:array
 property Pam\Desktop\CommandResult::$events readonly:array
 property Pam\Desktop\CommandResult::$payload readonly:mixed
+property Pam\Desktop\Database::$access readonly:Pam\Desktop\DatabaseAccess
+property Pam\Desktop\Database::$name readonly:string
+property Pam\Desktop\Database::$path readonly:string
+property Pam\Desktop\DatabaseAccess::$name readonly:string
+property Pam\Desktop\DatabaseAccess::$value readonly:int
 property Pam\Desktop\Effect::$kind readonly:Pam\Desktop\EffectKind
 property Pam\Desktop\Effect::$payload readonly:array
 property Pam\Desktop\Effect::$windowId readonly:string
@@ -255,17 +319,23 @@ property Pam\Desktop\FileSystemRoot::$name readonly:string
 property Pam\Desktop\FileSystemRoot::$path readonly:string
 property Pam\Desktop\GlobalShortcut::$accelerator readonly:string
 property Pam\Desktop\GlobalShortcut::$id readonly:string
+property Pam\Desktop\HttpOrigin::$name readonly:string
+property Pam\Desktop\HttpOrigin::$origin readonly:string
 property Pam\Desktop\JobContext::$id readonly:string
 property Pam\Desktop\JobContext::$requestId readonly:int
 property Pam\Desktop\JobContext::$runId readonly:int
 property Pam\Desktop\JobContext::$startedAtMilliseconds readonly:int
 property Pam\Desktop\JobOverlapPolicy::$name readonly:string
 property Pam\Desktop\JobOverlapPolicy::$value readonly:int
+property Pam\Desktop\Lifecycle::$autostartEnabled readonly:bool
+property Pam\Desktop\Lifecycle::$mimeTypes readonly:array
+property Pam\Desktop\Lifecycle::$urlSchemes readonly:array
 property Pam\Desktop\Manifest::$bundleExcludes readonly:array
 property Pam\Desktop\Manifest::$category readonly:Pam\Desktop\ApplicationCategory
 property Pam\Desktop\Manifest::$description readonly:string
 property Pam\Desktop\Manifest::$icon readonly:string
 property Pam\Desktop\Manifest::$identifier readonly:string
+property Pam\Desktop\Manifest::$lifecycle readonly:Pam\Desktop\Lifecycle
 property Pam\Desktop\Manifest::$name readonly:string
 property Pam\Desktop\Manifest::$publisher readonly:string
 property Pam\Desktop\Manifest::$updates readonly:?Pam\Desktop\Updates
@@ -284,11 +354,18 @@ property Pam\Desktop\MenuItemKind::$name readonly:string
 property Pam\Desktop\MenuItemKind::$value readonly:int
 property Pam\Desktop\MessageKind::$name readonly:string
 property Pam\Desktop\MessageKind::$value readonly:int
+property Pam\Desktop\ProcessArgumentPolicy::$name readonly:string
+property Pam\Desktop\ProcessArgumentPolicy::$value readonly:int
+property Pam\Desktop\ProcessCommand::$argumentPolicy readonly:Pam\Desktop\ProcessArgumentPolicy
+property Pam\Desktop\ProcessCommand::$arguments readonly:array
+property Pam\Desktop\ProcessCommand::$executable readonly:string
+property Pam\Desktop\ProcessCommand::$name readonly:string
 property Pam\Desktop\ResponseStatus::$name readonly:string
 property Pam\Desktop\ResponseStatus::$value readonly:int
 property Pam\Desktop\RustPlugin::$arguments readonly:array
 property Pam\Desktop\RustPlugin::$executable readonly:string
 property Pam\Desktop\RustPlugin::$id readonly:string
+property Pam\Desktop\RustPlugin::$sha256 readonly:?string
 property Pam\Desktop\RustPlugin::$timeoutMilliseconds readonly:int
 property Pam\Desktop\Shell::$menus readonly:array
 property Pam\Desktop\Shell::$shortcuts readonly:array
@@ -304,13 +381,18 @@ property Pam\Desktop\Updates::$channel readonly:string
 property Pam\Desktop\Updates::$endpoint readonly:string
 property Pam\Desktop\Updates::$policy readonly:Pam\Desktop\UpdatePolicy
 property Pam\Desktop\Updates::$publicKey readonly:string
+property Pam\Desktop\Window::$alwaysOnTop readonly:bool
+property Pam\Desktop\Window::$decorated readonly:bool
 property Pam\Desktop\Window::$entry readonly:string
+property Pam\Desktop\Window::$fullscreen readonly:bool
 property Pam\Desktop\Window::$height readonly:int
+property Pam\Desktop\Window::$maximized readonly:bool
 property Pam\Desktop\Window::$minHeight readonly:int
 property Pam\Desktop\Window::$minWidth readonly:int
 property Pam\Desktop\Window::$resizable readonly:bool
 property Pam\Desktop\Window::$theme readonly:Pam\Desktop\WindowTheme
 property Pam\Desktop\Window::$title readonly:string
+property Pam\Desktop\Window::$transparent readonly:bool
 property Pam\Desktop\Window::$visible readonly:bool
 property Pam\Desktop\Window::$width readonly:int
 property Pam\Desktop\WindowTheme::$name readonly:string
@@ -322,15 +404,19 @@ symbol class Pam\Desktop\Capabilities final,readonly
 symbol class Pam\Desktop\ClientEvent final,readonly
 symbol class Pam\Desktop\CommandContext final,readonly
 symbol class Pam\Desktop\CommandResult final,readonly
+symbol class Pam\Desktop\Database final,readonly
 symbol class Pam\Desktop\Effect final,readonly
 symbol class Pam\Desktop\EventContext final,readonly
 symbol class Pam\Desktop\FileSystemRoot final,readonly
 symbol class Pam\Desktop\GlobalShortcut final,readonly
+symbol class Pam\Desktop\HttpOrigin final,readonly
 symbol class Pam\Desktop\Identifier final
 symbol class Pam\Desktop\JobContext final,readonly
+symbol class Pam\Desktop\Lifecycle final,readonly
 symbol class Pam\Desktop\Manifest final,readonly
 symbol class Pam\Desktop\Menu final,readonly
 symbol class Pam\Desktop\MenuItem final,readonly
+symbol class Pam\Desktop\ProcessCommand final,readonly
 symbol class Pam\Desktop\RustPlugin final,readonly
 symbol class Pam\Desktop\Shell final,readonly
 symbol class Pam\Desktop\ShellEffect final
@@ -339,12 +425,15 @@ symbol class Pam\Desktop\Updates final,readonly
 symbol class Pam\Desktop\Window final,readonly
 symbol class Pam\Desktop\WindowEffect final
 symbol enum Pam\Desktop\ApplicationCategory final
+symbol enum Pam\Desktop\CommandExecution final
+symbol enum Pam\Desktop\DatabaseAccess final
 symbol enum Pam\Desktop\EffectKind final
 symbol enum Pam\Desktop\ErrorCode final
 symbol enum Pam\Desktop\FileAccess final
 symbol enum Pam\Desktop\JobOverlapPolicy final
 symbol enum Pam\Desktop\MenuItemKind final
 symbol enum Pam\Desktop\MessageKind final
+symbol enum Pam\Desktop\ProcessArgumentPolicy final
 symbol enum Pam\Desktop\ResponseStatus final
 symbol enum Pam\Desktop\TrayCloseBehavior final
 symbol enum Pam\Desktop\UpdatePolicy final

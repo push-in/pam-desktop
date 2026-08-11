@@ -15,8 +15,10 @@ use Pam\Desktop\Application;
 use Pam\Desktop\ApplicationCategory;
 use Pam\Desktop\BackgroundJob;
 use Pam\Desktop\Capabilities;
+use Pam\Desktop\Database;
 use Pam\Desktop\ClientEvent;
 use Pam\Desktop\CommandContext;
+use Pam\Desktop\CommandExecution;
 use Pam\Desktop\CommandResult;
 use Pam\Desktop\EffectKind;
 use Pam\Desktop\EventContext;
@@ -24,10 +26,13 @@ use Pam\Desktop\FileSystemRoot;
 use Pam\Desktop\GlobalShortcut;
 use Pam\Desktop\JobContext;
 use Pam\Desktop\JobOverlapPolicy;
+use Pam\Desktop\Lifecycle;
 use Pam\Desktop\Manifest;
 use Pam\Desktop\Menu;
 use Pam\Desktop\MenuItem;
 use Pam\Desktop\Plugin;
+use Pam\Desktop\ProcessCommand;
+use Pam\Desktop\HttpOrigin;
 use Pam\Desktop\ResponseStatus;
 use Pam\Desktop\RustPlugin;
 use Pam\Desktop\Shell;
@@ -124,6 +129,12 @@ $application = Application::create(
                 'https://updates.pushin.dev/pam/stable.json',
                 str_repeat('a', 64),
             )->policy(UpdatePolicy::Notify),
+        )
+        ->lifecycle(
+            Lifecycle::none()
+                ->schemes('pam')
+                ->files('application/x-pam-project')
+                ->autostart(),
         ),
 )
     ->window(
@@ -140,7 +151,13 @@ $application = Application::create(
             ->dialogs()
             ->clipboard()
             ->notifications()
-            ->dragAndDrop(),
+            ->dragAndDrop()
+            ->database(Database::readWrite('app', 'storage/app.sqlite'))
+            ->systemInformation()
+            ->http(HttpOrigin::allow('api', 'https://api.example.com/v1'))
+            ->secrets()
+            ->process(ProcessCommand::executable('thumbnailer', 'bin/thumbnailer')->allowArguments())
+            ->desktopPortal(),
     )
     ->shell(
         Shell::none()
@@ -205,6 +222,11 @@ $application->command(
             ]));
     },
 );
+$application->command(
+    'benchmark.noop',
+    static fn (CommandContext $command): null => null,
+    CommandExecution::Parallel,
+);
 
 $application->on(
     'settings.open',
@@ -232,12 +254,25 @@ expect($boot['payload']['manifest']['icon'] === 'resources/icon.svg', 'The defau
 expect($boot['payload']['manifest']['bundleExcludes'] === ['storage/cache'], 'Bundle exclusions should be retained.');
 expect($boot['payload']['manifest']['updates']['policy'] === 2, 'Notify update policy must be integer 2.');
 expect($boot['payload']['manifest']['updates']['channel'] === 'stable', 'The stable update channel is the default.');
+expect($boot['payload']['manifest']['lifecycle']['urlSchemes'] === ['pam'], 'URL schemes should be serialized.');
+expect($boot['payload']['manifest']['lifecycle']['mimeTypes'] === ['application/x-pam-project'], 'MIME associations should be serialized.');
+expect($boot['payload']['manifest']['lifecycle']['autostart'] === true, 'Autostart should be explicit.');
 expect($boot['payload']['capabilities']['filesystemRoots'][0]['name'] === 'data', 'The root should be named.');
 expect($boot['payload']['capabilities']['filesystemRoots'][0]['access'] === 3, 'ReadWrite must be integer 3.');
 expect($boot['payload']['capabilities']['dialogs'] === true, 'Dialogs should be enabled explicitly.');
 expect($boot['payload']['capabilities']['clipboardRead'] === true, 'Clipboard read should be enabled.');
 expect($boot['payload']['capabilities']['notifications'] === true, 'Notifications should be enabled.');
 expect($boot['payload']['capabilities']['dragAndDrop'] === true, 'Drag and drop should be enabled.');
+expect($boot['payload']['capabilities']['databases'][0]['name'] === 'app', 'The native database should be declared.');
+expect($boot['payload']['capabilities']['databases'][0]['access'] === 2, 'Read-write database access must be integer 2.');
+expect($boot['payload']['capabilities']['systemInformation'] === true, 'System information should be enabled explicitly.');
+expect($boot['payload']['capabilities']['httpOrigins'][0]['name'] === 'api', 'The native HTTP origin should be named.');
+expect($boot['payload']['capabilities']['httpOrigins'][0]['origin'] === 'https://api.example.com/v1', 'The native HTTP origin should be preserved.');
+expect($boot['payload']['capabilities']['secrets'] === true, 'Linux secret storage should be enabled explicitly.');
+expect($boot['payload']['capabilities']['processes'][0]['argumentPolicy'] === 2, 'Append process arguments must be integer 2.');
+expect($boot['payload']['capabilities']['desktopPortal'] === true, 'Desktop portal access should be explicit.');
+expect($boot['payload']['parallelWorkerCount'] === 2, 'The default parallel pool should contain two workers.');
+expect($boot['payload']['commands'][2]['execution'] === 2, 'Parallel execution must be integer 2.');
 expect($boot['payload']['shell']['menus'][0]['id'] === 'tray', 'The tray menu should be serialized.');
 expect($boot['payload']['shell']['menus'][0]['items'][1]['kind'] === 2, 'Checkbox must be integer 2.');
 expect($boot['payload']['shell']['tray']['closeBehavior'] === 2, 'Hide behavior must be integer 2.');

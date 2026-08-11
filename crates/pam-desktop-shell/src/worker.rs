@@ -88,6 +88,10 @@ impl WorkerSupervisor {
         self.generation
     }
 
+    pub fn fork(&self) -> Result<Self, String> {
+        Self::start_with_executable(self.project.clone(), self.executable.clone())
+    }
+
     pub fn request(
         &mut self,
         command: impl Into<String>,
