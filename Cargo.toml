@@ -33,6 +33,7 @@ ksni = { version = "0.3.6", default-features = false, features = ["blocking", "t
 # that currently fail together.
 mozjs = "=0.17.0"
 pam-desktop-protocol = { path = "crates/pam-desktop-protocol" }
+png = "=0.18.1"
 primeorder = "=0.14.0-rc.14"
 notify-rust = "=4.16.1"
 rfd = "0.17.2"

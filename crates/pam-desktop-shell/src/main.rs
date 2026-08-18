@@ -53,6 +53,7 @@ mod secret_store;
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod system_info;
 mod updater;
+mod visual;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod watcher;
@@ -123,6 +124,7 @@ fn run() -> Result<(), String> {
                 .map_or_else(|| PathBuf::from("."), PathBuf::from);
             run_doctor(&project)
         }
+        "visual" => visual::run(arguments.collect()),
         unknown => Err(format!("unknown command {unknown:?}")),
     }
 }
@@ -319,7 +321,8 @@ fn print_engine_diagnostic() {
 
 fn print_usage(executable: &std::ffi::OsStr) {
     println!(
-        "Usage: {} dev [directory]\n       {} run [directory]\n       {} build [directory] [options]\n       {} plugin new <id> [directory]\n       {} plugin build <id> [directory]\n       {} update-key --output <private-key-file>\n       {} publish-update [directory] [options]\n       {} doctor [directory]\n       {} --version",
+        "Usage: {} dev [directory]\n       {} run [directory]\n       {} build [directory] [options]\n       {} plugin new <id> [directory]\n       {} plugin build <id> [directory]\n       {} update-key --output <private-key-file>\n       {} publish-update [directory] [options]\n       {} doctor [directory]\n       {} visual accept|verify [directory] --name <case> --actual <png> [--force]\n       {} --version",
+        executable.to_string_lossy(),
         executable.to_string_lossy(),
         executable.to_string_lossy(),
         executable.to_string_lossy(),

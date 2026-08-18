@@ -40,6 +40,7 @@ global-hotkey.workspace = true
 # Compatibility pins for Servo 0.4; see the workspace manifest.
 mozjs = { workspace = true, optional = true }
 pam-desktop-protocol.workspace = true
+png.workspace = true
 primeorder = { workspace = true, optional = true }
 notify-rust.workspace = true
 rfd.workspace = true

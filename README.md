@@ -238,6 +238,7 @@ For data-intensive applications, continue with [Native SQLite](docs/database.md)
 [binary streaming](docs/streaming.md), [native HTTP](docs/http.md), [Linux secrets](docs/secrets.md),
 [authorized processes](docs/processes.md),
 [file watching](docs/file-watching.md), [Linux desktop portals](docs/desktop-portals.md),
+[visual regression testing](docs/visual-testing.md),
 [command execution lanes](docs/execution.md),
 [Linux system information](docs/system-information.md),
 the [native windows guide](docs/windows.md), [Linux lifecycle](docs/lifecycle.md) and the
@@ -368,6 +369,7 @@ docs/
 ├── plugins.md             PHP composition and process-isolated Rust SDK
 ├── streaming.md           backpressured binary file streams
 ├── stability.md           1.x support, SemVer and compatibility policy
+├── visual-testing.md      scoped pixel goldens and CI evidence
 ├── typed-commands.md       method/class commands, DTOs and typed events
 └── updates.md             signing, feeds and atomic automatic updates
 packaging/linux/            rootless host installation templates

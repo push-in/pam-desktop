@@ -5127,6 +5127,7 @@ dependencies = [
  "mozjs",
  "notify-rust",
  "pam-desktop-protocol",
+ "png",
  "primeorder",
  "rfd",
  "rusqlite",
