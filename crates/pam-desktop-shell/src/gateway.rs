@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::Request;
@@ -621,6 +621,9 @@ struct GatewayMetrics {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DiagnosticsSnapshot {
+    schema_version: u8,
+    surface_code: u8,
+    captured_at_unix_ms: u64,
     total_commands: u64,
     failed_commands: u64,
     active_commands: u64,
@@ -1531,6 +1534,15 @@ async fn diagnostics(
         .total_command_nanoseconds
         .load(Ordering::Relaxed);
     let snapshot = DiagnosticsSnapshot {
+        schema_version: 1,
+        surface_code: 3,
+        captured_at_unix_ms: u64::try_from(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX),
         total_commands: total,
         failed_commands: state.metrics.failed_commands.load(Ordering::Relaxed),
         active_commands: state.metrics.active_commands.load(Ordering::Relaxed),
@@ -2560,6 +2572,26 @@ mod tests {
         assert!(constant_time_eq(b"same", b"same"));
         assert!(!constant_time_eq(b"same", b"diff"));
         assert!(!constant_time_eq(b"short", b"longer"));
+    }
+
+    #[test]
+    fn diagnostics_use_the_cross_host_snapshot_envelope() {
+        let snapshot = DiagnosticsSnapshot {
+            schema_version: 1,
+            surface_code: 3,
+            captured_at_unix_ms: 42,
+            total_commands: 0,
+            failed_commands: 0,
+            active_commands: 0,
+            average_command_microseconds: 0,
+            primary_worker_generation: 1,
+            parallel_workers: 0,
+            event_cursor: 0,
+        };
+        let value = serde_json::to_value(snapshot).unwrap();
+        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["surfaceCode"], 3);
+        assert_eq!(value["capturedAtUnixMs"], 42);
     }
 
     #[test]

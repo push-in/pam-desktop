@@ -11,3 +11,7 @@ PHP runtime reloads use `data.reloadCode: 2`.
 The canonical cross-host envelope, integer event codes, compatibility rules,
 and consumer guidance live in the PAM runtime documentation at
 `docs/development-events.md`.
+
+Desktop diagnostics snapshots use the related DevTools envelope with
+`schemaVersion: 1`, integer `surfaceCode: 3`, and `capturedAtUnixMs`. Existing
+command, worker, pool, and event-cursor fields remain top-level and compatible.
