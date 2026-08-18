@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use url::Url;
 
+use crate::desktop_otlp::parse_traceparent;
 use crate::native::NativeError;
 
 const MAX_REQUEST_BODY_BYTES: usize = 8 * 1024 * 1024;
@@ -26,6 +27,7 @@ pub struct HttpRequest {
     pub headers: HashMap<String, String>,
     #[serde(default)]
     pub body: String,
+    pub traceparent: Option<String>,
 }
 
 pub struct HttpServices {
@@ -62,6 +64,7 @@ impl HttpServices {
             .ok_or_else(|| NativeError::disabled(format!("HTTP origin {:?}", request.origin)))?;
         let url = resolve_url(origin, &request.path)?;
         validate_headers(&request.headers)?;
+        let traceparent = validated_traceparent(request.traceparent.as_deref())?;
         if request.body.len() > MAX_REQUEST_BODY_BYTES {
             return Err(NativeError::too_large(format!(
                 "Native HTTP request bodies are limited to {MAX_REQUEST_BODY_BYTES} bytes."
@@ -78,19 +81,42 @@ impl HttpServices {
         }
 
         let response = match request.method {
-            HttpMethod::Get => apply_headers(self.agent.get(url.as_str()), &request.headers).call(),
-            HttpMethod::Post => apply_headers(self.agent.post(url.as_str()), &request.headers)
-                .send(request.body.as_bytes()),
-            HttpMethod::Put => apply_headers(self.agent.put(url.as_str()), &request.headers)
-                .send(request.body.as_bytes()),
-            HttpMethod::Patch => apply_headers(self.agent.patch(url.as_str()), &request.headers)
-                .send(request.body.as_bytes()),
-            HttpMethod::Delete => {
-                apply_headers(self.agent.delete(url.as_str()), &request.headers).call()
-            }
-            HttpMethod::Head => {
-                apply_headers(self.agent.head(url.as_str()), &request.headers).call()
-            }
+            HttpMethod::Get => apply_headers(
+                self.agent.get(url.as_str()),
+                &request.headers,
+                traceparent.as_deref(),
+            )
+            .call(),
+            HttpMethod::Post => apply_headers(
+                self.agent.post(url.as_str()),
+                &request.headers,
+                traceparent.as_deref(),
+            )
+            .send(request.body.as_bytes()),
+            HttpMethod::Put => apply_headers(
+                self.agent.put(url.as_str()),
+                &request.headers,
+                traceparent.as_deref(),
+            )
+            .send(request.body.as_bytes()),
+            HttpMethod::Patch => apply_headers(
+                self.agent.patch(url.as_str()),
+                &request.headers,
+                traceparent.as_deref(),
+            )
+            .send(request.body.as_bytes()),
+            HttpMethod::Delete => apply_headers(
+                self.agent.delete(url.as_str()),
+                &request.headers,
+                traceparent.as_deref(),
+            )
+            .call(),
+            HttpMethod::Head => apply_headers(
+                self.agent.head(url.as_str()),
+                &request.headers,
+                traceparent.as_deref(),
+            )
+            .call(),
         }
         .map_err(|error| NativeError {
             code: ErrorCode::NativeOperationFailed,
@@ -130,11 +156,30 @@ impl HttpServices {
 fn apply_headers<B>(
     mut request: ureq::RequestBuilder<B>,
     headers: &HashMap<String, String>,
+    traceparent: Option<&str>,
 ) -> ureq::RequestBuilder<B> {
     for (name, value) in headers {
         request = request.header(name, value);
     }
+    if let Some(traceparent) = traceparent {
+        request = request.header("traceparent", traceparent);
+    }
     request
+}
+
+fn validated_traceparent(value: Option<&str>) -> Result<Option<String>, NativeError> {
+    value
+        .map(|value| {
+            parse_traceparent(value).map_or_else(
+                || {
+                    Err(NativeError::invalid(
+                        "The native HTTP traceparent is invalid.",
+                    ))
+                },
+                |parent| Ok(parent.header_value()),
+            )
+        })
+        .transpose()
 }
 
 fn resolve_url(origin: &Url, path: &str) -> Result<Url, NativeError> {
@@ -196,6 +241,8 @@ fn validate_headers(headers: &HashMap<String, String>) -> Result<(), NativeError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
 
     #[test]
     fn confines_paths_to_the_declared_https_origin() {
@@ -233,5 +280,46 @@ mod tests {
             )]))
             .is_err()
         );
+    }
+
+    #[test]
+    fn validates_dedicated_outbound_trace_context() {
+        let valid = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        assert_eq!(
+            validated_traceparent(Some(valid)).unwrap().as_deref(),
+            Some(valid)
+        );
+        assert!(validated_traceparent(Some("forged")).is_err());
+        assert!(validated_traceparent(None).unwrap().is_none());
+    }
+
+    #[test]
+    fn host_injects_validated_traceparent_after_application_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4_096];
+            let read = stream.read(&mut request).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                .unwrap();
+            String::from_utf8_lossy(&request[..read]).into_owned()
+        });
+        let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        let agent = ureq::Agent::config_builder()
+            .max_redirects(0)
+            .build()
+            .new_agent();
+        apply_headers(
+            agent.get(format!("http://{address}/resource")),
+            &HashMap::from([("accept".to_owned(), "application/json".to_owned())]),
+            Some(traceparent),
+        )
+        .call()
+        .unwrap();
+        let request = server.join().unwrap().to_ascii_lowercase();
+        assert!(request.contains(&format!("traceparent: {traceparent}")));
+        assert!(request.contains("accept: application/json"));
     }
 }

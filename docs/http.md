@@ -34,10 +34,23 @@ cap request and response bodies at 8 MiB and 16 MiB. Use the binary streaming
 API for larger payloads. A base path such as `/v1` cannot be escaped by the
 frontend.
 
-`traceparent` and `tracestate` are also reserved to the host and rejected from
-application-provided headers so renderer code cannot forge distributed trace
-lineage. A future tracing option may inject a host-owned context after policy
-validation; do not work around this boundary with a differently cased name.
+`traceparent` and `tracestate` are reserved to the host and rejected from the
+generic `headers` map. To continue a known Server context, use the dedicated
+option; the authenticated bridge sends it separately and Rust validates W3C
+version `00`, lowercase hexadecimal, lengths and nonzero IDs before injecting
+the header into the capability-scoped request:
+
+```js
+await pam.http.request("api", {
+  path: "/users/42",
+  traceparent: serverResponse.headers.get("traceparent"),
+});
+```
+
+This context is correlation metadata, not authentication. PAM never adds
+`tracestate`, follows no redirect and sends the context only to the named HTTPS
+origin/base path. Do not work around this boundary with a differently cased
+header name.
 
 The returned object contains `status`, `headers` and a UTF-8 `body`. HTTP
 failures remain ordinary HTTP responses; capability, validation and transport

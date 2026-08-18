@@ -2535,6 +2535,7 @@ const BRIDGE_SCRIPT: &str = r#"
                 path: options.path ?? "/",
                 headers: options.headers ?? {},
                 body: options.body ?? "",
+                traceparent: options.traceparent ?? null,
             }, nativeOptions(options));
         },
     });

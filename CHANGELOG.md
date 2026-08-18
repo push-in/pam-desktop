@@ -9,6 +9,8 @@
   invocations into distinct Desktop command child spans.
 - Reserve `traceparent` and `tracestate` on capability-scoped HTTP requests so
   renderer code cannot forge outbound distributed-trace lineage.
+- Add a dedicated authenticated bridge option that validates and injects W3C
+  version `00` context only into a declared capability-scoped HTTPS origin.
 
 - Add a bounded, authenticated `pam desktop diagnostics` transport for live
   development snapshots, backed by an ephemeral private session descriptor.

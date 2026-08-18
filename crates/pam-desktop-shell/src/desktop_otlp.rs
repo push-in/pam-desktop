@@ -53,6 +53,15 @@ pub(crate) struct TraceParent {
     flags: u8,
 }
 
+impl TraceParent {
+    pub(crate) fn header_value(&self) -> String {
+        format!(
+            "00-{}-{}-{:02x}",
+            self.trace_id, self.parent_span_id, self.flags
+        )
+    }
+}
+
 struct Config {
     endpoint: Url,
     headers: Vec<(String, String)>,
