@@ -31,6 +31,7 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::database::DatabaseRequest;
 use crate::desktop_portal::DesktopPortalRequest;
+use crate::dev_event::{self, EventCode};
 use crate::event_hub::{EventHub, PublishedEvent};
 use crate::file_watch::{FileWatchManager, FileWatchRequest};
 use crate::host_event::HostEvent;
@@ -480,6 +481,11 @@ impl GatewayState {
     }
 
     fn reload(&self, kind: ChangeKind) {
+        let reload_code = match kind {
+            ChangeKind::Assets => 1,
+            ChangeKind::Runtime => 2,
+        };
+        self.emit_reload_started(reload_code);
         match kind {
             ChangeKind::Assets => {
                 let _ = self.event_proxy.send_event(HostEvent::ReloadViews);
@@ -488,6 +494,11 @@ impl GatewayState {
                     payload: serde_json::json!({"kind": 1}),
                     window_id: None,
                 });
+                dev_event::emit(
+                    EventCode::ReloadSucceeded,
+                    self.project.root(),
+                    &serde_json::json!({"reloadCode": reload_code}),
+                );
             }
             ChangeKind::Runtime => {
                 let result = self
@@ -513,52 +524,82 @@ impl GatewayState {
                             })?;
                         Ok((bootstrap, native, plugins, parallel))
                     });
-                match result {
-                    Ok((bootstrap, native, plugins, parallel)) => {
-                        *self
-                            .native
-                            .write()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(native);
-                        *self
-                            .bootstrap
-                            .write()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner) = bootstrap.clone();
-                        *self
-                            .updater
-                            .write()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                            Updater::prepare(&bootstrap.manifest);
-                        *self
-                            .plugins
-                            .write()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(plugins);
-                        *self
-                            .parallel_workers
-                            .write()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                            Arc::new(parallel);
-                        if let Err(error) = self.replace_scheduler(&bootstrap.background_jobs) {
-                            eprintln!("pam-desktop: cannot reload background scheduler: {error}");
-                        }
-                        let _ = self
-                            .event_proxy
-                            .send_event(HostEvent::Reconfigure(Box::new(bootstrap)));
-                        start_update_policy(self);
-                        self.events.publish(ClientEvent {
-                            name: "pam.dev.reloaded".to_owned(),
-                            payload: serde_json::json!({"kind": 2}),
-                            window_id: None,
-                        });
-                    }
-                    Err(error) => {
-                        eprintln!("pam-desktop: hot reload failed: {error}");
-                        self.events.publish(ClientEvent {
-                            name: "pam.dev.error".to_owned(),
-                            payload: serde_json::json!({"message": error}),
-                            window_id: None,
-                        });
-                    }
+                self.finish_runtime_reload(result, reload_code);
+            }
+        }
+    }
+
+    fn emit_reload_started(&self, reload_code: u8) {
+        dev_event::emit(
+            EventCode::ChangeDetected,
+            self.project.root(),
+            &serde_json::json!({"reloadCode": reload_code}),
+        );
+        dev_event::emit(
+            EventCode::ReloadStarted,
+            self.project.root(),
+            &serde_json::json!({"reloadCode": reload_code}),
+        );
+    }
+
+    fn finish_runtime_reload(
+        &self,
+        result: Result<(Bootstrap, NativeServices, PluginSupervisor, WorkerPool), String>,
+        reload_code: u8,
+    ) {
+        match result {
+            Ok((bootstrap, native, plugins, parallel)) => {
+                *self
+                    .native
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(native);
+                *self
+                    .bootstrap
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = bootstrap.clone();
+                *self
+                    .updater
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Updater::prepare(&bootstrap.manifest);
+                *self
+                    .plugins
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(plugins);
+                *self
+                    .parallel_workers
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(parallel);
+                if let Err(error) = self.replace_scheduler(&bootstrap.background_jobs) {
+                    eprintln!("pam-desktop: cannot reload background scheduler: {error}");
                 }
+                let _ = self
+                    .event_proxy
+                    .send_event(HostEvent::Reconfigure(Box::new(bootstrap)));
+                start_update_policy(self);
+                self.events.publish(ClientEvent {
+                    name: "pam.dev.reloaded".to_owned(),
+                    payload: serde_json::json!({"kind": 2}),
+                    window_id: None,
+                });
+                dev_event::emit(
+                    EventCode::ReloadSucceeded,
+                    self.project.root(),
+                    &serde_json::json!({"reloadCode": reload_code}),
+                );
+            }
+            Err(error) => {
+                dev_event::emit(
+                    EventCode::ReloadFailed,
+                    self.project.root(),
+                    &serde_json::json!({"reloadCode": reload_code, "message": error}),
+                );
+                eprintln!("pam-desktop: hot reload failed: {error}");
+                self.events.publish(ClientEvent {
+                    name: "pam.dev.error".to_owned(),
+                    payload: serde_json::json!({"message": error}),
+                    window_id: None,
+                });
             }
         }
     }

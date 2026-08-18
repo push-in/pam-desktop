@@ -25,6 +25,7 @@ use winit::keyboard::{
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::{Fullscreen, Theme, Window, WindowId, WindowLevel};
 
+use crate::dev_event::{self, EventCode};
 use crate::gateway::Gateway;
 use crate::host_event::HostEvent;
 use crate::lifecycle::InstanceGuard;
@@ -41,6 +42,14 @@ pub fn run(
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let (project, supervisor, bootstrap) = runtime.into_parts();
+    let project_root = project.root().to_path_buf();
+    if watch {
+        dev_event::emit(
+            EventCode::SessionStarting,
+            &project_root,
+            &serde_json::json!({}),
+        );
+    }
     let event_loop = EventLoop::with_user_event()
         .build()
         .map_err(|error| format!("cannot create desktop event loop: {error}"))?;
@@ -52,6 +61,13 @@ pub fn run(
         event_loop.create_proxy(),
         watch,
     )?;
+    if watch {
+        dev_event::emit(
+            EventCode::SessionReady,
+            &project_root,
+            &serde_json::json!({"gatewayUrl": gateway.url()}),
+        );
+    }
     let events = gateway.event_hub();
     if !initial_arguments.is_empty() {
         events.publish(pam_desktop_protocol::ClientEvent {
@@ -69,9 +85,17 @@ pub fn run(
     })?;
     let mut application = Application::new(&event_loop, bootstrap, gateway);
 
-    event_loop
+    let result = event_loop
         .run_app(&mut application)
-        .map_err(|error| format!("desktop event loop failed: {error}"))?;
+        .map_err(|error| format!("desktop event loop failed: {error}"));
+    if watch {
+        dev_event::emit(
+            EventCode::SessionStopped,
+            &project_root,
+            &serde_json::json!({}),
+        );
+    }
+    result?;
     drop(instance);
     Ok(())
 }
