@@ -316,9 +316,10 @@ sudo apt-get install -y \
 cargo build --locked --release -p pam-desktop
 ```
 
-Tagged releases publish only
-`pam-desktop-<version>-x86_64-unknown-linux-gnu.tar.gz` and its adjacent
-SHA-256 file. Verify, extract and install it without root privileges:
+Tagged releases publish
+`pam-desktop-<version>-x86_64-unknown-linux-gnu.tar.gz`, a standalone host
+executable for PAM's signed registry installer, and adjacent SHA-256 files.
+Verify, extract and install the portable archive without root privileges:
 
 ```bash
 sha256sum --check pam-desktop-1.0.0-x86_64-unknown-linux-gnu.tar.gz.sha256

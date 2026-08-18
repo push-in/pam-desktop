@@ -112,6 +112,10 @@ jobs:
             "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.footprint.json"
           scripts/test-host-archive.sh \
             "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
+          install -m 0755 target/release/pam-desktop \
+            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu"
+          sha256sum "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu" \
+            >"dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.sha256"
       - name: Compare accepted release footprint
         env:
           GH_TOKEN: ${{ github.token }}
@@ -136,6 +140,7 @@ jobs:
         with:
           subject-path: |
             dist/*.tar.gz
+            dist/pam-desktop-*-x86_64-unknown-linux-gnu
             dist/*.reproducibility.json
             dist/*.footprint.json
       - uses: actions/upload-artifact@v4
