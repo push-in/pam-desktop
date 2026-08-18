@@ -43,6 +43,14 @@ pub(crate) struct CommandSpan {
     outcome: CommandOutcome,
     start_unix_nano: u64,
     end_unix_nano: u64,
+    parent: Option<TraceParent>,
+}
+
+#[derive(Clone)]
+pub(crate) struct TraceParent {
+    trace_id: String,
+    parent_span_id: String,
+    flags: u8,
 }
 
 struct Config {
@@ -77,6 +85,7 @@ impl DesktopOtlpExporter {
         execution: CommandExecution,
         outcome: CommandOutcome,
         start_unix_nano: u64,
+        parent: Option<TraceParent>,
     ) {
         let span = CommandSpan {
             command,
@@ -84,6 +93,7 @@ impl DesktopOtlpExporter {
             outcome,
             start_unix_nano,
             end_unix_nano: epoch_nanos(),
+            parent,
         };
         if let Err(error) = self.sender.try_send(span) {
             self.counters.dropped.fetch_add(1, Ordering::Relaxed);
@@ -312,8 +322,17 @@ fn payload(service_name: &str, spans: &[CommandSpan]) -> Value {
         .iter()
         .map(|span| {
             let error = !matches!(span.outcome, CommandOutcome::Success);
-            json!({
-                "traceId": random_hex::<16>(),
+            let trace_id = span
+                .parent
+                .as_ref()
+                .map_or_else(random_hex::<16>, |parent| parent.trace_id.clone());
+            let parent_span_id = span
+                .parent
+                .as_ref()
+                .map(|parent| parent.parent_span_id.clone());
+            let flags = span.parent.as_ref().map_or(1, |parent| parent.flags);
+            let mut encoded = json!({
+                "traceId": trace_id,
                 "spanId": random_hex::<8>(),
                 "name": "pam.desktop.command",
                 "kind": 1,
@@ -326,8 +345,12 @@ fn payload(service_name: &str, spans: &[CommandSpan]) -> Value {
                     {"key": "pam.desktop.outcome", "value": {"intValue": (span.outcome as u8).to_string()}},
                 ],
                 "status": {"code": if error { 2 } else { 1 }},
-                "flags": 1,
-            })
+                "flags": flags,
+            });
+            if let Some(parent_span_id) = parent_span_id {
+                encoded["parentSpanId"] = Value::String(parent_span_id);
+            }
+            encoded
         })
         .collect::<Vec<_>>();
     json!({
@@ -341,6 +364,26 @@ fn payload(service_name: &str, spans: &[CommandSpan]) -> Value {
                 "spans": spans,
             }],
         }],
+    })
+}
+
+pub(crate) fn parse_traceparent(value: &str) -> Option<TraceParent> {
+    let parts = value.split('-').collect::<Vec<_>>();
+    let valid = parts.len() == 4
+        && parts[0] == "00"
+        && parts[1].len() == 32
+        && parts[1] != "00000000000000000000000000000000"
+        && parts[2].len() == 16
+        && parts[2] != "0000000000000000"
+        && parts[3].len() == 2
+        && parts.iter().all(|part| {
+            part.bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        });
+    valid.then(|| TraceParent {
+        trace_id: parts[1].to_owned(),
+        parent_span_id: parts[2].to_owned(),
+        flags: u8::from_str_radix(parts[3], 16).expect("validated trace flags"),
     })
 }
 
@@ -430,6 +473,7 @@ mod tests {
                 outcome: CommandOutcome::Success,
                 start_unix_nano: 1,
                 end_unix_nano: 2,
+                parent: None,
             }],
         );
         let encoded = serde_json::to_string(&value).unwrap();
@@ -459,6 +503,43 @@ mod tests {
     }
 
     #[test]
+    fn traceparent_requires_lowercase_nonzero_w3c_version_zero_ids() {
+        let valid = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        let parent = parse_traceparent(valid).expect("valid W3C traceparent");
+        assert_eq!(parent.trace_id, "4bf92f3577b34da6a3ce929d0e0e4736");
+        assert_eq!(parent.parent_span_id, "00f067aa0ba902b7");
+        assert_eq!(parent.flags, 1);
+        assert!(parse_traceparent(&valid.to_uppercase()).is_none());
+        assert!(
+            parse_traceparent("00-00000000000000000000000000000000-00f067aa0ba902b7-01").is_none()
+        );
+        assert!(
+            parse_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01").is_none()
+        );
+    }
+
+    #[test]
+    fn payload_preserves_authenticated_parent_lineage() {
+        let parent =
+            parse_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00").unwrap();
+        let value = payload(
+            "desktop-test",
+            &[CommandSpan {
+                command: "catalog.refresh".to_owned(),
+                execution: CommandExecution::Stateful,
+                outcome: CommandOutcome::Success,
+                start_unix_nano: 1,
+                end_unix_nano: 2,
+                parent: Some(parent),
+            }],
+        );
+        let span = &value["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
+        assert_eq!(span["traceId"], "4bf92f3577b34da6a3ce929d0e0e4736");
+        assert_eq!(span["parentSpanId"], "00f067aa0ba902b7");
+        assert_eq!(span["flags"], 0);
+    }
+
+    #[test]
     fn partial_success_accepts_otlp_json_uint64_strings() {
         let response = json!({"partialSuccess": {"rejectedSpans": "3"}});
         let rejected = response
@@ -482,6 +563,10 @@ mod tests {
             CommandExecution::Parallel,
             CommandOutcome::Success,
             epoch_nanos(),
+            Some(
+                parse_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+                    .unwrap(),
+            ),
         );
         for _ in 0..100 {
             if exporter.counters.exported.load(Ordering::Relaxed) == 1 {

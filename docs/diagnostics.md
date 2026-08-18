@@ -67,3 +67,20 @@ status. Payloads, results, window/request identifiers, origins, filesystem
 paths, user identity and bridge credentials are never recorded. Diagnostics
 report exported, dropped, rejected and failed-export totals so backpressure and
 Collector partial success remain visible.
+
+An authenticated application invocation may continue a server trace by passing
+the exact W3C version `00` context returned by that server:
+
+```js
+await pam.invoke("catalog.refresh", null, {
+  traceparent: response.headers.get("traceparent"),
+});
+```
+
+The bridge sends this field only with its exact local origin and ephemeral
+256-bit token. The Rust host validates lowercase hexadecimal, field lengths and
+nonzero trace/span identifiers before command execution. A valid context keeps
+the trace ID and sampling flags, uses its span ID as the Desktop parent, and
+still creates a distinct Desktop span ID. Invalid contexts fail with a bounded
+client error; they are never normalized or exported. `tracestate` is not
+accepted because PAM does not yet have a vendor allowlist or size policy for it.

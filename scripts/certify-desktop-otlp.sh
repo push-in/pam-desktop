@@ -51,6 +51,8 @@ cargo test --locked -p pam-desktop --no-default-features --features gateway \
 collector_log=$(docker logs "${container}" 2>&1)
 grep -Fq 'pam.desktop.command' <<<"${collector_log}"
 grep -Fq 'catalog.refresh' <<<"${collector_log}"
+grep -Fq '4bf92f3577b34da6a3ce929d0e0e4736' <<<"${collector_log}"
+grep -Fq '00f067aa0ba902b7' <<<"${collector_log}"
 if grep -Fq 'must-not-leak' <<<"${collector_log}"; then
     printf 'Sensitive certification sentinel leaked into Collector output\n' >&2
     exit 1

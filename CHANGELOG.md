@@ -5,6 +5,8 @@
 - Add explicit-opt-in, privacy-bounded OTLP HTTP/JSON spans for Desktop command
   execution with a non-blocking bounded exporter, diagnostic counters and
   official Collector interoperability certification.
+- Continue validated W3C version `00` trace lineage from authenticated bridge
+  invocations into distinct Desktop command child spans.
 
 - Add a bounded, authenticated `pam desktop diagnostics` transport for live
   development snapshots, backed by an ephemeral private session descriptor.

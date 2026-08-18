@@ -30,7 +30,9 @@ use tokio_util::io::ReaderStream;
 use winit::event_loop::EventLoopProxy;
 
 use crate::database::DatabaseRequest;
-use crate::desktop_otlp::{CommandOutcome, DesktopOtlpExporter, OtlpCounters, epoch_nanos};
+use crate::desktop_otlp::{
+    CommandOutcome, DesktopOtlpExporter, OtlpCounters, TraceParent, epoch_nanos, parse_traceparent,
+};
 use crate::desktop_portal::DesktopPortalRequest;
 use crate::dev_event::{self, EventCode};
 use crate::diagnostic_session::DiagnosticSession;
@@ -736,6 +738,7 @@ struct InvokeRequest {
     command: String,
     window_id: String,
     timeout_ms: Option<u64>,
+    traceparent: Option<String>,
     #[serde(default)]
     payload: Value,
 }
@@ -944,6 +947,19 @@ async fn invoke(
             "The command name is invalid.",
         );
     }
+    let parent = match request.traceparent.as_deref() {
+        Some(value) => match parse_traceparent(value) {
+            Some(parent) => Some(parent),
+            None => {
+                return client_failure(
+                    StatusCode::BAD_REQUEST,
+                    ErrorCode::InvalidMessage,
+                    "The traceparent is not a valid W3C version 00 context.",
+                );
+            }
+        },
+        None => None,
+    };
     execute_request(
         state,
         request.request_id,
@@ -951,6 +967,7 @@ async fn invoke(
         request.timeout_ms,
         request.command,
         request.payload,
+        parent,
     )
     .await
 }
@@ -980,6 +997,7 @@ async fn emit(
             "name": request.name,
             "payload": request.payload,
         }),
+        None,
     )
     .await
 }
@@ -995,6 +1013,7 @@ async fn execute_request(
     timeout_ms: Option<u64>,
     command: String,
     payload: Value,
+    trace_parent: Option<TraceParent>,
 ) -> Response<Body> {
     if request_id == 0 || !state.has_window(&window_id) {
         return client_failure(
@@ -1092,6 +1111,7 @@ async fn execute_request(
                 execution,
                 CommandOutcome::WorkerFailure,
                 started_unix_nano,
+                trace_parent,
             );
             return worker_error_response(error);
         }
@@ -1106,6 +1126,7 @@ async fn execute_request(
                 execution,
                 CommandOutcome::TaskFailure,
                 started_unix_nano,
+                trace_parent,
             );
             return client_failure(
                 StatusCode::BAD_GATEWAY,
@@ -1127,6 +1148,7 @@ async fn execute_request(
             execution,
             CommandOutcome::HandlerFailure,
             started_unix_nano,
+            trace_parent,
         );
         let error = response.error.map_or(
             ClientError {
@@ -1154,6 +1176,7 @@ async fn execute_request(
         execution,
         CommandOutcome::Success,
         started_unix_nano,
+        trace_parent,
     );
 
     json_response(
@@ -1172,11 +1195,12 @@ fn export_command_span(
     execution: CommandExecution,
     outcome: CommandOutcome,
     start_unix_nano: Option<u64>,
+    parent: Option<TraceParent>,
 ) {
     if let Some(exporter) = &state.otlp
         && let Some(start_unix_nano) = start_unix_nano
     {
-        exporter.export(command, execution, outcome, start_unix_nano);
+        exporter.export(command, execution, outcome, start_unix_nano, parent);
     }
 }
 
@@ -2265,7 +2289,14 @@ const BRIDGE_SCRIPT: &str = r#"
         if (typeof command !== "string" || command.length === 0) {
             throw new TypeError("Pam command must be a non-empty string.");
         }
-        return request("/_pam/invoke", { command, payload }, options);
+        if (options?.traceparent != null && typeof options.traceparent !== "string") {
+            throw new TypeError("Pam traceparent must be a string.");
+        }
+        return request("/_pam/invoke", {
+            command,
+            payload,
+            traceparent: options?.traceparent ?? null,
+        }, options);
     };
 
     const emit = (name, payload = null, options = {}) => {
@@ -2660,6 +2691,16 @@ mod tests {
         assert!(constant_time_eq(b"same", b"same"));
         assert!(!constant_time_eq(b"same", b"diff"));
         assert!(!constant_time_eq(b"short", b"longer"));
+    }
+
+    #[test]
+    fn bridge_exposes_trace_context_only_on_authenticated_invocations() {
+        assert!(BRIDGE_SCRIPT.contains("traceparent: options?.traceparent ?? null"));
+        assert!(BRIDGE_SCRIPT.contains("X-Pam-Bridge\": token"));
+        assert!(
+            parse_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").is_some()
+        );
+        assert!(parse_traceparent("forged").is_none());
     }
 
     #[test]
