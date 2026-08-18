@@ -10,6 +10,10 @@ permissions:
   attestations: write
 
 jobs:
+  source-contracts:
+    name: Certify tagged Desktop source contracts
+    uses: ./.github/workflows/ci.yml
+
   native-changes:
     name: Detect native host changes
     runs-on: ubuntu-22.04
@@ -40,7 +44,9 @@ jobs:
           fi
 
   build:
-    needs: native-changes
+    needs:
+      - native-changes
+      - source-contracts
     if: needs.native-changes.outputs.rebuild == 'true'
     name: x86_64-unknown-linux-gnu
     runs-on: ubuntu-22.04
@@ -166,7 +172,9 @@ jobs:
           generate_release_notes: true
 
   publish-api:
-    needs: native-changes
+    needs:
+      - native-changes
+      - source-contracts
     if: needs.native-changes.outputs.rebuild == 'false'
     runs-on: ubuntu-22.04
     permissions:

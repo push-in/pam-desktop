@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  workflow_call:
+  workflow_dispatch:
   push:
     branches: ["main"]
   pull_request:
@@ -64,6 +66,7 @@ jobs:
       - run: composer validate --strict packages/desktop/composer.json
       - run: composer test --working-dir=packages/desktop
       - run: composer analyse --working-dir=packages/desktop
+      - run: php scripts/test-release-workflows.php
 
   otlp-collector:
     runs-on: ubuntu-22.04

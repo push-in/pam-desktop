@@ -1,0 +1,44 @@
+<?php
+
+declare(strict_types=1);
+
+$root = dirname(__DIR__);
+
+/** @return never */
+function fail(string $message): void
+{
+    fwrite(STDERR, "release-workflows: {$message}\n");
+    exit(1);
+}
+
+function readWorkflow(string $root, string $name): string
+{
+    $contents = file_get_contents("{$root}/.github/workflows/{$name}");
+    if ($contents === false) {
+        fail("cannot read {$name}");
+    }
+
+    return $contents;
+}
+
+function requireFragments(string $contents, string $name, array $fragments): void
+{
+    foreach ($fragments as $fragment) {
+        if (!str_contains($contents, $fragment)) {
+            fail("{$name} is missing required contract: {$fragment}");
+        }
+    }
+}
+
+$ci = readWorkflow($root, 'ci.yml');
+$release = readWorkflow($root, 'release.yml');
+
+requireFragments($ci, 'ci.yml', ["  workflow_call:\n", "  workflow_dispatch:\n"]);
+requireFragments($release, 'release.yml', [
+    "  source-contracts:\n",
+    "    uses: ./.github/workflows/ci.yml\n",
+    "  build:\n    needs:\n      - native-changes\n      - source-contracts\n",
+    "  publish-api:\n    needs:\n      - native-changes\n      - source-contracts\n",
+]);
+
+echo "PAM Desktop release workflow contracts passed.\n";

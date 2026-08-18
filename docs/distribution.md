@@ -110,6 +110,12 @@ manifest mismatches and non-reproducible or nonfunctional installs. It then
 installs into temporary XDG directories, invokes the installed host and
 uninstalls the exact version.
 
+Before either a native-host or API-only GitHub Release can be created, the
+release workflow calls the complete CI from the exact tagged commit. Formatting,
+Clippy, workspace tests, Composer tests and static analysis, reproducible archive
+contracts, footprint evidence and official Collector interoperability therefore
+remain hard publication dependencies even when no native host files changed.
+
 The release also publishes a sibling `.reproducibility.json` evidence manifest.
 Schema `1`, suite `1`, Desktop surface `3` and result `1` mean that two
 independent packaging directories produced the same bytes. The manifest binds

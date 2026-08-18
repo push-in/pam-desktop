@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Make the complete Desktop source CI reusable and mandatory for both native
+  host and API-only tagged releases, preventing publication from bypassing the
+  contracts validated on `main`.
 - Add explicit-opt-in, privacy-bounded OTLP HTTP/JSON spans for Desktop command
   execution with a non-blocking bounded exporter, diagnostic counters and
   official Collector interoperability certification.
