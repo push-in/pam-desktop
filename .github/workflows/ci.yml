@@ -26,19 +26,31 @@ jobs:
       - run: cargo test --locked --workspace --no-default-features --features gateway
       - name: Linux host archive contract
         run: |
-          sh -n scripts/package-host-linux.sh scripts/test-host-archive.sh scripts/test-host-cache.sh packages/desktop/bin/pam-desktop
+          sh -n scripts/package-host-linux.sh scripts/test-host-archive.sh scripts/test-host-cache.sh scripts/host-reproducibility-evidence.sh scripts/test-host-reproducibility-evidence.sh packages/desktop/bin/pam-desktop
           test -x packages/desktop/bin/pam-desktop
           scripts/test-host-cache.sh
+          scripts/test-host-reproducibility-evidence.sh
           cargo build --locked -p pam-desktop --no-default-features --features gateway --bins
           version=$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pam-desktop") | .version')
           mkdir -p "${RUNNER_TEMP}/host-one" "${RUNNER_TEMP}/host-two"
           SOURCE_DATE_EPOCH=0 scripts/package-host-linux.sh target/debug "${RUNNER_TEMP}/host-one" "${version}"
           SOURCE_DATE_EPOCH=0 scripts/package-host-linux.sh target/debug "${RUNNER_TEMP}/host-two" "${version}"
-          cmp \
+          PAM_EVIDENCE_REVISION="${GITHUB_SHA}" SOURCE_DATE_EPOCH=0 \
+            scripts/host-reproducibility-evidence.sh create \
             "${RUNNER_TEMP}/host-one/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "${RUNNER_TEMP}/host-two/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
+            "${RUNNER_TEMP}/host-two/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
+            "${RUNNER_TEMP}/host-evidence/evidence-manifest.json"
+          scripts/host-reproducibility-evidence.sh verify \
+            "${RUNNER_TEMP}/host-one/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
+            "${RUNNER_TEMP}/host-evidence/evidence-manifest.json"
           scripts/test-host-archive.sh \
             "${RUNNER_TEMP}/host-one/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pam-desktop-reproducibility-${{ github.sha }}
+          path: ${{ runner.temp }}/host-evidence/evidence-manifest.json
+          if-no-files-found: error
+          retention-days: 14
       - run: composer validate --strict composer.json
       - run: composer install --working-dir=packages/desktop --no-interaction --prefer-dist
       - run: composer validate --strict packages/desktop/composer.json

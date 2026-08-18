@@ -110,6 +110,28 @@ manifest mismatches and non-reproducible or nonfunctional installs. It then
 installs into temporary XDG directories, invokes the installed host and
 uninstalls the exact version.
 
+The release also publishes a sibling `.reproducibility.json` evidence manifest.
+Schema `1`, suite `1`, Desktop surface `3` and result `1` mean that two
+independent packaging directories produced the same bytes. The manifest binds
+the archive name, size and SHA-256 to the source commit, `SOURCE_DATE_EPOCH`,
+host OS and architecture. Both the archive and evidence receive GitHub artifact
+attestations. CI verifies the manifest again before uploading it; pull-request
+evidence uses a fixed artifact name and expires after 14 days.
+
+Reproduce the contract locally after building both host binaries:
+
+```bash
+SOURCE_DATE_EPOCH=0 scripts/package-host-linux.sh target/debug /tmp/host-one 1.2.1
+SOURCE_DATE_EPOCH=0 scripts/package-host-linux.sh target/debug /tmp/host-two 1.2.1
+SOURCE_DATE_EPOCH=0 scripts/host-reproducibility-evidence.sh create \
+  /tmp/host-one/pam-desktop-1.2.1-x86_64-unknown-linux-gnu.tar.gz \
+  /tmp/host-two/pam-desktop-1.2.1-x86_64-unknown-linux-gnu.tar.gz \
+  /tmp/host-evidence/evidence-manifest.json
+scripts/host-reproducibility-evidence.sh verify \
+  /tmp/host-one/pam-desktop-1.2.1-x86_64-unknown-linux-gnu.tar.gz \
+  /tmp/host-evidence/evidence-manifest.json
+```
+
 The installer defaults to
 `${XDG_DATA_HOME:-$HOME/.local/share}/pam-desktop/<version>` and links commands
 under `${XDG_BIN_HOME:-$HOME/.local/bin}`. It refuses to replace unrelated

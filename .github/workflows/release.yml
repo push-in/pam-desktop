@@ -29,6 +29,8 @@ jobs:
           elif git diff --quiet "${previous_tag}" "${GITHUB_SHA}" -- \
             Cargo.toml Cargo.lock crates compat/rust-plugin-v1 \
             scripts/package-host-linux.sh scripts/test-host-archive.sh \
+            scripts/host-reproducibility-evidence.sh \
+            scripts/test-host-reproducibility-evidence.sh \
             .github/workflows/release.yml; then
             echo "rebuild=false" >> "${GITHUB_OUTPUT}"
           else
@@ -91,15 +93,22 @@ jobs:
             target/release \
             verification \
             "${version}"
-          cmp \
+          PAM_EVIDENCE_REVISION="${GITHUB_SHA}" SOURCE_DATE_EPOCH="${source_epoch}" \
+            scripts/host-reproducibility-evidence.sh create \
             "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "verification/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
+            "verification/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
+            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.reproducibility.json"
+          scripts/host-reproducibility-evidence.sh verify \
+            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
+            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.reproducibility.json"
           scripts/test-host-archive.sh \
             "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
       - name: Attest reproducible Linux host archive
         uses: actions/attest@v4
         with:
-          subject-path: dist/*.tar.gz
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.reproducibility.json
       - uses: actions/upload-artifact@v4
         with:
           name: pam-desktop-x86_64-unknown-linux-gnu
