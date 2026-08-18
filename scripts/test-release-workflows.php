@@ -31,9 +31,16 @@ function requireFragments(string $contents, string $name, array $fragments): voi
 }
 
 $ci = readWorkflow($root, 'ci.yml');
+$platform = readWorkflow($root, 'platform-compatibility.yml');
 $release = readWorkflow($root, 'release.yml');
 
 requireFragments($ci, 'ci.yml', ["  workflow_call:\n", "  workflow_dispatch:\n"]);
+requireFragments($platform, 'platform-compatibility.yml', [
+    "  workflow_call:\n",
+    "            platform_code: 2\n",
+    "            platform_code: 3\n",
+    "      - name: Compile the real Servo desktop host\n",
+]);
 requireFragments($release, 'release.yml', [
     "  source-contracts:\n",
     "    uses: ./.github/workflows/ci.yml\n",

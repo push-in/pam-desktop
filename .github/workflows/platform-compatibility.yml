@@ -1,0 +1,55 @@
+name: Desktop platform compatibility
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - compat/rust-plugin-v1/**
+      - .github/workflows/platform-compatibility.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: ${{ matrix.name }} native contracts
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            runner: macos-15
+            platform_code: 2
+          - name: Windows x64
+            runner: windows-2025
+            platform_code: 3
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: desktop-${{ matrix.platform_code }}
+      - name: Validate portable gateway and plugin contracts
+        run: >-
+          cargo test --locked --workspace --all-targets
+          --no-default-features --features gateway
+      - name: Lint portable gateway and plugin contracts
+        run: >-
+          cargo clippy --locked --workspace --all-targets
+          --no-default-features --features gateway -- -D warnings
+      - name: Compile the real Servo desktop host
+        run: cargo check --locked -p pam-desktop --bins

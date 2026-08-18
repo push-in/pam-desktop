@@ -78,8 +78,12 @@ environment and compositor. Their documented graceful fallback is part of the
 contract.
 
 Windows/macOS packaging and update code from earlier development remains in the
-repository as experimental groundwork. It is not built, published, tested or
-supported by the 1.x release pipeline.
+repository as experimental groundwork. A dedicated pre-release matrix now runs
+the portable gateway/plugin tests and Clippy contracts and compiles the real
+Servo host natively on macOS arm64 and Windows x64. This is compatibility
+evidence, not yet a packaging or support guarantee: installers, signing,
+notarization, updates and clean-machine launch still require separate gates
+before either platform joins the supported 1.x release matrix.
 
 ## Trust boundary
 

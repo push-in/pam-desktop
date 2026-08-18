@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add native macOS arm64 and Windows x64 CI that tests and lints the portable
+  gateway/plugin contracts and compiles the real Servo host on hosted runners.
+  These are pre-release compatibility gates, not yet a distribution claim.
 - Make the complete Desktop source CI reusable and mandatory for both native
   host and API-only tagged releases, preventing publication from bypassing the
   contracts validated on `main`.
