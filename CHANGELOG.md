@@ -12,6 +12,8 @@
   inheriting it accidentally from Linux-only portal dependencies.
 - Exercise security, database and packaging fixtures with canonical paths,
   closed native handles and the required platform launcher on every host.
+- Keep shared asynchronous and fallible platform contracts explicit while
+  documenting their no-op or fail-closed implementations outside Linux.
 - Make the complete Desktop source CI reusable and mandatory for both native
   host and API-only tagged releases, preventing publication from bypassing the
   contracts validated on `main`.

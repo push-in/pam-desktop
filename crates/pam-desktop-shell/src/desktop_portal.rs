@@ -134,6 +134,10 @@ pub async fn execute(
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(
+    clippy::unused_async,
+    reason = "the platform fallback preserves the asynchronous gateway contract"
+)]
 pub async fn execute(
     _native: &NativeServices,
     _request: &DesktopPortalRequest,

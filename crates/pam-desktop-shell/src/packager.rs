@@ -1863,6 +1863,13 @@ fn directory_bytes(path: &Path) -> Result<u64, String> {
     Ok(bytes)
 }
 
+#[cfg_attr(
+    not(unix),
+    allow(
+        clippy::unnecessary_wraps,
+        reason = "the portable helper preserves the fallible Unix contract"
+    )
+)]
 fn normalize_permissions(root: &Path) -> Result<(), String> {
     #[cfg(not(unix))]
     let _ = root;
@@ -2009,6 +2016,13 @@ fn portable_relative(root: &Path, path: &Path) -> Result<String, String> {
         .map(|value| value.replace('\\', "/"))
 }
 
+#[cfg_attr(
+    not(unix),
+    allow(
+        clippy::unnecessary_wraps,
+        reason = "the portable helper preserves the fallible Unix contract"
+    )
+)]
 fn make_executable(path: &Path) -> Result<(), String> {
     #[cfg(not(unix))]
     let _ = path;
