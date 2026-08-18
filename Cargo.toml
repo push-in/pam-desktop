@@ -45,7 +45,7 @@ serde_repr = "0.1.20"
 secret-service = { version = "4.0.0", default-features = false, features = ["rt-tokio-crypto-rust"] }
 sha2 = "0.10.9"
 servo = { version = "=0.4.0", default-features = false, features = ["baked-in-resources", "clipboard", "js_jit"] }
-tokio = { version = "1.53.1", features = ["fs", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7.19", features = ["io"] }
 tracing = "0.1.44"
 tray-icon = { version = "0.24.1", default-features = false }

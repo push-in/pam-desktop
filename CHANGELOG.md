@@ -8,6 +8,8 @@
 - Scope XDG portal and Linux Secret Service dependencies to Linux, preserve a
   fail-closed response on other systems, and compile notification urgency and
   native menu handlers against their actual platform APIs.
+- Declare Tokio's directly used asynchronous I/O extension feature instead of
+  inheriting it accidentally from Linux-only portal dependencies.
 - Make the complete Desktop source CI reusable and mandatory for both native
   host and API-only tagged releases, preventing publication from bypassing the
   contracts validated on `main`.

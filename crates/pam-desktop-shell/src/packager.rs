@@ -1864,6 +1864,8 @@ fn directory_bytes(path: &Path) -> Result<u64, String> {
 }
 
 fn normalize_permissions(root: &Path) -> Result<(), String> {
+    #[cfg(not(unix))]
+    let _ = root;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -2008,6 +2010,8 @@ fn portable_relative(root: &Path, path: &Path) -> Result<String, String> {
 }
 
 fn make_executable(path: &Path) -> Result<(), String> {
+    #[cfg(not(unix))]
+    let _ = path;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
