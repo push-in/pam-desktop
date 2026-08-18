@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a bounded, authenticated `pam desktop diagnostics` transport for live
+  development snapshots, backed by an ephemeral private session descriptor.
 - Add authenticated Desktop package-footprint evidence for compressed,
   installed and executable bytes, plus a release comparison gate that rejects
   regressions beyond the accepted baseline.

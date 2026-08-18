@@ -10,6 +10,8 @@ mod desktop_portal;
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod dev_event;
 #[cfg(feature = "gateway")]
+mod diagnostic_session;
+#[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod event_hub;
 #[cfg(feature = "gateway")]
@@ -125,6 +127,18 @@ fn run() -> Result<(), String> {
                 .next()
                 .map_or_else(|| PathBuf::from("."), PathBuf::from);
             run_doctor(&project)
+        }
+        "diagnostics" => {
+            let project = arguments
+                .next()
+                .map_or_else(|| PathBuf::from("."), PathBuf::from);
+            if let Some(unknown) = arguments.next() {
+                return Err(format!(
+                    "unexpected argument for diagnostics: {}",
+                    unknown.to_string_lossy()
+                ));
+            }
+            run_diagnostics(&project)
         }
         "visual" => visual::run(arguments.collect()),
         unknown => Err(format!("unknown command {unknown:?}")),
@@ -294,6 +308,23 @@ fn run_doctor(path: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "gateway")]
+fn run_diagnostics(path: &std::path::Path) -> Result<(), String> {
+    let project = Project::discover(path)?;
+    let snapshot = diagnostic_session::capture(project.root())?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&snapshot)
+            .map_err(|error| format!("cannot encode desktop diagnostics: {error}"))?
+    );
+    Ok(())
+}
+
+#[cfg(not(feature = "gateway"))]
+fn run_diagnostics(_path: &std::path::Path) -> Result<(), String> {
+    Err("this binary was built without the gateway feature".to_owned())
+}
+
 #[cfg(feature = "servo-engine")]
 fn run_desktop(project: Project, watch: bool) -> Result<(), String> {
     let runtime = DesktopRuntime::prepare(project)?;
@@ -323,7 +354,8 @@ fn print_engine_diagnostic() {
 
 fn print_usage(executable: &std::ffi::OsStr) {
     println!(
-        "Usage: {} dev [directory]\n       {} run [directory]\n       {} build [directory] [options]\n       {} plugin new <id> [directory]\n       {} plugin build <id> [directory]\n       {} update-key --output <private-key-file>\n       {} publish-update [directory] [options]\n       {} doctor [directory]\n       {} audit permissions [directory] [--json] [--deny-high]\n       {} visual accept|verify [directory] --name <case> --actual <png> [--force]\n       {} --version",
+        "Usage: {} dev [directory]\n       {} run [directory]\n       {} build [directory] [options]\n       {} plugin new <id> [directory]\n       {} plugin build <id> [directory]\n       {} update-key --output <private-key-file>\n       {} publish-update [directory] [options]\n       {} doctor [directory]\n       {} diagnostics [directory]\n       {} audit permissions [directory] [--json] [--deny-high]\n       {} visual accept|verify [directory] --name <case> --actual <png> [--force]\n       {} --version",
+        executable.to_string_lossy(),
         executable.to_string_lossy(),
         executable.to_string_lossy(),
         executable.to_string_lossy(),

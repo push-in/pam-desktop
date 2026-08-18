@@ -32,6 +32,7 @@ use winit::event_loop::EventLoopProxy;
 use crate::database::DatabaseRequest;
 use crate::desktop_portal::DesktopPortalRequest;
 use crate::dev_event::{self, EventCode};
+use crate::diagnostic_session::DiagnosticSession;
 use crate::event_hub::{EventHub, PublishedEvent};
 use crate::file_watch::{FileWatchManager, FileWatchRequest};
 use crate::host_event::HostEvent;
@@ -58,6 +59,7 @@ pub struct Gateway {
     shutdown: Option<oneshot::Sender<()>>,
     thread: Option<JoinHandle<()>>,
     watcher: Option<ProjectWatcher>,
+    _diagnostic_session: Option<DiagnosticSession>,
 }
 
 impl Gateway {
@@ -183,6 +185,27 @@ impl Gateway {
         } else {
             None
         };
+        let diagnostic_session = if watch {
+            let window_id = {
+                let bootstrap = state
+                    .bootstrap
+                    .read()
+                    .map_err(|_| "desktop bootstrap lock is poisoned".to_owned())?;
+                bootstrap
+                    .windows
+                    .first()
+                    .map(|window| window.id.clone())
+                    .ok_or_else(|| "desktop project has no diagnostic source window".to_owned())?
+            };
+            Some(DiagnosticSession::create(
+                project.root(),
+                &url,
+                &state.token,
+                &window_id,
+            )?)
+        } else {
+            None
+        };
         start_update_policy(&state);
 
         Ok(Self {
@@ -191,6 +214,7 @@ impl Gateway {
             shutdown: Some(shutdown),
             thread: Some(thread),
             watcher,
+            _diagnostic_session: diagnostic_session,
         })
     }
 
