@@ -30,6 +30,7 @@ use tokio_util::io::ReaderStream;
 use winit::event_loop::EventLoopProxy;
 
 use crate::database::DatabaseRequest;
+use crate::desktop_otlp::{CommandOutcome, DesktopOtlpExporter, OtlpCounters, epoch_nanos};
 use crate::desktop_portal::DesktopPortalRequest;
 use crate::dev_event::{self, EventCode};
 use crate::diagnostic_session::DiagnosticSession;
@@ -90,6 +91,10 @@ impl Gateway {
         let updater = Updater::prepare(&bootstrap.manifest);
         let plugins = PluginSupervisor::prepare(project, &bootstrap.rust_plugins)?;
         let background_jobs = bootstrap.background_jobs.clone();
+        let otlp = DesktopOtlpExporter::from_environment()?;
+        let otlp_counters = otlp
+            .as_ref()
+            .map_or_else(OtlpCounters::default, |exporter| exporter.counters.clone());
 
         let parallel_workers =
             WorkerPool::prepare(&supervisor, requested_parallel_count(&bootstrap))?;
@@ -108,7 +113,11 @@ impl Gateway {
             updater: Arc::new(RwLock::new(updater)),
             plugins: Arc::new(RwLock::new(Arc::new(plugins))),
             scheduler: Arc::new(Mutex::new(None)),
-            metrics: Arc::new(GatewayMetrics::default()),
+            metrics: Arc::new(GatewayMetrics {
+                otlp: otlp_counters,
+                ..GatewayMetrics::default()
+            }),
+            otlp,
             file_watches: Arc::new(FileWatchManager::new()),
             development: watch,
         };
@@ -347,6 +356,7 @@ struct GatewayState {
     plugins: Arc<RwLock<Arc<PluginSupervisor>>>,
     scheduler: Arc<Mutex<Option<BackgroundScheduler>>>,
     metrics: Arc<GatewayMetrics>,
+    otlp: Option<DesktopOtlpExporter>,
     file_watches: Arc<FileWatchManager>,
     development: bool,
 }
@@ -640,6 +650,7 @@ struct GatewayMetrics {
     failed_commands: std::sync::atomic::AtomicU64,
     active_commands: std::sync::atomic::AtomicU64,
     total_command_nanoseconds: std::sync::atomic::AtomicU64,
+    otlp: OtlpCounters,
 }
 
 #[derive(Serialize)]
@@ -655,6 +666,10 @@ struct DiagnosticsSnapshot {
     primary_worker_generation: u64,
     parallel_workers: usize,
     event_cursor: u64,
+    otlp_spans_exported: u64,
+    otlp_spans_dropped: u64,
+    otlp_export_errors: u64,
+    otlp_spans_rejected: u64,
 }
 
 fn requested_parallel_count(bootstrap: &Bootstrap) -> u8 {
@@ -1021,6 +1036,8 @@ async fn execute_request(
 
     let execution = state.command_execution(&command);
     let started = Instant::now();
+    let started_unix_nano = state.otlp.as_ref().map(|_| epoch_nanos());
+    let span_command = command.clone();
     state.metrics.total_commands.fetch_add(1, Ordering::Relaxed);
     state
         .metrics
@@ -1069,6 +1086,13 @@ async fn execute_request(
                 .metrics
                 .failed_commands
                 .fetch_add(1, Ordering::Relaxed);
+            export_command_span(
+                &state,
+                span_command,
+                execution,
+                CommandOutcome::WorkerFailure,
+                started_unix_nano,
+            );
             return worker_error_response(error);
         }
         Err(error) => {
@@ -1076,6 +1100,13 @@ async fn execute_request(
                 .metrics
                 .failed_commands
                 .fetch_add(1, Ordering::Relaxed);
+            export_command_span(
+                &state,
+                span_command,
+                execution,
+                CommandOutcome::TaskFailure,
+                started_unix_nano,
+            );
             return client_failure(
                 StatusCode::BAD_GATEWAY,
                 ErrorCode::WorkerCrashed,
@@ -1090,6 +1121,13 @@ async fn execute_request(
             .metrics
             .failed_commands
             .fetch_add(1, Ordering::Relaxed);
+        export_command_span(
+            &state,
+            span_command,
+            execution,
+            CommandOutcome::HandlerFailure,
+            started_unix_nano,
+        );
         let error = response.error.map_or(
             ClientError {
                 code: ErrorCode::Internal as u16,
@@ -1110,6 +1148,14 @@ async fn execute_request(
         );
     }
 
+    export_command_span(
+        &state,
+        span_command,
+        execution,
+        CommandOutcome::Success,
+        started_unix_nano,
+    );
+
     json_response(
         StatusCode::OK,
         &InvokeResponse {
@@ -1118,6 +1164,20 @@ async fn execute_request(
             error: None,
         },
     )
+}
+
+fn export_command_span(
+    state: &GatewayState,
+    command: String,
+    execution: CommandExecution,
+    outcome: CommandOutcome,
+    start_unix_nano: Option<u64>,
+) {
+    if let Some(exporter) = &state.otlp
+        && let Some(start_unix_nano) = start_unix_nano
+    {
+        exporter.export(command, execution, outcome, start_unix_nano);
+    }
 }
 
 async fn cancel(
@@ -1578,6 +1638,10 @@ async fn diagnostics(
             .generation(),
         parallel_workers: state.parallel_workers().len(),
         event_cursor: state.events.latest_id(),
+        otlp_spans_exported: state.metrics.otlp.exported.load(Ordering::Relaxed),
+        otlp_spans_dropped: state.metrics.otlp.dropped.load(Ordering::Relaxed),
+        otlp_export_errors: state.metrics.otlp.errors.load(Ordering::Relaxed),
+        otlp_spans_rejected: state.metrics.otlp.rejected.load(Ordering::Relaxed),
     };
     native_success(serde_json::to_value(snapshot).unwrap_or(Value::Null))
 }
@@ -2611,6 +2675,10 @@ mod tests {
             primary_worker_generation: 1,
             parallel_workers: 0,
             event_cursor: 0,
+            otlp_spans_exported: 0,
+            otlp_spans_dropped: 0,
+            otlp_export_errors: 0,
+            otlp_spans_rejected: 0,
         };
         let value = serde_json::to_value(snapshot).unwrap();
         assert_eq!(value["schemaVersion"], 1);

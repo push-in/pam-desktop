@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add explicit-opt-in, privacy-bounded OTLP HTTP/JSON spans for Desktop command
+  execution with a non-blocking bounded exporter, diagnostic counters and
+  official Collector interoperability certification.
+
 - Add a bounded, authenticated `pam desktop diagnostics` transport for live
   development snapshots, backed by an ephemeral private session descriptor.
 - Add authenticated Desktop package-footprint evidence for compressed,

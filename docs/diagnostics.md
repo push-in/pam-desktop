@@ -44,3 +44,26 @@ development build needs command-level timings.
 Production applications may expose this data in a support panel. It contains
 operational counters only and is available solely to the authenticated local
 origin through the ephemeral bridge token.
+
+## Opt-in OTLP command traces
+
+The host can export one root span per Desktop command over OTLP HTTP/JSON. It
+is disabled by default and an endpoint alone never enables it. Set all three:
+
+```bash
+PAM_DESKTOP_OTLP_ENABLED=true
+OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/json
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://collector.example/v1/traces
+```
+
+Remote endpoints must use HTTPS; plain HTTP is accepted only for loopback
+development collectors. Standard OTLP headers, timeout, batch size, queue size
+and schedule delay environment variables are supported. Redirects are refused,
+responses are capped at 64 KiB, and export runs on a bounded non-blocking queue.
+
+Every `pam.desktop.command` span contains only the static command name, integer
+execution lane, integer outcome, service name/version, timestamps and OTLP
+status. Payloads, results, window/request identifiers, origins, filesystem
+paths, user identity and bridge credentials are never recorded. Diagnostics
+report exported, dropped, rejected and failed-export totals so backpressure and
+Collector partial success remain visible.

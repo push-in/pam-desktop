@@ -5,6 +5,9 @@
 mod database;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod desktop_otlp;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod desktop_portal;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
