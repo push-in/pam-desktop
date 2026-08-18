@@ -1,11 +1,20 @@
+#[cfg(target_os = "linux")]
 use std::os::fd::AsFd;
 
+#[cfg(target_os = "linux")]
 use ashpd::desktop::open_uri::OpenFileRequest;
+#[cfg(target_os = "linux")]
 use ashpd::desktop::print::{PageSetup, PrintProxy, Settings};
+#[cfg(target_os = "linux")]
 use ashpd::desktop::screenshot::Screenshot;
-use pam_desktop_protocol::{DesktopPortalOperation, FileAccess};
+use pam_desktop_protocol::DesktopPortalOperation;
+#[cfg(target_os = "linux")]
+use pam_desktop_protocol::FileAccess;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(target_os = "linux")]
+use serde_json::json;
+#[cfg(target_os = "linux")]
 use url::Url;
 
 use crate::native::{FileTarget, NativeError, NativeServices};
@@ -21,6 +30,7 @@ pub struct DesktopPortalRequest {
     pub title: String,
 }
 
+#[cfg(target_os = "linux")]
 pub async fn execute(
     native: &NativeServices,
     request: &DesktopPortalRequest,
@@ -121,6 +131,17 @@ pub async fn execute(
             Ok(json!({"submitted": true}))
         }
     }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn execute(
+    _native: &NativeServices,
+    _request: &DesktopPortalRequest,
+) -> Result<Value, NativeError> {
+    Err(NativeError::native(
+        "The XDG desktop portal is unavailable on this platform",
+        std::env::consts::OS,
+    ))
 }
 
 fn default_title() -> String {

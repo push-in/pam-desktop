@@ -651,7 +651,7 @@ mod platform {
 
     pub fn install_platform_event_handlers(proxy: &EventLoopProxy<HostEvent>) {
         let menu_proxy = proxy.clone();
-        MenuEvent::set_event_handler(Some(move |event| {
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             let _ = menu_proxy.send_event(HostEvent::Shell(ShellEvent::MenuSelected(
                 event.id.as_ref().to_owned(),
             )));

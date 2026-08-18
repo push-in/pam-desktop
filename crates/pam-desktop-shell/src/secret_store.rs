@@ -1,6 +1,8 @@
+#[cfg(target_os = "linux")]
 use std::collections::HashMap;
 
 use pam_desktop_protocol::{SecretOperation, validate_identifier};
+#[cfg(target_os = "linux")]
 use secret_service::{EncryptionType, SecretService};
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +26,7 @@ pub struct SecretResponse {
     pub value: Option<String>,
 }
 
+#[cfg(target_os = "linux")]
 pub async fn execute(
     application_id: &str,
     request: &SecretRequest,
@@ -123,4 +126,23 @@ pub async fn execute(
             Ok(SecretResponse { value: None })
         }
     }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn execute(
+    _application_id: &str,
+    request: &SecretRequest,
+) -> Result<SecretResponse, NativeError> {
+    validate_identifier(&request.key, "secret key").map_err(NativeError::invalid)?;
+    if request
+        .value
+        .as_ref()
+        .is_some_and(|value| value.len() > MAX_SECRET_BYTES)
+    {
+        return Err(NativeError::too_large("Secrets cannot exceed 64 KiB."));
+    }
+    Err(NativeError::native(
+        "A secure credential store is not implemented on this platform",
+        std::env::consts::OS,
+    ))
 }

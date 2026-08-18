@@ -5,6 +5,9 @@
 - Add native macOS arm64 and Windows x64 CI that tests and lints the portable
   gateway/plugin contracts and compiles the real Servo host on hosted runners.
   These are pre-release compatibility gates, not yet a distribution claim.
+- Scope XDG portal and Linux Secret Service dependencies to Linux, preserve a
+  fail-closed response on other systems, and compile notification urgency and
+  native menu handlers against their actual platform APIs.
 - Make the complete Desktop source CI reusable and mandatory for both native
   host and API-only tagged releases, preventing publication from bypassing the
   contracts validated on `main`.

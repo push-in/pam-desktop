@@ -7,7 +7,9 @@ use arboard::Clipboard;
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
 use getrandom::fill;
-use notify_rust::{Notification, Urgency};
+use notify_rust::Notification;
+#[cfg(target_os = "linux")]
+use notify_rust::Urgency;
 use pam_desktop_protocol::{
     ClipboardOperation, DialogKind, ErrorCode, FileAccess, FileEntryKind, FileOperation,
     NativeCapabilities, NotificationUrgency,
@@ -557,16 +559,18 @@ impl NativeServices {
                 "Notification bodies are limited to {MAX_NOTIFICATION_BODY_BYTES} bytes."
             )));
         }
-        let urgency = match request.urgency {
+        let mut notification = Notification::new();
+        notification
+            .appname("Pam Desktop")
+            .summary(&request.title)
+            .body(&request.body);
+        #[cfg(target_os = "linux")]
+        notification.urgency(match request.urgency {
             NotificationUrgency::Low => Urgency::Low,
             NotificationUrgency::Normal => Urgency::Normal,
             NotificationUrgency::Critical => Urgency::Critical,
-        };
-        Notification::new()
-            .appname("Pam Desktop")
-            .summary(&request.title)
-            .body(&request.body)
-            .urgency(urgency)
+        });
+        notification
             .show()
             .map_err(|error| NativeError::native("Cannot show the notification", error))?;
         Ok(Value::Null)

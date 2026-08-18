@@ -28,7 +28,6 @@ servo-engine = [
 
 [dependencies]
 arboard.workspace = true
-ashpd.workspace = true
 axum.workspace = true
 base64.workspace = true
 cap-std.workspace = true
@@ -48,7 +47,6 @@ rustls = { workspace = true, optional = true }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-secret-service.workspace = true
 sha2.workspace = true
 servo = { workspace = true, optional = true }
 tokio.workspace = true
@@ -59,7 +57,9 @@ url = { workspace = true, optional = true }
 winit.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+ashpd.workspace = true
 ksni.workspace = true
+secret-service.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 tray-icon.workspace = true
