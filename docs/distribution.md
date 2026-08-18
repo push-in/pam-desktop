@@ -118,6 +118,12 @@ host OS and architecture. Both the archive and evidence receive GitHub artifact
 attestations. CI verifies the manifest again before uploading it; pull-request
 evidence uses a fixed artifact name and expires after 14 days.
 
+The release also emits `.footprint.json` (schema `1`, suite `2`, Desktop surface
+`3`). It authenticates the archive and records compressed, installed and host
+executable byte counts without extracting untrusted paths. The performance gate
+can compare this immutable record with the last accepted release and reject a
+configurable percentage regression.
+
 Reproduce the contract locally after building both host binaries:
 
 ```bash

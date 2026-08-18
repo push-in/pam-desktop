@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add authenticated Desktop package-footprint evidence for compressed,
+  installed and executable bytes, plus a release comparison gate that rejects
+  regressions beyond the accepted baseline.
+
 ## 1.2.1
 
 - Align the Rust workspace, packaged host and Composer launcher on version

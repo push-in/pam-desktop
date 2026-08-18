@@ -31,6 +31,8 @@ jobs:
             scripts/package-host-linux.sh scripts/test-host-archive.sh \
             scripts/host-reproducibility-evidence.sh \
             scripts/test-host-reproducibility-evidence.sh \
+            scripts/desktop-footprint-evidence.sh \
+            scripts/test-desktop-footprint-evidence.sh \
             .github/workflows/release.yml; then
             echo "rebuild=false" >> "${GITHUB_OUTPUT}"
           else
@@ -101,14 +103,41 @@ jobs:
           scripts/host-reproducibility-evidence.sh verify \
             "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
             "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.reproducibility.json"
+          PAM_EVIDENCE_REVISION="${GITHUB_SHA}" \
+            scripts/desktop-footprint-evidence.sh create \
+            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
+            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.footprint.json"
+          scripts/desktop-footprint-evidence.sh verify \
+            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
+            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.footprint.json"
           scripts/test-host-archive.sh \
             "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
+      - name: Compare accepted release footprint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p baseline
+          if previous_tag=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null) \
+            && gh release download "${previous_tag}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --pattern '*.footprint.json' \
+              --dir baseline 2>/dev/null
+          then
+            set -- baseline/*.footprint.json
+            scripts/desktop-footprint-evidence.sh compare \
+              "dist/pam-desktop-${GITHUB_REF_NAME#v}-x86_64-unknown-linux-gnu.footprint.json" \
+              "$1" \
+              5
+          else
+            echo '::notice::Desktop footprint not compared: the last accepted release has no footprint evidence.'
+          fi
       - name: Attest reproducible Linux host archive
         uses: actions/attest@v4
         with:
           subject-path: |
             dist/*.tar.gz
             dist/*.reproducibility.json
+            dist/*.footprint.json
       - uses: actions/upload-artifact@v4
         with:
           name: pam-desktop-x86_64-unknown-linux-gnu

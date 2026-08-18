@@ -35,6 +35,26 @@ Use `cargo bloat`, release flamegraphs and allocator/procfs samples to explain
 regressions. An optimization is not complete until it has an observable metric
 and a test or gate that keeps it from silently disappearing.
 
+Package footprint is deterministic and therefore does not need repeated noisy
+samples. Every CI and release host archive produces a schema-1, suite-2 Desktop
+evidence manifest containing compressed archive bytes, installed bytes, combined
+host executable bytes, compression ratio, archive SHA-256, source revision and
+build environment. Create and authenticate it with:
+
+```bash
+PAM_EVIDENCE_REVISION=$(git rev-parse HEAD) \
+  scripts/desktop-footprint-evidence.sh create dist/pam-desktop-*.tar.gz footprint.json
+scripts/desktop-footprint-evidence.sh verify dist/pam-desktop-*.tar.gz footprint.json
+scripts/desktop-footprint-evidence.sh compare footprint.json previous-footprint.json 5
+```
+
+The comparison command applies the percentage ceiling independently to archive,
+installed and executable bytes. CI consumers should download the last accepted
+release manifest as the baseline; missing baseline evidence must be reported as
+“not compared”, never interpreted as a pass. Cold start, RSS and idle CPU still
+require a real graphical session and remain separate from this deterministic
+package gate.
+
 The authenticated `pam.diagnostics.snapshot()` API supplies worker generation,
 active/failed command counters and aggregate latency to the in-app inspector.
 See [Runtime diagnostics](diagnostics.md).

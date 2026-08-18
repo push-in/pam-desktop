@@ -391,6 +391,7 @@ composer test --working-dir=packages/desktop
 composer analyse --working-dir=packages/desktop
 composer validate --strict packages/desktop/composer.json
 scripts/test-host-reproducibility-evidence.sh
+scripts/test-desktop-footprint-evidence.sh
 scripts/test-host-archive.sh dist/pam-desktop-1.0.0-x86_64-unknown-linux-gnu.tar.gz
 ```
 
