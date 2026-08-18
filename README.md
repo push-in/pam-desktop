@@ -239,6 +239,7 @@ For data-intensive applications, continue with [Native SQLite](docs/database.md)
 [authorized processes](docs/processes.md),
 [file watching](docs/file-watching.md), [Linux desktop portals](docs/desktop-portals.md),
 [visual regression testing](docs/visual-testing.md),
+[permission auditing](docs/permission-audit.md),
 [command execution lanes](docs/execution.md),
 [Linux system information](docs/system-information.md),
 the [native windows guide](docs/windows.md), [Linux lifecycle](docs/lifecycle.md) and the
@@ -364,6 +365,7 @@ docs/
 ├── lifecycle.md           single instance, deep links and associations
 ├── native-shell.md        menus, tray, global shortcuts and shell effects
 ├── performance.md         budgets, benchmark harness and release tuning
+├── permission-audit.md    release capability risk policy and JSON contract
 ├── processes.md           allowlisted process execution without a shell
 ├── secrets.md             encrypted Linux Secret Service integration
 ├── plugins.md             PHP composition and process-isolated Rust SDK

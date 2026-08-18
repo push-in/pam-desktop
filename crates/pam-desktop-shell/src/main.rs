@@ -34,6 +34,7 @@ mod native;
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod native_shell;
 mod packager;
+mod permission_audit;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod plugin;
@@ -118,6 +119,7 @@ fn run() -> Result<(), String> {
         "update-key" => run_update_key(&arguments.collect::<Vec<_>>()),
         "publish-update" => run_publish_update(arguments.collect()),
         "apply-update" => updater::apply(updater::ApplyOptions::parse(arguments)?),
+        "audit" => permission_audit::run(arguments.collect()),
         "doctor" => {
             let project = arguments
                 .next()
@@ -321,7 +323,8 @@ fn print_engine_diagnostic() {
 
 fn print_usage(executable: &std::ffi::OsStr) {
     println!(
-        "Usage: {} dev [directory]\n       {} run [directory]\n       {} build [directory] [options]\n       {} plugin new <id> [directory]\n       {} plugin build <id> [directory]\n       {} update-key --output <private-key-file>\n       {} publish-update [directory] [options]\n       {} doctor [directory]\n       {} visual accept|verify [directory] --name <case> --actual <png> [--force]\n       {} --version",
+        "Usage: {} dev [directory]\n       {} run [directory]\n       {} build [directory] [options]\n       {} plugin new <id> [directory]\n       {} plugin build <id> [directory]\n       {} update-key --output <private-key-file>\n       {} publish-update [directory] [options]\n       {} doctor [directory]\n       {} audit permissions [directory] [--json] [--deny-high]\n       {} visual accept|verify [directory] --name <case> --actual <png> [--force]\n       {} --version",
+        executable.to_string_lossy(),
         executable.to_string_lossy(),
         executable.to_string_lossy(),
         executable.to_string_lossy(),
