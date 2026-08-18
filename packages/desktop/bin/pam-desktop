@@ -36,6 +36,31 @@ case "$HOST_ROOT" in
     */../*|*/..|*/./*|*/.) fail 'the cache directory must not contain dot segments' ;;
 esac
 
+prune_host_cache()
+{
+    [ -d "$HOST_ROOT" ] || return 0
+
+    find "$HOST_ROOT" -mindepth 1 -maxdepth 1 -type d \
+        -name '.download-*' -mtime +1 -exec rm -rf -- {} +
+
+    find "$HOST_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' \
+        | sort -rn \
+        | awk -v current="$HOST_VERSION" '
+            $2 == current { next }
+            $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$/ {
+                retained++
+                if (retained > 2) print $2
+            }
+        ' \
+        | while IFS= read -r stale_version
+        do
+            [ -n "$stale_version" ] || continue
+            rm -rf -- "${HOST_ROOT}/${stale_version}"
+        done
+}
+
+prune_host_cache
+
 if [ -x "$HOST_BINARY" ]; then
     exec "$HOST_BINARY" "$@"
 fi

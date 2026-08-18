@@ -44,6 +44,13 @@ uses named roots or opaque grants, plugins run behind versioned contracts, and
 releases carry integrity metadata. It is built to feel powerful without making
 the security model vague.
 
+The Composer launcher keeps the verified native host in the user cache. Each
+invocation preserves the active host plus the two most recently used semantic
+versions and removes older hosts. Interrupted download directories older than a
+day are also removed, preventing Servo host archives from accumulating without
+bound while retaining immediate rollback versions. Set `PAM_DESKTOP_CACHE_DIR`
+to place this bounded cache in an explicit absolute directory.
+
 Version 1.0 freezes the public PHP, JavaScript and Rust plugin APIs and turns
 the Linux host into a reproducible, verifiable release:
 

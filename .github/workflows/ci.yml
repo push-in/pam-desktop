@@ -26,8 +26,9 @@ jobs:
       - run: cargo test --locked --workspace --no-default-features --features gateway
       - name: Linux host archive contract
         run: |
-          sh -n scripts/package-host-linux.sh scripts/test-host-archive.sh packages/desktop/bin/pam-desktop
+          sh -n scripts/package-host-linux.sh scripts/test-host-archive.sh scripts/test-host-cache.sh packages/desktop/bin/pam-desktop
           test -x packages/desktop/bin/pam-desktop
+          scripts/test-host-cache.sh
           cargo build --locked -p pam-desktop --no-default-features --features gateway --bins
           version=$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pam-desktop") | .version')
           mkdir -p "${RUNNER_TEMP}/host-one" "${RUNNER_TEMP}/host-two"
