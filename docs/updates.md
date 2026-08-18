@@ -120,3 +120,31 @@ Downloads run outside Tokio workers, are bounded by the signed byte length, and
 must match both length and SHA-256. Installation uses a copied helper, waits for
 the host process, verifies the extracted bundle, swaps within one filesystem,
 retains the previous version for rollback and relaunches the declared launcher.
+
+## Interrupted installation recovery
+
+Immediately before the first bundle rename, the helper persists a sibling
+schema-1 transaction bound to the verified archive SHA-256. Re-running the same
+helper operation reconciles the filesystem rather than blindly repeating the
+swap:
+
+- missing current bundle plus a valid `.previous` bundle restores the previous
+  version and safely restarts installation;
+- valid current and previous bundles mean the replacement completed before the
+  helper stopped, so the operation finishes idempotently without consuming the
+  rollback version;
+- an invalid current bundle is moved to the single `.failed` quarantine slot
+  only after `.previous` verifies, then the previous version is restored;
+- missing current and previous bundles, symlinks, malformed/oversized journals,
+  or a journal bound to another archive fail closed without deleting anything.
+
+Successful installation removes the archive and expanded extraction tree. The
+running helper may remain in its stage on platforms that lock executables; the
+next download retains at most one existing stage before creating the new one,
+so at most two application-specific update stages coexist. `.previous` and
+`.failed` are each single deterministic paths rather than timestamped history.
+
+This recovery contract covers helper termination and restart at every swap
+boundary. Filesystem and hardware durability still depend on the operating
+system; release testing should include abrupt process termination and the
+supported platform's normal crash-consistency guarantees.

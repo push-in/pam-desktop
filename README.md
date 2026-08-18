@@ -79,7 +79,7 @@ the Linux host into a reproducible, verifiable release:
   and release guarantee;
 - an immutable PHP update policy with pinned Ed25519 public keys;
 - signed update feeds, bounded HTTPS downloads, exact size/SHA-256
-  verification and atomic install with one-version rollback;
+  verification, interruption recovery, bounded staging and one-version rollback;
 - frozen `pam.updater` status, check, download and install operations plus
   notify/automatic background policies;
 - composable PHP plugins that register commands, events and jobs;
@@ -373,7 +373,7 @@ docs/
 ├── stability.md           1.x support, SemVer and compatibility policy
 ├── visual-testing.md      scoped pixel goldens and CI evidence
 ├── typed-commands.md       method/class commands, DTOs and typed events
-└── updates.md             signing, feeds and atomic automatic updates
+└── updates.md             signing, feeds and recoverable automatic updates
 packaging/linux/            rootless host installation templates
 scripts/                    reproducible Linux host packaging and verification
 ```

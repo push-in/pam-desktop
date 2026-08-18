@@ -22,6 +22,8 @@ const MAX_FEED_BYTES: u64 = 1024 * 1024;
 const MAX_BUNDLE_MANIFEST_BYTES: u64 = 10 * 1024 * 1024;
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(30);
 const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(120);
+const MAX_RETAINED_UPDATE_STAGES: usize = 1;
+const MAX_TRANSACTION_BYTES: u64 = 4 * 1024;
 
 #[derive(Clone)]
 pub struct Updater {
@@ -618,6 +620,7 @@ fn update_stage(application_id: &str, version: &str) -> Result<PathBuf, UpdateEr
     let parent = discover_bundle_root()
         .and_then(|root| root.parent().map(Path::to_path_buf))
         .unwrap_or_else(std::env::temp_dir);
+    prune_update_stages(&parent, application_id)?;
     let mut entropy = [0_u8; 8];
     fill(&mut entropy).map_err(|error| {
         UpdateError::new(
@@ -638,6 +641,44 @@ fn update_stage(application_id: &str, version: &str) -> Result<PathBuf, UpdateEr
         )
     })?;
     Ok(stage)
+}
+
+fn prune_update_stages(parent: &Path, application_id: &str) -> Result<(), UpdateError> {
+    let prefix = format!(".pam-update-{}-", safe_path_segment(application_id));
+    let mut stages = fs::read_dir(parent)
+        .map_err(|error| {
+            UpdateError::new(
+                ErrorCode::UpdateInstallFailed,
+                format!("Cannot inspect update staging parent: {error}"),
+            )
+        })?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            if !name.starts_with(&prefix) {
+                return None;
+            }
+            let metadata = entry.metadata().ok()?;
+            if !metadata.is_dir() || entry.file_type().ok()?.is_symlink() {
+                return None;
+            }
+            Some((metadata.modified().ok(), name.to_owned(), entry.path()))
+        })
+        .collect::<Vec<_>>();
+    stages.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    for (_, _, stage) in stages.into_iter().skip(MAX_RETAINED_UPDATE_STAGES) {
+        fs::remove_dir_all(&stage).map_err(|error| {
+            UpdateError::new(
+                ErrorCode::UpdateInstallFailed,
+                format!(
+                    "Cannot remove stale update stage {}: {error}",
+                    stage.display()
+                ),
+            )
+        })?;
+    }
+    Ok(())
 }
 
 fn safe_path_segment(value: &str) -> String {
@@ -737,6 +778,19 @@ pub struct ApplyOptions {
     archive: PathBuf,
     sha256: String,
     launcher: Option<PathBuf>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UpdateTransaction {
+    schema_version: u8,
+    archive_sha256: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecoveryOutcome {
+    Ready,
+    AlreadyInstalled,
 }
 
 pub struct PublishOptions {
@@ -1146,19 +1200,26 @@ impl ApplyOptions {
 /// # Errors
 ///
 /// Returns an error without replacing the current application when process
-/// waiting, archive integrity, extraction, bundle verification, or atomic
-/// swapping fails.
+/// waiting, archive integrity, extraction, bundle verification, recoverable
+/// swapping, or relaunch fails.
 pub fn apply(options: ApplyOptions) -> Result<(), String> {
-    let bundle = options
-        .bundle
-        .canonicalize()
-        .map_err(|error| format!("cannot resolve installed bundle: {error}"))?;
-    let archive = options
-        .archive
+    let ApplyOptions {
+        parent_pid,
+        bundle: configured_bundle,
+        archive: configured_archive,
+        sha256,
+        launcher,
+    } = options;
+    let bundle = resolve_bundle_target(&configured_bundle)?;
+    let archive = configured_archive
         .canonicalize()
         .map_err(|error| format!("cannot resolve staged update archive: {error}"))?;
-    verify_file_hash(&archive, &options.sha256)?;
-    wait_for_parent(options.parent_pid)?;
+    verify_file_hash(&archive, &sha256)?;
+    wait_for_parent(parent_pid)?;
+    if reconcile_interrupted_update(&bundle, &sha256)? == RecoveryOutcome::AlreadyInstalled {
+        cleanup_update_stage(&archive)?;
+        return relaunch(&bundle, launcher.as_deref());
+    }
     let stage = archive
         .parent()
         .ok_or_else(|| "staged update archive has no parent".to_owned())?;
@@ -1181,44 +1242,239 @@ pub fn apply(options: ApplyOptions) -> Result<(), String> {
         .ok_or_else(|| "installed bundle has no filename".to_owned())?
         .to_string_lossy();
     let backup = parent.join(format!(".{name}.previous"));
+    let failed = parent.join(format!(".{name}.failed"));
+    let transaction = parent.join(format!(".{name}.update-transaction.json"));
     if backup.exists() {
-        fs::remove_dir_all(&backup)
-            .map_err(|error| format!("cannot remove the previous update backup: {error}"))?;
+        remove_scoped_directory(&backup, "previous update backup")?;
     }
+    if failed.exists() {
+        remove_scoped_directory(&failed, "failed update bundle")?;
+    }
+    write_update_transaction(&transaction, &sha256)?;
     fs::rename(&bundle, &backup)
         .map_err(|error| format!("cannot move the installed bundle to backup: {error}"))?;
     if let Err(error) = fs::rename(&replacement, &bundle) {
         let rollback = fs::rename(&backup, &bundle);
         return Err(match rollback {
-            Ok(()) => format!("cannot install the replacement bundle; rollback succeeded: {error}"),
+            Ok(()) => {
+                let _ = fs::remove_file(&transaction);
+                format!("cannot install the replacement bundle; rollback succeeded: {error}")
+            }
             Err(rollback) => format!(
                 "cannot install the replacement bundle ({error}) and rollback failed ({rollback})"
             ),
         });
     }
     verify_replacement(&bundle).map_err(|error| {
-        let failed = parent.join(format!(".{name}.failed"));
         let _ = fs::rename(&bundle, &failed);
         let rollback = fs::rename(&backup, &bundle);
         match rollback {
-            Ok(()) => format!("installed bundle verification failed; rollback succeeded: {error}"),
+            Ok(()) => {
+                let _ = fs::remove_file(&transaction);
+                format!("installed bundle verification failed; rollback succeeded: {error}")
+            }
             Err(rollback) => format!(
                 "installed bundle verification failed ({error}) and rollback failed ({rollback})"
             ),
         }
     })?;
+    fs::remove_file(&transaction)
+        .map_err(|error| format!("update installed but transaction cleanup failed: {error}"))?;
+    cleanup_update_stage(&archive)?;
+    relaunch(&bundle, launcher.as_deref())
+}
 
-    if let Some(launcher) = options.launcher {
-        validate_relative_path(&launcher, "update relaunch path")?;
-        let executable = bundle.join(launcher);
-        Command::new(&executable)
-            .current_dir(&bundle)
-            .spawn()
-            .map_err(|error| {
-                format!("update installed but application relaunch failed: {error}")
-            })?;
+fn resolve_bundle_target(configured: &Path) -> Result<PathBuf, String> {
+    if !configured.is_absolute() {
+        return Err("installed bundle path must be absolute".to_owned());
+    }
+    let parent = configured
+        .parent()
+        .ok_or_else(|| "installed bundle has no parent".to_owned())?
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve installed bundle parent: {error}"))?;
+    let name = configured
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "installed bundle has no filename".to_owned())?;
+    let bundle = parent.join(name);
+    if let Ok(metadata) = bundle.symlink_metadata()
+        && (metadata.file_type().is_symlink() || !metadata.is_dir())
+    {
+        return Err("installed bundle must be a regular directory, never a symlink".to_owned());
+    }
+    Ok(bundle)
+}
+
+fn transaction_paths(bundle: &Path) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let parent = bundle
+        .parent()
+        .ok_or_else(|| "installed bundle has no parent".to_owned())?;
+    let name = bundle
+        .file_name()
+        .ok_or_else(|| "installed bundle has no filename".to_owned())?
+        .to_string_lossy();
+    Ok((
+        parent.join(format!(".{name}.previous")),
+        parent.join(format!(".{name}.failed")),
+        parent.join(format!(".{name}.update-transaction.json")),
+    ))
+}
+
+fn write_update_transaction(path: &Path, sha256: &str) -> Result<(), String> {
+    let transaction = UpdateTransaction {
+        schema_version: 1,
+        archive_sha256: sha256.to_owned(),
+    };
+    let bytes = serde_json::to_vec(&transaction)
+        .map_err(|error| format!("cannot encode update transaction: {error}"))?;
+    let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
+    if temporary.exists() {
+        fs::remove_file(&temporary)
+            .map_err(|error| format!("cannot reset update transaction staging file: {error}"))?;
+    }
+    let result = (|| {
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|error| format!("cannot create update transaction: {error}"))?;
+        output
+            .write_all(&bytes)
+            .and_then(|()| output.sync_all())
+            .map_err(|error| format!("cannot persist update transaction: {error}"))?;
+        fs::rename(&temporary, path)
+            .map_err(|error| format!("cannot publish update transaction: {error}"))
+    })();
+    let _ = fs::remove_file(&temporary);
+    result
+}
+
+fn read_update_transaction(path: &Path, expected_sha256: &str) -> Result<bool, String> {
+    let metadata = match path.symlink_metadata() {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("cannot inspect update transaction: {error}")),
+    };
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > MAX_TRANSACTION_BYTES
+    {
+        return Err("update transaction is not a bounded regular file".to_owned());
+    }
+    let bytes =
+        fs::read(path).map_err(|error| format!("cannot read update transaction: {error}"))?;
+    let transaction: UpdateTransaction = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("cannot decode update transaction: {error}"))?;
+    if transaction.schema_version != 1 || transaction.archive_sha256 != expected_sha256 {
+        return Err("update transaction does not match the staged archive".to_owned());
+    }
+    Ok(true)
+}
+
+fn reconcile_interrupted_update(
+    bundle: &Path,
+    expected_sha256: &str,
+) -> Result<RecoveryOutcome, String> {
+    let (backup, failed, transaction) = transaction_paths(bundle)?;
+    if !read_update_transaction(&transaction, expected_sha256)? {
+        if !bundle.is_dir() {
+            return Err(
+                "installed bundle is missing and no recovery transaction exists".to_owned(),
+            );
+        }
+        return Ok(RecoveryOutcome::Ready);
+    }
+    let bundle_exists = scoped_directory_exists(bundle, "installed bundle")?;
+    let backup_exists = scoped_directory_exists(&backup, "update recovery backup")?;
+    match (bundle_exists, backup_exists) {
+        (true, true) if verify_replacement(bundle).is_ok() => {
+            fs::remove_file(&transaction)
+                .map_err(|error| format!("cannot finish recovered update transaction: {error}"))?;
+            Ok(RecoveryOutcome::AlreadyInstalled)
+        }
+        (true, true) => {
+            verify_replacement(&backup)
+                .map_err(|error| format!("update backup cannot be recovered: {error}"))?;
+            if failed.exists() {
+                remove_scoped_directory(&failed, "failed update bundle")?;
+            }
+            fs::rename(bundle, &failed)
+                .map_err(|error| format!("cannot quarantine interrupted replacement: {error}"))?;
+            fs::rename(&backup, bundle)
+                .map_err(|error| format!("cannot restore interrupted update backup: {error}"))?;
+            fs::remove_file(&transaction)
+                .map_err(|error| format!("cannot finish update rollback transaction: {error}"))?;
+            Ok(RecoveryOutcome::Ready)
+        }
+        (false, true) => {
+            verify_replacement(&backup)
+                .map_err(|error| format!("update backup cannot be recovered: {error}"))?;
+            fs::rename(&backup, bundle)
+                .map_err(|error| format!("cannot restore interrupted update backup: {error}"))?;
+            fs::remove_file(&transaction)
+                .map_err(|error| format!("cannot finish update recovery transaction: {error}"))?;
+            Ok(RecoveryOutcome::Ready)
+        }
+        (true, false) => {
+            verify_replacement(bundle)
+                .map_err(|error| format!("installed bundle cannot resume update: {error}"))?;
+            fs::remove_file(&transaction)
+                .map_err(|error| format!("cannot reset unstarted update transaction: {error}"))?;
+            Ok(RecoveryOutcome::Ready)
+        }
+        (false, false) => Err(
+            "installed bundle and its recovery backup are both missing; refusing destructive recovery"
+                .to_owned(),
+        ),
+    }
+}
+
+fn remove_scoped_directory(path: &Path, label: &str) -> Result<(), String> {
+    let metadata = path
+        .symlink_metadata()
+        .map_err(|error| format!("cannot inspect {label}: {error}"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(format!("{label} must be a regular directory"));
+    }
+    fs::remove_dir_all(path).map_err(|error| format!("cannot remove {label}: {error}"))
+}
+
+fn scoped_directory_exists(path: &Path, label: &str) -> Result<bool, String> {
+    match path.symlink_metadata() {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => Ok(true),
+        Ok(_) => Err(format!("{label} must be a regular directory")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("cannot inspect {label}: {error}")),
+    }
+}
+
+fn cleanup_update_stage(archive: &Path) -> Result<(), String> {
+    let stage = archive
+        .parent()
+        .ok_or_else(|| "staged update archive has no parent".to_owned())?;
+    let expanded = stage.join("expanded");
+    if expanded.exists() {
+        remove_scoped_directory(&expanded, "update extraction directory")?;
+    }
+    if archive.exists() {
+        fs::remove_file(archive)
+            .map_err(|error| format!("cannot remove installed update archive: {error}"))?;
     }
     Ok(())
+}
+
+fn relaunch(bundle: &Path, launcher: Option<&Path>) -> Result<(), String> {
+    let Some(launcher) = launcher else {
+        return Ok(());
+    };
+    validate_relative_path(launcher, "update relaunch path")?;
+    let executable = bundle.join(launcher);
+    Command::new(&executable)
+        .current_dir(bundle)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("update installed but application relaunch failed: {error}"))
 }
 
 fn verify_replacement(root: &Path) -> Result<(), String> {
@@ -1640,7 +1896,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn atomically_swaps_verified_bundles_and_keeps_a_rollback() {
+    fn swaps_verified_bundles_and_keeps_a_recoverable_rollback() {
         let root = temporary_test_directory("apply");
         let installed = root.join("application");
         let staged_root = root.join("staged");
@@ -1682,8 +1938,102 @@ mod tests {
                 .expect("rollback payload should exist"),
             b"old"
         );
+        assert!(!root.join("update.tar.gz").exists());
+        assert!(!root.join("expanded").exists());
+        assert!(!root.join(".application.update-transaction.json").exists());
 
         fs::remove_dir_all(root).expect("fixture should be removable");
+    }
+
+    #[test]
+    fn recovers_every_interrupted_swap_state_idempotently() {
+        let digest = "b".repeat(64);
+
+        let missing_root = temporary_test_directory("recover-missing");
+        let missing_bundle = missing_root.join("application");
+        write_fixture_bundle(&missing_bundle, b"old");
+        let (missing_backup, _, missing_transaction) =
+            transaction_paths(&missing_bundle).expect("transaction paths");
+        write_update_transaction(&missing_transaction, &digest).expect("transaction");
+        fs::rename(&missing_bundle, &missing_backup).expect("interrupted backup move");
+        assert_eq!(
+            reconcile_interrupted_update(&missing_bundle, &digest).expect("recovery"),
+            RecoveryOutcome::Ready
+        );
+        assert_eq!(
+            fs::read(missing_bundle.join("app/payload.txt")).expect("restored payload"),
+            b"old"
+        );
+        assert!(!missing_transaction.exists());
+
+        let installed_root = temporary_test_directory("recover-installed");
+        let installed_bundle = installed_root.join("application");
+        write_fixture_bundle(&installed_bundle, b"new");
+        let (installed_backup, _, installed_transaction) =
+            transaction_paths(&installed_bundle).expect("transaction paths");
+        write_fixture_bundle(&installed_backup, b"old");
+        write_update_transaction(&installed_transaction, &digest).expect("transaction");
+        assert_eq!(
+            reconcile_interrupted_update(&installed_bundle, &digest).expect("recovery"),
+            RecoveryOutcome::AlreadyInstalled
+        );
+        assert_eq!(
+            fs::read(installed_backup.join("app/payload.txt")).expect("retained rollback"),
+            b"old"
+        );
+        assert!(!installed_transaction.exists());
+
+        let invalid_root = temporary_test_directory("recover-invalid");
+        let invalid_bundle = invalid_root.join("application");
+        write_fixture_bundle(&invalid_bundle, b"tampered");
+        fs::write(invalid_bundle.join("app/payload.txt"), b"invalid")
+            .expect("replacement should be invalidated");
+        let (invalid_backup, invalid_failed, invalid_transaction) =
+            transaction_paths(&invalid_bundle).expect("transaction paths");
+        write_fixture_bundle(&invalid_backup, b"old");
+        write_update_transaction(&invalid_transaction, &digest).expect("transaction");
+        assert_eq!(
+            reconcile_interrupted_update(&invalid_bundle, &digest).expect("rollback"),
+            RecoveryOutcome::Ready
+        );
+        assert_eq!(
+            fs::read(invalid_bundle.join("app/payload.txt")).expect("rollback payload"),
+            b"old"
+        );
+        assert!(invalid_failed.is_dir());
+        assert!(!invalid_transaction.exists());
+
+        fs::remove_dir_all(missing_root).expect("cleanup");
+        fs::remove_dir_all(installed_root).expect("cleanup");
+        fs::remove_dir_all(invalid_root).expect("cleanup");
+    }
+
+    #[test]
+    fn rejects_forged_transactions_and_bounds_staging_directories() {
+        let root = temporary_test_directory("recover-forged");
+        let bundle = root.join("application");
+        write_fixture_bundle(&bundle, b"current");
+        let (_, _, transaction) = transaction_paths(&bundle).expect("transaction paths");
+        write_update_transaction(&transaction, &"a".repeat(64)).expect("transaction");
+        assert!(reconcile_interrupted_update(&bundle, &"b".repeat(64)).is_err());
+
+        for suffix in ["one", "two", "three"] {
+            fs::create_dir(root.join(format!(".pam-update-com.example.app-1.0.0-{suffix}")))
+                .expect("stage");
+        }
+        prune_update_stages(&root, "com.example.app").expect("stages should prune");
+        let retained = fs::read_dir(&root)
+            .expect("root")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".pam-update-com.example.app-")
+            })
+            .count();
+        assert_eq!(retained, MAX_RETAINED_UPDATE_STAGES);
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]
