@@ -180,6 +180,8 @@ fn validate_headers(headers: &HashMap<String, String>) -> Result<(), NativeError
                 "content-length",
                 "transfer-encoding",
                 "cookie",
+                "traceparent",
+                "tracestate",
             ]
             .iter()
             .any(|blocked| name.eq_ignore_ascii_case(blocked))
@@ -214,6 +216,20 @@ mod tests {
             validate_headers(&HashMap::from([(
                 "Cookie".to_owned(),
                 "session=secret".to_owned(),
+            )]))
+            .is_err()
+        );
+        assert!(
+            validate_headers(&HashMap::from([(
+                "traceparent".to_owned(),
+                "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_owned(),
+            )]))
+            .is_err()
+        );
+        assert!(
+            validate_headers(&HashMap::from([(
+                "TrAcEsTaTe".to_owned(),
+                "vendor=value".to_owned(),
             )]))
             .is_err()
         );

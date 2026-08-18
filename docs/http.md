@@ -34,6 +34,11 @@ cap request and response bodies at 8 MiB and 16 MiB. Use the binary streaming
 API for larger payloads. A base path such as `/v1` cannot be escaped by the
 frontend.
 
+`traceparent` and `tracestate` are also reserved to the host and rejected from
+application-provided headers so renderer code cannot forge distributed trace
+lineage. A future tracing option may inject a host-owned context after policy
+validation; do not work around this boundary with a differently cased name.
+
 The returned object contains `status`, `headers` and a UTF-8 `body`. HTTP
 failures remain ordinary HTTP responses; capability, validation and transport
 failures reject with a typed Pam error. Pass an `AbortSignal` to stop waiting
