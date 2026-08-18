@@ -484,7 +484,8 @@ mod tests {
             ..NativeCapabilities::default()
         };
         let mut findings = Vec::new();
-        audit_capabilities(&root, &capabilities, &mut findings);
+        let canonical_root = root.canonicalize().expect("project root should resolve");
+        audit_capabilities(&canonical_root, &capabilities, &mut findings);
         audit_plugins(
             &[RustPluginConfig {
                 id: "camera".to_owned(),

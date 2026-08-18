@@ -2105,7 +2105,7 @@ mod tests {
             &options,
             &fixture.host,
             &fixture.pam,
-            None,
+            Some(&fixture.launcher),
         )
         .expect("first portable archive should build");
         let first_bytes =
@@ -2128,7 +2128,7 @@ mod tests {
             &options,
             &fixture.host,
             &fixture.pam,
-            None,
+            Some(&fixture.launcher),
         )
         .expect("second portable archive should build");
         let second_bytes =
@@ -2153,14 +2153,26 @@ mod tests {
             &options,
             &fixture.host,
             &fixture.pam,
-            None,
+            Some(&fixture.launcher),
         )
         .expect("bundle should build");
 
         let bundle = &result.artifacts[0];
-        assert!(bundle.join("bin/pam-desktop").is_file());
-        assert!(bundle.join("bin/pam").is_file());
-        assert!(bundle.join("bin/hello").is_file());
+        assert!(
+            bundle
+                .join(format!("bin/pam-desktop{}", std::env::consts::EXE_SUFFIX))
+                .is_file()
+        );
+        assert!(
+            bundle
+                .join(format!("bin/pam{}", std::env::consts::EXE_SUFFIX))
+                .is_file()
+        );
+        assert!(
+            bundle
+                .join(format!("bin/hello{}", std::env::consts::EXE_SUFFIX))
+                .is_file()
+        );
         assert!(bundle.join("app/vendor/autoload.php").is_file());
         assert!(
             !bundle
@@ -2232,6 +2244,7 @@ mod tests {
         output: PathBuf,
         host: PathBuf,
         pam: PathBuf,
+        launcher: PathBuf,
     }
 
     impl Fixture {
@@ -2282,20 +2295,24 @@ mod tests {
             fs::write(project.join(".env"), "SECRET=yes\n").expect("secret should be written");
             let host = root.join("pam-desktop");
             let pam = root.join("pam");
+            let launcher = root.join("pam-desktop-launcher");
             fs::write(&host, "#!/bin/sh\nexit 0\n").expect("host should be written");
             fs::write(
                 &pam,
                 "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'pam 0.1.1'; fi\n",
             )
             .expect("pam should be written");
+            fs::write(&launcher, "#!/bin/sh\nexit 0\n").expect("launcher should be written");
             make_executable(&host).expect("host should be executable");
             make_executable(&pam).expect("pam should be executable");
+            make_executable(&launcher).expect("launcher should be executable");
             Self {
                 root,
                 project,
                 output,
                 host,
                 pam,
+                launcher,
             }
         }
 

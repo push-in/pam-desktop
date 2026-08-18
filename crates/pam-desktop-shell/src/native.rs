@@ -1031,6 +1031,7 @@ mod tests {
         assert_eq!(list[0]["kind"], FileEntryKind::File as u8);
         assert_eq!(list[0]["path"], "notes/hello.txt");
 
+        drop(services);
         std::fs::remove_dir_all(root).expect("the temporary directory should be removed");
     }
 
@@ -1057,6 +1058,7 @@ mod tests {
             .expect_err("read-only roots should reject writes");
         assert_eq!(write.code, ErrorCode::PermissionDenied);
 
+        drop(services);
         std::fs::remove_dir_all(root).expect("the temporary directory should be removed");
     }
 
@@ -1083,6 +1085,8 @@ mod tests {
         assert_eq!(bytes, 5);
         assert_eq!(payload, [0, 1, 2, 3, 255]);
 
+        drop(reader);
+        drop(services);
         std::fs::remove_dir_all(root).expect("the temporary directory should be removed");
     }
 

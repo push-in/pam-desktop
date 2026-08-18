@@ -10,6 +10,8 @@
   native menu handlers against their actual platform APIs.
 - Declare Tokio's directly used asynchronous I/O extension feature instead of
   inheriting it accidentally from Linux-only portal dependencies.
+- Exercise security, database and packaging fixtures with canonical paths,
+  closed native handles and the required platform launcher on every host.
 - Make the complete Desktop source CI reusable and mandatory for both native
   host and API-only tagged releases, preventing publication from bypassing the
   contracts validated on `main`.

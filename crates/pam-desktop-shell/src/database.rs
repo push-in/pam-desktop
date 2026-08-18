@@ -356,6 +356,7 @@ mod tests {
         assert_eq!(result["rows"].as_array().map(Vec::len), Some(2));
         assert_eq!(result["rows"][1]["body"], "two");
 
+        drop(service);
         std::fs::remove_dir_all(&root).expect("the isolated test root should be removable");
     }
 
