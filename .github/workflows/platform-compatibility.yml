@@ -10,6 +10,8 @@ on:
       - Cargo.lock
       - crates/**
       - compat/rust-plugin-v1/**
+      - scripts/desktop-platform-evidence.py
+      - tests/test_desktop_platform_evidence.py
       - .github/workflows/platform-compatibility.yml
 
 permissions:
@@ -31,9 +33,15 @@ jobs:
           - name: macOS arm64
             runner: macos-15
             platform_code: 2
+            architecture_code: 1
+            executable: target/debug/pam-desktop
+            python: python3
           - name: Windows x64
             runner: windows-2025
             platform_code: 3
+            architecture_code: 2
+            executable: target/debug/pam-desktop.exe
+            python: python
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.88.0
@@ -55,3 +63,26 @@ jobs:
           --no-default-features --features gateway -- -D warnings
       - name: Compile the real Servo desktop host
         run: cargo check --locked -p pam-desktop --bins
+      - name: Build and smoke-test the real Servo desktop host
+        shell: bash
+        run: |
+          cargo build --locked -p pam-desktop --bins
+          rust_version=$(rustc --version)
+          '${{ matrix.python }}' scripts/desktop-platform-evidence.py create \
+            --binary '${{ matrix.executable }}' \
+            --platform-code '${{ matrix.platform_code }}' \
+            --architecture-code '${{ matrix.architecture_code }}' \
+            --revision '${{ github.sha }}' \
+            --rust-version "${rust_version}" \
+            --output 'desktop-platform-evidence-${{ matrix.platform_code }}.json'
+          '${{ matrix.python }}' scripts/desktop-platform-evidence.py verify \
+            --binary '${{ matrix.executable }}' \
+            --evidence 'desktop-platform-evidence-${{ matrix.platform_code }}.json'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pam-desktop-${{ matrix.platform_code }}-native-smoke
+          path: |
+            ${{ matrix.executable }}
+            desktop-platform-evidence-${{ matrix.platform_code }}.json
+          if-no-files-found: error
+          retention-days: 14

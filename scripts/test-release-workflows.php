@@ -57,6 +57,11 @@ requireFragments($platform, 'platform-compatibility.yml', [
     "            platform_code: 2\n",
     "            platform_code: 3\n",
     "      - name: Compile the real Servo desktop host\n",
+    "      - name: Build and smoke-test the real Servo desktop host\n",
+    "          retention-days: 14\n",
+    '            desktop-platform-evidence-${{ matrix.platform_code }}.json' . "\n",
+    "      - scripts/desktop-platform-evidence.py\n",
+    "      - tests/test_desktop_platform_evidence.py\n",
 ]);
 foreach (['ci.yml' => $ci, 'platform-compatibility.yml' => $platform, 'release.yml' => $release] as $name => $workflow) {
     if (str_contains($workflow, 'dtolnay/rust-toolchain@stable')) {

@@ -77,15 +77,17 @@ Tray visibility and global shortcut registration depend on the desktop
 environment and compositor. Their documented graceful fallback is part of the
 contract.
 
-Windows/macOS packaging and update code from earlier development remains in the
-repository as experimental groundwork. A dedicated pre-release matrix now runs
-the portable gateway/plugin tests and Clippy contracts and compiles the real
-Servo host natively on macOS arm64 and Windows x64. Tagged releases cannot
+Windows/macOS packaging and update code remains experimental groundwork. A
+dedicated pre-release matrix runs the portable gateway/plugin tests and Clippy
+contracts, builds the real Servo host natively on macOS arm64 and Windows x64,
+executes its bounded version handshake and publishes a 14-day schema-1 evidence
+artifact bound to the source commit, toolchain, binary hash and byte size.
+Tagged releases cannot
 publish through either the native-host or API-only path unless that platform
 matrix and the complete source CI both pass. This is compatibility evidence,
-not yet a packaging or support guarantee: installers, signing, notarization,
-updates and clean-machine launch still require separate gates before either
-platform joins the supported 1.x release matrix.
+not yet a packaging or support guarantee: a CLI handshake does not prove a
+graphical session, installer, signature, notarization or updater. Those remain
+separate gates before either platform joins the supported 1.x release matrix.
 
 ## Trust boundary
 

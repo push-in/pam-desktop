@@ -98,7 +98,7 @@ the Linux host into a reproducible, verifiable release:
 - no Node runtime and no unrestricted ambient native API.
 
 Pam Desktop 1.x is stable for Linux x86-64 applications built against public
-API version 1 and protocol 6. Servo 0.4 is still evolving, so engine behavior
+API version 1 and protocol 6. Servo 0.5 is still evolving, so engine behavior
 does not imply feature-for-feature Electron compatibility. The PAM contracts
 around it are protected by executable compatibility fixtures.
 
@@ -307,7 +307,7 @@ in PHP or printed. See the [Updates and signing guide](docs/updates.md).
 
 ## Build the host
 
-The Rust workspace pins Servo 0.4.0 and carries a committed `Cargo.lock`.
+The Rust workspace pins Servo 0.5.0 and carries a committed `Cargo.lock`.
 On Ubuntu 22.04 or compatible distributions:
 
 ```bash

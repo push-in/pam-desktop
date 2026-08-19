@@ -68,6 +68,8 @@ jobs:
       - run: composer test --working-dir=packages/desktop
       - run: composer analyse --working-dir=packages/desktop
       - run: php scripts/test-release-workflows.php
+      - name: Validate native platform evidence contracts
+        run: python3 -m unittest tests/test_desktop_platform_evidence.py
 
   otlp-collector:
     runs-on: ubuntu-22.04

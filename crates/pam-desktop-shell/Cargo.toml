@@ -36,7 +36,7 @@ euclid = { workspace = true, optional = true }
 getrandom.workspace = true
 futures-util.workspace = true
 global-hotkey.workspace = true
-# Compatibility pins for Servo 0.4; see the workspace manifest.
+# Compatibility pins for Servo 0.5; see the workspace manifest.
 mozjs = { workspace = true, optional = true }
 pam-desktop-protocol.workspace = true
 png.workspace = true

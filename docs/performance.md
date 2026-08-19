@@ -55,6 +55,16 @@ release manifest as the baseline; missing baseline evidence must be reported as
 require a real graphical session and remain separate from this deterministic
 package gate.
 
+macOS arm64 and Windows x64 pre-release jobs additionally emit schema-1,
+suite-3 Desktop host evidence. Platform codes are `2` (macOS) and `3`
+(Windows); architecture codes are `1` (arm64) and `2` (x86-64). The manifest
+records the exact source commit, Rust 1.88 toolchain, executable byte count and
+SHA-256, then reproduces the bounded `--version` handshake during verification.
+The executable and evidence expire after 14 days so cross-platform proof does
+not become an unbounded build archive. This is startup/linkage evidence only;
+cold start, RSS, accessibility and renderer readiness still require a real
+graphical session.
+
 The authenticated `pam.diagnostics.snapshot()` API supplies worker generation,
 active/failed command counters and aggregate latency to the in-app inspector.
 See [Runtime diagnostics](diagnostics.md).
