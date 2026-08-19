@@ -22,6 +22,8 @@
 - Preserve the host lifecycle contract on pre-release non-Linux builds while
   leaving cross-process single-instance forwarding disabled until its native
   Windows and macOS transports are certified.
+- Install the declared Rust 1.88 toolchain by immutable action ref in source,
+  platform and release workflows, and assert the compiler version at runtime.
 - Make the complete Desktop source CI reusable and mandatory for both native
   host and API-only tagged releases, preventing publication from bypassing the
   contracts validated on `main`.

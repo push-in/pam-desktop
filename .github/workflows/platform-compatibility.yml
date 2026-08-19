@@ -36,10 +36,12 @@ jobs:
             platform_code: 3
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.88.0
         with:
-          toolchain: "1.88"
           components: clippy
+      - name: Verify the supported Rust toolchain
+        shell: bash
+        run: rustc --version | grep -E '^rustc 1\.88\.'
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: desktop-${{ matrix.platform_code }}

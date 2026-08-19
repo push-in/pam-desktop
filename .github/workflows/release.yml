@@ -57,9 +57,9 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.88"
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Verify the supported Rust toolchain
+        run: rustc --version | grep -E '^rustc 1\.88\.'
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: pam-desktop-release

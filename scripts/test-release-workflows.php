@@ -37,10 +37,17 @@ $release = readWorkflow($root, 'release.yml');
 requireFragments($ci, 'ci.yml', ["  workflow_call:\n", "  workflow_dispatch:\n"]);
 requireFragments($platform, 'platform-compatibility.yml', [
     "  workflow_call:\n",
+    "      - uses: dtolnay/rust-toolchain@1.88.0\n",
+    "        run: rustc --version | grep -E '^rustc 1\\.88\\.'\n",
     "            platform_code: 2\n",
     "            platform_code: 3\n",
     "      - name: Compile the real Servo desktop host\n",
 ]);
+foreach (['ci.yml' => $ci, 'platform-compatibility.yml' => $platform, 'release.yml' => $release] as $name => $workflow) {
+    if (str_contains($workflow, 'dtolnay/rust-toolchain@stable')) {
+        fail("{$name} must not claim a pinned MSRV while installing the moving stable toolchain");
+    }
+}
 requireFragments($release, 'release.yml', [
     "  source-contracts:\n",
     "    uses: ./.github/workflows/ci.yml\n",
