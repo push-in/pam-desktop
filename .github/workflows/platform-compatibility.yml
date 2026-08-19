@@ -61,8 +61,6 @@ jobs:
         run: >-
           cargo clippy --locked --workspace --all-targets
           --no-default-features --features gateway -- -D warnings
-      - name: Compile the real Servo desktop host
-        run: cargo check --locked -p pam-desktop --bins
       - name: Build and smoke-test the real Servo desktop host
         shell: bash
         run: |

@@ -56,7 +56,6 @@ requireFragments($platform, 'platform-compatibility.yml', [
     "        run: rustc --version | grep -E '^rustc 1\\.88\\.'\n",
     "            platform_code: 2\n",
     "            platform_code: 3\n",
-    "      - name: Compile the real Servo desktop host\n",
     "      - name: Build and smoke-test the real Servo desktop host\n",
     "          retention-days: 14\n",
     '          path: desktop-platform-evidence-${{ matrix.platform_code }}.json' . "\n",

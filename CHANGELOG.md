@@ -4,6 +4,8 @@
 
 - Build and execute the real Servo host on macOS arm64 and Windows x64, with
   bounded commit/toolchain/hash/size smoke evidence retained for 14 days.
+- Replace the redundant Servo `cargo check` plus build sequence with the
+  stronger executable build alone.
 - Align public documentation with the pinned Servo 0.5 engine.
 
 - Add native macOS arm64 and Windows x64 CI that tests and lints the portable
