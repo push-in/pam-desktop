@@ -347,7 +347,7 @@ fn run_desktop(_project: Project, _watch: bool) -> Result<(), String> {
 
 #[cfg(feature = "servo-engine")]
 fn print_engine_diagnostic() {
-    println!("[ok] Servo engine: 0.4.0");
+    println!("[ok] Servo engine: 0.5.0");
 }
 
 #[cfg(not(feature = "servo-engine"))]

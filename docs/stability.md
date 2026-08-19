@@ -80,10 +80,12 @@ contract.
 Windows/macOS packaging and update code from earlier development remains in the
 repository as experimental groundwork. A dedicated pre-release matrix now runs
 the portable gateway/plugin tests and Clippy contracts and compiles the real
-Servo host natively on macOS arm64 and Windows x64. This is compatibility
-evidence, not yet a packaging or support guarantee: installers, signing,
-notarization, updates and clean-machine launch still require separate gates
-before either platform joins the supported 1.x release matrix.
+Servo host natively on macOS arm64 and Windows x64. Tagged releases cannot
+publish through either the native-host or API-only path unless that platform
+matrix and the complete source CI both pass. This is compatibility evidence,
+not yet a packaging or support guarantee: installers, signing, notarization,
+updates and clean-machine launch still require separate gates before either
+platform joins the supported 1.x release matrix.
 
 ## Trust boundary
 

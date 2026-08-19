@@ -44,8 +44,10 @@ requireFragments($platform, 'platform-compatibility.yml', [
 requireFragments($release, 'release.yml', [
     "  source-contracts:\n",
     "    uses: ./.github/workflows/ci.yml\n",
-    "  build:\n    needs:\n      - native-changes\n      - source-contracts\n",
-    "  publish-api:\n    needs:\n      - native-changes\n      - source-contracts\n",
+    "  platform-contracts:\n",
+    "    uses: ./.github/workflows/platform-compatibility.yml\n",
+    "  build:\n    needs:\n      - native-changes\n      - platform-contracts\n      - source-contracts\n",
+    "  publish-api:\n    needs:\n      - native-changes\n      - platform-contracts\n      - source-contracts\n",
 ]);
 
 echo "PAM Desktop release workflow contracts passed.\n";

@@ -14,6 +14,14 @@
   closed native handles and the required platform launcher on every host.
 - Keep shared asynchronous and fallible platform contracts explicit while
   documenting their no-op or fail-closed implementations outside Linux.
+- Require the native macOS arm64 and Windows x64 compatibility matrix before
+  either Desktop tagged-release publication path can proceed.
+- Align the embedded engine and its cryptography, JavaScript and SQLite graph
+  with Servo 0.5, including its fixed macOS font implementation and bundled
+  FreeType runtime.
+- Preserve the host lifecycle contract on pre-release non-Linux builds while
+  leaving cross-process single-instance forwarding disabled until its native
+  Windows and macOS transports are certified.
 - Make the complete Desktop source CI reusable and mandatory for both native
   host and API-only tagged releases, preventing publication from bypassing the
   contracts validated on `main`.

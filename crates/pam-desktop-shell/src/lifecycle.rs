@@ -156,3 +156,35 @@ mod linux {
 #[cfg(target_os = "linux")]
 #[allow(unused_imports, reason = "used by the Servo-enabled binary")]
 pub use linux::{Instance, InstanceGuard};
+
+#[cfg(not(target_os = "linux"))]
+mod portable {
+    #[derive(Debug)]
+    pub struct Activation {
+        pub arguments: Vec<String>,
+    }
+
+    pub enum Instance {
+        Primary(InstanceGuard),
+        Forwarded,
+    }
+
+    pub struct InstanceGuard;
+
+    impl InstanceGuard {
+        pub fn acquire(_identifier: &str, _arguments: &[String]) -> Result<Instance, String> {
+            Ok(Instance::Primary(Self))
+        }
+
+        pub fn listen<F>(&mut self, _handler: F) -> Result<(), String>
+        where
+            F: Fn(Activation) + Send + 'static,
+        {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+#[allow(unused_imports, reason = "used by the Servo-enabled binary")]
+pub use portable::{Instance, InstanceGuard};

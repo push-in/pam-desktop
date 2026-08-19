@@ -14,6 +14,10 @@ jobs:
     name: Certify tagged Desktop source contracts
     uses: ./.github/workflows/ci.yml
 
+  platform-contracts:
+    name: Certify tagged macOS and Windows contracts
+    uses: ./.github/workflows/platform-compatibility.yml
+
   native-changes:
     name: Detect native host changes
     runs-on: ubuntu-22.04
@@ -46,6 +50,7 @@ jobs:
   build:
     needs:
       - native-changes
+      - platform-contracts
       - source-contracts
     if: needs.native-changes.outputs.rebuild == 'true'
     name: x86_64-unknown-linux-gnu
@@ -174,6 +179,7 @@ jobs:
   publish-api:
     needs:
       - native-changes
+      - platform-contracts
       - source-contracts
     if: needs.native-changes.outputs.rebuild == 'false'
     runs-on: ubuntu-22.04

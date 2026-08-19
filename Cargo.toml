@@ -21,30 +21,28 @@ ashpd = { version = "0.12.3", default-features = false, features = ["tokio"] }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 base64 = "0.22.1"
 cap-std = "4.0.2"
-# Servo 0.4 pins the compatible Dalek release candidate transitively.
-ed25519-dalek = { version = "=3.0.0-rc.1", default-features = false, features = ["fast", "signature", "zeroize"] }
+# Keep the host cryptography aligned with Servo's stable dependency graph.
+ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "signature", "zeroize"] }
 euclid = "0.22.14"
 getrandom = "0.3.4"
 futures-util = { version = "0.3.33", default-features = false, features = ["std"] }
 global-hotkey = "0.8.0"
 ksni = { version = "0.3.6", default-features = false, features = ["blocking", "tokio"] }
-# Servo 0.4's tested lock uses these prerelease-compatible versions. Keeping
-# them exact prevents Cargo from selecting later semver-compatible releases
-# that currently fail together.
-mozjs = "=0.17.0"
+# Keep the JavaScript engine and elliptic-curve primitives aligned with Servo.
+mozjs = "=0.21.0"
 pam-desktop-protocol = { path = "crates/pam-desktop-protocol" }
 png = "=0.18.1"
-primeorder = "=0.14.0-rc.14"
+primeorder = "=0.14.0"
 notify-rust = "=4.16.1"
 rfd = "0.17.2"
 rustls = { version = "0.23.41", default-features = false, features = ["aws-lc-rs", "logging", "std", "tls12"] }
-rusqlite = { version = "=0.37.0", features = ["bundled"] }
+rusqlite = { version = "=0.38.0", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_repr = "0.1.20"
 secret-service = { version = "4.0.0", default-features = false, features = ["rt-tokio-crypto-rust"] }
 sha2 = "0.10.9"
-servo = { version = "=0.4.0", default-features = false, features = ["baked-in-resources", "clipboard", "js_jit"] }
+servo = { version = "=0.5.0", default-features = false, features = ["baked-in-resources", "bundled_freetype", "clipboard", "js_jit"] }
 tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7.19", features = ["io"] }
 tracing = "0.1.44"
