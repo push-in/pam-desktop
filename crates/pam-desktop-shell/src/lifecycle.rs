@@ -172,10 +172,19 @@ mod portable {
     pub struct InstanceGuard;
 
     impl InstanceGuard {
+        #[allow(
+            clippy::unnecessary_wraps,
+            reason = "the portable implementation preserves the fallible Linux contract"
+        )]
         pub fn acquire(_identifier: &str, _arguments: &[String]) -> Result<Instance, String> {
             Ok(Instance::Primary(Self))
         }
 
+        #[allow(
+            clippy::unnecessary_wraps,
+            clippy::unused_self,
+            reason = "the portable implementation preserves the stateful Linux listener contract"
+        )]
         pub fn listen<F>(&mut self, _handler: F) -> Result<(), String>
         where
             F: Fn(Activation) + Send + 'static,
