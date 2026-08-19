@@ -59,7 +59,7 @@ requireFragments($platform, 'platform-compatibility.yml', [
     "      - name: Compile the real Servo desktop host\n",
     "      - name: Build and smoke-test the real Servo desktop host\n",
     "          retention-days: 14\n",
-    '            desktop-platform-evidence-${{ matrix.platform_code }}.json' . "\n",
+    '          path: desktop-platform-evidence-${{ matrix.platform_code }}.json' . "\n",
     "      - scripts/desktop-platform-evidence.py\n",
     "      - tests/test_desktop_platform_evidence.py\n",
 ]);

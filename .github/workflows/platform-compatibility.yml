@@ -81,8 +81,6 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: pam-desktop-${{ matrix.platform_code }}-native-smoke
-          path: |
-            ${{ matrix.executable }}
-            desktop-platform-evidence-${{ matrix.platform_code }}.json
+          path: desktop-platform-evidence-${{ matrix.platform_code }}.json
           if-no-files-found: error
           retention-days: 14

@@ -80,8 +80,9 @@ contract.
 Windows/macOS packaging and update code remains experimental groundwork. A
 dedicated pre-release matrix runs the portable gateway/plugin tests and Clippy
 contracts, builds the real Servo host natively on macOS arm64 and Windows x64,
-executes its bounded version handshake and publishes a 14-day schema-1 evidence
-artifact bound to the source commit, toolchain, binary hash and byte size.
+executes its bounded version handshake and publishes a compact 14-day schema-1
+evidence artifact bound to the source commit, toolchain, binary hash and byte
+size. The large debug host remains disposable runner state and is not uploaded.
 Tagged releases cannot
 publish through either the native-host or API-only path unless that platform
 matrix and the complete source CI both pass. This is compatibility evidence,

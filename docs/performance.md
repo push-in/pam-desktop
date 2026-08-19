@@ -60,7 +60,8 @@ suite-3 Desktop host evidence. Platform codes are `2` (macOS) and `3`
 (Windows); architecture codes are `1` (arm64) and `2` (x86-64). The manifest
 records the exact source commit, Rust 1.88 toolchain, executable byte count and
 SHA-256, then reproduces the bounded `--version` handshake during verification.
-The executable and evidence expire after 14 days so cross-platform proof does
+Only the compact evidence is uploaded and it expires after 14 days; the large
+debug executable dies with the disposable runner so cross-platform proof does
 not become an unbounded build archive. This is startup/linkage evidence only;
 cold start, RSS, accessibility and renderer readiness still require a real
 graphical session.
