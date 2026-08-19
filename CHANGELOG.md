@@ -24,6 +24,9 @@
   Windows and macOS transports are certified.
 - Install the declared Rust 1.88 toolchain by immutable action ref in source,
   platform and release workflows, and assert the compiler version at runtime.
+- Carry a bounded, source-auditable `servo-fonts 0.5.0` macOS lifetime fix
+  until an upstream crates.io release contains the equivalent correction;
+  omit upstream's 14 MB test fixture corpus from the override.
 - Make the complete Desktop source CI reusable and mandatory for both native
   host and API-only tagged releases, preventing publication from bypassing the
   contracts validated on `main`.

@@ -33,6 +33,21 @@ function requireFragments(string $contents, string $name, array $fragments): voi
 $ci = readWorkflow($root, 'ci.yml');
 $platform = readWorkflow($root, 'platform-compatibility.yml');
 $release = readWorkflow($root, 'release.yml');
+$manifest = file_get_contents("{$root}/Cargo.toml");
+$patchedFont = file_get_contents("{$root}/third_party/servo-fonts-0.5.0/platform/macos/font.rs");
+if ($manifest === false || $patchedFont === false) {
+    fail('cannot read the Servo macOS source override');
+}
+requireFragments($manifest, 'Cargo.toml', [
+    'servo-fonts = { path = "third_party/servo-fonts-0.5.0" }',
+]);
+requireFragments($patchedFont, 'patched servo-fonts macOS source', [
+    'Some(CFString::from_str(options.language.as_str()))',
+    'language.as_deref()',
+]);
+if (str_contains($patchedFont, 'Some(&*CFString::from_str(options.language.as_str()))')) {
+    fail('the Servo macOS source override restored the borrowed temporary');
+}
 
 requireFragments($ci, 'ci.yml', ["  workflow_call:\n", "  workflow_dispatch:\n"]);
 requireFragments($platform, 'platform-compatibility.yml', [
