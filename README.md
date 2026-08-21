@@ -11,7 +11,7 @@ logic remains elegant, typed PHP.
 ![Version](https://img.shields.io/badge/version-1.2.1-68ded2?style=flat-square)
 ![Status](https://img.shields.io/badge/Linux-stable-22c55e?style=flat-square)
 ![Servo](https://img.shields.io/badge/Servo-0.4.0-5b50d6?style=flat-square)
-![PHP](https://img.shields.io/badge/PHP-8.4-777BB4?style=flat-square&logo=php&logoColor=white)
+![PHP](https://img.shields.io/badge/PHP-8.5-777BB4?style=flat-square&logo=php&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-1.88%2B-000000?style=flat-square&logo=rust&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)
 
@@ -50,6 +50,29 @@ versions and removes older hosts. Interrupted download directories older than a
 day are also removed, preventing Servo host archives from accumulating without
 bound while retaining immediate rollback versions. Set `PAM_DESKTOP_CACHE_DIR`
 to place this bounded cache in an explicit absolute directory.
+
+## Start here
+
+PAM Desktop is a Composer product hosted by the PAM Runtime. Install PAM first,
+then create the project and install the Desktop package through PAM's verified
+Composer toolchain:
+
+```bash
+curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    --connect-timeout 15 --max-time 60 --max-filesize 1048576 -fsSL \
+    https://github.com/push-in/pam/releases/latest/download/install.sh | sh
+
+pam doctor
+pam init my-app --template desktop
+cd my-app
+pam composer require pushinbr/pam-desktop
+pam desktop doctor
+pam dev
+```
+
+The project remains a normal Composer application. PAM supplies the persistent
+PHP runtime; PAM Desktop supplies the native window host and authenticated
+renderer bridge.
 
 Version 1.0 freezes the public PHP, JavaScript and Rust plugin APIs and turns
 the Linux host into a reproducible, verifiable release:
