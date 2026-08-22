@@ -14,6 +14,16 @@
     "bin": [
         "bin/pam-desktop"
     ],
+    "extra": {
+        "pam": {
+            "commands": {
+                "desktop": {
+                    "bin": "bin/pam-desktop",
+                    "description": "Build, run and diagnose PAM Desktop applications"
+                }
+            }
+        }
+    },
     "support": {
         "issues": "https://github.com/push-in/pam-desktop/issues",
         "source": "https://github.com/push-in/pam-desktop"
