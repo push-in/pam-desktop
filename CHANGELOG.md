@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Align all PAM Desktop Rust crates with release 1.2.5 so packaged hosts report
+  the same version as their signed release artifacts.
+
 - Add integer-coded UTF-8 and Base64 PAM HTTP request bodies so authorized
   origins can receive multipart forms and binary uploads without browser networking.
 
