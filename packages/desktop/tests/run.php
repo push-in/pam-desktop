@@ -91,6 +91,10 @@ final readonly class DocumentData
     name: 'settings',
     title: 'Settings',
     page: 'resources/settings.html',
+    width: 680,
+    height: 520,
+    minimumWidth: 480,
+    minimumHeight: 360,
 )]
 final readonly class SettingsWindow extends DesktopWindow
 {
@@ -218,6 +222,8 @@ $conventionBoot = $conventionApplication->dispatch([
 expect($conventionBoot['payload']['manifest']['identifier'] === 'com.pushin.convention', 'The #[Desktop] attribute should define the manifest.');
 expect($conventionBoot['payload']['windows'][0]['entry'] === 'resources/index.html', 'The convention-first app should use the conventional entry page.');
 expect($conventionBoot['payload']['windows'][1]['id'] === 'settings', 'Attributed windows should be discovered.');
+expect($conventionBoot['payload']['windows'][1]['width'] === 680, 'A window may lower its initial and minimum width together.');
+expect($conventionBoot['payload']['windows'][1]['minWidth'] === 480, 'The attributed minimum width should be applied before the initial width.');
 expect($conventionBoot['payload']['commands'][0]['name'] === 'greet', 'Attributed methods should become commands.');
 expect($conventionBoot['payload']['shell']['tray']['closeBehavior'] === 2, 'Attributed menus should configure the tray.');
 expect($conventionBoot['payload']['shell']['shortcuts'][0]['id'] === 'show', 'Menu shortcuts should become native shortcuts.');

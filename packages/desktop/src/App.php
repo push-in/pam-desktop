@@ -40,8 +40,8 @@ abstract class App
         $metadata = $attributes[0]->newInstance();
         $window = Window::create($metadata->name)
             ->load($metadata->page)
-            ->size($metadata->width, $metadata->height)
             ->minimumSize($metadata->minimumWidth, $metadata->minimumHeight)
+            ->size($metadata->width, $metadata->height)
             ->theme($metadata->theme);
         $application = Application::make(
             id: $metadata->id,
@@ -121,8 +121,8 @@ abstract class App
                 $metadata->name,
                 Window::create($metadata->title)
                     ->load($metadata->page)
-                    ->size($metadata->width, $metadata->height)
                     ->minimumSize($metadata->minimumWidth, $metadata->minimumHeight)
+                    ->size($metadata->width, $metadata->height)
                     ->visible($metadata->visible)
                     ->theme($metadata->theme),
             );
