@@ -1,5 +1,10 @@
 # Convention-first authoring
 
+The desktop gateway keeps scripts restricted to packaged same-origin assets.
+Inline styles are allowed so component frameworks can apply runtime layout,
+theme tokens, and responsive dimensions through CSSOM without weakening the
+script policy or opening remote image and network origins.
+
 PAM Desktop offers one runtime with two authoring levels. The convention-first
 API is the default for applications; the immutable builders remain available
 for infrastructure, plugins, generators, and unusual host policy.

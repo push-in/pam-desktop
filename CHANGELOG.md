@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep command cancellation metadata out of strict native capability payloads,
+  restoring database, HTTP, secrets, process, and portal calls through the PAM bridge.
+- Allow inline renderer styles while preserving the strict packaged-script and
+  capability-scoped network policies, enabling Vue and PrimeVue component styling.
+
 - Build and execute the real Servo host on macOS arm64 and Windows x64, with
   bounded commit/toolchain/hash/size smoke evidence retained for 14 days.
 - Replace the redundant Servo `cargo check` plus build sequence with the

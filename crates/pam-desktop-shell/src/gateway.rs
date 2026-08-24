@@ -2168,7 +2168,7 @@ fn secure_response(status: StatusCode, content_type: &'static str, body: Body) -
     headers.insert(
         CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(
-            "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; frame-src 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'",
+            "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; frame-src 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'",
         ),
     );
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
@@ -2252,14 +2252,16 @@ const BRIDGE_SCRIPT: &str = r#"
             }, options.timeout);
 
         try {
+            const metadata = options.includeRequestMetadata === true
+                ? { requestId, timeoutMs: options.timeout ?? null }
+                : {};
             const response = await fetch(endpoint, {
                 method: "POST",
                 headers,
                 signal: controller.signal,
                 body: JSON.stringify({
-                    requestId,
                     windowId,
-                    timeoutMs: options.timeout ?? null,
+                    ...metadata,
                     ...body,
                 }),
             });
@@ -2296,14 +2298,17 @@ const BRIDGE_SCRIPT: &str = r#"
             command,
             payload,
             traceparent: options?.traceparent ?? null,
-        }, options);
+        }, { ...options, includeRequestMetadata: true });
     };
 
     const emit = (name, payload = null, options = {}) => {
         if (typeof name !== "string" || name.length === 0) {
             throw new TypeError("Pam event must have a non-empty name.");
         }
-        return request("/_pam/emit", { name, payload }, options);
+        return request("/_pam/emit", { name, payload }, {
+            ...options,
+            includeRequestMetadata: true,
+        });
     };
 
     const normalizeTarget = (target) => {
@@ -2603,7 +2608,7 @@ const BRIDGE_SCRIPT: &str = r#"
                 plugin,
                 command,
                 payload,
-            }, nativeOptions(options));
+            }, { ...nativeOptions(options), includeRequestMetadata: true });
         },
     });
 
@@ -2702,6 +2707,13 @@ mod tests {
             parse_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01").is_some()
         );
         assert!(parse_traceparent("forged").is_none());
+    }
+
+    #[test]
+    fn bridge_keeps_command_metadata_out_of_strict_native_requests() {
+        assert!(BRIDGE_SCRIPT.contains("const metadata = options.includeRequestMetadata === true"));
+        assert!(BRIDGE_SCRIPT.contains("...options, includeRequestMetadata: true"));
+        assert!(BRIDGE_SCRIPT.contains("}, nativeOptions(options));"));
     }
 
     #[test]
