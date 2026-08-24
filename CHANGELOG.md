@@ -4,6 +4,8 @@
 
 - Add integer-coded UTF-8 and Base64 PAM HTTP request bodies so authorized
   origins can receive multipart forms and binary uploads without browser networking.
+- Point the Composer launcher at native host 1.2.4 so strict PAM database and
+  HTTP capability calls use the corrected bridge payload contract.
 
 - Keep command cancellation metadata out of strict native capability payloads,
   restoring database, HTTP, secrets, process, and portal calls through the PAM bridge.
