@@ -51,6 +51,8 @@ pub struct HttpRequest {
     pub body: String,
     #[serde(default)]
     pub body_encoding: HttpBodyEncoding,
+    #[serde(default)]
+    pub response_body_encoding: HttpBodyEncoding,
     pub traceparent: Option<String>,
 }
 
@@ -169,12 +171,24 @@ impl HttpServices {
             .map_err(|error| NativeError::too_large(format!(
                 "Native HTTP response exceeds {MAX_RESPONSE_BODY_BYTES} bytes or cannot be read: {error}"
             )))?;
-        let body = String::from_utf8(bytes).map_err(|_| {
+        let body = encode_response_body(bytes, request.response_body_encoding)?;
+        Ok(json!({
+            "status": status,
+            "headers": headers,
+            "body": body,
+            "bodyEncoding": request.response_body_encoding as u8,
+        }))
+    }
+}
+
+fn encode_response_body(bytes: Vec<u8>, encoding: HttpBodyEncoding) -> Result<String, NativeError> {
+    match encoding {
+        HttpBodyEncoding::Utf8 => String::from_utf8(bytes).map_err(|_| {
             NativeError::invalid(
-                "Native HTTP JSON responses must be UTF-8; stream binary downloads to a file.",
+                "Native HTTP text responses must be UTF-8; request Base64 encoding for binary data.",
             )
-        })?;
-        Ok(json!({"status": status, "headers": headers, "body": body}))
+        }),
+        HttpBodyEncoding::Base64 => Ok(BASE64.encode(bytes)),
     }
 }
 
@@ -326,9 +340,19 @@ mod tests {
             headers: HashMap::new(),
             body: "AP+A".to_owned(),
             body_encoding: HttpBodyEncoding::Base64,
+            response_body_encoding: HttpBodyEncoding::Utf8,
             traceparent: None,
         };
         assert_eq!(decode_body(&request).unwrap(), vec![0, 255, 128]);
+    }
+
+    #[test]
+    fn encodes_binary_http_response_bodies() {
+        assert_eq!(
+            encode_response_body(vec![0, 255, 128], HttpBodyEncoding::Base64).unwrap(),
+            "AP+A"
+        );
+        assert!(encode_response_body(vec![255], HttpBodyEncoding::Utf8).is_err());
     }
 
     #[test]

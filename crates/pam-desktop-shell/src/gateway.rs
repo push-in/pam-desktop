@@ -2541,6 +2541,7 @@ const BRIDGE_SCRIPT: &str = r#"
                 headers: options.headers ?? {},
                 body: options.body ?? "",
                 bodyEncoding: options.bodyEncoding ?? 1,
+                responseBodyEncoding: options.responseBodyEncoding ?? 1,
                 traceparent: options.traceparent ?? null,
             }, nativeOptions(options));
         },
@@ -2750,6 +2751,7 @@ mod tests {
         assert!(BRIDGE_SCRIPT.contains("const database = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const system = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const http = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("responseBodyEncoding: options.responseBodyEncoding ?? 1"));
         assert!(BRIDGE_SCRIPT.contains("const secrets = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const process = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const portal = Object.freeze({"));
