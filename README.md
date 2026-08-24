@@ -1,33 +1,51 @@
+<!-- pam:product-page:start -->
 <div align="center">
 
-# Pam Desktop
+# PAM Desktop
 
-### PHP in control. Rust at the boundary. Servo on screen.
+**PHP in control. Rust at the boundary. Servo on screen.**
 
-A direct Servo host for building native desktop applications whose application
-logic remains elegant, typed PHP.
+Build secure desktop applications with typed PHP logic, a Rust capability boundary, and a direct Servo host—without Electron or Node.js.
 
-[![Documentation](https://img.shields.io/badge/docs-desktop-5b50d6?style=flat-square)](https://push-in.github.io/pam-docs/desktop/overview/)
-![Version](https://img.shields.io/badge/version-1.2.1-68ded2?style=flat-square)
-![Status](https://img.shields.io/badge/Linux-stable-22c55e?style=flat-square)
-![Servo](https://img.shields.io/badge/Servo-0.4.0-5b50d6?style=flat-square)
+[![Release](https://img.shields.io/github/v/release/push-in/pam-desktop?style=flat-square&label=stable)](https://github.com/push-in/pam-desktop/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/push-in/pam-desktop/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/push-in/pam-desktop/actions)
 ![PHP](https://img.shields.io/badge/PHP-8.5-777BB4?style=flat-square&logo=php&logoColor=white)
-![Rust](https://img.shields.io/badge/Rust-1.88%2B-000000?style=flat-square&logo=rust&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-22c55e?style=flat-square)
+![License](https://img.shields.io/github/license/push-in/pam-desktop?style=flat-square)
 
-**[Documentation](https://push-in.github.io/pam-docs/desktop/overview/) ·
-[5-minute tutorial](https://push-in.github.io/pam-docs/desktop/quickstart/) ·
-[Cookbook](https://push-in.github.io/pam-docs/desktop/cookbook/) ·
-[vs Electron](https://push-in.github.io/pam-docs/desktop/electron-comparison/) ·
-[Capabilities](https://push-in.github.io/pam-docs/desktop/capabilities/) ·
-[Security](https://push-in.github.io/pam-docs/desktop/security/) ·
-[Distribution](https://push-in.github.io/pam-docs/desktop/distribution/) ·
-[Plugins](https://push-in.github.io/pam-docs/desktop/plugins/) ·
-[Contributing](https://push-in.github.io/pam-docs/community/contributing/)**
+**[Documentation](https://push-in.github.io/pam-docs/desktop/overview/) · [Why this exists](#why-this-exists) · [What you can build](#what-you-can-build) · [Quick start](#quick-start) · [Issues](https://github.com/push-in/pam-desktop/issues)**
 
 </div>
 
 ---
+
+## Why this exists
+
+Build secure desktop applications with typed PHP logic, a Rust capability boundary, and a direct Servo host—without Electron or Node.js.
+
+| | |
+| --- | --- |
+| **Role** | Desktop product |
+| **Execution path** | Rust · Servo · PAM Runtime |
+| **This repository owns** | Windows, lifecycle, secure bridge, capabilities, plugins, distribution |
+| **Boundary** | PAM remains the worker runtime; filesystem and OS authority default to off |
+
+## What you can build
+
+- Secure internal tools and operations consoles
+- Offline-first desktop products
+- Cross-platform application shells with explicit native authority
+
+## Quick start
+
+```bash
+pam init my-desktop --template desktop
+cd my-desktop
+pam composer require pushinbr/pam-desktop
+pam desktop:dev
+```
+
+The **[PAM documentation](https://push-in.github.io/pam-docs/desktop/overview/)** covers prerequisites, production setup, and the complete workflow. PAM projects keep normal manifests and lockfiles; product features stay in the package that owns them.
+<!-- pam:product-page:end -->
 
 Pam Desktop is intentionally separate from the Pam server core. This repository
 owns the native window, Servo integration, secure local bridge, shared protocol,
@@ -50,80 +68,6 @@ versions and removes older hosts. Interrupted download directories older than a
 day are also removed, preventing Servo host archives from accumulating without
 bound while retaining immediate rollback versions. Set `PAM_DESKTOP_CACHE_DIR`
 to place this bounded cache in an explicit absolute directory.
-
-## Start here
-
-PAM Desktop is a Composer product hosted by the PAM Runtime. Install PAM first,
-then create the project and install the Desktop package through PAM's verified
-Composer toolchain:
-
-```bash
-curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
-    --connect-timeout 15 --max-time 60 --max-filesize 1048576 -fsSL \
-    https://github.com/push-in/pam/releases/latest/download/install.sh | sh
-
-pam doctor
-pam init my-app --template desktop
-cd my-app
-pam composer require pushinbr/pam-desktop
-pam desktop doctor
-pam dev
-```
-
-The project remains a normal Composer application. PAM supplies the persistent
-PHP runtime; PAM Desktop supplies the native window host and authenticated
-renderer bridge.
-
-Version 1.0 freezes the public PHP, JavaScript and Rust plugin APIs and turns
-the Linux host into a reproducible, verifiable release:
-
-- local HTML, CSS, JavaScript and assets rendered directly by Servo;
-- explicit commands and bidirectional events through `window.pam`;
-- timeouts, `AbortSignal` cancellation, crash detection and worker recovery;
-- multiple independent Servo/Winit windows with targeted effects;
-- typed, immutable window configuration, events and effects in PHP;
-- development hot reload for assets, PHP and Composer changes;
-- PHP-declared filesystem roots with read/write policy;
-- native dialogs, clipboard and notifications behind independent permissions;
-- capability-scoped SQLite with bundled engine, WAL, prepared parameters and atomic transactions;
-- authenticated binary file streaming with browser backpressure and no base64 expansion;
-- lazy supervised PHP worker pools for explicitly parallel or background commands;
-- privacy-bounded Linux system, memory, network, power and battery snapshots;
-- opaque, process-lifetime grants for selected and dropped files;
-- typed reverse-DNS application manifests, integer-backed categories and
-  validated PNG/SVG icons;
-- atomic self-contained Linux bundles with Pam, PHP libraries, the Servo host,
-  vendored application code and per-file SHA-256 integrity metadata;
-- portable `.tar.gz` distribution, per-user install/uninstall scripts and
-  optional native `.deb` packages;
-- a stable Linux x86-64 host contract and reproducible official archive;
-- an XDG-aware, atomic per-user host installer that never invokes `sudo`;
-- preserved experimental Windows/macOS packager code, outside the 1.x support
-  and release guarantee;
-- an immutable PHP update policy with pinned Ed25519 public keys;
-- signed update feeds, bounded HTTPS downloads, exact size/SHA-256
-  verification, interruption recovery, bounded staging and one-version rollback;
-- frozen `pam.updater` status, check, download and install operations plus
-  notify/automatic background policies;
-- composable PHP plugins that register commands, events and jobs;
-- process-isolated Rust plugins with a versioned SDK, declared exports,
-  deadlines, cancellation and crash recovery;
-- `pam desktop plugin new/build` for generating and bundling native extensions;
-- immutable PHP menu trees, checkbox state, application tray and optional
-  close-to-tray behavior;
-- global shortcuts with typed press/release events and graceful platform
-  fallback;
-- supervised PHP background jobs with initial delay, timeout and integer-backed
-  skip/wait overlap policy;
-- dynamic menu, checkbox and tray-visibility effects;
-- one supervised Pam worker with bounded, versioned JSON-lines messages;
-- a random loopback gateway with origin and token enforcement;
-- no Node runtime and no unrestricted ambient native API.
-
-Pam Desktop 1.x is stable for Linux x86-64 applications built against public
-API version 1 and protocol 6. Servo 0.5 is still evolving, so engine behavior
-does not imply feature-for-feature Electron compatibility. The PAM contracts
-around it are protected by executable compatibility fixtures.
 
 ## Create an application
 
