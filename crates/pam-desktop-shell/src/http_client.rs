@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use pam_desktop_protocol::{ErrorCode, HttpMethod, HttpOriginConfig};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -15,6 +16,27 @@ const MAX_HEADERS: usize = 32;
 const MAX_HEADER_BYTES: usize = 8 * 1024;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(try_from = "u8")]
+#[repr(u8)]
+pub enum HttpBodyEncoding {
+    #[default]
+    Utf8 = 1,
+    Base64 = 2,
+}
+
+impl TryFrom<u8> for HttpBodyEncoding {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Utf8),
+            2 => Ok(Self::Base64),
+            _ => Err("HTTP body encoding must be 1 or 2.".to_owned()),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HttpRequest {
@@ -27,6 +49,8 @@ pub struct HttpRequest {
     pub headers: HashMap<String, String>,
     #[serde(default)]
     pub body: String,
+    #[serde(default)]
+    pub body_encoding: HttpBodyEncoding,
     pub traceparent: Option<String>,
 }
 
@@ -65,7 +89,8 @@ impl HttpServices {
         let url = resolve_url(origin, &request.path)?;
         validate_headers(&request.headers)?;
         let traceparent = validated_traceparent(request.traceparent.as_deref())?;
-        if request.body.len() > MAX_REQUEST_BODY_BYTES {
+        let body = decode_body(request)?;
+        if body.len() > MAX_REQUEST_BODY_BYTES {
             return Err(NativeError::too_large(format!(
                 "Native HTTP request bodies are limited to {MAX_REQUEST_BODY_BYTES} bytes."
             )));
@@ -92,19 +117,19 @@ impl HttpServices {
                 &request.headers,
                 traceparent.as_deref(),
             )
-            .send(request.body.as_bytes()),
+            .send(&body),
             HttpMethod::Put => apply_headers(
                 self.agent.put(url.as_str()),
                 &request.headers,
                 traceparent.as_deref(),
             )
-            .send(request.body.as_bytes()),
+            .send(&body),
             HttpMethod::Patch => apply_headers(
                 self.agent.patch(url.as_str()),
                 &request.headers,
                 traceparent.as_deref(),
             )
-            .send(request.body.as_bytes()),
+            .send(&body),
             HttpMethod::Delete => apply_headers(
                 self.agent.delete(url.as_str()),
                 &request.headers,
@@ -150,6 +175,15 @@ impl HttpServices {
             )
         })?;
         Ok(json!({"status": status, "headers": headers, "body": body}))
+    }
+}
+
+fn decode_body(request: &HttpRequest) -> Result<Vec<u8>, NativeError> {
+    match request.body_encoding {
+        HttpBodyEncoding::Utf8 => Ok(request.body.as_bytes().to_vec()),
+        HttpBodyEncoding::Base64 => BASE64
+            .decode(request.body.as_bytes())
+            .map_err(|_| NativeError::invalid("Base64 HTTP request bodies are invalid.")),
     }
 }
 
@@ -280,6 +314,21 @@ mod tests {
             )]))
             .is_err()
         );
+    }
+
+    #[test]
+    fn decodes_binary_http_request_bodies() {
+        let request = HttpRequest {
+            window_id: "main".to_owned(),
+            origin: "uploads".to_owned(),
+            method: HttpMethod::Put,
+            path: "/object".to_owned(),
+            headers: HashMap::new(),
+            body: "AP+A".to_owned(),
+            body_encoding: HttpBodyEncoding::Base64,
+            traceparent: None,
+        };
+        assert_eq!(decode_body(&request).unwrap(), vec![0, 255, 128]);
     }
 
     #[test]
