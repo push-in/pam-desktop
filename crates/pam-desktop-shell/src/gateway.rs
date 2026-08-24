@@ -2540,6 +2540,7 @@ const BRIDGE_SCRIPT: &str = r#"
                 path: options.path ?? "/",
                 headers: options.headers ?? {},
                 body: options.body ?? "",
+                bodyEncoding: options.bodyEncoding ?? 1,
                 traceparent: options.traceparent ?? null,
             }, nativeOptions(options));
         },

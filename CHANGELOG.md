@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add integer-coded UTF-8 and Base64 PAM HTTP request bodies so authorized
+  origins can receive multipart forms and binary uploads without browser networking.
+
 - Keep command cancellation metadata out of strict native capability payloads,
   restoring database, HTTP, secrets, process, and portal calls through the PAM bridge.
 - Allow inline renderer styles while preserving the strict packaged-script and
