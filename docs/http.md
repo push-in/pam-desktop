@@ -52,7 +52,22 @@ This context is correlation metadata, not authentication. PAM never adds
 origin/base path. Do not work around this boundary with a differently cased
 header name.
 
-The returned object contains `status`, `headers` and a UTF-8 `body`. HTTP
+Request and response body encodings are integer enums: `1` UTF-8 and `2`
+Base64. UTF-8 remains the default in both directions. Use Base64 only for
+bounded binary transfers such as an image or a presigned upload:
+
+```js
+const image = await pam.http.request("media", {
+  method: 1,
+  path: "/products/42.webp",
+  responseBodyEncoding: 2,
+});
+
+const imageDataUrl = `data:${image.headers["content-type"]};base64,${image.body}`;
+```
+
+The returned object contains `status`, `headers`, `body` and the integer
+`bodyEncoding` used for the response. HTTP
 failures remain ordinary HTTP responses; capability, validation and transport
 failures reject with a typed Pam error. Pass an `AbortSignal` to stop waiting
 in JavaScript. A request already executing in the native blocking transport may
