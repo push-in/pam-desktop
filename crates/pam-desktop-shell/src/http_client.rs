@@ -75,6 +75,7 @@ impl HttpServices {
         }
         let agent = ureq::Agent::config_builder()
             .https_only(true)
+            .http_status_as_error(false)
             .max_redirects(0)
             .timeout_global(Some(HTTP_TIMEOUT))
             .user_agent(concat!("pam-desktop/", env!("CARGO_PKG_VERSION")))
@@ -328,6 +329,17 @@ mod tests {
             )]))
             .is_err()
         );
+    }
+
+    #[test]
+    fn returns_http_error_statuses_to_the_application() {
+        let services = HttpServices::prepare(&[HttpOriginConfig {
+            name: "api".to_owned(),
+            origin: "https://api.example.com".to_owned(),
+        }])
+        .expect("the HTTP service should be prepared");
+
+        assert!(!services.agent.config().http_status_as_error());
     }
 
     #[test]
