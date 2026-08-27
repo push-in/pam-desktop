@@ -1790,7 +1790,7 @@ async fn notification(
     }
     let native = state.native_services();
     let events = state.events.clone();
-    native_task(tokio::task::spawn_blocking(move || native.notify(&request, events)).await)
+    native_task(tokio::task::spawn_blocking(move || native.notify(&request, &events)).await)
 }
 
 async fn database(

@@ -840,7 +840,7 @@ impl NativeServices {
     pub fn notify(
         &self,
         request: &NotificationRequest,
-        events: EventHub,
+        events: &EventHub,
     ) -> Result<Value, NativeError> {
         if !self.capabilities.notifications {
             return Err(NativeError::disabled("notifications"));
@@ -913,6 +913,7 @@ impl NativeServices {
             let id = handle.id();
             if !request.actions.is_empty() {
                 let window_id = request.window_id.clone();
+                let events = events.clone();
                 std::thread::Builder::new()
                     .name(format!("pam-notification-{id}"))
                     .spawn(move || {
