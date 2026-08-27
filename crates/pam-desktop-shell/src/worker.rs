@@ -17,6 +17,8 @@ use crate::project::Project;
 
 const BOOT_TIMEOUT: Duration = Duration::from_secs(10);
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(20);
+const EXECUTABLE_BUSY_RETRY_INTERVAL: Duration = Duration::from_millis(10);
+const EXECUTABLE_BUSY_RETRY_LIMIT: usize = 25;
 
 #[derive(Clone, Debug, Default)]
 pub struct CancellationToken(Arc<AtomicBool>);
@@ -149,20 +151,12 @@ struct WorkerClient {
 
 impl WorkerClient {
     fn spawn(project: &Project, executable: &OsStr) -> Result<Self, String> {
-        let mut child = Command::new(executable)
-            .arg("exec")
-            .arg(project.application())
-            .current_dir(project.root())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|error| {
-                format!(
-                    "cannot start PHP worker with {}: {error}",
-                    executable.to_string_lossy(),
-                )
-            })?;
+        let mut child = spawn_worker_process(project, executable).map_err(|error| {
+            format!(
+                "cannot start PHP worker with {}: {error}",
+                executable.to_string_lossy(),
+            )
+        })?;
         let input = child
             .stdin
             .take()
@@ -295,6 +289,42 @@ impl WorkerClient {
     }
 }
 
+fn spawn_worker_process(project: &Project, executable: &OsStr) -> std::io::Result<Child> {
+    for attempt in 0..=EXECUTABLE_BUSY_RETRY_LIMIT {
+        match Command::new(executable)
+            .arg("exec")
+            .arg(project.application())
+            .current_dir(project.root())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+        {
+            Err(error) if executable_is_busy(&error) && attempt < EXECUTABLE_BUSY_RETRY_LIMIT => {
+                std::thread::sleep(EXECUTABLE_BUSY_RETRY_INTERVAL);
+            }
+            result => return result,
+        }
+    }
+    unreachable!("the bounded worker spawn loop always returns on its final attempt")
+}
+
+fn executable_is_busy(error: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        error.raw_os_error() == Some(26)
+    }
+    #[cfg(windows)]
+    {
+        matches!(error.raw_os_error(), Some(32 | 33))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = error;
+        false
+    }
+}
+
 impl Drop for WorkerClient {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -322,6 +352,12 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn recognizes_the_platform_executable_busy_condition() {
+        assert!(executable_is_busy(&std::io::Error::from_raw_os_error(26)));
+        assert!(!executable_is_busy(&std::io::Error::from_raw_os_error(2)));
+    }
 
     #[test]
     fn recovers_after_timeout_cancellation_and_crash_without_replaying_commands() {
