@@ -88,7 +88,12 @@ def main() -> None:
         fail(f"refusing to replace existing artifact {archive_path}")
 
     repository = Path(__file__).resolve().parent.parent
-    with tempfile.TemporaryDirectory(prefix="pam-desktop-portable-") as temporary:
+    # Keep staging on the artifact filesystem. Windows runners commonly place
+    # TEMP on C: and the checked-out workspace on D:, while os.replace() is only
+    # atomic within one volume.
+    with tempfile.TemporaryDirectory(
+        prefix=".pam-desktop-portable-", dir=output_dir
+    ) as temporary:
         root = Path(temporary) / package
         (root / "bin").mkdir(parents=True)
         shutil.copyfile(repository / "LICENSE", root / "LICENSE")

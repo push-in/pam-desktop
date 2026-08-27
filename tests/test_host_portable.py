@@ -53,6 +53,10 @@ class PortableHostArchiveTest(unittest.TestCase):
                     ],
                     check=True,
                 )
+                self.assertEqual(
+                    sorted(path.name for path in output.iterdir()),
+                    [archive.name, f"{archive.name}.sha256"],
+                )
                 archives.append(archive)
             self.assertEqual(archives[0].read_bytes(), archives[1].read_bytes())
 
