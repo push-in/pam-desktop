@@ -42,7 +42,10 @@ jobs:
   native:
     name: ${{ matrix.name }} native contracts
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    # A clean Windows release build of Servo can legitimately exceed 45 minutes
+    # after the test, clippy and debug smoke gates. Keep the timeout bounded, but
+    # leave enough room for the production archive and unconditional cleanup.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
