@@ -327,8 +327,8 @@ mod windows_status {
         fn numeric_badges_have_transparent_edges_and_visible_content() {
             let pixels = badge_pixels(128);
             assert_eq!(pixels[0], 0);
-            assert!(pixels.iter().any(|pixel| *pixel == 0xffff_2d55));
-            assert!(pixels.iter().any(|pixel| *pixel == 0xffff_ffff));
+            assert!(pixels.contains(&0xffff_2d55));
+            assert!(pixels.contains(&0xffff_ffff));
         }
 
         #[test]
