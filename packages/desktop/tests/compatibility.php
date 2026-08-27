@@ -9,7 +9,7 @@ require dirname(__DIR__).'/vendor/autoload.php';
  * Reviewing an intentional additive API change should produce a small snapshot
  * diff, while removals and signature changes fail the compatibility suite.
  */
-function parameterSignature(ReflectionParameter $parameter): string
+function parameterSignature(ReflectionClass $class, ReflectionParameter $parameter): string
 {
     $signature = '';
     if ($parameter->isPassedByReference()) {
@@ -21,7 +21,13 @@ function parameterSignature(ReflectionParameter $parameter): string
 
     $signature .= '$'.$parameter->getName();
     if ($parameter->hasType()) {
-        $signature .= ':'.$parameter->getType();
+        $type = (string) $parameter->getType();
+        if ($type === $class->getName()) {
+            $type = 'self';
+        } elseif ($type === '?'.$class->getName()) {
+            $type = '?self';
+        }
+        $signature .= ':'.$type;
     }
     if ($parameter->isDefaultValueAvailable()) {
         $default = $parameter->isDefaultValueConstant()
@@ -39,7 +45,7 @@ function parameterSignature(ReflectionParameter $parameter): string
 function methodSignature(ReflectionClass $class, ReflectionMethod $method): string
 {
     $parameters = array_map(
-        parameterSignature(...),
+        static fn (ReflectionParameter $parameter): string => parameterSignature($class, $parameter),
         $method->getParameters(),
     );
     $returnType = $method->hasReturnType() ? (string) $method->getReturnType() : '-';

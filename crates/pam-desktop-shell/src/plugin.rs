@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 
 use pam_desktop_protocol::{
     ClientEvent, ErrorCode, MAX_MESSAGE_BYTES, PLUGIN_BOOT_COMMAND, PLUGIN_PROTOCOL_VERSION,
-    PluginMetadata, PluginRequestEnvelope, PluginResponseEnvelope, ResponseStatus,
-    RustPluginConfig,
+    PluginMetadata, PluginRequestEnvelope, PluginResponseEnvelope, PluginSandboxMode,
+    ResponseStatus, RustPluginConfig,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -205,9 +205,8 @@ impl PluginClient {
         executable: &Path,
         config: &RustPluginConfig,
     ) -> Result<Self, String> {
-        let mut child = Command::new(executable)
-            .args(&config.arguments)
-            .current_dir(project_root)
+        let mut command = plugin_command(project_root, executable, config)?;
+        let mut child = command
             .env_clear()
             .env("PAM_DESKTOP_PLUGIN_ID", &config.id)
             .env(
@@ -365,6 +364,133 @@ impl PluginClient {
     }
 }
 
+fn plugin_command(
+    project_root: &Path,
+    executable: &Path,
+    config: &RustPluginConfig,
+) -> Result<Command, String> {
+    if config.sandbox == PluginSandboxMode::Inherited {
+        let mut command = Command::new(executable);
+        command.args(&config.arguments).current_dir(project_root);
+        return Ok(command);
+    }
+    strict_plugin_command(project_root, executable, config)
+}
+
+#[cfg(target_os = "linux")]
+fn strict_plugin_command(
+    project_root: &Path,
+    executable: &Path,
+    config: &RustPluginConfig,
+) -> Result<Command, String> {
+    let bubblewrap = ["/usr/bin/bwrap", "/bin/bwrap"]
+        .into_iter()
+        .map(Path::new)
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            format!(
+                "Rust plugin {:?} requires strict sandboxing, but bubblewrap is unavailable",
+                config.id
+            )
+        })?;
+    let canonical_root = project_root
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve plugin project root: {error}"))?;
+    let canonical_executable = executable
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve plugin executable: {error}"))?;
+    let mut command = Command::new(bubblewrap);
+    command.args([
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-all",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+    ]);
+    if config.permissions.network {
+        command.arg("--share-net");
+    }
+    for system_root in ["/usr/lib", "/usr/lib64", "/lib", "/lib64"] {
+        if Path::new(system_root).exists() {
+            command.args(["--ro-bind", system_root, system_root]);
+        }
+    }
+    // An empty project directory becomes the working directory; only the
+    // verified executable and explicitly granted roots are materialized.
+    append_parent_directories(&mut command, &canonical_root);
+    command.args(["--dir", canonical_root.to_string_lossy().as_ref()]);
+    append_parent_directories(&mut command, &canonical_executable);
+    command.args([
+        "--ro-bind",
+        canonical_executable.to_string_lossy().as_ref(),
+        canonical_executable.to_string_lossy().as_ref(),
+    ]);
+    for relative in &config.permissions.filesystem_roots {
+        let root = canonical_root
+            .join(relative)
+            .canonicalize()
+            .map_err(|error| {
+                format!("cannot resolve strict plugin filesystem root {relative:?}: {error}")
+            })?;
+        if !root.starts_with(&canonical_root) {
+            return Err(format!(
+                "strict plugin filesystem root {relative:?} escapes the project"
+            ));
+        }
+        append_parent_directories(&mut command, &root);
+        command.args([
+            "--bind",
+            root.to_string_lossy().as_ref(),
+            root.to_string_lossy().as_ref(),
+        ]);
+    }
+    if config.permissions.devices {
+        command.args(["--dev-bind", "/dev", "/dev"]);
+    }
+    if config.permissions.shell {
+        for root in ["/usr/bin", "/bin"] {
+            if Path::new(root).exists() {
+                command.args(["--ro-bind", root, root]);
+            }
+        }
+    }
+    command
+        .args(["--chdir", canonical_root.to_string_lossy().as_ref(), "--"])
+        .arg(&canonical_executable)
+        .args(&config.arguments)
+        .current_dir(&canonical_root);
+    Ok(command)
+}
+
+#[cfg(target_os = "linux")]
+fn append_parent_directories(command: &mut Command, path: &Path) {
+    let mut parents: Vec<_> = path
+        .ancestors()
+        .skip(1)
+        .filter(|path| path != &Path::new("/"))
+        .collect();
+    parents.reverse();
+    for parent in parents {
+        command.args(["--dir", parent.to_string_lossy().as_ref()]);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn strict_plugin_command(
+    _project_root: &Path,
+    _executable: &Path,
+    config: &RustPluginConfig,
+) -> Result<Command, String> {
+    Err(format!(
+        "Rust plugin {:?} requests strict sandboxing, which is not certified on this platform",
+        config.id
+    ))
+}
+
 impl Drop for PluginClient {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -403,6 +529,30 @@ mod tests {
 
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn strict_sandbox_executes_only_the_materialized_plugin_surface() {
+        let fixture = Fixture::create();
+        let executable = fixture.root.join("plugins/strict-fixture");
+        fs::copy("/bin/true", &executable).expect("static sandbox fixture should copy");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+            .expect("sandbox fixture should be executable");
+        let config = RustPluginConfig {
+            id: "strict-fixture".to_owned(),
+            executable: "plugins/strict-fixture".to_owned(),
+            arguments: Vec::new(),
+            timeout_ms: 1_000,
+            sha256: None,
+            sandbox: PluginSandboxMode::Strict,
+            permissions: pam_desktop_protocol::PluginPermissions::default(),
+        };
+        let status = plugin_command(&fixture.root, &executable, &config)
+            .expect("strict sandbox command should materialize")
+            .status()
+            .expect("bubblewrap should start");
+        assert!(status.success(), "sandboxed fixture should complete");
+    }
+
     #[test]
     fn supervises_a_process_plugin_and_recovers_after_a_crash() {
         let fixture = Fixture::create();
@@ -413,6 +563,8 @@ mod tests {
             arguments: Vec::new(),
             timeout_ms: 1_000,
             sha256: None,
+            sandbox: PluginSandboxMode::Inherited,
+            permissions: pam_desktop_protocol::PluginPermissions::default(),
         };
         let supervisor =
             PluginSupervisor::prepare(&project, &[config]).expect("plugin should register");

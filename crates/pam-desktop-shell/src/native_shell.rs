@@ -302,6 +302,11 @@ impl PlatformStatus {
 struct PlatformStatus;
 
 #[cfg(not(target_os = "linux"))]
+#[allow(
+    clippy::unnecessary_wraps,
+    clippy::unused_self,
+    reason = "the platform-neutral shell dispatcher requires one fallible status interface"
+)]
 impl PlatformStatus {
     const fn empty() -> Self {
         Self

@@ -2,7 +2,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use pam_desktop_protocol::{
-    Bootstrap, FileAccess, NativeCapabilities, ProcessArgumentPolicy, RustPluginConfig,
+    Bootstrap, FileAccess, NativeCapabilities, PluginSandboxMode, ProcessArgumentPolicy,
+    RustPluginConfig,
 };
 use serde::Serialize;
 
@@ -367,6 +368,15 @@ fn audit_network_and_processes(capabilities: &NativeCapabilities, findings: &mut
 
 fn audit_plugins(plugins: &[RustPluginConfig], findings: &mut Vec<Finding>) {
     for plugin in plugins {
+        if plugin.sandbox == PluginSandboxMode::Inherited {
+            findings.push(Finding::new(
+                Severity::Critical,
+                "plugin.unsandboxed",
+                &plugin.id,
+                "The Rust plugin inherits the complete operating-system authority of the application user.",
+                "Enable strict sandboxing and grant only the required filesystem, network, shell and device capabilities.",
+            ));
+        }
         findings.push(Finding::new(
             if plugin.sha256.is_some() {
                 Severity::Warning
@@ -493,6 +503,8 @@ mod tests {
                 arguments: Vec::new(),
                 timeout_ms: 1_000,
                 sha256: None,
+                sandbox: pam_desktop_protocol::PluginSandboxMode::Inherited,
+                permissions: pam_desktop_protocol::PluginPermissions::default(),
             }],
             &mut findings,
         );

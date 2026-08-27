@@ -93,9 +93,11 @@ the corresponding operating system.
 
 ## Trust boundary
 
-Local frontend assets and registered PHP/Rust plugins are trusted application
-code. Rust plugins are process-isolated for lifecycle, crash and ABI safety;
-they are not sandboxed and retain the operating-system authority of the user.
+Local frontend assets and registered PHP plugins are trusted application code.
+Rust plugins are process-isolated for lifecycle, crash and ABI safety. Their
+compatible default inherits user authority; Linux applications can select the
+fail-closed strict namespace sandbox and explicit per-plugin capabilities.
+Strict mode is rejected on platforms that have not yet earned sandbox evidence.
 Remote arbitrary pages, dynamic libraries in the host and generic shell or
 filesystem bridges are outside the public contract.
 

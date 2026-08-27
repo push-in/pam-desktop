@@ -1766,6 +1766,43 @@ pub struct RustPluginConfig {
     pub timeout_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "is_inherited_plugin_sandbox")]
+    pub sandbox: PluginSandboxMode,
+    #[serde(default, skip_serializing_if = "is_default_plugin_permissions")]
+    pub permissions: PluginPermissions,
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip callback requires a reference"
+)]
+const fn is_inherited_plugin_sandbox(value: &PluginSandboxMode) -> bool {
+    matches!(value, PluginSandboxMode::Inherited)
+}
+
+fn is_default_plugin_permissions(value: &PluginPermissions) -> bool {
+    value == &PluginPermissions::default()
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum PluginSandboxMode {
+    #[default]
+    Inherited = 1,
+    Strict = 2,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginPermissions {
+    #[serde(default)]
+    pub filesystem_roots: Vec<String>,
+    #[serde(default)]
+    pub network: bool,
+    #[serde(default)]
+    pub shell: bool,
+    #[serde(default)]
+    pub devices: bool,
 }
 
 impl RustPluginConfig {
@@ -1800,6 +1837,22 @@ impl RustPluginConfig {
         }
         if let Some(digest) = &self.sha256 {
             validate_lower_hex(digest, 64, "Rust plugin SHA-256 digest")?;
+        }
+        if self.permissions.filesystem_roots.len() > 16 {
+            return Err(format!(
+                "Rust plugin {:?} cannot authorize more than 16 filesystem roots",
+                self.id
+            ));
+        }
+        let mut roots = HashSet::with_capacity(self.permissions.filesystem_roots.len());
+        for root in &self.permissions.filesystem_roots {
+            validate_relative_project_path(root, "Rust plugin filesystem root")?;
+            if !roots.insert(root) {
+                return Err(format!(
+                    "Rust plugin {:?} declares duplicate filesystem root {root:?}",
+                    self.id
+                ));
+            }
         }
         Ok(())
     }
@@ -2375,6 +2428,13 @@ mod tests {
             arguments: vec!["--quiet".to_owned()],
             timeout_ms: 5_000,
             sha256: None,
+            sandbox: PluginSandboxMode::Strict,
+            permissions: PluginPermissions {
+                filesystem_roots: vec!["workspace".to_owned()],
+                network: false,
+                shell: false,
+                devices: false,
+            },
         };
         assert!(plugin.validate().is_ok());
 

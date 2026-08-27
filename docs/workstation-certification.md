@@ -26,8 +26,8 @@ PAM never reports a successful no-op.
 | 16 | Typed binary IPC, backpressure and cancellation | protocol 6, bounded streams, cancellation tokens and golden fixtures |
 | 17 | Constant-memory large-file streaming | chunked read/write endpoints, byte limits and stream cancellation |
 | 18 | PHP process pools | bounded supervised pools, round-robin and affinity routing |
-| 19 | Configurable command/plugin sandbox | isolated plugin processes and capability roots/allowlists |
-| 20 | Per-plugin filesystem/network/shell/device permissions | permission audit and deny-by-default bootstrap capabilities |
+| 19 | Configurable command/plugin sandbox | strict Linux bubblewrap namespaces, inherited compatibility mode, fail-closed unsupported-platform behavior |
+| 20 | Per-plugin filesystem/network/shell/device permissions | typed integer policy, explicit mount/network/shell/device exposure and critical permission-audit finding for inherited authority |
 | 21 | Real PTY | `portable-pty`, resize, ANSI bytes, signals, multiple session registry |
 | 22 | Incremental process manager | bounded stdout/stderr chunks, exit events, cancellation and timeout |
 | 23 | SQLite worker with WAL and migrations | dedicated native database service and migration journal |

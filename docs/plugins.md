@@ -150,10 +150,33 @@ Rust extensions are executables, not dynamic libraries. This avoids loading an
 unstable or unsafe ABI into the Servo host and gives every plugin a separate
 process boundary.
 
-That process boundary provides crash containment and a stable transport; it is
-not an operating-system sandbox. A Rust plugin is trusted native code with the
-ambient authority of the application user. Only install and register plugins
-you trust, and model sensitive access through narrow plugin commands.
+The default `Inherited` mode preserves the 1.x compatibility contract and is
+trusted native code with the ambient authority of the application user. The
+permission audit reports it as critical. New applications can opt into a
+fail-closed policy per plugin:
+
+```php
+use Pam\Desktop\{PluginPermissions, PluginSandboxMode, RustPlugin};
+
+$plugin = RustPlugin::executable('indexer', 'plugins/indexer')
+    ->integrity($sha256)
+    ->sandbox(
+        PluginSandboxMode::Strict,
+        new PluginPermissions(
+            filesystemRoots: ['workspace'],
+            network: false,
+            shell: false,
+            devices: false,
+        ),
+    );
+```
+
+Strict mode is currently certified on Linux through bubblewrap namespaces. It
+starts with no network namespace, no project tree, no shell binaries and only a
+minimal virtual `/dev`; the verified plugin executable and declared roots are
+mounted explicitly. Network, shell and host devices appear only when granted.
+Missing bubblewrap, a missing root, a path escape, or an uncertified operating
+system refuses to start the plugin instead of silently reducing isolation.
 
 For each configured plugin, the host:
 

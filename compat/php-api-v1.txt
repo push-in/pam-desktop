@@ -64,6 +64,8 @@ case Pam\Desktop\MenuItemKind::Separator=3
 case Pam\Desktop\MenuItemKind::Submenu=4
 case Pam\Desktop\MessageKind::Request=1
 case Pam\Desktop\MessageKind::Response=2
+case Pam\Desktop\PluginSandboxMode::Inherited=1
+case Pam\Desktop\PluginSandboxMode::Strict=2
 case Pam\Desktop\ProcessArgumentPolicy::Append=2
 case Pam\Desktop\ProcessArgumentPolicy::Fixed=1
 case Pam\Desktop\ProcessIsolation::PerWindow=2
@@ -294,6 +296,11 @@ method Pam\Desktop\Permissions::secrets ():self
 method Pam\Desktop\Permissions::systemInformation ():self
 method Pam\Desktop\Plugin::identifier ():string
 method Pam\Desktop\Plugin::register ($application:Pam\Desktop\Application):void
+method Pam\Desktop\PluginPermissions::__construct ($filesystemRoots:array=[],$network:bool=false,$shell:bool=false,$devices:bool=false):-
+method Pam\Desktop\PluginPermissions::toArray ():array
+method Pam\Desktop\PluginSandboxMode::cases static ():array
+method Pam\Desktop\PluginSandboxMode::from static ($value:string|int):static
+method Pam\Desktop\PluginSandboxMode::tryFrom static ($value:string|int):?static
 method Pam\Desktop\ProcessArgumentPolicy::cases static ():array
 method Pam\Desktop\ProcessArgumentPolicy::from static ($value:string|int):static
 method Pam\Desktop\ProcessArgumentPolicy::tryFrom static ($value:string|int):?static
@@ -318,8 +325,10 @@ method Pam\Desktop\ResponseStatus::cases static ():array
 method Pam\Desktop\ResponseStatus::from static ($value:string|int):static
 method Pam\Desktop\ResponseStatus::tryFrom static ($value:string|int):?static
 method Pam\Desktop\RustPlugin::arguments (...$arguments:string):self
+method Pam\Desktop\RustPlugin::assertProjectPath static ($path:string):void
 method Pam\Desktop\RustPlugin::executable static ($id:string,$path:string):self
 method Pam\Desktop\RustPlugin::integrity ($sha256:string):self
+method Pam\Desktop\RustPlugin::sandbox ($mode:Pam\Desktop\PluginSandboxMode=Pam\Desktop\PluginSandboxMode::Strict,$permissions:?Pam\Desktop\PluginPermissions=null):self
 method Pam\Desktop\RustPlugin::timeout ($milliseconds:int):self
 method Pam\Desktop\RustPlugin::toArray ():array
 method Pam\Desktop\Shell::menu (...$menus:Pam\Desktop\Menu):self
@@ -544,6 +553,12 @@ property Pam\Desktop\PerformanceBudget::$idleCpuBasisPoints readonly:int
 property Pam\Desktop\PerformanceBudget::$idleMemoryMegabytes readonly:int
 property Pam\Desktop\PerformanceBudget::$ipcP95Microseconds readonly:int
 property Pam\Desktop\PerformanceBudget::$warmStartMilliseconds readonly:int
+property Pam\Desktop\PluginPermissions::$devices readonly:bool
+property Pam\Desktop\PluginPermissions::$filesystemRoots readonly:array
+property Pam\Desktop\PluginPermissions::$network readonly:bool
+property Pam\Desktop\PluginPermissions::$shell readonly:bool
+property Pam\Desktop\PluginSandboxMode::$name readonly:string
+property Pam\Desktop\PluginSandboxMode::$value readonly:int
 property Pam\Desktop\ProcessArgumentPolicy::$name readonly:string
 property Pam\Desktop\ProcessArgumentPolicy::$value readonly:int
 property Pam\Desktop\ProcessCommand::$argumentPolicy readonly:Pam\Desktop\ProcessArgumentPolicy
@@ -564,6 +579,8 @@ property Pam\Desktop\ResponseStatus::$value readonly:int
 property Pam\Desktop\RustPlugin::$arguments readonly:array
 property Pam\Desktop\RustPlugin::$executable readonly:string
 property Pam\Desktop\RustPlugin::$id readonly:string
+property Pam\Desktop\RustPlugin::$permissions readonly:Pam\Desktop\PluginPermissions
+property Pam\Desktop\RustPlugin::$sandboxMode readonly:Pam\Desktop\PluginSandboxMode
 property Pam\Desktop\RustPlugin::$sha256 readonly:?string
 property Pam\Desktop\RustPlugin::$timeoutMilliseconds readonly:int
 property Pam\Desktop\Shell::$menus readonly:array
@@ -665,6 +682,7 @@ symbol class Pam\Desktop\Menu final,readonly
 symbol class Pam\Desktop\MenuItem final,readonly
 symbol class Pam\Desktop\PerformanceBudget final,readonly
 symbol class Pam\Desktop\Permissions final
+symbol class Pam\Desktop\PluginPermissions final,readonly
 symbol class Pam\Desktop\ProcessCommand final,readonly
 symbol class Pam\Desktop\QuickAction final,readonly
 symbol class Pam\Desktop\RustPlugin final,readonly
@@ -688,6 +706,7 @@ symbol enum Pam\Desktop\InstallerScope final
 symbol enum Pam\Desktop\JobOverlapPolicy final
 symbol enum Pam\Desktop\MenuItemKind final
 symbol enum Pam\Desktop\MessageKind final
+symbol enum Pam\Desktop\PluginSandboxMode final
 symbol enum Pam\Desktop\ProcessArgumentPolicy final
 symbol enum Pam\Desktop\ProcessIsolation final
 symbol enum Pam\Desktop\ReleaseChannel final

@@ -47,6 +47,8 @@ use Pam\Desktop\QuickAction;
 use Pam\Desktop\HttpOrigin;
 use Pam\Desktop\ResponseStatus;
 use Pam\Desktop\RustPlugin;
+use Pam\Desktop\PluginPermissions;
+use Pam\Desktop\PluginSandboxMode;
 use Pam\Desktop\Shell;
 use Pam\Desktop\ShellEffect;
 use Pam\Desktop\Tray;
@@ -453,7 +455,11 @@ $application = Application::create(
     ->rustPlugin(
         RustPlugin::executable('system', 'plugins/bin/system')
             ->arguments('--quiet')
-            ->timeout(5_000),
+            ->timeout(5_000)
+            ->sandbox(
+                PluginSandboxMode::Strict,
+                new PluginPermissions(['workspace'], network: true),
+            ),
     )
     ->commandTimeout(12_000);
 
