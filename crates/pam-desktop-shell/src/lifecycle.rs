@@ -99,14 +99,12 @@ mod linux {
                                         .is_ok()
                                         && bytes.len() <= MAX_ACTIVATION_BYTES
                                         && let Ok(activation) = serde_json::from_slice(&bytes)
-                                    {
-                                        if stream
+                                        && stream
                                             .write_all(ACTIVATION_ACK)
                                             .and_then(|()| stream.flush())
                                             .is_ok()
-                                        {
-                                            handler(activation);
-                                        }
+                                    {
+                                        handler(activation);
                                     }
                                 }
                                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -403,14 +401,12 @@ mod portable {
                 Ok(mut stream) => {
                     if let Ok(bytes) = read_frame(&mut stream)
                         && let Ok(activation) = serde_json::from_slice(&bytes)
-                    {
-                        if stream
+                        && stream
                             .write_all(ACTIVATION_ACK)
                             .and_then(|()| stream.flush())
                             .is_ok()
-                        {
-                            handler(activation);
-                        }
+                    {
+                        handler(activation);
                     }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
