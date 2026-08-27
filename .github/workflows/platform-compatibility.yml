@@ -54,7 +54,7 @@ jobs:
             runner: macos-15
             platform_code: 2
             architecture_code: 1
-            executable: target/debug/pam-desktop
+            executable: target/release/pam-desktop
             release_directory: target/release
             target: aarch64-apple-darwin
             python: python3
@@ -62,7 +62,7 @@ jobs:
             runner: windows-2025
             platform_code: 3
             architecture_code: 2
-            executable: target/debug/pam-desktop.exe
+            executable: target/release/pam-desktop.exe
             release_directory: target/release
             target: x86_64-pc-windows-msvc
             python: python
@@ -85,10 +85,10 @@ jobs:
         run: >-
           cargo clippy --locked --workspace --all-targets
           --no-default-features --features gateway -- -D warnings
-      - name: Build and smoke-test the real Servo desktop host
+      - name: Build and smoke-test the production Servo desktop host
         shell: bash
         run: |
-          cargo build --locked -p pam-desktop --bins
+          cargo build --locked --release -p pam-desktop --bins
           rust_version=$(rustc --version)
           '${{ matrix.python }}' scripts/desktop-platform-evidence.py create \
             --binary '${{ matrix.executable }}' \
@@ -103,7 +103,6 @@ jobs:
       - name: Build and verify the production host archive
         shell: bash
         run: |
-          cargo build --locked --release -p pam-desktop --bins
           version=$(cargo metadata --no-deps --format-version 1 \
             | '${{ matrix.python }}' -c 'import json,sys; data=json.load(sys.stdin); print(next(package["version"] for package in data["packages"] if package["name"] == "pam-desktop"))')
           source_epoch=$(git log -1 --format=%ct)
