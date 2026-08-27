@@ -900,7 +900,12 @@ impl NativeServices {
                 notification.action(&action.id, &action.label);
             }
         }
+        #[cfg(target_os = "linux")]
         let handle = notification
+            .show()
+            .map_err(|error| NativeError::native("Cannot show the notification", error))?;
+        #[cfg(not(target_os = "linux"))]
+        notification
             .show()
             .map_err(|error| NativeError::native("Cannot show the notification", error))?;
         #[cfg(target_os = "linux")]
@@ -927,7 +932,7 @@ impl NativeServices {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (handle, events);
+            let _ = events;
             Ok(Value::Null)
         }
     }

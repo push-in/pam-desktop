@@ -179,7 +179,8 @@ fn restrict_directory(path: &Path) -> Result<(), String> {
             .map_err(|error| format!("cannot restrict startup snapshot directory: {error}"))?;
     }
     #[cfg(not(unix))]
-    let _ = path;
+    path.metadata()
+        .map_err(|error| format!("cannot inspect startup snapshot directory: {error}"))?;
     Ok(())
 }
 
