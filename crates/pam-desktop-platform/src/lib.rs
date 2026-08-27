@@ -182,7 +182,7 @@ mod windows_status {
                 .map_err(|error| format!("cannot bind Windows Jump List application: {error}"))?;
             let mut minimum_slots = 0;
             let _: IObjectArray = destinations
-                .BeginList(&mut minimum_slots)
+                .BeginList(&raw mut minimum_slots)
                 .map_err(|error| format!("cannot begin Windows Jump List: {error}"))?;
             let collection: IObjectCollection =
                 CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)
@@ -208,7 +208,7 @@ mod windows_status {
                     .map_err(|error| format!("cannot edit Windows quick-action title: {error}"))?;
                 let title = PROPVARIANT::from(action.label);
                 properties
-                    .SetValue(&PKEY_TITLE, &title)
+                    .SetValue(&PKEY_TITLE, &raw const title)
                     .and_then(|()| properties.Commit())
                     .map_err(|error| {
                         format!("cannot commit Windows quick-action title: {error}")
@@ -358,7 +358,7 @@ pub fn publish_quick_actions(
 ) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        return windows_status::publish_quick_actions(application_id, launcher, actions);
+        windows_status::publish_quick_actions(application_id, launcher, actions)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -454,18 +454,19 @@ mod macos_status {
 ///
 /// Returns an error when the call is made off the required UI thread or the
 /// current platform has no implemented badge backend.
-pub fn set_badge(_native_window: isize, count: Option<u32>) -> Result<(), String> {
+pub fn set_badge(native_window: isize, count: Option<u32>) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        windows_status::set_badge(_native_window, count)
+        windows_status::set_badge(native_window, count)
     }
     #[cfg(target_os = "macos")]
     {
+        let _ = native_window;
         macos_status::set_badge(count)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let _ = count;
+        let _ = (native_window, count);
         Err("application badges are unavailable on this platform".to_owned())
     }
 }

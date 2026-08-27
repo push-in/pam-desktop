@@ -178,6 +178,8 @@ fn restrict_directory(path: &Path) -> Result<(), String> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
             .map_err(|error| format!("cannot restrict startup snapshot directory: {error}"))?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 

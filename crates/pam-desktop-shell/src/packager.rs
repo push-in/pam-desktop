@@ -1950,7 +1950,7 @@ fn create_debian_package(
     let installed_size = directory_bytes(&root)?.div_ceil(1024);
     let section = debian_section(bootstrap.manifest.category);
     let control = format!(
-        "Package: {}\nVersion: {}\nSection: {section}\nPriority: optional\nArchitecture: {}\nMaintainer: {}\nInstalled-Size: {installed_size}\nDepends: libc6, libfontconfig1, libfreetype6, libgl1, libx11-6, libxcb1\nDescription: {}\n {}\n",
+        "Package: {}\nVersion: {}\nSection: {section}\nPriority: optional\nArchitecture: {}\nMaintainer: {}\nInstalled-Size: {installed_size}\nDepends: bubblewrap, libc6, libfontconfig1, libfreetype6, libgl1, libx11-6, libxcb1\nDescription: {}\n {}\n",
         bootstrap.manifest.identifier,
         bootstrap.manifest.version,
         debian_architecture(&names.architecture)?,
@@ -2116,7 +2116,7 @@ fn create_rpm_package(
     let specs = top.join("SPECS");
     fs::create_dir_all(&specs).map_err(|error| error.to_string())?;
     let spec = format!(
-        "Name: {}\nVersion: {}\nRelease: 1%{{?dist}}\nSummary: {}\nLicense: Proprietary\nBuildArch: {}\nRequires: glibc, fontconfig, freetype, libX11, libxcb\n\n%description\n{}\n\n%install\nmkdir -p %{{buildroot}}\ncp -a {}/* %{{buildroot}}/\n\n%files\n/opt/{}\n/usr/bin/{}\n/usr/share/applications/{}.desktop\n/usr/share/icons\n",
+        "Name: {}\nVersion: {}\nRelease: 1%{{?dist}}\nSummary: {}\nLicense: Proprietary\nBuildArch: {}\nRequires: bubblewrap, glibc, fontconfig, freetype, libX11, libxcb\n\n%description\n{}\n\n%install\nmkdir -p %{{buildroot}}\ncp -a {}/* %{{buildroot}}/\n\n%files\n/opt/{}\n/usr/bin/{}\n/usr/share/applications/{}.desktop\n/usr/share/icons\n",
         names.executable,
         bootstrap.manifest.version,
         rpm_escape(&bootstrap.manifest.name),
