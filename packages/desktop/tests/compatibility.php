@@ -43,6 +43,14 @@ function methodSignature(ReflectionClass $class, ReflectionMethod $method): stri
         $method->getParameters(),
     );
     $returnType = $method->hasReturnType() ? (string) $method->getReturnType() : '-';
+    // PHP 8.5 resolves a declared `self` return to the declaring class while
+    // older supported engines preserve the source spelling. Keep the public
+    // API contract stable across engines by using the semantic spelling.
+    if ($returnType === $class->getName()) {
+        $returnType = 'self';
+    } elseif ($returnType === '?'.$class->getName()) {
+        $returnType = '?self';
+    }
 
     return sprintf(
         'method %s::%s %s(%s):%s',
