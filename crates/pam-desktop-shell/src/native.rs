@@ -1608,6 +1608,8 @@ mod tests {
                 .clipboard_file_path(&target("document.txt"))
                 .expect("regular authorized file"),
             root.join("document.txt")
+                .canonicalize()
+                .expect("clipboard fixture should canonicalize")
         );
         assert!(
             services

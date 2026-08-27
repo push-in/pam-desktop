@@ -7,7 +7,7 @@ use std::sync::{Mutex, mpsc};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;

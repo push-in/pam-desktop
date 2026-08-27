@@ -43,7 +43,7 @@ mod linux {
                     stop: Arc::new(AtomicBool::new(false)),
                     thread: None,
                 })),
-                Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                Err(error) if endpoint_is_owned_by_primary(&error) => {
                     if forward(&path, arguments).is_ok() {
                         return Ok(Instance::Forwarded);
                     }
@@ -115,6 +115,16 @@ mod linux {
             );
             Ok(())
         }
+    }
+
+    fn endpoint_is_owned_by_primary(error: &std::io::Error) -> bool {
+        if error.kind() == std::io::ErrorKind::AddrInUse {
+            return true;
+        }
+        // Windows named pipes report ERROR_ACCESS_DENIED when a first-pipe
+        // instance rejects another listener. Connecting below remains the
+        // authority check: a stale or unrelated endpoint still fails closed.
+        cfg!(windows) && error.kind() == std::io::ErrorKind::PermissionDenied
     }
 
     impl Drop for InstanceGuard {
