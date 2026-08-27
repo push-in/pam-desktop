@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 1.3.0 - 2026-08-27
+
+- Turn PAM Desktop into a Native Workstation runtime with configurable
+  multi-process window isolation, native window roles, mixed-DPI restoration,
+  system shell integrations, secure single-instance activation and a separate
+  background agent.
+- Add persistent jobs, typed bounded IPC, constant-memory streams, supervised
+  PHP pools, real PTYs, incremental processes, SQLite WAL workers, coalesced
+  project watching and background full-text search.
+- Add strict per-plugin Linux sandboxing with explicit filesystem, network,
+  shell and device grants, fail-closed unsupported-platform behavior and a
+  release permission audit.
+- Add signed channel-bound updates with rollback, native packaging contracts,
+  deterministic host archives and mandatory Windows/macOS native-host gates.
+- Add startup snapshots, deep idle, lazy capabilities, a GPU backend with safe
+  software fallback, dirty-region presentation, bounded virtualization,
+  docking, detachable tabs, commands, transactional history and crash recovery.
+- Add native notification responses, device portals, AccessKit trees,
+  authenticated automation and DevTools, symbolizable diagnostics and enforced
+  performance/clean-room release evidence.
+
 - Align all PAM Desktop Rust crates with release 1.2.5 so packaged hosts report
   the same version as their signed release artifacts.
 
