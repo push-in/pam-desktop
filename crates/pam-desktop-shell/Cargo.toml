@@ -23,6 +23,7 @@ servo-engine = [
     "dep:primeorder",
     "dep:rustls",
     "dep:servo",
+    "dep:softbuffer",
     "dep:tracing",
     "dep:url",
 ]
@@ -53,6 +54,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 servo = { workspace = true, optional = true }
+softbuffer = { workspace = true, optional = true }
 tokio.workspace = true
 tokio-util.workspace = true
 tracing = { workspace = true, optional = true }

@@ -117,3 +117,14 @@ Creation fails when runtime samples are incomplete, any runtime budget failed,
 idle CPU exceeds its declared budget, or the source revision is not exact.
 Verification authenticates the canonical evidence digest and rejects missing,
 renamed or non-integer metrics.
+
+## GPU and software fallback
+
+`RenderBackend::Automatic` attempts Servo's native window GL context first. A
+context creation failure activates an offscreen software GL context and a
+cross-platform `softbuffer` presenter; `Gpu` instead fails explicitly and
+`Software` bypasses GPU creation. Software frames are compared with the
+previous frame and their changed bounding rectangle is sent to the compositor
+as damage when dirty regions are enabled. The framebuffer remains bounded by
+the live physical window size and is replaced, rather than accumulated, after
+every presentation.

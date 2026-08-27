@@ -42,8 +42,8 @@ PAM never reports a successful no-op.
 | 32 | Immediate startup snapshot | project fingerprint, protocol/schema validation and warm/cold budget evidence |
 | 33 | Lazy plugin/module initialization | lazy supervisors and on-demand native namespaces |
 | 34 | Capability tree shaking | bootstrap-derived frozen bridge surface tests |
-| 35 | GPU acceleration with safe fallback | typed render backend and automatic/software fallback diagnostics |
-| 36 | Dirty-region partial rendering | frame-coalesced keyed invalidation scheduler |
+| 35 | GPU acceleration with safe fallback | real Servo window GL backend; automatic fallback to software GL presented through `softbuffer`; forced GPU/software policies |
+| 36 | Dirty-region partial rendering | software-frame change bounds drive compositor damage rectangles; frontend keyed invalidations remain frame-coalesced |
 | 37 | Virtualized lists/tables/trees | bounded DOM window, overscan and ARIA set metadata |
 | 38 | IDE docking layout | serializable panel order/direction/size model |
 | 39 | Detachable tabs | tab transfer event bound to declared window identities |

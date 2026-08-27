@@ -1,18 +1,20 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use euclid::Scale;
 use pam_desktop_protocol::{
-    Bootstrap, Effect, EffectKind, MAIN_WINDOW_ID, TaskbarProgressState, WindowConfig, WindowRole,
-    WindowTheme, WorkstationConfig,
+    Bootstrap, Effect, EffectKind, MAIN_WINDOW_ID, RenderBackend, TaskbarProgressState,
+    WindowConfig, WindowRole, WindowTheme, WorkstationConfig,
 };
 use servo::{
-    Code, DevicePoint, EventLoopWaker, InputEvent, Key, KeyState, KeyboardEvent, Location,
-    Modifiers, MouseButton as ServoMouseButton, MouseButtonAction, MouseButtonEvent,
-    MouseLeftViewportEvent, MouseMoveEvent, NamedKey, NavigationRequest, Preferences,
-    RenderingContext, Servo, ServoBuilder, WebView, WebViewBuilder, WebViewDelegate, WheelDelta,
-    WheelEvent, WheelMode, WindowRenderingContext,
+    Code, DeviceIntRect, DeviceIntSize, DevicePoint, EventLoopWaker, InputEvent, Key, KeyState,
+    KeyboardEvent, Location, Modifiers, MouseButton as ServoMouseButton, MouseButtonAction,
+    MouseButtonEvent, MouseLeftViewportEvent, MouseMoveEvent, NamedKey, NavigationRequest,
+    Preferences, RenderingContext, Servo, ServoBuilder, SoftwareRenderingContext, WebView,
+    WebViewBuilder, WebViewDelegate, WheelDelta, WheelEvent, WheelMode, WindowRenderingContext,
 };
 use tracing::warn;
 use url::Url;
@@ -166,11 +168,114 @@ struct DesktopWindow {
     role: WindowRole,
     parent: Option<String>,
     webview: WebView,
-    rendering_context: Rc<WindowRenderingContext>,
-    window: Window,
+    rendering_context: Rc<dyn RenderingContext>,
+    software_presenter: Option<RefCell<SoftwarePresenter>>,
+    window: Arc<Window>,
     accessibility: RefCell<accesskit_winit::Adapter>,
     mouse_position: Cell<DevicePoint>,
     modifiers: Cell<ModifiersState>,
+}
+
+struct SoftwarePresenter {
+    context: Rc<SoftwareRenderingContext>,
+    surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
+    previous: Vec<u32>,
+    dirty_regions: bool,
+}
+
+impl SoftwarePresenter {
+    fn new(
+        window: Arc<Window>,
+        context: Rc<SoftwareRenderingContext>,
+        dirty_regions: bool,
+    ) -> Result<Self, String> {
+        let display = softbuffer::Context::new(window.clone())
+            .map_err(|error| format!("cannot create software display context: {error}"))?;
+        let surface = softbuffer::Surface::new(&display, window)
+            .map_err(|error| format!("cannot create software window surface: {error}"))?;
+        Ok(Self {
+            context,
+            surface,
+            previous: Vec::new(),
+            dirty_regions,
+        })
+    }
+
+    fn present(&mut self) -> Result<(), String> {
+        let size = self.context.size();
+        let width =
+            NonZeroU32::new(size.width).ok_or_else(|| "software frame width is zero".to_owned())?;
+        let height = NonZeroU32::new(size.height)
+            .ok_or_else(|| "software frame height is zero".to_owned())?;
+        let rectangle = DeviceIntRect::from_size(DeviceIntSize::new(
+            i32::try_from(size.width).map_err(|_| "software frame is too wide".to_owned())?,
+            i32::try_from(size.height).map_err(|_| "software frame is too tall".to_owned())?,
+        ));
+        let image = self
+            .context
+            .read_to_image(rectangle)
+            .ok_or_else(|| "Servo did not expose the software frame".to_owned())?;
+        let pixels = image
+            .as_raw()
+            .chunks_exact(4)
+            .map(|rgba| (u32::from(rgba[0]) << 16) | (u32::from(rgba[1]) << 8) | u32::from(rgba[2]))
+            .collect::<Vec<_>>();
+        let damage = self
+            .dirty_regions
+            .then(|| changed_bounds(&self.previous, &pixels, size.width, size.height))
+            .flatten();
+        self.surface
+            .resize(width, height)
+            .map_err(|error| format!("cannot resize software window surface: {error}"))?;
+        let mut buffer = self
+            .surface
+            .buffer_mut()
+            .map_err(|error| format!("cannot map software window buffer: {error}"))?;
+        buffer.copy_from_slice(&pixels);
+        self.previous = pixels;
+        if let Some((x, y, damage_width, damage_height)) = damage {
+            buffer
+                .present_with_damage(&[softbuffer::Rect {
+                    x,
+                    y,
+                    width: NonZeroU32::new(damage_width).expect("damage width is nonzero"),
+                    height: NonZeroU32::new(damage_height).expect("damage height is nonzero"),
+                }])
+                .map_err(|error| format!("cannot present dirty software frame: {error}"))
+        } else {
+            buffer
+                .present()
+                .map_err(|error| format!("cannot present software frame: {error}"))
+        }
+    }
+}
+
+fn changed_bounds(
+    previous: &[u32],
+    current: &[u32],
+    width: u32,
+    height: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    if previous.len() != current.len() || previous.is_empty() {
+        return None;
+    }
+    let width_usize = width as usize;
+    let mut min_x = width;
+    let mut min_y = height;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    for (index, (before, after)) in previous.iter().zip(current).enumerate() {
+        if before == after {
+            continue;
+        }
+        let x = (index % width_usize) as u32;
+        let y = (index / width_usize) as u32;
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x);
+        max_y = max_y.max(y);
+    }
+    (min_x <= max_x).then_some((min_x, min_y, max_x - min_x + 1, max_y - min_y + 1))
 }
 
 impl DesktopWindow {
@@ -233,6 +338,55 @@ struct AppState {
 }
 
 impl AppState {
+    fn create_rendering_context(
+        &self,
+        event_loop: &ActiveEventLoop,
+        window: Arc<Window>,
+        window_id: &str,
+    ) -> Result<(Rc<dyn RenderingContext>, Option<RefCell<SoftwarePresenter>>), String> {
+        let workstation = self.workstation.borrow();
+        let backend = workstation.render_backend;
+        let dirty_regions = workstation.dirty_regions;
+        drop(workstation);
+        if backend != RenderBackend::Software {
+            let gpu = (|| {
+                let display_handle = event_loop.display_handle().map_err(|error| {
+                    format!("desktop event loop has no display handle: {error}")
+                })?;
+                let window_handle = window.window_handle().map_err(|error| {
+                    format!("window {window_id:?} has no native handle: {error}")
+                })?;
+                WindowRenderingContext::new(display_handle, window_handle, window.inner_size())
+                    .map(Rc::new)
+                    .map_err(|error| format!("GPU context creation failed: {error:?}"))
+            })();
+            match gpu {
+                Ok(context) => {
+                    let rendering_context: Rc<dyn RenderingContext> = context;
+                    return Ok((rendering_context, None));
+                }
+                Err(error) if backend == RenderBackend::Gpu => {
+                    return Err(format!(
+                        "Servo cannot create the required GPU context for {window_id:?}: {error}"
+                    ));
+                }
+                Err(error) => warn!(
+                    window = window_id,
+                    %error,
+                    "GPU initialization failed; activating certified software fallback"
+                ),
+            }
+        }
+        let context = Rc::new(SoftwareRenderingContext::new(window.inner_size()).map_err(
+            |error| {
+                format!("cannot create software rendering context for {window_id:?}: {error:?}")
+            },
+        )?);
+        let presenter = SoftwarePresenter::new(window, context.clone(), dirty_regions)?;
+        let rendering_context: Rc<dyn RenderingContext> = context;
+        Ok((rendering_context, Some(RefCell::new(presenter))))
+    }
+
     fn configure(
         self: &Rc<Self>,
         event_loop: &ActiveEventLoop,
@@ -352,29 +506,18 @@ impl AppState {
                 .with_position(PhysicalPosition::new(state.x, state.y));
         }
         drop(workstation);
-        let window = event_loop
-            .create_window(attributes)
-            .map_err(|error| format!("cannot create window {:?}: {error}", config.id))?;
+        let window = Arc::new(
+            event_loop
+                .create_window(attributes)
+                .map_err(|error| format!("cannot create window {:?}: {error}", config.id))?,
+        );
         let accessibility = accesskit_winit::Adapter::with_event_loop_proxy(
             event_loop,
             &window,
             self.event_proxy.clone(),
         );
-        let display_handle = event_loop
-            .display_handle()
-            .map_err(|error| format!("desktop event loop has no display handle: {error}"))?;
-        let window_handle = window
-            .window_handle()
-            .map_err(|error| format!("window {:?} has no native handle: {error}", config.id))?;
-        let rendering_context = Rc::new(
-            WindowRenderingContext::new(display_handle, window_handle, window.inner_size())
-                .map_err(|error| {
-                    format!(
-                        "Servo cannot create the rendering context for {:?}: {error:?}",
-                        config.id,
-                    )
-                })?,
-        );
+        let (rendering_context, software_presenter) =
+            self.create_rendering_context(event_loop, window.clone(), &config.id)?;
         rendering_context.make_current().map_err(|error| {
             format!(
                 "Servo cannot activate the rendering context for {:?}: {error:?}",
@@ -404,6 +547,7 @@ impl AppState {
             parent,
             webview,
             rendering_context,
+            software_presenter,
             window,
             accessibility: RefCell::new(accessibility),
             mouse_position: Cell::new(DevicePoint::default()),
@@ -922,6 +1066,11 @@ impl ApplicationHandler<HostEvent> for Application {
         match event {
             WindowEvent::RedrawRequested => {
                 window.webview.paint();
+                if let Some(presenter) = &window.software_presenter
+                    && let Err(error) = presenter.borrow_mut().present()
+                {
+                    warn!(window = window.id, %error, "cannot present software-rendered frame");
+                }
                 window.rendering_context.present();
             }
             WindowEvent::Moved(_) => state.record_window_state(window),
