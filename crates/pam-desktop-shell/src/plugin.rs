@@ -54,12 +54,17 @@ pub struct PluginSupervisor {
 }
 
 impl PluginSupervisor {
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.plugins.len()
+    }
+
     pub fn prepare(project: &Project, configs: &[RustPluginConfig]) -> Result<Self, String> {
         let mut plugins = HashMap::with_capacity(configs.len());
         for config in configs {
             let executable = project.resolve_plugin_executable(&config.executable)?;
             verify_integrity(&executable, config)?;
-            let slot = PluginSlot::start(project.root(), executable, config.clone())?;
+            let slot = PluginSlot::lazy(project.root(), executable, config.clone());
             plugins.insert(config.id.clone(), Mutex::new(slot));
         }
         Ok(Self { plugins })
@@ -87,34 +92,19 @@ struct PluginSlot {
     project_root: PathBuf,
     executable: PathBuf,
     config: RustPluginConfig,
-    metadata: PluginMetadata,
+    metadata: Option<PluginMetadata>,
     client: Option<PluginClient>,
 }
 
 impl PluginSlot {
-    fn start(
-        project_root: &Path,
-        executable: PathBuf,
-        config: RustPluginConfig,
-    ) -> Result<Self, String> {
-        let mut client = PluginClient::spawn(project_root, &executable, &config)?;
-        let metadata = client.boot()?;
-        metadata.validate()?;
-        if metadata.identifier != config.id {
-            return Err(format!(
-                "Rust plugin at {} identifies as {:?}, expected {:?}",
-                executable.display(),
-                metadata.identifier,
-                config.id
-            ));
-        }
-        Ok(Self {
+    fn lazy(project_root: &Path, executable: PathBuf, config: RustPluginConfig) -> Self {
+        Self {
             project_root: project_root.to_path_buf(),
             executable,
             config,
-            metadata,
-            client: Some(client),
-        })
+            metadata: None,
+            client: None,
+        }
     }
 
     fn invoke(
@@ -124,8 +114,13 @@ impl PluginSlot {
         timeout: Option<Duration>,
         cancellation: &CancellationToken,
     ) -> Result<PluginInvocation, PluginError> {
+        if self.client.is_none() {
+            self.restart().map_err(PluginError::unavailable)?;
+        }
         if !self
             .metadata
+            .as_ref()
+            .expect("plugin metadata is loaded with the client")
             .commands
             .iter()
             .any(|export| export == command)
@@ -137,9 +132,6 @@ impl PluginSlot {
                     self.config.id
                 ),
             });
-        }
-        if self.client.is_none() {
-            self.restart().map_err(PluginError::unavailable)?;
         }
         let deadline = timeout.unwrap_or_else(|| Duration::from_millis(self.config.timeout_ms));
         let result = self
@@ -176,11 +168,23 @@ impl PluginSlot {
         let mut client = PluginClient::spawn(&self.project_root, &self.executable, &self.config)?;
         let metadata = client.boot()?;
         metadata.validate()?;
-        if metadata != self.metadata {
+        if metadata.identifier != self.config.id {
             return Err(format!(
-                "Rust plugin {:?} changed metadata while recovering",
+                "Rust plugin at {} identifies as {:?}, expected {:?}",
+                self.executable.display(),
+                metadata.identifier,
                 self.config.id
             ));
+        }
+        if let Some(expected) = &self.metadata {
+            if &metadata != expected {
+                return Err(format!(
+                    "Rust plugin {:?} changed metadata while recovering",
+                    self.config.id
+                ));
+            }
+        } else {
+            self.metadata = Some(metadata);
         }
         self.client = Some(client);
         Ok(())
@@ -411,7 +415,11 @@ mod tests {
             sha256: None,
         };
         let supervisor =
-            PluginSupervisor::prepare(&project, &[config]).expect("plugin should start");
+            PluginSupervisor::prepare(&project, &[config]).expect("plugin should register");
+        assert!(
+            !fixture.root.join("plugin-booted").exists(),
+            "registered plugins must remain cold until their first invocation"
+        );
         let invocation = supervisor
             .invoke(
                 "fixture",
@@ -421,6 +429,7 @@ mod tests {
                 &CancellationToken::default(),
             )
             .expect("plugin command should succeed");
+        assert!(fixture.root.join("plugin-booted").is_file());
         assert_eq!(invocation.payload, serde_json::json!({"safe": true}));
 
         let crashed = supervisor.invoke(
@@ -479,13 +488,15 @@ mod tests {
             )
             .expect("icon should be written");
             let executable = root.join("plugins/fixture");
+            let staging = root.join("plugins/.fixture-staging");
             fs::write(
-                &executable,
+                &staging,
                 r#"#!/bin/sh
 while IFS= read -r line; do
     id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
     case "$line" in
         *'"command":"@pam/plugin/boot"'*)
+            : > "$PAM_DESKTOP_PROJECT_ROOT/plugin-booted"
             printf '{"version":1,"id":%s,"kind":2,"status":1,"payload":{"identifier":"fixture","name":"Fixture","version":"1.0.0","commands":["echo","crash"]},"events":[]}\n' "$id"
             ;;
         *'"command":"crash"'*)
@@ -502,8 +513,9 @@ done
 "#,
             )
             .expect("plugin should be written");
-            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+            fs::set_permissions(&staging, fs::Permissions::from_mode(0o755))
                 .expect("plugin should be executable");
+            fs::rename(&staging, &executable).expect("plugin should publish atomically");
             Self { root }
         }
     }

@@ -128,3 +128,60 @@ remains active. Use a menu item or global shortcut that returns
 
 Window chrome, transparency, fullscreen, maximization and stacking belong to
 the window contract rather than the tray/menu shell. See [Native windows](windows.md).
+
+## Application badge and taskbar progress
+
+Status effects do not require a tray:
+
+```php
+use Pam\Desktop\ShellEffect;
+use Pam\Desktop\TaskbarProgressState;
+
+return CommandResult::success()
+    ->effect(ShellEffect::badge(7))
+    ->effect(ShellEffect::taskbarProgress(0.65, TaskbarProgressState::Normal));
+```
+
+Use `badge(null)` and `taskbarProgress(0, TaskbarProgressState::Hidden)` to
+clear the indicators. Counts are bounded to 9,999 and progress to `0.0..1.0`.
+The implementation is native on every desktop target:
+
+| Platform | Badge | Progress |
+| --- | --- | --- |
+| Linux | Unity LauncherEntry count | Unity progress and error urgency |
+| Windows | Generated numeric taskbar overlay with accessible description | `ITaskbarList3`, including indeterminate, paused and error states |
+| macOS | `NSDockTile.badgeLabel` | Dock tile preserving the application icon with a determinate or animated indeterminate bar |
+
+Linux uses the packaged desktop identifier and the standard
+`com.canonical.Unity.LauncherEntry.Update` session-bus signal. Windows confines
+COM/GDI calls to a small audited internal crate and releases every bitmap/icon
+handle after the shell copies it. macOS requires and verifies the AppKit main
+thread before changing its Dock tile. None of the backends poll.
+
+## Quick actions
+
+Quick actions are independent of tray menus and global shortcuts:
+
+```php
+use Pam\Desktop\QuickAction;
+use Pam\Desktop\Shell;
+
+$shell = Shell::none()->quickAction(
+    QuickAction::create('compose', 'New message')
+        ->description('Open the message composer'),
+    QuickAction::create('search', 'Search'),
+);
+```
+
+Selection arrives as `pam.quick-action.selected` with `{ id }`. Only identifiers
+declared in the signed bootstrap are accepted; forged reserved launcher
+arguments are discarded. The packaged launcher preserves quick-action, deep
+link and file-association arguments instead of consuming them.
+
+Linux packages emit freedesktop `Desktop Action` sections for every declared
+action. Packaged Windows applications atomically publish the same bounded list
+as `IShellLinkW` user tasks in the application's Jump List, targeting the public
+launcher rather than the privileged host binary. Each link carries only the
+validated reserved identifier. macOS Dock-menu publication remains a separate
+release gate; a build must not claim that surface from another platform's
+contract.

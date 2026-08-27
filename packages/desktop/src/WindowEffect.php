@@ -66,4 +66,16 @@ final class WindowEffect
             ['alwaysOnTop' => $alwaysOnTop],
         );
     }
+
+    public static function attention(
+        bool $active = true,
+        bool $critical = false,
+        string $windowId = 'main',
+    ): Effect {
+        return new Effect(
+            EffectKind::SetWindowAttention,
+            $windowId,
+            ['active' => $active, 'critical' => $critical],
+        );
+    }
 }

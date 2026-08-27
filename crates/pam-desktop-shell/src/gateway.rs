@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -18,9 +18,9 @@ use base64::Engine;
 use futures_util::StreamExt;
 use getrandom::fill;
 use pam_desktop_protocol::{
-    Bootstrap, ClientEvent, CommandExecution, DialogKind, EVENT_COMMAND, ErrorCode, FileAccess,
-    FileEntryKind, MAIN_WINDOW_ID, MAX_COMMAND_TIMEOUT_MS, MIN_COMMAND_TIMEOUT_MS,
-    ResponseEnvelope, ResponseStatus, validate_identifier,
+    Bootstrap, ClientEvent, CommandExecution, DialogKind, EVENT_COMMAND, Effect, EffectKind,
+    ErrorCode, FileAccess, FileEntryKind, MAIN_WINDOW_ID, MAX_COMMAND_TIMEOUT_MS,
+    MIN_COMMAND_TIMEOUT_MS, ResponseEnvelope, ResponseStatus, validate_identifier,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -48,6 +48,7 @@ use crate::plugin::{PluginError, PluginSupervisor};
 use crate::process_runner::ProcessRequest;
 use crate::project::Project;
 use crate::scheduler::BackgroundScheduler;
+use crate::search::SearchRequest;
 use crate::secret_store::SecretRequest;
 use crate::updater::{UpdateError, UpdateSnapshot, Updater};
 use crate::watcher::{ChangeKind, ProjectWatcher};
@@ -76,6 +77,7 @@ impl Gateway {
         bootstrap: Bootstrap,
         event_proxy: EventLoopProxy<HostEvent>,
         watch: bool,
+        startup_snapshot_hit: bool,
     ) -> Result<Self, String> {
         project.validate_bootstrap(&bootstrap)?;
         let public_root = project.public_root()?;
@@ -89,7 +91,11 @@ impl Gateway {
             .map_err(|error| format!("cannot read desktop gateway address: {error}"))?;
         let url = format!("http://127.0.0.1:{}/", address.port());
         let token = secure_token()?;
-        let native = NativeServices::prepare(project.root(), &bootstrap.capabilities)?;
+        let native = NativeServices::prepare(
+            project.root(),
+            &bootstrap.manifest.identifier,
+            &bootstrap.capabilities,
+        )?;
         let updater = Updater::prepare(&bootstrap.manifest);
         let plugins = PluginSupervisor::prepare(project, &bootstrap.rust_plugins)?;
         let background_jobs = bootstrap.background_jobs.clone();
@@ -122,12 +128,24 @@ impl Gateway {
             otlp,
             file_watches: Arc::new(FileWatchManager::new()),
             development: watch,
+            startup_snapshot_hit,
+            started_at: Instant::now(),
         };
-        state.replace_scheduler(&background_jobs)?;
+        if !state
+            .bootstrap
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .workstation
+            .background_agent
+        {
+            state.replace_scheduler(&background_jobs)?;
+        }
         let router = Router::new()
             .route("/", get(serve_main))
             .route("/_pam/window/{window}", get(serve_window))
             .route("/_pam/bridge.js", get(serve_bridge))
+            .route("/_pam/workstation.js", get(serve_workstation_js))
+            .route("/_pam/workstation.css", get(serve_workstation_css))
             .route("/_pam/inspector", get(serve_inspector))
             .route("/_pam/inspector.css", get(serve_inspector_css))
             .route("/_pam/inspector.js", get(serve_inspector_js))
@@ -146,9 +164,12 @@ impl Gateway {
             .route("/_pam/http", post(http_request))
             .route("/_pam/secrets", post(secrets))
             .route("/_pam/process", post(process))
+            .route("/_pam/search", post(search))
             .route("/_pam/fs/watch", post(file_watch))
             .route("/_pam/portal", post(desktop_portal))
             .route("/_pam/diagnostics", post(diagnostics))
+            .route("/_pam/automation", post(automation))
+            .route("/_pam/performance/frame", post(performance_frame))
             .route("/_pam/update/status", post(update_status))
             .route("/_pam/update/check", post(update_check))
             .route("/_pam/update/download", post(update_download))
@@ -361,6 +382,8 @@ struct GatewayState {
     otlp: Option<DesktopOtlpExporter>,
     file_watches: Arc<FileWatchManager>,
     development: bool,
+    startup_snapshot_hit: bool,
+    started_at: Instant,
 }
 
 impl GatewayState {
@@ -372,6 +395,40 @@ impl GatewayState {
             .iter()
             .find(|command| command.name == name)
             .map_or(CommandExecution::Stateful, |command| command.execution)
+    }
+
+    fn process_isolation(&self) -> pam_desktop_protocol::ProcessIsolation {
+        self.bootstrap
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .workstation
+            .isolation
+    }
+
+    fn isolation_key(&self, window_id: &str) -> String {
+        let bootstrap = self
+            .bootstrap
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if bootstrap.workstation.isolation == pam_desktop_protocol::ProcessIsolation::PerWorkspace {
+            let mut current = window_id;
+            let mut depth = 0;
+            while let Some(parent) = bootstrap
+                .workstation
+                .windows
+                .get(current)
+                .and_then(|profile| profile.parent.as_deref())
+            {
+                current = parent;
+                depth += 1;
+                if depth > bootstrap.windows.len() {
+                    break;
+                }
+            }
+            current.to_owned()
+        } else {
+            window_id.to_owned()
+        }
     }
 
     fn parallel_workers(&self) -> Arc<WorkerPool> {
@@ -451,8 +508,13 @@ impl GatewayState {
         &self,
         jobs: &[pam_desktop_protocol::BackgroundJobConfig],
     ) -> Result<(), String> {
-        let scheduler =
-            BackgroundScheduler::start(jobs, &self.supervisor, &self.events, &self.event_proxy)?;
+        let scheduler = BackgroundScheduler::start(
+            jobs,
+            &self.application_id(),
+            &self.supervisor,
+            &self.events,
+            &self.event_proxy,
+        )?;
         *self
             .scheduler
             .lock()
@@ -544,8 +606,11 @@ impl GatewayState {
                     .and_then(|mut supervisor| supervisor.restart())
                     .and_then(|bootstrap| {
                         self.project.validate_bootstrap(&bootstrap)?;
-                        let native =
-                            NativeServices::prepare(self.project.root(), &bootstrap.capabilities)?;
+                        let native = NativeServices::prepare(
+                            self.project.root(),
+                            &bootstrap.manifest.identifier,
+                            &bootstrap.capabilities,
+                        )?;
                         let plugins =
                             PluginSupervisor::prepare(&self.project, &bootstrap.rust_plugins)?;
                         let parallel = self
@@ -606,8 +671,22 @@ impl GatewayState {
                     .parallel_workers
                     .write()
                     .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(parallel);
-                if let Err(error) = self.replace_scheduler(&bootstrap.background_jobs) {
-                    eprintln!("pam-desktop: cannot reload background scheduler: {error}");
+                if bootstrap.workstation.background_agent {
+                    self.scheduler
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .take();
+                    if let Err(error) = crate::background_agent::spawn(
+                        &self.project,
+                        &bootstrap.manifest.identifier,
+                    ) {
+                        eprintln!("pam-desktop: cannot reload background agent: {error}");
+                    }
+                } else {
+                    let _ = crate::background_agent::stop(&bootstrap.manifest.identifier);
+                    if let Err(error) = self.replace_scheduler(&bootstrap.background_jobs) {
+                        eprintln!("pam-desktop: cannot reload background scheduler: {error}");
+                    }
                 }
                 let _ = self
                     .event_proxy
@@ -644,15 +723,63 @@ impl GatewayState {
 struct WorkerPool {
     workers: Vec<Mutex<WorkerSupervisor>>,
     next: AtomicUsize,
+    affinities: Mutex<HashMap<String, usize>>,
+    next_affinity: AtomicUsize,
 }
 
-#[derive(Default)]
 struct GatewayMetrics {
     total_commands: std::sync::atomic::AtomicU64,
     failed_commands: std::sync::atomic::AtomicU64,
     active_commands: std::sync::atomic::AtomicU64,
     total_command_nanoseconds: std::sync::atomic::AtomicU64,
+    first_command_milliseconds: std::sync::atomic::AtomicU64,
+    command_microseconds: Mutex<VecDeque<u64>>,
+    frame_microseconds: Mutex<VecDeque<u64>>,
     otlp: OtlpCounters,
+}
+
+impl Default for GatewayMetrics {
+    fn default() -> Self {
+        Self {
+            total_commands: std::sync::atomic::AtomicU64::new(0),
+            failed_commands: std::sync::atomic::AtomicU64::new(0),
+            active_commands: std::sync::atomic::AtomicU64::new(0),
+            total_command_nanoseconds: std::sync::atomic::AtomicU64::new(0),
+            first_command_milliseconds: std::sync::atomic::AtomicU64::new(0),
+            command_microseconds: Mutex::new(VecDeque::with_capacity(PERFORMANCE_SAMPLE_LIMIT)),
+            frame_microseconds: Mutex::new(VecDeque::with_capacity(PERFORMANCE_SAMPLE_LIMIT)),
+            otlp: OtlpCounters::default(),
+        }
+    }
+}
+
+const PERFORMANCE_SAMPLE_LIMIT: usize = 2_048;
+
+impl GatewayMetrics {
+    fn record_sample(samples: &Mutex<VecDeque<u64>>, value: u64) {
+        let mut samples = samples
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if samples.len() == PERFORMANCE_SAMPLE_LIMIT {
+            samples.pop_front();
+        }
+        samples.push_back(value);
+    }
+
+    fn percentile(samples: &Mutex<VecDeque<u64>>, percentile: usize) -> Option<u64> {
+        let mut values = samples
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        if values.is_empty() {
+            return None;
+        }
+        values.sort_unstable();
+        let index = (values.len() - 1).saturating_mul(percentile).div_ceil(100);
+        values.get(index).copied()
+    }
 }
 
 #[derive(Serialize)]
@@ -672,29 +799,46 @@ struct DiagnosticsSnapshot {
     otlp_spans_dropped: u64,
     otlp_export_errors: u64,
     otlp_spans_rejected: u64,
+    uptime_milliseconds: u64,
+    resident_memory_bytes: u64,
+    terminal_sessions: usize,
+    rust_plugins: usize,
+    startup_milliseconds: Option<u64>,
+    startup_snapshot_hit: bool,
+    ipc_p95_microseconds: Option<u64>,
+    frame_p95_microseconds: Option<u64>,
+    performance_complete: bool,
+    performance_passed: bool,
+    performance_violations: Vec<String>,
+    performance_budget: pam_desktop_protocol::PerformanceBudgetConfig,
 }
 
-fn requested_parallel_count(bootstrap: &Bootstrap) -> u8 {
+fn requested_parallel_count(bootstrap: &Bootstrap) -> usize {
+    if bootstrap.workstation.isolation != pam_desktop_protocol::ProcessIsolation::Shared {
+        return usize::from(bootstrap.parallel_worker_count).max(bootstrap.windows.len());
+    }
     if bootstrap
         .commands
         .iter()
         .any(|command| command.execution != CommandExecution::Stateful)
     {
-        bootstrap.parallel_worker_count
+        usize::from(bootstrap.parallel_worker_count)
     } else {
         0
     }
 }
 
 impl WorkerPool {
-    fn prepare(supervisor: &WorkerSupervisor, count: u8) -> Result<Self, String> {
-        let mut workers = Vec::with_capacity(usize::from(count));
+    fn prepare(supervisor: &WorkerSupervisor, count: usize) -> Result<Self, String> {
+        let mut workers = Vec::with_capacity(count);
         for _ in 0..count {
             workers.push(Mutex::new(supervisor.fork()?));
         }
         Ok(Self {
             workers,
             next: AtomicUsize::new(0),
+            affinities: Mutex::new(HashMap::new()),
+            next_affinity: AtomicUsize::new(0),
         })
     }
 
@@ -716,6 +860,45 @@ impl WorkerPool {
             .lock()
             .map_err(|_| {
                 WorkerRequestError::Crashed("parallel worker lock is poisoned".to_owned())
+            })?
+            .request(command, window_id, payload, timeout, cancellation)
+    }
+
+    fn request_keyed(
+        &self,
+        key: &str,
+        command: String,
+        window_id: String,
+        payload: Value,
+        timeout: Duration,
+        cancellation: &CancellationToken,
+    ) -> Result<ResponseEnvelope, WorkerRequestError> {
+        if self.workers.is_empty() {
+            return Err(WorkerRequestError::Crashed(
+                "isolated worker pool is not configured".to_owned(),
+            ));
+        }
+        let index = {
+            let mut affinities = self.affinities.lock().map_err(|_| {
+                WorkerRequestError::Crashed("worker affinity lock is poisoned".to_owned())
+            })?;
+            if let Some(index) = affinities.get(key) {
+                *index
+            } else {
+                let index = self.next_affinity.fetch_add(1, Ordering::Relaxed);
+                if index >= self.workers.len() {
+                    return Err(WorkerRequestError::Crashed(
+                        "isolated worker capacity is exhausted".to_owned(),
+                    ));
+                }
+                affinities.insert(key.to_owned(), index);
+                index
+            }
+        };
+        self.workers[index]
+            .lock()
+            .map_err(|_| {
+                WorkerRequestError::Crashed("isolated worker lock is poisoned".to_owned())
             })?
             .request(command, window_id, payload, timeout, cancellation)
     }
@@ -877,13 +1060,103 @@ async fn serve_file(state: &GatewayState, relative: &Path) -> Response<Body> {
 }
 
 async fn serve_bridge(State(state): State<GatewayState>) -> Response<Body> {
+    let surface = {
+        let bootstrap = state
+            .bootstrap
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        bridge_surface(&bootstrap, state.development)
+    };
+    let commands = {
+        let bootstrap = state
+            .bootstrap
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        serde_json::to_string(&bootstrap.commands).unwrap_or_else(|_| "[]".to_owned())
+    };
     let script = BRIDGE_SCRIPT
         .replace("__PAM_ORIGIN__", &javascript_string(&state.origin))
-        .replace("__PAM_TOKEN__", &javascript_string(&state.token));
+        .replace("__PAM_TOKEN__", &javascript_string(&state.token))
+        .replace("__PAM_COMMANDS__", &commands)
+        .replace("__PAM_SURFACE__", &surface);
     secure_response(
         StatusCode::OK,
         "text/javascript; charset=utf-8",
         Body::from(script),
+    )
+}
+
+fn bridge_surface(bootstrap: &Bootstrap, development: bool) -> String {
+    let capabilities = &bootstrap.capabilities;
+    let all = !bootstrap.workstation.tree_shaking;
+    let mut fields = vec![
+        "apiVersion: 1",
+        "commands",
+        "emit",
+        "invoke",
+        "on",
+        "windowId",
+    ];
+    if all || capabilities.clipboard_read || capabilities.clipboard_write {
+        fields.push("clipboard");
+    }
+    if all || !capabilities.databases.is_empty() {
+        fields.push("database");
+    }
+    if all || bootstrap.workstation.devtools {
+        fields.push("diagnostics");
+    }
+    if development && bootstrap.workstation.devtools {
+        fields.push("automation");
+    }
+    if all || capabilities.dialogs {
+        fields.push("dialog");
+    }
+    if all || !capabilities.filesystem_roots.is_empty() {
+        fields.push("fs: filesystem");
+        fields.push("search");
+    }
+    if all || !capabilities.http_origins.is_empty() {
+        fields.push("http");
+    }
+    if all || capabilities.notifications {
+        fields.push("notification");
+    }
+    if all || !bootstrap.rust_plugins.is_empty() {
+        fields.push("plugins");
+    }
+    if all || capabilities.desktop_portal {
+        fields.push("portal");
+    }
+    if all || !capabilities.processes.is_empty() {
+        fields.push("process");
+        fields.push("terminal");
+    }
+    if all || capabilities.secrets {
+        fields.push("secrets");
+    }
+    if all || capabilities.system_information {
+        fields.push("system");
+    }
+    if all || bootstrap.manifest.updates.is_some() {
+        fields.push("updater");
+    }
+    format!("{{{}}}", fields.join(","))
+}
+
+async fn serve_workstation_js() -> Response<Body> {
+    secure_response(
+        StatusCode::OK,
+        "text/javascript; charset=utf-8",
+        Body::from(WORKSTATION_JS),
+    )
+}
+
+async fn serve_workstation_css() -> Response<Body> {
+    secure_response(
+        StatusCode::OK,
+        "text/css; charset=utf-8",
+        Body::from(WORKSTATION_CSS),
     )
 }
 
@@ -1054,7 +1327,18 @@ async fn execute_request(
     }
 
     let execution = state.command_execution(&command);
+    let isolation = state.process_isolation();
+    let isolation_key = state.isolation_key(&window_id);
     let started = Instant::now();
+    let first_command = u64::try_from(state.started_at.elapsed().as_millis())
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let _ = state.metrics.first_command_milliseconds.compare_exchange(
+        0,
+        first_command,
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
     let started_unix_nano = state.otlp.as_ref().map(|_| epoch_nanos());
     let span_command = command.clone();
     state.metrics.total_commands.fetch_add(1, Ordering::Relaxed);
@@ -1065,16 +1349,28 @@ async fn execute_request(
     let supervisor = state.supervisor.clone();
     let parallel_workers = state.parallel_workers();
     let response = tokio::task::spawn_blocking(move || match execution {
-        CommandExecution::Stateful => supervisor
-            .lock()
-            .map_err(|_| WorkerRequestError::Crashed("worker lock is poisoned".to_owned()))?
-            .request(
-                command,
-                window_id,
-                payload,
-                Duration::from_millis(timeout_ms),
-                &cancellation,
-            ),
+        CommandExecution::Stateful
+            if isolation == pam_desktop_protocol::ProcessIsolation::Shared =>
+        {
+            supervisor
+                .lock()
+                .map_err(|_| WorkerRequestError::Crashed("worker lock is poisoned".to_owned()))?
+                .request(
+                    command,
+                    window_id,
+                    payload,
+                    Duration::from_millis(timeout_ms),
+                    &cancellation,
+                )
+        }
+        CommandExecution::Stateful => parallel_workers.request_keyed(
+            &isolation_key,
+            command,
+            window_id,
+            payload,
+            Duration::from_millis(timeout_ms),
+            &cancellation,
+        ),
         CommandExecution::Parallel | CommandExecution::Background => parallel_workers.request(
             command,
             window_id,
@@ -1088,9 +1384,14 @@ async fn execute_request(
         .metrics
         .active_commands
         .fetch_sub(1, Ordering::Relaxed);
-    state.metrics.total_command_nanoseconds.fetch_add(
-        u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
-        Ordering::Relaxed,
+    let elapsed_nanoseconds = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    state
+        .metrics
+        .total_command_nanoseconds
+        .fetch_add(elapsed_nanoseconds, Ordering::Relaxed);
+    GatewayMetrics::record_sample(
+        &state.metrics.command_microseconds,
+        elapsed_nanoseconds / 1_000,
     );
     state
         .cancellations
@@ -1201,6 +1502,26 @@ fn export_command_span(
         && let Some(start_unix_nano) = start_unix_nano
     {
         exporter.export(command, execution, outcome, start_unix_nano, parent);
+    }
+}
+
+fn resident_memory_bytes() -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+            return 0;
+        };
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix("VmRSS:"))
+            .and_then(|value| value.split_ascii_whitespace().next())
+            .and_then(|kilobytes| kilobytes.parse::<u64>().ok())
+            .and_then(|kilobytes| kilobytes.checked_mul(1024))
+            .unwrap_or(0)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        0
     }
 }
 
@@ -1468,7 +1789,8 @@ async fn notification(
         );
     }
     let native = state.native_services();
-    native_task(tokio::task::spawn_blocking(move || native.notify(&request)).await)
+    let events = state.events.clone();
+    native_task(tokio::task::spawn_blocking(move || native.notify(&request, events)).await)
 }
 
 async fn database(
@@ -1574,6 +1896,25 @@ async fn process(
     native_task(tokio::task::spawn_blocking(move || native.process(&request)).await)
 }
 
+async fn search(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<SearchRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The search source window is invalid.",
+        );
+    }
+    let native = state.native_services();
+    native_task(tokio::task::spawn_blocking(move || native.search(&request)).await)
+}
+
 async fn file_watch(
     State(state): State<GatewayState>,
     headers: HeaderMap,
@@ -1615,7 +1956,7 @@ async fn desktop_portal(
         );
     }
     let native = state.native_services();
-    match crate::desktop_portal::execute(&native, &request).await {
+    match crate::desktop_portal::execute(native, &request).await {
         Ok(value) => native_success(value),
         Err(error) => native_failure(error),
     }
@@ -1641,6 +1982,32 @@ async fn diagnostics(
         .metrics
         .total_command_nanoseconds
         .load(Ordering::Relaxed);
+    let startup_milliseconds = state
+        .metrics
+        .first_command_milliseconds
+        .load(Ordering::Relaxed)
+        .checked_sub(1);
+    let ipc_p95_microseconds = GatewayMetrics::percentile(&state.metrics.command_microseconds, 95);
+    let frame_p95_microseconds = GatewayMetrics::percentile(&state.metrics.frame_microseconds, 95);
+    let resident_memory_bytes = resident_memory_bytes();
+    let budget = state
+        .bootstrap
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .workstation
+        .performance
+        .clone();
+    let performance_violations = performance_violations(
+        &budget,
+        state.startup_snapshot_hit,
+        startup_milliseconds,
+        resident_memory_bytes,
+        ipc_p95_microseconds,
+        frame_p95_microseconds,
+    );
+    let performance_complete = startup_milliseconds.is_some()
+        && ipc_p95_microseconds.is_some()
+        && frame_p95_microseconds.is_some();
     let snapshot = DiagnosticsSnapshot {
         schema_version: 1,
         surface_code: 3,
@@ -1666,8 +2033,354 @@ async fn diagnostics(
         otlp_spans_dropped: state.metrics.otlp.dropped.load(Ordering::Relaxed),
         otlp_export_errors: state.metrics.otlp.errors.load(Ordering::Relaxed),
         otlp_spans_rejected: state.metrics.otlp.rejected.load(Ordering::Relaxed),
+        uptime_milliseconds: u64::try_from(state.started_at.elapsed().as_millis())
+            .unwrap_or(u64::MAX),
+        resident_memory_bytes,
+        terminal_sessions: state.native_services().terminal_session_count(),
+        rust_plugins: state
+            .plugins
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len(),
+        startup_milliseconds,
+        startup_snapshot_hit: state.startup_snapshot_hit,
+        ipc_p95_microseconds,
+        frame_p95_microseconds,
+        performance_complete,
+        performance_passed: performance_complete && performance_violations.is_empty(),
+        performance_violations,
+        performance_budget: budget,
     };
     native_success(serde_json::to_value(snapshot).unwrap_or(Value::Null))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+enum AutomationOperation {
+    Menu = 1,
+    ShortcutPress = 2,
+    ShortcutRelease = 3,
+    WindowFocus = 4,
+    WindowShow = 5,
+    WindowHide = 6,
+    WindowClose = 7,
+    DragHover = 8,
+    DragDrop = 9,
+    DragLeave = 10,
+}
+
+impl TryFrom<u8> for AutomationOperation {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Menu),
+            2 => Ok(Self::ShortcutPress),
+            3 => Ok(Self::ShortcutRelease),
+            4 => Ok(Self::WindowFocus),
+            5 => Ok(Self::WindowShow),
+            6 => Ok(Self::WindowHide),
+            7 => Ok(Self::WindowClose),
+            8 => Ok(Self::DragHover),
+            9 => Ok(Self::DragDrop),
+            10 => Ok(Self::DragLeave),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AutomationRequest {
+    window_id: String,
+    operation: u8,
+    #[serde(default)]
+    target: String,
+    #[serde(default)]
+    path: String,
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the automation dispatcher keeps its closed integer operation contract auditable in one place"
+)]
+async fn automation(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<AutomationRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    let bootstrap = state
+        .bootstrap
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !state.development || !bootstrap.workstation.devtools {
+        return client_failure(
+            StatusCode::FORBIDDEN,
+            ErrorCode::CapabilityDisabled,
+            "Desktop automation is available only in a devtools development session.",
+        );
+    }
+    if !bootstrap
+        .windows
+        .iter()
+        .any(|window| window.id == request.window_id)
+    {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The automation source window is invalid.",
+        );
+    }
+    let Ok(operation) = AutomationOperation::try_from(request.operation) else {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "The desktop automation operation is invalid.",
+        );
+    };
+    let result = match operation {
+        AutomationOperation::Menu => {
+            if menu_item_enabled(&bootstrap.shell.menus, &request.target) {
+                state.events.publish(ClientEvent {
+                    name: "pam.menu.selected".to_owned(),
+                    payload: serde_json::json!({"id": request.target}),
+                    window_id: None,
+                });
+                Ok(())
+            } else {
+                Err("The automation menu target is unknown or disabled.".to_owned())
+            }
+        }
+        AutomationOperation::ShortcutPress | AutomationOperation::ShortcutRelease => {
+            if bootstrap
+                .shell
+                .shortcuts
+                .iter()
+                .any(|shortcut| shortcut.id == request.target)
+            {
+                state.events.publish(ClientEvent {
+                    name: "pam.shortcut.changed".to_owned(),
+                    payload: serde_json::json!({
+                        "id": request.target,
+                        "state": if operation == AutomationOperation::ShortcutPress { 1 } else { 2 },
+                    }),
+                    window_id: None,
+                });
+                Ok(())
+            } else {
+                Err("The automation shortcut target is unknown.".to_owned())
+            }
+        }
+        AutomationOperation::WindowFocus
+        | AutomationOperation::WindowShow
+        | AutomationOperation::WindowHide
+        | AutomationOperation::WindowClose => {
+            if bootstrap
+                .windows
+                .iter()
+                .any(|window| window.id == request.target)
+            {
+                let (kind, payload) = match operation {
+                    AutomationOperation::WindowFocus => (EffectKind::FocusWindow, Value::Null),
+                    AutomationOperation::WindowShow => (
+                        EffectKind::SetWindowVisible,
+                        serde_json::json!({"visible": true}),
+                    ),
+                    AutomationOperation::WindowHide => (
+                        EffectKind::SetWindowVisible,
+                        serde_json::json!({"visible": false}),
+                    ),
+                    AutomationOperation::WindowClose => (EffectKind::CloseWindow, Value::Null),
+                    _ => unreachable!(),
+                };
+                state
+                    .event_proxy
+                    .send_event(HostEvent::ApplyEffects(vec![Effect {
+                        kind,
+                        window_id: request.target,
+                        payload,
+                    }]))
+                    .map_err(|_| "The desktop event loop is unavailable.".to_owned())
+            } else {
+                Err("The automation window target is unknown.".to_owned())
+            }
+        }
+        AutomationOperation::DragHover | AutomationOperation::DragDrop => {
+            let path = resolve_automation_path(state.project.root(), &request.path);
+            match path {
+                Ok(path) => {
+                    if operation == AutomationOperation::DragHover {
+                        automation_drag_hover(&state, &request.window_id, &path)
+                    } else {
+                        automation_drag_drop(&state, &request.window_id, &path)
+                    }
+                }
+                Err(error) => Err(error),
+            }
+        }
+        AutomationOperation::DragLeave => {
+            if state.native_services().drag_and_drop_enabled() {
+                state.events.publish(ClientEvent {
+                    name: "pam.drag.leave".to_owned(),
+                    payload: Value::Null,
+                    window_id: Some(request.window_id),
+                });
+                Ok(())
+            } else {
+                Err("Drag and drop capability is disabled.".to_owned())
+            }
+        }
+    };
+    drop(bootstrap);
+    match result {
+        Ok(()) => native_success(serde_json::json!({"accepted": true})),
+        Err(message) => {
+            client_failure(StatusCode::BAD_REQUEST, ErrorCode::InvalidPayload, &message)
+        }
+    }
+}
+
+fn menu_item_enabled(menus: &[pam_desktop_protocol::MenuConfig], id: &str) -> bool {
+    fn contains(items: &[pam_desktop_protocol::MenuItemConfig], id: &str) -> bool {
+        items.iter().any(|item| {
+            (item.id == id
+                && item.enabled
+                && matches!(
+                    item.kind,
+                    pam_desktop_protocol::MenuItemKind::Command
+                        | pam_desktop_protocol::MenuItemKind::Checkbox
+                ))
+                || contains(&item.items, id)
+        })
+    }
+    menus.iter().any(|menu| contains(&menu.items, id))
+}
+
+fn resolve_automation_path(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(path);
+    if path.is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("Automation drag paths must be project-relative without traversal.".to_owned());
+    }
+    let resolved = root
+        .join(relative)
+        .canonicalize()
+        .map_err(|error| format!("Cannot resolve automation drag path: {error}"))?;
+    if !resolved.starts_with(root) {
+        return Err("Automation drag path escaped the project.".to_owned());
+    }
+    Ok(resolved)
+}
+
+fn automation_drag_hover(state: &GatewayState, window_id: &str, path: &Path) -> Result<(), String> {
+    if !state.native_services().drag_and_drop_enabled() {
+        return Err("Drag and drop capability is disabled.".to_owned());
+    }
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("Cannot inspect automation drag path: {error}"))?;
+    if metadata.file_type().is_symlink() || (!metadata.is_file() && !metadata.is_dir()) {
+        return Err("Automation drag target must be a regular file or directory.".to_owned());
+    }
+    let kind = if metadata.is_file() {
+        FileEntryKind::File
+    } else {
+        FileEntryKind::Directory
+    };
+    state.events.publish(ClientEvent {
+        name: "pam.drag.enter".to_owned(),
+        payload: serde_json::json!({
+            "name": path.file_name().unwrap_or_default().to_string_lossy(),
+            "kind": kind,
+        }),
+        window_id: Some(window_id.to_owned()),
+    });
+    Ok(())
+}
+
+fn automation_drag_drop(state: &GatewayState, window_id: &str, path: &Path) -> Result<(), String> {
+    let native = state.native_services();
+    if !native.drag_and_drop_enabled() {
+        return Err("Drag and drop capability is disabled.".to_owned());
+    }
+    let file = native
+        .grant_path(path, FileAccess::Read)
+        .map_err(|error| error.message)?;
+    state.events.publish(ClientEvent {
+        name: "pam.drag.drop".to_owned(),
+        payload: serde_json::json!({"files": [file]}),
+        window_id: Some(window_id.to_owned()),
+    });
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FrameSampleRequest {
+    window_id: String,
+    microseconds: u64,
+}
+
+async fn performance_frame(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Json(request): Json<FrameSampleRequest>,
+) -> Response<Body> {
+    if !authorized(&state, &headers) {
+        return unauthorized_response();
+    }
+    if !state.has_window(&request.window_id) || !(1..=1_000_000).contains(&request.microseconds) {
+        return client_failure(
+            StatusCode::BAD_REQUEST,
+            ErrorCode::InvalidMessage,
+            "Frame samples require a valid window and 1 to 1,000,000 microseconds.",
+        );
+    }
+    GatewayMetrics::record_sample(&state.metrics.frame_microseconds, request.microseconds);
+    native_success(Value::Null)
+}
+
+fn performance_violations(
+    budget: &pam_desktop_protocol::PerformanceBudgetConfig,
+    startup_snapshot_hit: bool,
+    startup_milliseconds: Option<u64>,
+    resident_memory_bytes: u64,
+    ipc_p95_microseconds: Option<u64>,
+    frame_p95_microseconds: Option<u64>,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    let startup_budget = if startup_snapshot_hit {
+        budget.warm_start_milliseconds
+    } else {
+        budget.cold_start_milliseconds
+    };
+    if startup_milliseconds.is_some_and(|value| value > u64::from(startup_budget)) {
+        violations.push(
+            if startup_snapshot_hit {
+                "warm-start"
+            } else {
+                "cold-start"
+            }
+            .to_owned(),
+        );
+    }
+    if resident_memory_bytes > u64::from(budget.idle_memory_megabytes).saturating_mul(1024 * 1024) {
+        violations.push("resident-memory".to_owned());
+    }
+    if ipc_p95_microseconds.is_some_and(|value| value > u64::from(budget.ipc_p95_microseconds)) {
+        violations.push("ipc-p95".to_owned());
+    }
+    if frame_p95_microseconds.is_some_and(|value| value > u64::from(budget.frame_p95_microseconds))
+    {
+        violations.push("frame-p95".to_owned());
+    }
+    violations
 }
 
 async fn update_status(
@@ -1964,6 +2677,7 @@ async fn dialog(
         Err(error) => return native_failure(error),
     };
     let kind = request.kind;
+    let persistent = request.persistent;
     let (reply, receiver) = oneshot::channel();
     let event = HostEvent::Dialog(DialogRequest {
         kind,
@@ -1993,7 +2707,7 @@ async fn dialog(
             });
         }
     };
-    let files = match native.grant_paths(paths, access) {
+    let files = match native.grant_paths(paths, access, persistent) {
         Ok(files) => files,
         Err(error) => return native_failure(error),
     };
@@ -2179,13 +2893,16 @@ fn secure_response(status: StatusCode, content_type: &'static str, body: Body) -
     response
 }
 
+const WORKSTATION_JS: &str = include_str!("../assets/workstation.js");
+const WORKSTATION_CSS: &str = include_str!("../assets/workstation.css");
+
 const INSPECTOR_HTML: &str = r##"<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pam Desktop Inspector</title><link rel="stylesheet" href="/_pam/inspector.css"><script defer src="/_pam/bridge.js"></script><script defer src="/_pam/inspector.js"></script></head>
-<body><a class="skip" href="#metrics">Skip to metrics</a><header><div><p class="eyebrow">PAM DESKTOP · DEVELOPMENT</p><h1>Runtime Inspector</h1><p id="status" role="status" aria-live="polite">Connecting to the native host…</p></div><button id="refresh" type="button">Refresh now</button></header><main id="metrics" tabindex="-1"><section class="grid" aria-label="Runtime metrics"><article><span>Total commands</span><strong id="total">—</strong></article><article><span>Active now</span><strong id="active">—</strong></article><article><span>Failures</span><strong id="failed">—</strong></article><article><span>Average host time</span><strong id="average">—</strong></article><article><span>Worker generation</span><strong id="generation">—</strong></article><article><span>Parallel workers</span><strong id="workers">—</strong></article><article><span>Event cursor</span><strong id="cursor">—</strong></article></section><section class="note"><h2>Privacy boundary</h2><p>This inspector reads bounded aggregate counters only. Payloads, paths, SQL, secrets and bridge credentials are never collected.</p></section></main></body></html>"##;
+<body><a class="skip" href="#metrics">Skip to metrics</a><header><div><p class="eyebrow">PAM DESKTOP · DEVELOPMENT</p><h1>Runtime Inspector</h1><p id="status" role="status" aria-live="polite">Connecting to the native host…</p></div><button id="refresh" type="button">Refresh now</button></header><main id="metrics" tabindex="-1"><section class="grid" aria-label="Runtime metrics"><article><span>Total commands</span><strong id="total">—</strong></article><article><span>Active now</span><strong id="active">—</strong></article><article><span>Failures</span><strong id="failed">—</strong></article><article><span>Average host time</span><strong id="average">—</strong></article><article><span>IPC p95</span><strong id="ipc">—</strong></article><article><span>Frame p95</span><strong id="frame">—</strong></article><article><span>First command</span><strong id="startup">—</strong></article><article><span>Startup snapshot</span><strong id="snapshot">—</strong></article><article><span>Performance gate</span><strong id="gate">—</strong></article><article><span>Worker generation</span><strong id="generation">—</strong></article><article><span>Parallel workers</span><strong id="workers">—</strong></article><article><span>Event cursor</span><strong id="cursor">—</strong></article><article><span>Host uptime</span><strong id="uptime">—</strong></article><article><span>Resident memory</span><strong id="memory">—</strong></article><article><span>PTY sessions</span><strong id="terminals">—</strong></article><article><span>Rust plugins</span><strong id="plugins">—</strong></article></section><section class="note"><h2>Privacy boundary</h2><p>This inspector reads bounded aggregate counters only. Payloads, paths, SQL, secrets and bridge credentials are never collected.</p></section></main></body></html>"##;
 
 const INSPECTOR_CSS: &str = r":root{color-scheme:dark;--bg:#0f172a;--surface:#172033;--surface-2:#1e293b;--text:#f8fafc;--muted:#cbd5e1;--border:#475569;--accent:#22c55e;--danger:#fb7185;--ring:#86efac;font-family:Inter,ui-sans-serif,system-ui,sans-serif}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 80% 0,#1e293b 0,transparent 38%),var(--bg);color:var(--text);padding:clamp(20px,4vw,56px)}header,main{max-width:1120px;margin-inline:auto}header{display:flex;align-items:end;justify-content:space-between;gap:24px;margin-bottom:32px}.eyebrow{color:var(--accent);font:600 12px/1.5 ui-monospace,monospace;letter-spacing:.12em;margin:0 0 8px}h1{font-size:clamp(30px,5vw,52px);line-height:1.05;letter-spacing:-.04em;margin:0}#status{color:var(--muted);margin:12px 0 0;line-height:1.5}button{min-height:44px;padding:0 18px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);color:var(--text);font:600 14px/1 system-ui;cursor:pointer;transition:background-color .18s ease,border-color .18s ease}button:hover{background:#334155;border-color:#64748b}button:focus-visible,.skip:focus-visible{outline:3px solid var(--ring);outline-offset:3px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.grid article,.note{border:1px solid var(--border);border-radius:14px;background:color-mix(in srgb,var(--surface) 94%,transparent);box-shadow:0 14px 40px #02061740}.grid article{min-height:132px;padding:20px;display:flex;flex-direction:column;justify-content:space-between}.grid span{color:var(--muted);font-size:13px;line-height:1.4}.grid strong{font:650 clamp(24px,4vw,38px)/1 ui-monospace,monospace;font-variant-numeric:tabular-nums}.grid article[data-error=true] strong{color:var(--danger)}.note{padding:22px;margin-top:12px}.note h2{font-size:16px;margin:0 0 8px}.note p{max-width:72ch;color:var(--muted);line-height:1.65;margin:0}.skip{position:fixed;left:16px;top:16px;transform:translateY(-160%);background:var(--text);color:var(--bg);padding:12px 16px;border-radius:8px;z-index:10}.skip:focus{transform:none}@media(max-width:820px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){body{padding:20px}header{align-items:stretch;flex-direction:column}.grid{grid-template-columns:1fr}.grid article{min-height:112px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important}}";
 
-const INSPECTOR_JS: &str = r##"(() => {"use strict";const ids={total:"totalCommands",active:"activeCommands",failed:"failedCommands",average:"averageCommandMicroseconds",generation:"primaryWorkerGeneration",workers:"parallelWorkers",cursor:"eventCursor"};const status=document.querySelector("#status");const refresh=document.querySelector("#refresh");let pending=false;const render=async()=>{if(pending)return;pending=true;refresh.disabled=true;try{const data=await window.pam.diagnostics.snapshot();for(const [id,key] of Object.entries(ids)){const node=document.getElementById(id);const value=data[key];node.textContent=id==="average"?`${Number(value).toLocaleString()} µs`:Number(value).toLocaleString();if(id==="failed")node.parentElement.dataset.error=String(value>0)}status.textContent=`Live · updated ${new Date().toLocaleTimeString()}`}catch(error){status.textContent=`Inspector unavailable · ${error.message}`}finally{pending=false;refresh.disabled=false}};refresh.addEventListener("click",render);render();setInterval(render,1000)})();"##;
+const INSPECTOR_JS: &str = r##"(() => {"use strict";const ids={total:"totalCommands",active:"activeCommands",failed:"failedCommands",average:"averageCommandMicroseconds",ipc:"ipcP95Microseconds",frame:"frameP95Microseconds",startup:"startupMilliseconds",snapshot:"startupSnapshotHit",generation:"primaryWorkerGeneration",workers:"parallelWorkers",cursor:"eventCursor",uptime:"uptimeMilliseconds",memory:"residentMemoryBytes",terminals:"terminalSessions",plugins:"rustPlugins"};const status=document.querySelector("#status");const refresh=document.querySelector("#refresh");let pending=false;const format=(id,value)=>value==null?"collecting":id==="gate"?(value?"PASS":"FAIL"):id==="snapshot"?(value?"HIT":"MISS"):id==="average"||id==="ipc"||id==="frame"?`${Number(value).toLocaleString()} µs`:id==="startup"?`${Number(value).toLocaleString()} ms`:id==="uptime"?`${(Number(value)/1000).toFixed(1)} s`:id==="memory"?`${(Number(value)/1048576).toFixed(1)} MiB`:Number(value).toLocaleString();const render=async()=>{if(pending)return;pending=true;refresh.disabled=true;try{const data=await window.pam.diagnostics.snapshot();for(const [id,key] of Object.entries(ids)){const node=document.getElementById(id);const value=data[key];node.textContent=format(id,value);if(id==="failed")node.parentElement.dataset.error=String(value>0);}const gate=document.getElementById("gate");gate.textContent=!data.performanceComplete?"collecting":data.performancePassed?"PASS":"FAIL";gate.parentElement.dataset.error=String(data.performanceComplete&&!data.performancePassed);status.textContent=data.performanceViolations.length?`Budget violations · ${data.performanceViolations.join(", ")}`:`Live · updated ${new Date().toLocaleTimeString()}`}catch(error){status.textContent=`Inspector unavailable · ${error.message}`}finally{pending=false;refresh.disabled=false}};refresh.addEventListener("click",render);render();setInterval(render,1000)})();"##;
 
 const BRIDGE_SCRIPT: &str = r#"
 (() => {
@@ -2193,6 +2910,7 @@ const BRIDGE_SCRIPT: &str = r#"
 
     const allowedOrigin = __PAM_ORIGIN__;
     const token = __PAM_TOKEN__;
+    const commandManifest = Object.freeze(__PAM_COMMANDS__);
     if (window.location.origin !== allowedOrigin) {
         return;
     }
@@ -2434,6 +3152,7 @@ const BRIDGE_SCRIPT: &str = r#"
             fileName: options.fileName ?? null,
             filters: options.filters ?? [],
             access: options.access ?? null,
+            persistent: options.persistent === true,
         });
     };
 
@@ -2449,6 +3168,8 @@ const BRIDGE_SCRIPT: &str = r#"
             const data = await request("/_pam/clipboard", {
                 operation: 1,
                 text: null,
+                html: null,
+                image: null,
             }, nativeOptions(options));
             return data.text;
         },
@@ -2459,12 +3180,63 @@ const BRIDGE_SCRIPT: &str = r#"
             return request("/_pam/clipboard", {
                 operation: 2,
                 text,
+                html: null,
+                image: null,
             }, nativeOptions(options));
         },
         clear: (options = {}) => request("/_pam/clipboard", {
             operation: 3,
             text: null,
+            html: null,
+            image: null,
         }, nativeOptions(options)),
+        writeHtml: (html, text = null, options = {}) => {
+            if (typeof html !== "string" || (text !== null && typeof text !== "string")) {
+                throw new TypeError("Pam clipboard HTML requires HTML and an optional text fallback.");
+            }
+            return request("/_pam/clipboard", {
+                operation: 4, text, html, image: null,
+            }, nativeOptions(options));
+        },
+        readImage: (options = {}) => request("/_pam/clipboard", {
+            operation: 5, text: null, html: null, image: null,
+        }, nativeOptions(options)),
+        writeImage: (image, options = {}) => {
+            if (image === null || typeof image !== "object" || Array.isArray(image)) {
+                throw new TypeError("Pam clipboard images require width, height and rgbaBase64.");
+            }
+            return request("/_pam/clipboard", {
+                operation: 6, text: null, html: null, image,
+            }, nativeOptions(options));
+        },
+        readFiles: (options = {}) => request("/_pam/clipboard", {
+            operation: 7, text: null, html: null, image: null, files: [],
+        }, nativeOptions(options)),
+        writeFiles: (files, options = {}) => {
+            if (!Array.isArray(files) || files.length === 0 || files.some((target) => target === null || typeof target !== "object" || Array.isArray(target))) {
+                throw new TypeError("Pam clipboard files require a non-empty array of file targets.");
+            }
+            return request("/_pam/clipboard", {
+                operation: 8, text: null, html: null, image: null, files,
+            }, nativeOptions(options));
+        },
+        readCustom: (format, options = {}) => {
+            if (typeof format !== "string") throw new TypeError("Pam custom clipboard reads require a format.");
+            return request("/_pam/clipboard", {
+                operation: 9, text: null, html: null, image: null, files: [], format, dataBase64: null,
+            }, nativeOptions(options));
+        },
+        writeCustom: (format, dataBase64, options = {}) => {
+            if (typeof format !== "string" || typeof dataBase64 !== "string") {
+                throw new TypeError("Pam custom clipboard writes require a format and base64 data.");
+            }
+            return request("/_pam/clipboard", {
+                operation: 10, text: null, html: null, image: null, files: [], format, dataBase64,
+            }, nativeOptions(options));
+        },
+        availableFormats: (options = {}) => request("/_pam/clipboard", {
+            operation: 11, text: null, html: null, image: null, files: [], format: null, dataBase64: null,
+        }, nativeOptions(options)).then((data) => data.formats),
     });
 
     const notification = Object.freeze({
@@ -2476,6 +3248,7 @@ const BRIDGE_SCRIPT: &str = r#"
                 title: options.title,
                 body: options.body ?? "",
                 urgency: options.urgency ?? 2,
+                actions: options.actions ?? [],
             }, nativeOptions(options));
         },
     });
@@ -2547,8 +3320,27 @@ const BRIDGE_SCRIPT: &str = r#"
         },
     });
 
+    const automation = Object.freeze({
+        menu: (id, options = {}) => request("/_pam/automation", { operation: 1, target: id }, nativeOptions(options)),
+        shortcutPress: (id, options = {}) => request("/_pam/automation", { operation: 2, target: id }, nativeOptions(options)),
+        shortcutRelease: (id, options = {}) => request("/_pam/automation", { operation: 3, target: id }, nativeOptions(options)),
+        focusWindow: (id, options = {}) => request("/_pam/automation", { operation: 4, target: id }, nativeOptions(options)),
+        showWindow: (id, options = {}) => request("/_pam/automation", { operation: 5, target: id }, nativeOptions(options)),
+        hideWindow: (id, options = {}) => request("/_pam/automation", { operation: 6, target: id }, nativeOptions(options)),
+        closeWindow: (id, options = {}) => request("/_pam/automation", { operation: 7, target: id }, nativeOptions(options)),
+        dragHover: (path, options = {}) => request("/_pam/automation", { operation: 8, path }, nativeOptions(options)),
+        dragDrop: (path, options = {}) => request("/_pam/automation", { operation: 9, path }, nativeOptions(options)),
+        dragLeave: (options = {}) => request("/_pam/automation", { operation: 10 }, nativeOptions(options)),
+    });
+
     const diagnostics = Object.freeze({
         snapshot: (options = {}) => request("/_pam/diagnostics", {}, nativeOptions(options)),
+        reportFrame: (microseconds, options = {}) => {
+            if (!Number.isInteger(microseconds) || microseconds < 1 || microseconds > 1_000_000) {
+                throw new TypeError("Pam frame samples must contain 1 to 1,000,000 microseconds.");
+            }
+            return request("/_pam/performance/frame", { microseconds }, nativeOptions(options));
+        },
     });
 
     const secrets = Object.freeze({
@@ -2573,12 +3365,56 @@ const BRIDGE_SCRIPT: &str = r#"
                 throw new TypeError("Pam process.run requires an authorized command name.");
             }
             return request("/_pam/process", {
+                operation: 1,
                 command,
                 arguments: options.arguments ?? [],
                 stdin: options.stdin ?? "",
                 timeoutMs: options.timeout ?? 30_000,
             }, nativeOptions(options));
         },
+    });
+
+    const terminal = Object.freeze({
+        open: (command, options = {}) => request("/_pam/process", {
+            operation: 2,
+            command,
+            arguments: options.arguments ?? [],
+            columns: options.columns ?? 80,
+            rows: options.rows ?? 24,
+        }, nativeOptions(options)),
+        write: (sessionId, data, options = {}) => request("/_pam/process", {
+            operation: 3, sessionId, data,
+        }, nativeOptions(options)),
+        read: (sessionId, options = {}) => request("/_pam/process", {
+            operation: 4, sessionId,
+        }, nativeOptions(options)).then((result) => ({
+            ...result,
+            bytes: Uint8Array.from(atob(result.data), (character) => character.charCodeAt(0)),
+        })),
+        resize: (sessionId, columns, rows, options = {}) => request("/_pam/process", {
+            operation: 5, sessionId, columns, rows,
+        }, nativeOptions(options)),
+        close: (sessionId, options = {}) => request("/_pam/process", {
+            operation: 6, sessionId,
+        }, nativeOptions(options)),
+    });
+
+    const search = Object.freeze({
+        index: (path, title, content, options = {}) => request("/_pam/search", {
+            operation: 1, path, title, content,
+        }, nativeOptions(options)),
+        remove: (path, options = {}) => request("/_pam/search", {
+            operation: 2, path,
+        }, nativeOptions(options)),
+        query: (query, options = {}) => request("/_pam/search", {
+            operation: 3, query, limit: options.limit ?? 50,
+        }, nativeOptions(options)),
+        rebuild: (target, options = {}) => request("/_pam/search", {
+            operation: 4, target: normalizeTarget(target),
+        }, nativeOptions(options)),
+        clear: (options = {}) => request("/_pam/search", {
+            operation: 5,
+        }, nativeOptions(options)),
     });
 
     const portal = Object.freeze({
@@ -2589,6 +3425,30 @@ const BRIDGE_SCRIPT: &str = r#"
             target: normalizeTarget(target),
             title: options.title ?? "Pam Desktop",
         }, nativeOptions(options)),
+        camera: Object.freeze({
+            status: (options = {}) => request("/_pam/portal", { operation: 4 }, nativeOptions(options)),
+            request: (options = {}) => request("/_pam/portal", { operation: 5 }, nativeOptions(options)),
+        }),
+        microphone: Object.freeze({
+            request: async (options = {}) => {
+                if (!navigator.mediaDevices?.getUserMedia) {
+                    return Object.freeze({ granted: false, available: false });
+                }
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: options.constraints ?? true });
+                for (const track of stream.getTracks()) track.stop();
+                return Object.freeze({ granted: true, available: true });
+            },
+        }),
+        scanner: Object.freeze({
+            list: (options = {}) => request("/_pam/portal", { operation: 6 }, nativeOptions(options)),
+            scan: (target, options = {}) => request("/_pam/portal", {
+                operation: 7,
+                target: normalizeTarget(target),
+                device: options.device ?? null,
+                resolution: options.resolution ?? 300,
+                format: options.format ?? 1,
+            }, nativeOptions(options)),
+        }),
     });
 
     const updater = Object.freeze({
@@ -2612,6 +3472,11 @@ const BRIDGE_SCRIPT: &str = r#"
                 payload,
             }, { ...nativeOptions(options), includeRequestMetadata: true });
         },
+    });
+
+    const commands = Object.freeze({
+        list: () => commandManifest,
+        invoke: (name, payload = null, options = {}) => invoke(name, payload, options),
     });
 
     const on = (name, listener) => {
@@ -2656,26 +3521,7 @@ const BRIDGE_SCRIPT: &str = r#"
         configurable: false,
         enumerable: true,
         writable: false,
-        value: Object.freeze({
-            apiVersion: 1,
-            clipboard,
-            database,
-            diagnostics,
-            dialog,
-            emit,
-            fs: filesystem,
-            http,
-            invoke,
-            notification,
-            on,
-            plugins,
-            portal,
-            process,
-            secrets,
-            system,
-            updater,
-            windowId,
-        }),
+        value: Object.freeze(__PAM_SURFACE__),
     });
     void poll();
 })();
@@ -2735,11 +3581,51 @@ mod tests {
             otlp_spans_dropped: 0,
             otlp_export_errors: 0,
             otlp_spans_rejected: 0,
+            uptime_milliseconds: 42,
+            resident_memory_bytes: 1024,
+            terminal_sessions: 0,
+            rust_plugins: 0,
+            startup_milliseconds: Some(40),
+            startup_snapshot_hit: false,
+            ipc_p95_microseconds: Some(300),
+            frame_p95_microseconds: Some(16_000),
+            performance_complete: true,
+            performance_passed: true,
+            performance_violations: Vec::new(),
+            performance_budget: pam_desktop_protocol::PerformanceBudgetConfig::default(),
         };
         let value = serde_json::to_value(snapshot).unwrap();
         assert_eq!(value["schemaVersion"], 1);
         assert_eq!(value["surfaceCode"], 3);
         assert_eq!(value["capturedAtUnixMs"], 42);
+        assert_eq!(value["performancePassed"], true);
+    }
+
+    #[test]
+    fn performance_gate_reports_each_exceeded_budget() {
+        let budget = pam_desktop_protocol::PerformanceBudgetConfig {
+            cold_start_milliseconds: 100,
+            warm_start_milliseconds: 50,
+            idle_memory_megabytes: 1,
+            idle_cpu_basis_points: 100,
+            ipc_p95_microseconds: 200,
+            frame_p95_microseconds: 16_667,
+        };
+        assert_eq!(
+            performance_violations(
+                &budget,
+                false,
+                Some(101),
+                2 * 1024 * 1024,
+                Some(201),
+                Some(16_668),
+            ),
+            ["cold-start", "resident-memory", "ipc-p95", "frame-p95"]
+        );
+        assert_eq!(
+            performance_violations(&budget, true, Some(51), 0, Some(1), Some(1)),
+            ["warm-start"]
+        );
     }
 
     #[test]
@@ -2754,16 +3640,33 @@ mod tests {
         assert!(BRIDGE_SCRIPT.contains("responseBodyEncoding: options.responseBodyEncoding ?? 1"));
         assert!(BRIDGE_SCRIPT.contains("const secrets = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const process = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const terminal = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const search = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const portal = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const diagnostics = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("const automation = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const updater = Object.freeze({"));
         assert!(BRIDGE_SCRIPT.contains("const plugins = Object.freeze({"));
-        assert!(BRIDGE_SCRIPT.contains("value: Object.freeze({"));
-        assert!(BRIDGE_SCRIPT.contains("apiVersion: 1,"));
-        assert!(BRIDGE_SCRIPT.contains("fs: filesystem,"));
+        assert!(BRIDGE_SCRIPT.contains("const commandManifest = Object.freeze(__PAM_COMMANDS__)"));
+        assert!(BRIDGE_SCRIPT.contains("const commands = Object.freeze({"));
+        assert!(BRIDGE_SCRIPT.contains("value: Object.freeze(__PAM_SURFACE__)"));
         assert!(BRIDGE_SCRIPT.contains("openRead: async (target, options = {})"));
         assert!(BRIDGE_SCRIPT.contains("writeStream: async (target, source, options = {})"));
-        assert!(BRIDGE_SCRIPT.contains("updater,"));
-        assert!(BRIDGE_SCRIPT.contains("plugins,"));
+    }
+
+    #[test]
+    fn automation_operations_are_stable_sequential_integers() {
+        assert_eq!(AutomationOperation::Menu as u8, 1);
+        assert_eq!(AutomationOperation::ShortcutPress as u8, 2);
+        assert_eq!(AutomationOperation::ShortcutRelease as u8, 3);
+        assert_eq!(AutomationOperation::WindowFocus as u8, 4);
+        assert_eq!(AutomationOperation::WindowShow as u8, 5);
+        assert_eq!(AutomationOperation::WindowHide as u8, 6);
+        assert_eq!(AutomationOperation::WindowClose as u8, 7);
+        assert_eq!(AutomationOperation::DragHover as u8, 8);
+        assert_eq!(AutomationOperation::DragDrop as u8, 9);
+        assert_eq!(AutomationOperation::DragLeave as u8, 10);
+        assert!(AutomationOperation::try_from(0).is_err());
+        assert!(AutomationOperation::try_from(11).is_err());
     }
 }

@@ -1,0 +1,46 @@
+[package]
+name = "pam-desktop-platform"
+description = "Audited native workstation integrations behind a safe PAM Desktop API."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "NSApplication",
+    "NSControl",
+    "NSDockTile",
+    "NSImage",
+    "NSImageView",
+    "NSProgressIndicator",
+    "NSResponder",
+    "NSView",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "NSString",
+    "objc2-core-foundation",
+] }
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

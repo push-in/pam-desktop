@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ffi::{OsStr, OsString};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -21,6 +22,10 @@ enum PackageFormat {
     Portable = 2,
     Debian = 3,
     Native = 4,
+    AppImage = 5,
+    Rpm = 6,
+    Pkg = 7,
+    Msi = 8,
 }
 
 /// Parsed `pam desktop build` action.
@@ -89,17 +94,35 @@ impl BuildOptions {
                         "native" | "dmg" | "msix" => {
                             formats.insert(PackageFormat::Native);
                         }
+                        "appimage" => {
+                            formats.insert(PackageFormat::AppImage);
+                        }
+                        "rpm" => {
+                            formats.insert(PackageFormat::Rpm);
+                        }
+                        "pkg" => {
+                            formats.insert(PackageFormat::Pkg);
+                        }
+                        "msi" => {
+                            formats.insert(PackageFormat::Msi);
+                        }
                         "all" => {
                             formats.extend([PackageFormat::Directory, PackageFormat::Portable]);
                             if cfg!(target_os = "linux") {
-                                formats.insert(PackageFormat::Debian);
+                                formats.extend([
+                                    PackageFormat::Debian,
+                                    PackageFormat::AppImage,
+                                    PackageFormat::Rpm,
+                                ]);
+                            } else if cfg!(target_os = "macos") {
+                                formats.extend([PackageFormat::Native, PackageFormat::Pkg]);
                             } else {
-                                formats.insert(PackageFormat::Native);
+                                formats.extend([PackageFormat::Native, PackageFormat::Msi]);
                             }
                         }
                         _ => {
                             return Err(format!(
-                                "unknown package format {value:?}; expected directory, portable, deb, native, dmg, msix, or all"
+                                "unknown package format {value:?}; expected directory, portable, appimage, deb, rpm, native, dmg, pkg, msix, msi, or all"
                             ));
                         }
                     }
@@ -263,6 +286,16 @@ fn build_with_binaries(
         )?;
         staged.push((native, destinations.native.clone()));
     }
+    stage_extended_installers(
+        &workspace.path,
+        &bundle,
+        bootstrap,
+        &names,
+        &icon,
+        options,
+        &destinations,
+        &mut staged,
+    )?;
     if options.formats.contains(&PackageFormat::Directory) {
         staged.push((bundle, destinations.directory.clone()));
     }
@@ -284,15 +317,72 @@ fn build_with_binaries(
     Ok(BuildResult { artifacts })
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "installer staging keeps every immutable build input explicit"
+)]
+fn stage_extended_installers(
+    workspace: &Path,
+    bundle: &Path,
+    bootstrap: &Bootstrap,
+    names: &ArtifactNames,
+    icon: &Path,
+    options: &BuildOptions,
+    destinations: &ArtifactDestinations,
+    staged: &mut Vec<(PathBuf, Option<PathBuf>)>,
+) -> Result<(), String> {
+    if options.formats.contains(&PackageFormat::AppImage) {
+        let artifact = workspace.join(&names.appimage);
+        create_appimage_package(workspace, bundle, bootstrap, names, icon, &artifact)?;
+        staged.push((artifact, destinations.appimage.clone()));
+    }
+    if options.formats.contains(&PackageFormat::Rpm) {
+        let artifact = workspace.join(&names.rpm);
+        create_rpm_package(workspace, bundle, bootstrap, names, icon, &artifact)?;
+        staged.push((artifact, destinations.rpm.clone()));
+    }
+    if options.formats.contains(&PackageFormat::Pkg) {
+        let artifact = workspace.join(&names.pkg);
+        create_pkg_package(
+            workspace,
+            bundle,
+            bootstrap,
+            names,
+            icon,
+            &artifact,
+            options.sign,
+        )?;
+        staged.push((artifact, destinations.pkg.clone()));
+    }
+    if options.formats.contains(&PackageFormat::Msi) {
+        let artifact = workspace.join(&names.msi);
+        create_msi_package(workspace, bundle, bootstrap, names, &artifact, options.sign)?;
+        staged.push((artifact, destinations.msi.clone()));
+    }
+    Ok(())
+}
+
 fn validate_platform_formats(options: &BuildOptions) -> Result<(), String> {
-    if options.formats.contains(&PackageFormat::Debian) && !cfg!(target_os = "linux") {
-        return Err("the deb format is only available on Linux".to_owned());
+    if options.formats.iter().any(|format| {
+        matches!(
+            format,
+            PackageFormat::Debian | PackageFormat::AppImage | PackageFormat::Rpm
+        )
+    }) && !cfg!(target_os = "linux")
+    {
+        return Err("appimage, deb and rpm formats are only available on Linux".to_owned());
     }
     if options.formats.contains(&PackageFormat::Native) && cfg!(target_os = "linux") {
         return Err(
             "Linux native packaging uses --format deb; --format native targets DMG or MSIX"
                 .to_owned(),
         );
+    }
+    if options.formats.contains(&PackageFormat::Pkg) && !cfg!(target_os = "macos") {
+        return Err("the pkg format is only available on macOS".to_owned());
+    }
+    if options.formats.contains(&PackageFormat::Msi) && !cfg!(target_os = "windows") {
+        return Err("the msi format is only available on Windows".to_owned());
     }
     if options.sign && cfg!(target_os = "linux") {
         return Err(
@@ -308,6 +398,10 @@ struct ArtifactNames {
     portable: String,
     debian: String,
     native: String,
+    appimage: String,
+    rpm: String,
+    pkg: String,
+    msi: String,
     executable: String,
     architecture: String,
 }
@@ -346,11 +440,22 @@ impl ArtifactNames {
         } else {
             format!("{}-{}-{architecture}.deb", executable, manifest.version)
         };
+        let appimage = format!(
+            "{}-{}-{architecture}.AppImage",
+            executable, manifest.version
+        );
+        let rpm = format!("{}-{}.{architecture}.rpm", executable, manifest.version);
+        let pkg = format!("{}-{}-{architecture}.pkg", executable, manifest.version);
+        let msi = format!("{}-{}-{architecture}.msi", executable, manifest.version);
         Ok(Self {
             bundle,
             portable,
             debian,
             native,
+            appimage,
+            rpm,
+            pkg,
+            msi,
             executable,
             architecture,
         })
@@ -362,6 +467,10 @@ struct ArtifactDestinations {
     portable: Option<PathBuf>,
     debian: Option<PathBuf>,
     native: Option<PathBuf>,
+    appimage: Option<PathBuf>,
+    rpm: Option<PathBuf>,
+    pkg: Option<PathBuf>,
+    msi: Option<PathBuf>,
 }
 
 impl ArtifactDestinations {
@@ -379,6 +488,18 @@ impl ArtifactDestinations {
             native: formats
                 .contains(&PackageFormat::Native)
                 .then(|| output.join(&names.native)),
+            appimage: formats
+                .contains(&PackageFormat::AppImage)
+                .then(|| output.join(&names.appimage)),
+            rpm: formats
+                .contains(&PackageFormat::Rpm)
+                .then(|| output.join(&names.rpm)),
+            pkg: formats
+                .contains(&PackageFormat::Pkg)
+                .then(|| output.join(&names.pkg)),
+            msi: formats
+                .contains(&PackageFormat::Msi)
+                .then(|| output.join(&names.msi)),
         }
     }
 
@@ -388,6 +509,10 @@ impl ArtifactDestinations {
             .chain(self.portable.iter())
             .chain(self.debian.iter())
             .chain(self.native.iter())
+            .chain(self.appimage.iter())
+            .chain(self.rpm.iter())
+            .chain(self.pkg.iter())
+            .chain(self.msi.iter())
     }
 
     fn ensure_available(&self, force: bool) -> Result<(), String> {
@@ -533,7 +658,11 @@ fn materialize_bundle(
         )
     })?;
     if cfg!(target_os = "linux") {
-        let desktop_template = desktop_entry(&bootstrap.manifest, "@PAM_EXEC@");
+        let desktop_template = desktop_entry(
+            &bootstrap.manifest,
+            &bootstrap.shell.quick_actions,
+            "@PAM_EXEC@",
+        );
         fs::write(
             applications.join(format!("{}.desktop.in", bootstrap.manifest.identifier)),
             desktop_template,
@@ -963,7 +1092,11 @@ fn bundle_icon_path(
     )))
 }
 
-fn desktop_entry(manifest: &ApplicationManifest, executable: &str) -> String {
+fn desktop_entry(
+    manifest: &ApplicationManifest,
+    quick_actions: &[pam_desktop_protocol::QuickActionConfig],
+    executable: &str,
+) -> String {
     let category = freedesktop_category(manifest.category);
     let mime_types = manifest
         .lifecycle
@@ -983,8 +1116,30 @@ fn desktop_entry(manifest: &ApplicationManifest, executable: &str) -> String {
     } else {
         format!("MimeType={};\n", mime_types.join(";"))
     };
+    let action_ids = quick_actions
+        .iter()
+        .map(|action| action.id.as_str())
+        .collect::<Vec<_>>();
+    let actions_line = if action_ids.is_empty() {
+        String::new()
+    } else {
+        format!("Actions={};\n", action_ids.join(";"))
+    };
+    let action_sections = quick_actions
+        .iter()
+        .fold(String::new(), |mut output, action| {
+            write!(
+                output,
+                "\n[Desktop Action {}]\nName={}\nExec={executable} --pam-quick-action={}\n",
+                action.id,
+                desktop_value(&action.label),
+                action.id,
+            )
+            .expect("writing to a String cannot fail");
+            output
+        });
     format!(
-        "[Desktop Entry]\nType=Application\nVersion=1.5\nName={}\nComment={}\nExec={executable} %U\nIcon={}\nTerminal=false\nCategories={category};\n{mime_line}StartupWMClass={}\n",
+        "[Desktop Entry]\nType=Application\nVersion=1.5\nName={}\nComment={}\nExec={executable} %U\nIcon={}\nTerminal=false\nCategories={category};\n{mime_line}{actions_line}StartupWMClass={}\n{action_sections}",
         desktop_value(&manifest.name),
         desktop_value(&manifest.description),
         manifest.identifier,
@@ -1759,6 +1914,7 @@ fn create_debian_package(
         applications.join(format!("{}.desktop", bootstrap.manifest.identifier)),
         desktop_entry(
             &bootstrap.manifest,
+            &bootstrap.shell.quick_actions,
             &format!(
                 "/opt/{}/bin/{}",
                 bootstrap.manifest.identifier, names.executable
@@ -1821,6 +1977,347 @@ fn create_debian_package(
         return Err(format!("dpkg-deb failed with status {status}"));
     }
     Ok(())
+}
+
+fn require_packaging_tool(name: &str, install_hint: &str) -> Result<(), String> {
+    Command::new(name)
+        .arg("--version")
+        .output()
+        .map_err(|error| format!("{name} is required ({install_hint}): {error}"))
+        .and_then(|output| {
+            output.status.success().then_some(()).ok_or_else(|| {
+                format!(
+                    "{name} is unavailable ({install_hint}); status {}",
+                    output.status
+                )
+            })
+        })
+}
+
+fn create_appimage_package(
+    workspace: &Path,
+    bundle: &Path,
+    bootstrap: &Bootstrap,
+    names: &ArtifactNames,
+    icon: &Path,
+    output: &Path,
+) -> Result<(), String> {
+    require_packaging_tool(
+        "appimagetool",
+        "install the official AppImageKit appimagetool",
+    )?;
+    let app_dir = workspace.join(format!("{}.AppDir", names.executable));
+    let runtime = app_dir.join("usr/lib").join(&bootstrap.manifest.identifier);
+    hardlink_or_copy(bundle, &runtime)?;
+    let usr_bin = app_dir.join("usr/bin");
+    fs::create_dir_all(&usr_bin).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        format!(
+            "../lib/{}/bin/{}",
+            bootstrap.manifest.identifier, names.executable
+        ),
+        usr_bin.join(&names.executable),
+    )
+    .map_err(|error| format!("cannot create AppImage launcher link: {error}"))?;
+    let desktop_name = format!("{}.desktop", bootstrap.manifest.identifier);
+    fs::write(
+        app_dir.join(&desktop_name),
+        desktop_entry(
+            &bootstrap.manifest,
+            &bootstrap.shell.quick_actions,
+            &names.executable,
+        ),
+    )
+    .map_err(|error| format!("cannot write AppImage desktop entry: {error}"))?;
+    let icon_extension = icon.extension().and_then(OsStr::to_str).unwrap_or("png");
+    let icon_name = format!("{}.{}", bootstrap.manifest.identifier, icon_extension);
+    fs::copy(icon, app_dir.join(&icon_name))
+        .map_err(|error| format!("cannot copy AppImage icon: {error}"))?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&desktop_name, app_dir.join("AppRun.desktop"))
+        .map_err(|error| format!("cannot create AppImage desktop alias: {error}"))?;
+    fs::write(
+        app_dir.join("AppRun"),
+        format!(
+            "#!/bin/sh\nset -eu\nHERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\nexec \"$HERE/usr/bin/{}\" \"$@\"\n",
+            names.executable
+        ),
+    )
+    .map_err(|error| format!("cannot write AppRun: {error}"))?;
+    make_executable(&app_dir.join("AppRun"))?;
+    let status = Command::new("appimagetool")
+        .arg(&app_dir)
+        .arg(output)
+        .env("ARCH", appimage_architecture(&names.architecture)?)
+        .status()
+        .map_err(|error| format!("cannot start appimagetool: {error}"))?;
+    if !status.success() {
+        return Err(format!("appimagetool failed with status {status}"));
+    }
+    Ok(())
+}
+
+fn appimage_architecture(architecture: &str) -> Result<&'static str, String> {
+    match architecture {
+        "x86_64" => Ok("x86_64"),
+        "aarch64" => Ok("aarch64"),
+        value => Err(format!("unsupported AppImage architecture {value:?}")),
+    }
+}
+
+fn create_rpm_package(
+    workspace: &Path,
+    bundle: &Path,
+    bootstrap: &Bootstrap,
+    names: &ArtifactNames,
+    icon: &Path,
+    output: &Path,
+) -> Result<(), String> {
+    require_packaging_tool("rpmbuild", "install rpm-build")?;
+    let top = workspace.join("rpmbuild");
+    let payload = workspace.join("rpm-payload");
+    let application_root = payload.join("opt").join(&bootstrap.manifest.identifier);
+    hardlink_or_copy(bundle, &application_root)?;
+    let usr_bin = payload.join("usr/bin");
+    fs::create_dir_all(&usr_bin).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        format!(
+            "/opt/{}/bin/{}",
+            bootstrap.manifest.identifier, names.executable
+        ),
+        usr_bin.join(&names.executable),
+    )
+    .map_err(|error| format!("cannot create RPM launcher link: {error}"))?;
+    let applications = payload.join("usr/share/applications");
+    fs::create_dir_all(&applications).map_err(|error| error.to_string())?;
+    fs::write(
+        applications.join(format!("{}.desktop", bootstrap.manifest.identifier)),
+        desktop_entry(
+            &bootstrap.manifest,
+            &bootstrap.shell.quick_actions,
+            &format!(
+                "/opt/{}/bin/{}",
+                bootstrap.manifest.identifier, names.executable
+            ),
+        ),
+    )
+    .map_err(|error| format!("cannot write RPM desktop entry: {error}"))?;
+    let source_icon = bundle_icon_path(bundle, &bootstrap.manifest, icon)?;
+    let relative_icon = source_icon
+        .strip_prefix(bundle)
+        .map_err(|error| error.to_string())?;
+    let destination_icon = payload.join("usr").join(relative_icon);
+    if let Some(parent) = destination_icon.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    hardlink_or_copy(&source_icon, &destination_icon)?;
+    let specs = top.join("SPECS");
+    fs::create_dir_all(&specs).map_err(|error| error.to_string())?;
+    let spec = format!(
+        "Name: {}\nVersion: {}\nRelease: 1%{{?dist}}\nSummary: {}\nLicense: Proprietary\nBuildArch: {}\nRequires: glibc, fontconfig, freetype, libX11, libxcb\n\n%description\n{}\n\n%install\nmkdir -p %{{buildroot}}\ncp -a {}/* %{{buildroot}}/\n\n%files\n/opt/{}\n/usr/bin/{}\n/usr/share/applications/{}.desktop\n/usr/share/icons\n",
+        names.executable,
+        bootstrap.manifest.version,
+        rpm_escape(&bootstrap.manifest.name),
+        rpm_architecture(&names.architecture)?,
+        rpm_escape(if bootstrap.manifest.description.is_empty() {
+            &bootstrap.manifest.name
+        } else {
+            &bootstrap.manifest.description
+        }),
+        payload.display(),
+        bootstrap.manifest.identifier,
+        names.executable,
+        bootstrap.manifest.identifier,
+    );
+    let spec_path = specs.join(format!("{}.spec", names.executable));
+    fs::write(&spec_path, spec).map_err(|error| format!("cannot write RPM spec: {error}"))?;
+    let status = Command::new("rpmbuild")
+        .args(["-bb", "--define"])
+        .arg(format!("_topdir {}", top.display()))
+        .arg(&spec_path)
+        .status()
+        .map_err(|error| format!("cannot start rpmbuild: {error}"))?;
+    if !status.success() {
+        return Err(format!("rpmbuild failed with status {status}"));
+    }
+    let built = find_single_extension(&top.join("RPMS"), "rpm")?;
+    fs::rename(&built, output).map_err(|error| format!("cannot stage RPM: {error}"))
+}
+
+fn rpm_architecture(architecture: &str) -> Result<&'static str, String> {
+    match architecture {
+        "x86_64" => Ok("x86_64"),
+        "aarch64" => Ok("aarch64"),
+        value => Err(format!("unsupported RPM architecture {value:?}")),
+    }
+}
+
+fn rpm_escape(value: &str) -> String {
+    value.replace(['\n', '\r'], " ").replace('%', "%%")
+}
+
+fn find_single_extension(root: &Path, extension: &str) -> Result<PathBuf, String> {
+    let mut matches = Vec::new();
+    let mut directories = vec![root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(&directory)
+            .map_err(|error| format!("cannot inspect {}: {error}", directory.display()))?
+        {
+            let path = entry.map_err(|error| error.to_string())?.path();
+            if path.is_dir() {
+                directories.push(path);
+            } else if path.extension().and_then(OsStr::to_str) == Some(extension) {
+                matches.push(path);
+            }
+        }
+    }
+    if matches.len() != 1 {
+        return Err(format!(
+            "expected exactly one .{extension} artifact, found {}",
+            matches.len()
+        ));
+    }
+    Ok(matches.remove(0))
+}
+
+fn create_pkg_package(
+    workspace: &Path,
+    bundle: &Path,
+    bootstrap: &Bootstrap,
+    names: &ArtifactNames,
+    icon: &Path,
+    output: &Path,
+    sign: bool,
+) -> Result<(), String> {
+    require_packaging_tool("pkgbuild", "install Xcode command-line tools")?;
+    let application = create_macos_application(workspace, bundle, bootstrap, names, icon, sign)?;
+    let root = workspace.join("pkg-root/Applications");
+    fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    hardlink_or_copy(
+        &application,
+        &root.join(application.file_name().unwrap_or_default()),
+    )?;
+    let mut command = Command::new("pkgbuild");
+    command.arg("--root").arg(workspace.join("pkg-root")).args([
+        "--identifier",
+        &bootstrap.manifest.identifier,
+        "--version",
+        &bootstrap.manifest.version,
+    ]);
+    if sign {
+        let identity = std::env::var("PAM_MACOS_INSTALLER_IDENTITY").map_err(|_| {
+            "PAM_MACOS_INSTALLER_IDENTITY is required for signed PKG builds".to_owned()
+        })?;
+        command.args(["--sign", &identity]);
+    }
+    let status = command
+        .arg(output)
+        .status()
+        .map_err(|error| format!("cannot start pkgbuild: {error}"))?;
+    if !status.success() {
+        return Err(format!("pkgbuild failed with status {status}"));
+    }
+    if sign {
+        notarize_macos(output)?;
+    }
+    Ok(())
+}
+
+fn create_msi_package(
+    workspace: &Path,
+    bundle: &Path,
+    bootstrap: &Bootstrap,
+    names: &ArtifactNames,
+    output: &Path,
+    sign: bool,
+) -> Result<(), String> {
+    require_packaging_tool("wix", "install WiX Toolset 5 and place wix on PATH")?;
+    let source = workspace.join("pam-desktop.wxs");
+    fs::write(
+        &source,
+        windows_wix_source(bundle, &bootstrap.manifest, names),
+    )
+    .map_err(|error| format!("cannot write WiX source: {error}"))?;
+    let status = Command::new("wix")
+        .args([
+            "build",
+            "-arch",
+            windows_wix_architecture(&names.architecture)?,
+        ])
+        .arg("-o")
+        .arg(output)
+        .arg(&source)
+        .status()
+        .map_err(|error| format!("cannot start WiX: {error}"))?;
+    if !status.success() {
+        return Err(format!("WiX failed with status {status}"));
+    }
+    if sign {
+        sign_windows_path(output)?;
+    }
+    Ok(())
+}
+
+fn windows_wix_architecture(architecture: &str) -> Result<&'static str, String> {
+    match architecture {
+        "x86_64" => Ok("x64"),
+        "aarch64" => Ok("arm64"),
+        value => Err(format!("unsupported MSI architecture {value:?}")),
+    }
+}
+
+fn windows_wix_source(
+    bundle: &Path,
+    manifest: &ApplicationManifest,
+    names: &ArtifactNames,
+) -> String {
+    let source = xml_escape(&bundle.display().to_string());
+    format!(
+        r#"<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="{}" Manufacturer="{}" Version="{}" UpgradeCode="{}" Scope="perUser">
+    <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="INSTALLFOLDER" Name="{}">
+        <Files Include="{}\**" />
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Main"><FilesRef Id="INSTALLFOLDER" /></Feature>
+  </Package>
+</Wix>
+"#,
+        xml_escape(&manifest.name),
+        xml_escape(&manifest.publisher),
+        windows_version(&manifest.version),
+        deterministic_windows_guid(&manifest.identifier),
+        xml_escape(&names.executable),
+        source,
+    )
+}
+
+fn deterministic_windows_guid(identifier: &str) -> String {
+    let digest = Sha256::digest(identifier.as_bytes());
+    format!(
+        "{:02X}{:02X}{:02X}{:02X}-{:02X}{:02X}-4{:01X}{:02X}-8{:01X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+        digest[0],
+        digest[1],
+        digest[2],
+        digest[3],
+        digest[4],
+        digest[5],
+        digest[6] & 0x0f,
+        digest[7],
+        digest[8] & 0x0f,
+        digest[9],
+        digest[10],
+        digest[11],
+        digest[12],
+        digest[13],
+        digest[14],
+        digest[15]
+    )
 }
 
 fn hardlink_or_copy(source: &Path, destination: &Path) -> Result<(), String> {
@@ -2048,7 +2545,7 @@ fn hex(bytes: &[u8]) -> String {
 /// Prints the stable cross-platform build command surface.
 pub fn print_build_usage(executable: &OsStr) {
     println!(
-        "Usage: {} build [directory] [--output directory] [--format directory|portable|deb|native|all] [--sign] [--force]\n\nDefault formats: directory and portable.\nLinux native installers use `deb`; macOS and Windows use `native` (DMG/MSIX). `--sign` reads platform credentials from PAM_MACOS_* or PAM_WINDOWS_* environment variables.",
+        "Usage: {} build [directory] [--output directory] [--format directory|portable|appimage|deb|rpm|dmg|pkg|msix|msi|native|all] [--sign] [--force]\n\nDefault formats: directory and portable.\nLinux supports AppImage, DEB and RPM; macOS supports DMG and PKG; Windows supports MSIX and MSI. `--sign` reads platform credentials from PAM_MACOS_* or PAM_WINDOWS_* environment variables.",
         executable.to_string_lossy()
     );
 }
@@ -2082,6 +2579,53 @@ mod tests {
         assert!(options.formats.contains(&PackageFormat::Portable));
         assert!(!options.formats.contains(&PackageFormat::Directory));
         assert!(options.force);
+    }
+
+    #[test]
+    fn parses_every_professional_installer_format() {
+        let BuildCommand::Build(options) = BuildOptions::parse([
+            OsString::from("--format"),
+            OsString::from("appimage"),
+            OsString::from("--format"),
+            OsString::from("rpm"),
+            OsString::from("--format"),
+            OsString::from("pkg"),
+            OsString::from("--format"),
+            OsString::from("msi"),
+        ])
+        .expect("professional formats should parse") else {
+            panic!("expected a build action");
+        };
+        assert!(options.formats.contains(&PackageFormat::AppImage));
+        assert!(options.formats.contains(&PackageFormat::Rpm));
+        assert!(options.formats.contains(&PackageFormat::Pkg));
+        assert!(options.formats.contains(&PackageFormat::Msi));
+    }
+
+    #[test]
+    fn produces_stable_windows_installer_identity() {
+        let first = deterministic_windows_guid("com.pushin.studio");
+        assert_eq!(first, deterministic_windows_guid("com.pushin.studio"));
+        assert_ne!(first, deterministic_windows_guid("com.pushin.other"));
+        assert_eq!(first.len(), 36);
+    }
+
+    #[test]
+    fn emits_freedesktop_quick_actions_with_bounded_host_arguments() {
+        let mut bootstrap = Fixture::bootstrap();
+        bootstrap.shell.quick_actions = vec![pam_desktop_protocol::QuickActionConfig {
+            id: "compose".to_owned(),
+            label: "New message".to_owned(),
+            description: "Open the composer".to_owned(),
+        }];
+        let entry = desktop_entry(
+            &bootstrap.manifest,
+            &bootstrap.shell.quick_actions,
+            "/opt/pam/bin/example",
+        );
+        assert!(entry.contains("Actions=compose;\n"));
+        assert!(entry.contains("[Desktop Action compose]\nName=New message\n"));
+        assert!(entry.contains("Exec=/opt/pam/bin/example --pam-quick-action=compose\n"));
     }
 
     #[test]
@@ -2369,6 +2913,7 @@ mod tests {
                 background_jobs: Vec::new(),
                 rust_plugins: Vec::new(),
                 php_plugins: Vec::new(),
+                workstation: pam_desktop_protocol::WorkstationConfig::default(),
             }
         }
     }

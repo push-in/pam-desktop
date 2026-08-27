@@ -43,6 +43,7 @@ use Pam\Desktop\Menu;
 use Pam\Desktop\MenuItem;
 use Pam\Desktop\Plugin;
 use Pam\Desktop\ProcessCommand;
+use Pam\Desktop\QuickAction;
 use Pam\Desktop\HttpOrigin;
 use Pam\Desktop\ResponseStatus;
 use Pam\Desktop\RustPlugin;
@@ -50,12 +51,19 @@ use Pam\Desktop\Shell;
 use Pam\Desktop\ShellEffect;
 use Pam\Desktop\Tray;
 use Pam\Desktop\TrayCloseBehavior;
+use Pam\Desktop\TaskbarProgressState;
 use Pam\Desktop\UpdatePolicy;
 use Pam\Desktop\Updates;
 use Pam\Desktop\Window;
 use Pam\Desktop\WindowEffect;
 use Pam\Desktop\WindowTheme;
 use Pam\Desktop\WindowHandle;
+use Pam\Desktop\InstallerScope;
+use Pam\Desktop\ProcessIsolation;
+use Pam\Desktop\ReleaseChannel;
+use Pam\Desktop\RenderBackend;
+use Pam\Desktop\WindowProfile;
+use Pam\Desktop\Workstation;
 
 final readonly class GreetingService
 {
@@ -210,7 +218,21 @@ function expect(bool $condition, string $message): void
 expect(Application::API_VERSION === 1, 'The stable PHP API version should be 1.');
 expect(Application::PROTOCOL_VERSION === 6, 'The stable PHP protocol should remain version 6.');
 
+$workstation = Workstation::defaults()
+    ->instance(forwardArguments: true)
+    ->processes(ProcessIsolation::PerWorkspace, 4)
+    ->agent()
+    ->runtime(15_000)
+    ->rendering(RenderBackend::Gpu)
+    ->window('settings', WindowProfile::child('main'))
+    ->release(ReleaseChannel::Beta, InstallerScope::CurrentUser);
+$workstationConfig = $workstation->toArray();
+expect($workstationConfig['isolation'] === 3, 'Workstation isolation must use its integer protocol enum.');
+expect($workstationConfig['windows']['settings']['role'] === 2, 'Child windows must retain their integer role.');
+expect($workstationConfig['releaseChannel'] === 2, 'Release channels must use their integer protocol enum.');
+
 $conventionApplication = ConventionApp::application();
+$conventionApplication->workstation($workstation);
 $conventionBoot = $conventionApplication->dispatch([
     'version' => 6,
     'id' => 100,
@@ -220,6 +242,8 @@ $conventionBoot = $conventionApplication->dispatch([
     'payload' => null,
 ]);
 expect($conventionBoot['payload']['manifest']['identifier'] === 'com.pushin.convention', 'The #[Desktop] attribute should define the manifest.');
+expect($conventionBoot['payload']['parallelWorkerCount'] === 4, 'The workstation process pool should configure PHP execution lanes.');
+expect($conventionBoot['payload']['workstation']['renderBackend'] === 2, 'The workstation bootstrap should cross the PHP/Rust boundary.');
 expect($conventionBoot['payload']['windows'][0]['entry'] === 'resources/index.html', 'The convention-first app should use the conventional entry page.');
 expect($conventionBoot['payload']['windows'][1]['id'] === 'settings', 'Attributed windows should be discovered.');
 expect($conventionBoot['payload']['windows'][1]['width'] === 680, 'A window may lower its initial and minimum width together.');
@@ -409,14 +433,19 @@ $application = Application::create(
                 Tray::create('tray', 'Pam Desktop')
                     ->closeBehavior(TrayCloseBehavior::Hide),
             )
-            ->shortcut(GlobalShortcut::create('show', 'CmdOrCtrl+Shift+KeyP')),
+            ->shortcut(GlobalShortcut::create('show', 'CmdOrCtrl+Shift+KeyP'))
+            ->quickAction(
+                QuickAction::create('compose', 'New message')
+                    ->description('Open the message composer'),
+            ),
     )
     ->job(
         'heartbeat',
         BackgroundJob::every(60_000)
             ->runOnStart()
             ->timeout(5_000)
-            ->overlap(JobOverlapPolicy::Skip),
+            ->overlap(JobOverlapPolicy::Skip)
+            ->persistent(maximumAttempts: 4, retryBackoffMilliseconds: 500),
         static fn (JobContext $job): CommandResult => CommandResult::success([
             'runId' => $job->runId,
         ]),
@@ -511,7 +540,10 @@ expect($boot['payload']['shell']['menus'][0]['id'] === 'tray', 'The tray menu sh
 expect($boot['payload']['shell']['menus'][0]['items'][1]['kind'] === 2, 'Checkbox must be integer 2.');
 expect($boot['payload']['shell']['tray']['closeBehavior'] === 2, 'Hide behavior must be integer 2.');
 expect($boot['payload']['shell']['shortcuts'][0]['id'] === 'show', 'The shortcut should be serialized.');
+expect($boot['payload']['shell']['quickActions'][0]['id'] === 'compose', 'Quick actions should be serialized.');
 expect($boot['payload']['backgroundJobs'][0]['overlap'] === 1, 'Skip overlap must be integer 1.');
+expect($boot['payload']['backgroundJobs'][0]['persistent'] === true, 'Persistent jobs should be explicit.');
+expect($boot['payload']['backgroundJobs'][0]['maximumAttempts'] === 4, 'Persistent job retry limits should cross the protocol.');
 expect($boot['payload']['rustPlugins'][0]['id'] === 'system', 'Rust plugins should be declared.');
 expect($boot['payload']['phpPlugins'] === ['fixture'], 'PHP plugins should be visible to the host.');
 
@@ -580,5 +612,25 @@ expect($plugin['payload']['window'] === 'main', 'PHP plugins should register app
 
 $shellEffect = ShellEffect::menuChecked('background', false)->toArray();
 expect($shellEffect['kind'] === 6, 'Menu checked effects must use integer kind 6.');
+
+$attention = WindowEffect::attention(critical: true, windowId: 'settings')->toArray();
+expect($attention['kind'] === 11, 'Window attention must use integer kind 11.');
+expect($attention['windowId'] === 'settings', 'Window attention must preserve its target.');
+expect($attention['payload']['active'] === true, 'Window attention should be active by default.');
+expect($attention['payload']['critical'] === true, 'Critical attention should be explicit.');
+
+$badge = ShellEffect::badge(42)->toArray();
+expect($badge['kind'] === 12, 'Application badges must use integer kind 12.');
+expect($badge['payload'] === ['visible' => true, 'count' => 42], 'Badge payload should be bounded and explicit.');
+$progress = ShellEffect::taskbarProgress(0.75, TaskbarProgressState::Paused)->toArray();
+expect($progress['kind'] === 13, 'Taskbar progress must use integer kind 13.');
+expect($progress['payload']['state'] === 4, 'Paused taskbar state must use integer 4.');
+$quit = ShellEffect::quit()->toArray();
+expect($quit['kind'] === 14, 'Explicit application quit must use integer kind 14.');
+try {
+    ShellEffect::taskbarProgress(1.01);
+    expect(false, 'Out-of-range taskbar progress must fail.');
+} catch (InvalidArgumentException) {
+}
 
 echo "pushinbr/pam-desktop protocol tests passed\n";

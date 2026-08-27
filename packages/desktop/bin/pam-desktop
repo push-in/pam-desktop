@@ -1,164 +1,222 @@
-#!/bin/sh
+#!/usr/bin/env php
+<?php
 
-set -eu
+declare(strict_types=1);
 
-# The native host has its own release cadence. Composer API releases can keep
-# using this verified engine without rebuilding Servo.
-HOST_VERSION='1.2.7'
-TARGET='x86_64-unknown-linux-gnu'
-REPOSITORY='push-in/pam-desktop'
-ARCHIVE="pam-desktop-${HOST_VERSION}-${TARGET}.tar.gz"
-RELEASE_URL="https://github.com/${REPOSITORY}/releases/download/v${HOST_VERSION}"
+const HOST_VERSION = '1.2.7';
+const REPOSITORY = 'push-in/pam-desktop';
+const MAX_ARCHIVE_BYTES = 536_870_912;
+const MAX_EXTRACTED_BYTES = 1_073_741_824;
 
-fail()
+function fail(string $message): never
 {
-    printf 'pam-desktop: %s\n' "$1" >&2
-    exit 1
+    fwrite(STDERR, "pam-desktop: {$message}\n");
+    exit(1);
 }
 
-[ "$(uname -s)" = 'Linux' ] || fail 'the desktop host currently supports Linux only'
-case "$(uname -m)" in
-    x86_64|amd64) ;;
-    *) fail "unsupported architecture; expected x86_64 for ${TARGET}" ;;
-esac
-
-CACHE_HOME=${XDG_CACHE_HOME:-"${HOME:?HOME must be set}/.cache"}
-HOST_ROOT="${PAM_DESKTOP_CACHE_DIR:-"${CACHE_HOME}/pam-desktop"}"
-HOST_DIRECTORY="${HOST_ROOT}/${HOST_VERSION}/${TARGET}"
-HOST_BINARY="${HOST_DIRECTORY}/bin/pam-desktop"
-LOCK_DIRECTORY="${HOST_ROOT}/.install-${HOST_VERSION}-${TARGET}.lock"
-
-case "$HOST_ROOT" in
-    /*) ;;
-    *) fail 'the cache directory must be absolute' ;;
-esac
-case "$HOST_ROOT" in
-    */../*|*/..|*/./*|*/.) fail 'the cache directory must not contain dot segments' ;;
-esac
-
-prune_host_cache()
+function target(): string
 {
-    [ -d "$HOST_ROOT" ] || return 0
+    $machine = strtolower(php_uname('m'));
+    $architecture = match ($machine) {
+        'x86_64', 'amd64' => 'x86_64',
+        'arm64', 'aarch64' => 'aarch64',
+        default => fail("unsupported architecture {$machine}"),
+    };
+    return match (PHP_OS_FAMILY) {
+        'Linux' => $architecture === 'x86_64' ? 'x86_64-unknown-linux-gnu' : 'aarch64-unknown-linux-gnu',
+        'Darwin' => "{$architecture}-apple-darwin",
+        'Windows' => $architecture === 'x86_64' ? 'x86_64-pc-windows-msvc' : 'aarch64-pc-windows-msvc',
+        default => fail('the native desktop host supports Linux, macOS and Windows'),
+    };
+}
 
-    find "$HOST_ROOT" -mindepth 1 -maxdepth 1 -type d \
-        -name '.download-*' -mtime +1 -exec rm -rf -- {} +
+function absolutePath(string $path): bool
+{
+    return PHP_OS_FAMILY === 'Windows'
+        ? preg_match('/^(?:[A-Za-z]:[\\\\\/]|\\\\\\\\)/', $path) === 1
+        : str_starts_with($path, '/');
+}
 
-    find "$HOST_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %f\n' \
-        | sort -rn \
-        | awk -v current="$HOST_VERSION" '
-            $2 == current { next }
-            $2 ~ /^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$/ {
-                retained++
-                if (retained > 2) print $2
+/** @param list<string> $arguments */
+function execute(string $binary, array $arguments): never
+{
+    $process = proc_open([$binary, ...$arguments], [STDIN, STDOUT, STDERR], $pipes, null, null, ['bypass_shell' => true]);
+    if (!is_resource($process)) {
+        fail("cannot start native host {$binary}");
+    }
+    $status = proc_close($process);
+    exit($status === -1 ? 1 : $status);
+}
+
+function removeTree(string $directory): void
+{
+    if (!is_dir($directory) || is_link($directory)) {
+        return;
+    }
+    foreach (new FilesystemIterator($directory, FilesystemIterator::SKIP_DOTS) as $entry) {
+        $path = $entry->getPathname();
+        if ($entry->isDir() && !$entry->isLink()) {
+            removeTree($path);
+        } else {
+            @unlink($path);
+        }
+    }
+    @rmdir($directory);
+}
+
+function pruneCache(string $root, string $current): void
+{
+    if (!is_dir($root)) {
+        return;
+    }
+    $versions = [];
+    foreach (new FilesystemIterator($root, FilesystemIterator::SKIP_DOTS) as $entry) {
+        if (!$entry->isDir() || $entry->isLink()) {
+            continue;
+        }
+        $name = $entry->getFilename();
+        if (str_starts_with($name, '.download-') && $entry->getMTime() < time() - 86_400) {
+            removeTree($entry->getPathname());
+        } elseif ($name !== $current && preg_match('/^\d+\.\d+\.\d+(?:[.+-][0-9A-Za-z.-]+)?$/', $name) === 1) {
+            $versions[] = ['path' => $entry->getPathname(), 'mtime' => $entry->getMTime()];
+        }
+    }
+    usort($versions, static fn (array $left, array $right): int => $right['mtime'] <=> $left['mtime']);
+    foreach (array_slice($versions, 2) as $stale) {
+        removeTree($stale['path']);
+    }
+}
+
+function download(string $url, string $destination): void
+{
+    $context = stream_context_create([
+        'http' => ['follow_location' => 1, 'max_redirects' => 5, 'timeout' => 60],
+        'ssl' => ['verify_peer' => true, 'verify_peer_name' => true, 'SNI_enabled' => true],
+    ]);
+    $input = @fopen($url, 'rb', false, $context);
+    $output = @fopen($destination, 'xb');
+    if ($input === false || $output === false) {
+        if (is_resource($input)) {
+            fclose($input);
+        }
+        fail("cannot download {$url}");
+    }
+    $bytes = stream_copy_to_stream($input, $output, MAX_ARCHIVE_BYTES + 1);
+    fclose($input);
+    fclose($output);
+    if ($bytes === false || $bytes > MAX_ARCHIVE_BYTES) {
+        @unlink($destination);
+        fail('native host download exceeds the 512 MiB safety limit');
+    }
+}
+
+function extractArchive(string $archive, string $work, string $package): string
+{
+    try {
+        $compressed = new PharData($archive);
+        $compressed->decompress();
+        $tarPath = substr($archive, 0, -3);
+        $tar = new PharData($tarPath);
+        $prefix = 'phar://' . str_replace('\\', '/', $tarPath) . '/';
+        $bytes = 0;
+        foreach (new RecursiveIteratorIterator($tar) as $entry) {
+            $path = str_replace('\\', '/', $entry->getPathname());
+            $relative = str_starts_with($path, $prefix) ? substr($path, strlen($prefix)) : '';
+            if ($relative === '' || str_starts_with($relative, '/') || preg_match('#(^|/)\.\.(/|$)#', $relative)) {
+                fail('native host archive contains an unsafe path');
             }
-        ' \
-        | while IFS= read -r stale_version
-        do
-            [ -n "$stale_version" ] || continue
-            rm -rf -- "${HOST_ROOT}/${stale_version}"
-        done
+            $bytes += $entry->getSize();
+            if ($bytes > MAX_EXTRACTED_BYTES) {
+                fail('native host archive exceeds the 1 GiB extraction limit');
+            }
+        }
+        $tar->extractTo($work, null, false);
+    } catch (Throwable $error) {
+        fail("cannot extract native host archive: {$error->getMessage()}");
+    }
+    $directory = $work . DIRECTORY_SEPARATOR . $package;
+    if (!is_dir($directory)) {
+        fail('native host archive has no expected package directory');
+    }
+    return $directory;
 }
 
-prune_host_cache
-
-if [ -x "$HOST_BINARY" ]; then
-    exec "$HOST_BINARY" "$@"
-fi
-
-command -v tar >/dev/null 2>&1 || fail 'tar is required to install the desktop host'
-if command -v curl >/dev/null 2>&1; then
-    DOWNLOAD='curl'
-elif command -v wget >/dev/null 2>&1; then
-    DOWNLOAD='wget'
-else
-    fail 'curl or wget is required for the first desktop host download'
-fi
-if command -v sha256sum >/dev/null 2>&1; then
-    CHECKSUM='sha256sum'
-elif command -v shasum >/dev/null 2>&1; then
-    CHECKSUM='shasum'
-else
-    fail 'sha256sum or shasum is required to verify the desktop host'
-fi
-
-mkdir -p "$HOST_ROOT"
-if ! mkdir "$LOCK_DIRECTORY" 2>/dev/null; then
-    attempts=0
-    while [ "$attempts" -lt 120 ] && [ ! -x "$HOST_BINARY" ]
-    do
-        attempts=$((attempts + 1))
-        sleep 1
-    done
-    [ -x "$HOST_BINARY" ] \
-        || fail "another installation is still running; remove ${LOCK_DIRECTORY} if it is stale"
-    exec "$HOST_BINARY" "$@"
-fi
-
-WORK_DIRECTORY=$(mktemp -d "${HOST_ROOT}/.download-${HOST_VERSION}.XXXXXX")
-cleanup()
-{
-    rm -rf "$WORK_DIRECTORY"
-    rmdir "$LOCK_DIRECTORY" 2>/dev/null || true
+$arguments = array_slice($argv, 1);
+$override = getenv('PAM_DESKTOP_HOST_BINARY');
+if (is_string($override) && $override !== '') {
+    if (!absolutePath($override) || !is_file($override) || is_link($override)) {
+        fail('PAM_DESKTOP_HOST_BINARY must be an absolute regular non-symlink file');
+    }
+    execute($override, $arguments);
 }
-trap cleanup EXIT HUP INT TERM
 
-printf 'pam-desktop: downloading verified host %s...\n' "$HOST_VERSION" >&2
-if [ "$DOWNLOAD" = 'curl' ]; then
-    curl --fail --location --silent --show-error \
-        --output "${WORK_DIRECTORY}/${ARCHIVE}" \
-        "${RELEASE_URL}/${ARCHIVE}" \
-        || fail "host ${HOST_VERSION} is not available yet; retry in a moment"
-    curl --fail --location --silent --show-error \
-        --output "${WORK_DIRECTORY}/${ARCHIVE}.sha256" \
-        "${RELEASE_URL}/${ARCHIVE}.sha256" \
-        || fail "cannot download the host checksum"
-else
-    wget --quiet --output-document="${WORK_DIRECTORY}/${ARCHIVE}" \
-        "${RELEASE_URL}/${ARCHIVE}" \
-        || fail "host ${HOST_VERSION} is not available yet; retry in a moment"
-    wget --quiet --output-document="${WORK_DIRECTORY}/${ARCHIVE}.sha256" \
-        "${RELEASE_URL}/${ARCHIVE}.sha256" \
-        || fail "cannot download the host checksum"
-fi
+$target = target();
+$suffix = PHP_OS_FAMILY === 'Windows' ? '.exe' : '';
+$cacheBase = getenv('PAM_DESKTOP_CACHE_DIR');
+if (!is_string($cacheBase) || $cacheBase === '') {
+    $cacheBase = match (PHP_OS_FAMILY) {
+        'Windows' => (getenv('LOCALAPPDATA') ?: fail('LOCALAPPDATA is unavailable')) . '\\pam-desktop',
+        'Darwin' => (getenv('HOME') ?: fail('HOME is unavailable')) . '/Library/Caches/pam-desktop',
+        default => (getenv('XDG_CACHE_HOME') ?: (getenv('HOME') ?: fail('HOME is unavailable')) . '/.cache') . '/pam-desktop',
+    };
+}
+if (!absolutePath($cacheBase)) {
+    fail('the desktop host cache directory must be absolute');
+}
+$hostDirectory = $cacheBase . DIRECTORY_SEPARATOR . HOST_VERSION . DIRECTORY_SEPARATOR . $target;
+$hostBinary = $hostDirectory . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . "pam-desktop{$suffix}";
+pruneCache($cacheBase, HOST_VERSION);
+if (is_file($hostBinary)) {
+    execute($hostBinary, $arguments);
+}
+if (!extension_loaded('phar')) {
+    fail('the PHP Phar extension is required for the first native host installation');
+}
+if (!is_dir($cacheBase) && !mkdir($cacheBase, 0700, true) && !is_dir($cacheBase)) {
+    fail("cannot create native host cache {$cacheBase}");
+}
+$lockPath = $cacheBase . DIRECTORY_SEPARATOR . '.install-' . HOST_VERSION . "-{$target}.lock";
+$lock = fopen($lockPath, 'c+b');
+if ($lock === false || !flock($lock, LOCK_EX)) {
+    fail('cannot acquire the native host installation lock');
+}
+if (is_file($hostBinary)) {
+    flock($lock, LOCK_UN);
+    fclose($lock);
+    execute($hostBinary, $arguments);
+}
 
-(
-    cd "$WORK_DIRECTORY"
-    if [ "$CHECKSUM" = 'sha256sum' ]; then
-        sha256sum --check "${ARCHIVE}.sha256"
-    else
-        expected=$(cut -d ' ' -f 1 "${ARCHIVE}.sha256")
-        actual=$(shasum -a 256 "$ARCHIVE" | cut -d ' ' -f 1)
-        [ "$actual" = "$expected" ] || fail 'host checksum verification failed'
-    fi
-) >&2
-
-tar -tzf "${WORK_DIRECTORY}/${ARCHIVE}" | while IFS= read -r member
-do
-    case "$member" in
-        /*|../*|*/../*|*/..) fail "unsafe archive member: ${member}" ;;
-    esac
-done
-tar -xzf "${WORK_DIRECTORY}/${ARCHIVE}" -C "$WORK_DIRECTORY"
-
-PACKAGE_DIRECTORY="${WORK_DIRECTORY}/pam-desktop-${HOST_VERSION}-${TARGET}"
-[ -x "${PACKAGE_DIRECTORY}/bin/pam-desktop" ] \
-    || fail 'the verified archive does not contain the desktop host'
-[ "$("${PACKAGE_DIRECTORY}/bin/pam-desktop" --version)" = "pam-desktop ${HOST_VERSION}" ] \
-    || fail 'the downloaded desktop host reports an unexpected version'
-
-STAGING="${HOST_ROOT}/.host-${HOST_VERSION}-${TARGET}-$$"
-mkdir -p "$STAGING"
-cp -R "${PACKAGE_DIRECTORY}/." "$STAGING/"
-mkdir -p "$(dirname "$HOST_DIRECTORY")"
-if [ -e "$HOST_DIRECTORY" ]; then
-    rm -rf "$STAGING"
-else
-    mv "$STAGING" "$HOST_DIRECTORY"
-fi
-
-trap - EXIT HUP INT TERM
-rm -rf "$WORK_DIRECTORY"
-rmdir "$LOCK_DIRECTORY"
-
-printf 'pam-desktop: host %s ready.\n' "$HOST_VERSION" >&2
-exec "$HOST_BINARY" "$@"
+$work = $cacheBase . DIRECTORY_SEPARATOR . '.download-' . HOST_VERSION . '-' . bin2hex(random_bytes(8));
+if (!mkdir($work, 0700)) {
+    fail('cannot create native host staging directory');
+}
+register_shutdown_function(static fn () => removeTree($work));
+$package = 'pam-desktop-' . HOST_VERSION . "-{$target}";
+$archiveName = "{$package}.tar.gz";
+$release = 'https://github.com/' . REPOSITORY . '/releases/download/v' . HOST_VERSION;
+$archive = $work . DIRECTORY_SEPARATOR . $archiveName;
+$checksum = $archive . '.sha256';
+fwrite(STDERR, 'pam-desktop: downloading verified host ' . HOST_VERSION . " for {$target}...\n");
+download("{$release}/{$archiveName}", $archive);
+download("{$release}/{$archiveName}.sha256", $checksum);
+$expected = strtolower(strtok(trim((string) file_get_contents($checksum)), " \t"));
+$actual = hash_file('sha256', $archive);
+if (!is_string($actual) || strlen($expected) !== 64 || !hash_equals($expected, strtolower($actual))) {
+    fail('native host archive checksum verification failed');
+}
+$packageDirectory = extractArchive($archive, $work, $package);
+$candidate = $packageDirectory . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . "pam-desktop{$suffix}";
+if (!is_file($candidate)) {
+    fail('verified archive does not contain the native desktop host');
+}
+if (!is_dir(dirname($hostDirectory)) && !mkdir(dirname($hostDirectory), 0700, true) && !is_dir(dirname($hostDirectory))) {
+    fail('cannot create the versioned native host cache');
+}
+if (!@rename($packageDirectory, $hostDirectory) && !is_file($hostBinary)) {
+    fail('cannot atomically publish the native desktop host');
+}
+flock($lock, LOCK_UN);
+fclose($lock);
+@unlink($lockPath);
+fwrite(STDERR, 'pam-desktop: host ' . HOST_VERSION . " ready.\n");
+execute($hostBinary, $arguments);

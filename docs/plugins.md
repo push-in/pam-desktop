@@ -137,9 +137,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Metadata is validated during application boot and again after recovery.
-Declared identity and exported commands cannot change while the application is
-running.
+Registration validates the project-relative executable and its optional hash
+without spawning it. The process and protocol handshake are initialized lazily
+on the plugin's first invocation; metadata is then validated and pinned for
+every recovery. Declared identity and exported commands cannot change while the
+application is running. Applications with many Composer-discovered extensions
+therefore pay no process or handshake cost for unused plugins.
 
 ## Isolation and failure semantics
 
@@ -156,8 +159,8 @@ For each configured plugin, the host:
 
 1. resolves a regular executable below the project while rejecting `.git`,
    `.pam`, `dist`, `node_modules`, `target`, parent traversal, and symlinks;
-2. verifies the optional pinned SHA-256 before initial start and every restart;
-3. starts the process with an empty inherited environment and piped standard
+2. verifies the optional pinned SHA-256 at registration, first use and every restart;
+3. starts the process lazily with an empty inherited environment and piped standard
    input/output, exposing only documented `PAM_DESKTOP_*` variables;
 4. performs a protocol-1 boot handshake and validates its exact metadata;
 5. serializes calls per plugin, enforces the declared export list, one-megabyte

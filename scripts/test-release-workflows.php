@@ -57,6 +57,11 @@ requireFragments($platform, 'platform-compatibility.yml', [
     "            platform_code: 2\n",
     "            platform_code: 3\n",
     "      - name: Build and smoke-test the real Servo desktop host\n",
+    "      - name: Build and verify the production host archive\n",
+    '          name: pam-desktop-${{ matrix.target }}' . "\n",
+    "      - name: Attest the native host archive\n",
+    "          subject-path: |\n            dist/*.tar.gz\n            dist/*.sha256\n",
+    "        run: cargo clean\n",
     "          retention-days: 14\n",
     '          path: desktop-platform-evidence-${{ matrix.platform_code }}.json' . "\n",
     "      - scripts/desktop-platform-evidence.py\n",
@@ -74,6 +79,8 @@ requireFragments($release, 'release.yml', [
     "    uses: ./.github/workflows/platform-compatibility.yml\n",
     "  build:\n    needs:\n      - native-changes\n      - platform-contracts\n      - source-contracts\n",
     "  publish-api:\n    needs:\n      - native-changes\n      - platform-contracts\n      - source-contracts\n",
+    "      && needs.platform-contracts.result == 'success'\n",
+    "      && needs.source-contracts.result == 'success'\n",
 ]);
 
 echo "PAM Desktop release workflow contracts passed.\n";

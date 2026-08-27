@@ -1,4 +1,4 @@
-# Linux distribution
+# Desktop distribution
 
 Pam Desktop 1.0 packages the application policy declared in PHP. The build
 command boots the application, validates protocol 6, and derives identity,
@@ -32,26 +32,31 @@ Required application paths cannot be excluded. Pam also omits `.git`, `.pam`,
 `vendor` directories from Composer path packages. Absolute `type=path`
 repository locations are removed after their packages are materialized.
 
-## Linux-first build formats
+## Build formats
 
 ```bash
 # Unpacked Linux bundle + update-ready portable archive
 pam desktop build
 
 pam desktop build --format deb
+pam desktop build --format appimage
+pam desktop build --format rpm
 pam desktop build --output artifacts --format all
 ```
 
 Existing destinations cause a failure. Pass `--force` only to replace those
 exact versioned artifacts.
 
-| Host | `directory` | `portable` | native installer |
+| Host | `directory` | `portable` | installers |
 | --- | --- | --- | --- |
-| Linux | self-contained directory | deterministic `.tar.gz` | `.deb` |
+| Linux | self-contained directory | deterministic `.tar.gz` | `.AppImage`, `.deb`, `.rpm` |
+| macOS | application runtime directory | `.zip` | `.dmg`, `.pkg` |
+| Windows | application runtime directory | `.zip` | `.msix`, `.msi` |
 
-The official 1.x release pipeline generates Linux x86-64 artifacts only. The
-existing Windows/macOS packagers remain experimental code for future work;
-they are not built, published, or covered by the 1.x compatibility guarantee.
+Each installer is built on its target operating system. `--format all` selects
+all formats supported by that host. AppImage uses the official AppImageKit
+tool, RPM uses `rpmbuild`, PKG uses Apple's `pkgbuild`, and MSI uses WiX 5;
+missing tools fail before publishing an incomplete artifact.
 
 Linux packages are built on Linux. The build copies the
 host, the native launcher, Pam worker, application, isolated `php.ini`, adjacent
@@ -61,7 +66,11 @@ starting production mode.
 
 Linux portable bundles also include atomic per-user `install.sh` and
 `uninstall.sh` scripts. Debian packages install below `/opt`, expose a launcher
-under `/usr/bin`, and install Freedesktop and hicolor metadata.
+under `/usr/bin`, and install Freedesktop and hicolor metadata. RPM packages
+use the same filesystem contract. AppImage emits a self-contained AppDir with
+`AppRun`, desktop metadata and its product icon. macOS builds an `.app` before
+DMG/PKG packaging. Windows materializes the runtime into either MSIX or a WiX
+MSI; both retain the stable reverse-DNS product identity.
 
 Configured Rust plugin executables are copied with the application and must be
 present before staging succeeds.
@@ -71,6 +80,10 @@ present before staging succeeds.
 Linux `.deb` and portable bundles use the per-file integrity manifest and the
 separately signed update feed. Distribution signing secrets stay outside PHP
 and the repository; see the updates guide for the Ed25519 publication flow.
+On macOS, application binaries and the `.app` use Developer ID signing; DMG and
+PKG artifacts are notarized and stapled, with PKG additionally requiring
+`PAM_MACOS_INSTALLER_IDENTITY`. Windows signs MSIX/MSI with SHA-256 Authenticode
+and an RFC-3161 timestamp using the configured certificate thumbprint.
 
 ## Integrity and compatibility
 
@@ -109,6 +122,15 @@ The adjacent `.sha256` file authenticates the complete compressed archive.
 manifest mismatches and non-reproducible or nonfunctional installs. It then
 installs into temporary XDG directories, invokes the installed host and
 uninstalls the exact version.
+
+The native platform matrix produces the same bootstrap-facing archive contract
+for `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`. Those portable host
+archives contain the host, launcher, license and schema-1 manifest; they do not
+pretend to be application installers. `scripts/package-host-portable.py` writes
+deterministic gzip/tar metadata, refuses symlink inputs and version mismatches,
+and `scripts/verify-host-portable.py` rejects traversal, non-file members,
+unexpected files and digest mismatches. Tagged publication downloads these
+artifacts only after both native jobs and the complete source suite pass.
 
 Before either a native-host or API-only GitHub Release can be created, the
 release workflow calls the complete CI from the exact tagged commit. Formatting,

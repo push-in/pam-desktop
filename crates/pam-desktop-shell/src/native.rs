@@ -1,11 +1,14 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use arboard::Clipboard;
+use arboard::{Clipboard, ImageData};
+use base64::Engine as _;
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
+use clipboard_rs::{Clipboard as ClipboardCustom, ClipboardContext};
 use getrandom::fill;
 use notify_rust::Notification;
 #[cfg(target_os = "linux")]
@@ -19,16 +22,63 @@ use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
 use crate::database::{DatabaseRequest, DatabaseServices};
+use crate::event_hub::EventHub;
 use crate::http_client::{HttpRequest, HttpServices};
 use crate::process_runner::{ProcessRequest, ProcessServices};
+use crate::search::{SearchRequest, SearchServices};
 
 const MAX_TEXT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CLIPBOARD_BYTES: usize = 1024 * 1024;
+const MAX_CLIPBOARD_FILES: usize = 256;
+const MAX_CLIPBOARD_FORMAT_BYTES: usize = 128;
 const MAX_NOTIFICATION_TITLE_BYTES: usize = 256;
 const MAX_NOTIFICATION_BODY_BYTES: usize = 4 * 1024;
 const MAX_DIALOG_FILTERS: usize = 16;
 const MAX_DIALOG_EXTENSIONS: usize = 32;
 pub const MAX_STREAM_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+fn ensure_clipboard_size(bytes: usize) -> Result<(), NativeError> {
+    if bytes > MAX_CLIPBOARD_BYTES {
+        return Err(NativeError {
+            code: ErrorCode::ResourceTooLarge,
+            message: format!("Clipboard content is limited to {MAX_CLIPBOARD_BYTES} bytes."),
+        });
+    }
+    Ok(())
+}
+
+fn decode_clipboard_image(image: &ClipboardImage) -> Result<Vec<u8>, NativeError> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&image.rgba_base64)
+        .map_err(|_| NativeError::invalid("Clipboard image must be valid base64."))?;
+    ensure_clipboard_size(bytes.len())?;
+    let expected = image
+        .width
+        .checked_mul(image.height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| NativeError::invalid("Clipboard image dimensions overflow."))?;
+    if expected != bytes.len() {
+        return Err(NativeError::invalid(
+            "Clipboard image must contain width × height RGBA pixels.",
+        ));
+    }
+    Ok(bytes)
+}
+
+fn validate_custom_clipboard_format(format: Option<&str>) -> Result<&str, NativeError> {
+    let format = format.ok_or_else(|| NativeError::invalid("Clipboard format is required."))?;
+    if format.is_empty()
+        || format.len() > MAX_CLIPBOARD_FORMAT_BYTES
+        || !format.is_ascii()
+        || format.bytes().any(|byte| byte.is_ascii_control())
+        || !(format.starts_with("application/x-") || format.starts_with("application/vnd."))
+    {
+        return Err(NativeError::invalid(
+            "Custom clipboard formats must be printable application/x-* or application/vnd.* identifiers of at most 128 bytes.",
+        ));
+    }
+    Ok(format)
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +104,20 @@ pub struct ClipboardRequest {
     pub operation: ClipboardOperation,
     pub window_id: String,
     pub text: Option<String>,
+    pub html: Option<String>,
+    pub image: Option<ClipboardImage>,
+    #[serde(default)]
+    pub files: Vec<FileTarget>,
+    pub format: Option<String>,
+    pub data_base64: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClipboardImage {
+    pub width: usize,
+    pub height: usize,
+    pub rgba_base64: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -65,6 +129,15 @@ pub struct NotificationRequest {
     pub body: String,
     #[serde(default)]
     pub urgency: NotificationUrgency,
+    #[serde(default)]
+    pub actions: Vec<NotificationAction>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NotificationAction {
+    pub id: String,
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -77,6 +150,8 @@ pub struct DialogBridgeRequest {
     #[serde(default)]
     pub filters: Vec<DialogFilter>,
     pub access: Option<FileAccess>,
+    #[serde(default)]
+    pub persistent: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -132,6 +207,13 @@ impl NativeError {
         }
     }
 
+    pub(crate) fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::ResourceNotFound,
+            message: message.into(),
+        }
+    }
+
     fn invalid_grant() -> Self {
         Self {
             code: ErrorCode::InvalidGrant,
@@ -170,14 +252,23 @@ pub struct NativeServices {
     capabilities: NativeCapabilities,
     roots: HashMap<String, AuthorizedRoot>,
     grants: Mutex<HashMap<String, FileGrant>>,
+    persistent_grants: Mutex<HashMap<String, PersistentGrant>>,
+    persistent_grants_path: PathBuf,
     clipboard: Mutex<Option<Clipboard>>,
+    custom_clipboard: Mutex<Option<ClipboardContext>>,
+    clipboard_gate: Mutex<()>,
     databases: DatabaseServices,
     http: HttpServices,
     processes: ProcessServices,
+    search: SearchServices,
 }
 
 impl NativeServices {
-    pub fn prepare(project_root: &Path, capabilities: &NativeCapabilities) -> Result<Self, String> {
+    pub fn prepare(
+        project_root: &Path,
+        application_id: &str,
+        capabilities: &NativeCapabilities,
+    ) -> Result<Self, String> {
         capabilities.validate()?;
         let mut roots = HashMap::with_capacity(capabilities.filesystem_roots.len());
         for config in &capabilities.filesystem_roots {
@@ -219,14 +310,29 @@ impl NativeServices {
             );
         }
 
+        let persistent_grants_path = persistent_grants_path(application_id)?;
+        let persistent_grants = load_persistent_grants(&persistent_grants_path)?;
+        let grants = persistent_grants
+            .iter()
+            .filter_map(|(id, grant)| {
+                create_file_grant(&grant.path, grant.access)
+                    .ok()
+                    .map(|file_grant| (id.clone(), file_grant))
+            })
+            .collect();
         Ok(Self {
             capabilities: capabilities.clone(),
             roots,
-            grants: Mutex::new(HashMap::new()),
+            grants: Mutex::new(grants),
+            persistent_grants: Mutex::new(persistent_grants),
+            persistent_grants_path,
             clipboard: Mutex::new(None),
+            custom_clipboard: Mutex::new(None),
+            clipboard_gate: Mutex::new(()),
             databases: DatabaseServices::prepare(project_root, &capabilities.databases)?,
             http: HttpServices::prepare(&capabilities.http_origins)?,
             processes: ProcessServices::prepare(project_root, &capabilities.processes)?,
+            search: SearchServices::prepare(project_root)?,
         })
     }
 
@@ -238,6 +344,10 @@ impl NativeServices {
     #[must_use]
     pub fn desktop_portal_enabled(&self) -> bool {
         self.capabilities.desktop_portal
+    }
+
+    pub fn terminal_session_count(&self) -> usize {
+        self.processes.terminal_session_count()
     }
 
     #[must_use]
@@ -262,8 +372,16 @@ impl NativeServices {
     }
 
     pub fn process(&self, request: &ProcessRequest) -> Result<Value, NativeError> {
-        serde_json::to_value(self.processes.execute(request)?)
-            .map_err(|error| NativeError::native("Cannot encode process result", error))
+        self.processes.dispatch(request)
+    }
+
+    pub fn search(&self, request: &SearchRequest) -> Result<Value, NativeError> {
+        let path = request
+            .target
+            .as_ref()
+            .map(|target| self.watch_path(target))
+            .transpose()?;
+        self.search.dispatch(request, path.as_deref())
     }
 
     pub fn watch_path(&self, target: &FileTarget) -> Result<PathBuf, NativeError> {
@@ -478,18 +596,36 @@ impl NativeServices {
         Ok(Value::Null)
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "all bounded clipboard formats share one lazily owned native clipboard"
+    )]
     pub fn clipboard(&self, request: &ClipboardRequest) -> Result<Value, NativeError> {
         match request.operation {
-            ClipboardOperation::ReadText if !self.capabilities.clipboard_read => {
+            ClipboardOperation::ReadText
+            | ClipboardOperation::ReadImage
+            | ClipboardOperation::ReadFiles
+            | ClipboardOperation::ReadCustom
+            | ClipboardOperation::AvailableFormats
+                if !self.capabilities.clipboard_read =>
+            {
                 return Err(NativeError::disabled("clipboard read"));
             }
-            ClipboardOperation::WriteText | ClipboardOperation::Clear
+            ClipboardOperation::WriteText
+            | ClipboardOperation::WriteHtml
+            | ClipboardOperation::WriteImage
+            | ClipboardOperation::WriteFiles
+            | ClipboardOperation::WriteCustom
+            | ClipboardOperation::Clear
                 if !self.capabilities.clipboard_write =>
             {
                 return Err(NativeError::disabled("clipboard write"));
             }
             _ => {}
         }
+        let _gate = self.clipboard_gate.lock().map_err(|_| {
+            NativeError::native("Cannot serialize clipboard access", "lock is poisoned")
+        })?;
         let mut clipboard = self
             .clipboard
             .lock()
@@ -536,6 +672,124 @@ impl NativeServices {
                     .map_err(|error| NativeError::native("Cannot write clipboard text", error))?;
                 Ok(Value::Null)
             }
+            ClipboardOperation::WriteHtml => {
+                let html = request
+                    .html
+                    .as_deref()
+                    .ok_or_else(|| NativeError::invalid("Clipboard HTML is required."))?;
+                ensure_clipboard_size(html.len())?;
+                clipboard
+                    .set_html(html, request.text.as_deref())
+                    .map_err(|error| NativeError::native("Cannot write clipboard HTML", error))?;
+                Ok(Value::Null)
+            }
+            ClipboardOperation::ReadImage => {
+                let image = clipboard
+                    .get_image()
+                    .map_err(|error| NativeError::native("Cannot read clipboard image", error))?;
+                ensure_clipboard_size(image.bytes.len())?;
+                Ok(json!({
+                    "width": image.width,
+                    "height": image.height,
+                    "rgbaBase64": base64::engine::general_purpose::STANDARD.encode(image.bytes),
+                }))
+            }
+            ClipboardOperation::WriteImage => {
+                let image = request
+                    .image
+                    .as_ref()
+                    .ok_or_else(|| NativeError::invalid("Clipboard image is required."))?;
+                let bytes = decode_clipboard_image(image)?;
+                clipboard
+                    .set_image(ImageData {
+                        width: image.width,
+                        height: image.height,
+                        bytes: Cow::Owned(bytes),
+                    })
+                    .map_err(|error| NativeError::native("Cannot write clipboard image", error))?;
+                Ok(Value::Null)
+            }
+            ClipboardOperation::ReadFiles => {
+                let paths = clipboard
+                    .get()
+                    .file_list()
+                    .map_err(|error| NativeError::native("Cannot read clipboard files", error))?;
+                if paths.len() > MAX_CLIPBOARD_FILES {
+                    return Err(NativeError::too_large(format!(
+                        "Clipboard file lists are limited to {MAX_CLIPBOARD_FILES} entries."
+                    )));
+                }
+                let grants = self.grant_paths(paths, FileAccess::Read, false)?;
+                serde_json::to_value(grants).map_err(|error| {
+                    NativeError::native("Cannot encode clipboard file grants", error)
+                })
+            }
+            ClipboardOperation::WriteFiles => {
+                if request.files.is_empty() || request.files.len() > MAX_CLIPBOARD_FILES {
+                    return Err(NativeError::invalid(format!(
+                        "Clipboard file lists require 1 to {MAX_CLIPBOARD_FILES} entries."
+                    )));
+                }
+                let paths = request
+                    .files
+                    .iter()
+                    .map(|target| self.clipboard_file_path(target))
+                    .collect::<Result<Vec<_>, _>>()?;
+                clipboard
+                    .set()
+                    .file_list(&paths)
+                    .map_err(|error| NativeError::native("Cannot write clipboard files", error))?;
+                Ok(Value::Null)
+            }
+            ClipboardOperation::ReadCustom => {
+                let format = validate_custom_clipboard_format(request.format.as_deref())?;
+                let context = self.custom_clipboard()?;
+                let bytes = context
+                    .as_ref()
+                    .expect("custom clipboard is initialized immediately above")
+                    .get_buffer(format)
+                    .map_err(|error| {
+                        NativeError::native("Cannot read custom clipboard data", error)
+                    })?;
+                ensure_clipboard_size(bytes.len())?;
+                Ok(json!({
+                    "format": format,
+                    "dataBase64": base64::engine::general_purpose::STANDARD.encode(bytes),
+                }))
+            }
+            ClipboardOperation::WriteCustom => {
+                let format = validate_custom_clipboard_format(request.format.as_deref())?;
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(request.data_base64.as_deref().ok_or_else(|| {
+                        NativeError::invalid("Custom clipboard data is required.")
+                    })?)
+                    .map_err(|_| {
+                        NativeError::invalid("Custom clipboard data must be valid base64.")
+                    })?;
+                ensure_clipboard_size(bytes.len())?;
+                self.custom_clipboard()?
+                    .as_ref()
+                    .expect("custom clipboard is initialized immediately above")
+                    .set_buffer(format, bytes)
+                    .map_err(|error| {
+                        NativeError::native("Cannot write custom clipboard data", error)
+                    })?;
+                Ok(Value::Null)
+            }
+            ClipboardOperation::AvailableFormats => {
+                let formats = self
+                    .custom_clipboard()?
+                    .as_ref()
+                    .expect("custom clipboard is initialized immediately above")
+                    .available_formats()
+                    .map_err(|error| NativeError::native("Cannot list clipboard formats", error))?;
+                if formats.len() > 256 {
+                    return Err(NativeError::too_large(
+                        "The system clipboard exposed more than 256 formats.",
+                    ));
+                }
+                Ok(json!({"formats": formats}))
+            }
             ClipboardOperation::Clear => {
                 clipboard
                     .clear()
@@ -545,7 +799,49 @@ impl NativeServices {
         }
     }
 
-    pub fn notify(&self, request: &NotificationRequest) -> Result<Value, NativeError> {
+    fn custom_clipboard(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, Option<ClipboardContext>>, NativeError> {
+        let mut context = self
+            .custom_clipboard
+            .lock()
+            .map_err(|_| NativeError::native("Cannot lock custom clipboard", "lock is poisoned"))?;
+        if context.is_none() {
+            *context = Some(ClipboardContext::new().map_err(|error| {
+                NativeError::native("Cannot initialize custom clipboard", error)
+            })?);
+        }
+        Ok(context)
+    }
+
+    fn clipboard_file_path(&self, target: &FileTarget) -> Result<PathBuf, NativeError> {
+        let resolved = self.resolve(target)?;
+        resolved.require_read()?;
+        let metadata = resolved.metadata()?;
+        if !metadata.is_file() && !metadata.is_dir() {
+            return Err(NativeError::invalid(
+                "Clipboard file entries must be regular files or directories.",
+            ));
+        }
+        let path = resolved.absolute_path.ok_or_else(|| {
+            NativeError::permission("Clipboard files require a canonical local path.")
+        })?;
+        let canonical = path
+            .canonicalize()
+            .map_err(|error| NativeError::io("Cannot resolve clipboard file", &error))?;
+        if canonical != path {
+            return Err(NativeError::permission(
+                "Clipboard file paths cannot traverse symbolic links.",
+            ));
+        }
+        Ok(path)
+    }
+
+    pub fn notify(
+        &self,
+        request: &NotificationRequest,
+        events: EventHub,
+    ) -> Result<Value, NativeError> {
         if !self.capabilities.notifications {
             return Err(NativeError::disabled("notifications"));
         }
@@ -559,21 +855,81 @@ impl NativeServices {
                 "Notification bodies are limited to {MAX_NOTIFICATION_BODY_BYTES} bytes."
             )));
         }
+        if request.actions.len() > 4 {
+            return Err(NativeError::invalid(
+                "Notifications accept at most four actions.",
+            ));
+        }
+        let mut action_ids = std::collections::HashSet::new();
+        for action in &request.actions {
+            if action.id.is_empty()
+                || action.id.len() > 64
+                || !action
+                    .id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+            {
+                return Err(NativeError::invalid(
+                    "Notification action IDs must contain 1 to 64 ASCII identifier bytes.",
+                ));
+            }
+            if action.label.trim().is_empty() || action.label.len() > 80 {
+                return Err(NativeError::invalid(
+                    "Notification action labels must contain 1 to 80 bytes.",
+                ));
+            }
+            if !action_ids.insert(action.id.as_str()) {
+                return Err(NativeError::invalid(
+                    "Notification action IDs must be unique.",
+                ));
+            }
+        }
         let mut notification = Notification::new();
         notification
             .appname("Pam Desktop")
             .summary(&request.title)
             .body(&request.body);
         #[cfg(target_os = "linux")]
-        notification.urgency(match request.urgency {
-            NotificationUrgency::Low => Urgency::Low,
-            NotificationUrgency::Normal => Urgency::Normal,
-            NotificationUrgency::Critical => Urgency::Critical,
-        });
-        notification
+        {
+            notification.urgency(match request.urgency {
+                NotificationUrgency::Low => Urgency::Low,
+                NotificationUrgency::Normal => Urgency::Normal,
+                NotificationUrgency::Critical => Urgency::Critical,
+            });
+            for action in &request.actions {
+                notification.action(&action.id, &action.label);
+            }
+        }
+        let handle = notification
             .show()
             .map_err(|error| NativeError::native("Cannot show the notification", error))?;
-        Ok(Value::Null)
+        #[cfg(target_os = "linux")]
+        {
+            let id = handle.id();
+            if !request.actions.is_empty() {
+                let window_id = request.window_id.clone();
+                std::thread::Builder::new()
+                    .name(format!("pam-notification-{id}"))
+                    .spawn(move || {
+                        handle.wait_for_action(|action| {
+                            events.publish(pam_desktop_protocol::ClientEvent {
+                                name: "pam.notification.action".to_owned(),
+                                payload: json!({"notificationId": id, "action": action}),
+                                window_id: Some(window_id.clone()),
+                            });
+                        });
+                    })
+                    .map_err(|error| {
+                        NativeError::native("Cannot start notification action listener", error)
+                    })?;
+            }
+            Ok(json!({"id": id}))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (handle, events);
+            Ok(Value::Null)
+        }
     }
 
     pub fn validate_dialog(
@@ -641,10 +997,11 @@ impl NativeServices {
         &self,
         paths: Vec<PathBuf>,
         access: FileAccess,
+        persistent: bool,
     ) -> Result<Vec<FileReference>, NativeError> {
         paths
             .into_iter()
-            .map(|path| self.grant_path(&path, access))
+            .map(|path| self.grant_path_with_persistence(&path, access, persistent))
             .collect()
     }
 
@@ -653,77 +1010,44 @@ impl NativeServices {
         selected: &Path,
         access: FileAccess,
     ) -> Result<FileReference, NativeError> {
-        let (directory_path, relative, kind, name) = match std::fs::symlink_metadata(selected) {
-            Ok(metadata) => {
-                if metadata.file_type().is_symlink() {
-                    return Err(NativeError::permission(
-                        "Symbolic links cannot become external file grants.",
-                    ));
-                }
-                let canonical = std::fs::canonicalize(selected)
-                    .map_err(|error| NativeError::io("Cannot resolve the selected path", &error))?;
-                if metadata.is_dir() {
-                    let name = canonical.file_name().map_or_else(
-                        || canonical.display().to_string(),
-                        |name| name.to_string_lossy().into_owned(),
-                    );
-                    (canonical, PathBuf::new(), FileEntryKind::Directory, name)
-                } else if metadata.is_file() {
-                    let parent = canonical.parent().ok_or_else(|| {
-                        NativeError::invalid("The selected file has no parent directory.")
-                    })?;
-                    let file_name = canonical.file_name().ok_or_else(|| {
-                        NativeError::invalid("The selected file has no filename.")
-                    })?;
-                    (
-                        parent.to_path_buf(),
-                        PathBuf::from(file_name),
-                        FileEntryKind::File,
-                        file_name.to_string_lossy().into_owned(),
-                    )
-                } else {
-                    return Err(NativeError::invalid(
-                        "Only regular files and directories can become grants.",
-                    ));
-                }
-            }
-            Err(error) if error.kind() == ErrorKind::NotFound && access.can_write() => {
-                let parent = selected.parent().ok_or_else(|| {
-                    NativeError::invalid("The selected save path has no parent directory.")
-                })?;
-                let parent = std::fs::canonicalize(parent).map_err(|error| {
-                    NativeError::io("Cannot resolve the save directory", &error)
-                })?;
-                let file_name = selected.file_name().ok_or_else(|| {
-                    NativeError::invalid("The selected save path has no filename.")
-                })?;
-                (
-                    parent,
-                    PathBuf::from(file_name),
-                    FileEntryKind::File,
-                    file_name.to_string_lossy().into_owned(),
-                )
-            }
-            Err(error) => return Err(NativeError::io("Cannot inspect the selected path", &error)),
-        };
+        self.grant_path_with_persistence(selected, access, false)
+    }
 
-        let directory = Dir::open_ambient_dir(&directory_path, ambient_authority())
-            .map_err(|error| NativeError::io("Cannot open the granted directory", &error))?;
+    fn grant_path_with_persistence(
+        &self,
+        selected: &Path,
+        access: FileAccess,
+        persistent: bool,
+    ) -> Result<FileReference, NativeError> {
+        let file_grant = create_file_grant(selected, access)?;
         let grant_id = secure_grant_id()?;
+        let name = file_grant.name.clone();
+        let kind = file_grant.kind;
         self.grants
             .lock()
             .map_err(|_| NativeError::native("Cannot store the file grant", "lock is poisoned"))?
-            .insert(
+            .insert(grant_id.clone(), file_grant);
+        if persistent {
+            let canonical = canonical_grant_target(selected, access)?;
+            let mut grants = self.persistent_grants.lock().map_err(|_| {
+                NativeError::native("Cannot store the persistent file grant", "lock is poisoned")
+            })?;
+            grants.insert(
                 grant_id.clone(),
-                FileGrant {
-                    directory: Arc::new(directory),
-                    relative,
-                    kind,
+                PersistentGrant {
+                    path: canonical,
                     access,
-                    name: name.clone(),
                 },
             );
-
+            if let Err(error) = persist_grants(&self.persistent_grants_path, &grants) {
+                grants.remove(&grant_id);
+                self.grants
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&grant_id);
+                return Err(error);
+            }
+        }
         Ok(FileReference {
             grant_id,
             name,
@@ -731,7 +1055,83 @@ impl NativeServices {
             access,
         })
     }
+}
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistentGrant {
+    path: PathBuf,
+    access: FileAccess,
+}
+
+fn create_file_grant(selected: &Path, access: FileAccess) -> Result<FileGrant, NativeError> {
+    let (directory_path, relative, kind, name) = match std::fs::symlink_metadata(selected) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(NativeError::permission(
+                    "Symbolic links cannot become external file grants.",
+                ));
+            }
+            let canonical = std::fs::canonicalize(selected)
+                .map_err(|error| NativeError::io("Cannot resolve the selected path", &error))?;
+            if metadata.is_dir() {
+                let name = canonical.file_name().map_or_else(
+                    || canonical.display().to_string(),
+                    |name| name.to_string_lossy().into_owned(),
+                );
+                (canonical, PathBuf::new(), FileEntryKind::Directory, name)
+            } else if metadata.is_file() {
+                let parent = canonical.parent().ok_or_else(|| {
+                    NativeError::invalid("The selected file has no parent directory.")
+                })?;
+                let file_name = canonical
+                    .file_name()
+                    .ok_or_else(|| NativeError::invalid("The selected file has no filename."))?;
+                (
+                    parent.to_path_buf(),
+                    PathBuf::from(file_name),
+                    FileEntryKind::File,
+                    file_name.to_string_lossy().into_owned(),
+                )
+            } else {
+                return Err(NativeError::invalid(
+                    "Only regular files and directories can become grants.",
+                ));
+            }
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound && access.can_write() => {
+            let parent = selected.parent().ok_or_else(|| {
+                NativeError::invalid("The selected save path has no parent directory.")
+            })?;
+            let parent = std::fs::canonicalize(parent)
+                .map_err(|error| NativeError::io("Cannot resolve the save directory", &error))?;
+            let file_name = selected
+                .file_name()
+                .ok_or_else(|| NativeError::invalid("The selected save path has no filename."))?;
+            (
+                parent,
+                PathBuf::from(file_name),
+                FileEntryKind::File,
+                file_name.to_string_lossy().into_owned(),
+            )
+        }
+        Err(error) => return Err(NativeError::io("Cannot inspect the selected path", &error)),
+    };
+
+    let path = directory_path.join(&relative);
+    let directory = Dir::open_ambient_dir(&directory_path, ambient_authority())
+        .map_err(|error| NativeError::io("Cannot open the granted directory", &error))?;
+    Ok(FileGrant {
+        directory: Arc::new(directory),
+        relative,
+        kind,
+        access,
+        name,
+        path,
+    })
+}
+
+impl NativeServices {
     fn resolve(&self, target: &FileTarget) -> Result<ResolvedTarget, NativeError> {
         validate_relative_path(&target.path)?;
         match (&target.root, &target.grant_id) {
@@ -748,6 +1148,7 @@ impl NativeServices {
                     display_name: Path::new(&target.path)
                         .file_name()
                         .map_or_else(|| root.clone(), |name| name.to_string_lossy().into_owned()),
+                    absolute_path: Some(authorized.path.join(&target.path)),
                 })
             }
             (None, Some(grant_id)) => {
@@ -770,6 +1171,11 @@ impl NativeServices {
                 } else {
                     grant.relative.join(&target.path)
                 };
+                let absolute_path = if grant.kind == FileEntryKind::File {
+                    grant.path.clone()
+                } else {
+                    grant.path.join(&target.path)
+                };
                 Ok(ResolvedTarget {
                     directory: grant.directory,
                     relative,
@@ -781,6 +1187,7 @@ impl NativeServices {
                             .file_name()
                             .map_or_else(|| grant.name, |name| name.to_string_lossy().into_owned())
                     },
+                    absolute_path: Some(absolute_path),
                 })
             }
             _ => Err(NativeError::invalid(
@@ -804,6 +1211,7 @@ struct FileGrant {
     kind: FileEntryKind,
     access: FileAccess,
     name: String,
+    path: PathBuf,
 }
 
 struct ResolvedTarget {
@@ -811,6 +1219,7 @@ struct ResolvedTarget {
     relative: PathBuf,
     access: FileAccess,
     display_name: String,
+    absolute_path: Option<PathBuf>,
 }
 
 impl ResolvedTarget {
@@ -931,6 +1340,104 @@ fn text_too_large(operation: &str) -> NativeError {
     }
 }
 
+fn canonical_grant_target(selected: &Path, access: FileAccess) -> Result<PathBuf, NativeError> {
+    match std::fs::canonicalize(selected) {
+        Ok(path) => Ok(path),
+        Err(error) if error.kind() == ErrorKind::NotFound && access.can_write() => {
+            let parent = selected.parent().ok_or_else(|| {
+                NativeError::invalid("The selected save path has no parent directory.")
+            })?;
+            let parent = std::fs::canonicalize(parent)
+                .map_err(|error| NativeError::io("Cannot resolve the save directory", &error))?;
+            let name = selected
+                .file_name()
+                .ok_or_else(|| NativeError::invalid("The selected save path has no filename."))?;
+            Ok(parent.join(name))
+        }
+        Err(error) => Err(NativeError::io("Cannot resolve the selected path", &error)),
+    }
+}
+
+fn load_persistent_grants(path: &Path) -> Result<HashMap<String, PersistentGrant>, String> {
+    if !path.is_file() {
+        return Ok(HashMap::new());
+    }
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("cannot inspect persistent file grants: {error}"))?;
+    if metadata.file_type().is_symlink() || metadata.len() > 1024 * 1024 {
+        return Err("persistent file grants must be a regular file below 1 MiB".to_owned());
+    }
+    let grants: HashMap<String, PersistentGrant> = serde_json::from_slice(
+        &std::fs::read(path)
+            .map_err(|error| format!("cannot read persistent file grants: {error}"))?,
+    )
+    .map_err(|error| format!("cannot decode persistent file grants: {error}"))?;
+    if grants.len() > 128
+        || grants.iter().any(|(id, grant)| {
+            id.len() != 64
+                || !id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                || !grant.path.is_absolute()
+        })
+    {
+        return Err("persistent file grant store has an invalid entry".to_owned());
+    }
+    Ok(grants)
+}
+
+fn persist_grants(
+    path: &Path,
+    grants: &HashMap<String, PersistentGrant>,
+) -> Result<(), NativeError> {
+    if grants.len() > 128 {
+        return Err(NativeError::too_large(
+            "Applications may retain at most 128 persistent file grants.",
+        ));
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| NativeError::native("Cannot persist file grants", "missing parent"))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| NativeError::io("Cannot create the file grant store", &error))?;
+    let bytes = serde_json::to_vec(grants)
+        .map_err(|error| NativeError::native("Cannot encode persistent file grants", error))?;
+    let temporary = path.with_extension("json.tmp");
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut output = options
+        .open(&temporary)
+        .map_err(|error| NativeError::io("Cannot create persistent file grants", &error))?;
+    output
+        .write_all(&bytes)
+        .and_then(|()| output.sync_all())
+        .map_err(|error| NativeError::io("Cannot write persistent file grants", &error))?;
+    std::fs::rename(&temporary, path)
+        .map_err(|error| NativeError::io("Cannot publish persistent file grants", &error))
+}
+
+fn persistent_grants_path(application_id: &str) -> Result<PathBuf, String> {
+    let base = if cfg!(target_os = "windows") {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support"))
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share"))
+            })
+    }
+    .ok_or_else(|| "cannot locate OS data directory for persistent file grants".to_owned())?;
+    Ok(base
+        .join("pam-desktop")
+        .join(application_id)
+        .join("file-grants.json"))
+}
+
 fn secure_grant_id() -> Result<String, NativeError> {
     let mut bytes = [0_u8; 32];
     fill(&mut bytes)
@@ -961,6 +1468,7 @@ mod tests {
     fn services(root: &Path, access: FileAccess) -> NativeServices {
         NativeServices::prepare(
             root,
+            "com.pushin.pam-desktop-test",
             &NativeCapabilities {
                 filesystem_roots: vec![FileSystemRootConfig {
                     name: "data".to_owned(),
@@ -1088,6 +1596,102 @@ mod tests {
         drop(reader);
         drop(services);
         std::fs::remove_dir_all(root).expect("the temporary directory should be removed");
+    }
+
+    #[test]
+    fn resolves_only_readable_canonical_clipboard_files() {
+        let root = temporary_directory();
+        std::fs::write(root.join("document.txt"), "PAM").expect("clipboard fixture");
+        let services = services(&root, FileAccess::Read);
+        assert_eq!(
+            services
+                .clipboard_file_path(&target("document.txt"))
+                .expect("regular authorized file"),
+            root.join("document.txt")
+        );
+        assert!(
+            services
+                .clipboard_file_path(&target("missing.txt"))
+                .is_err()
+        );
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("document.txt"), root.join("alias.txt"))
+                .expect("symlink fixture");
+            assert!(services.clipboard_file_path(&target("alias.txt")).is_err());
+        }
+
+        drop(services);
+        std::fs::remove_dir_all(root).expect("the temporary directory should be removed");
+    }
+
+    #[test]
+    fn validates_clipboard_rgba_shape_and_bounds_without_opening_the_system_clipboard() {
+        assert_eq!(
+            validate_custom_clipboard_format(Some("application/vnd.pushin.document+json"))
+                .expect("vendor clipboard format"),
+            "application/vnd.pushin.document+json"
+        );
+        assert!(validate_custom_clipboard_format(Some("text/plain")).is_err());
+        assert!(validate_custom_clipboard_format(Some("application/x-pam\nforged")).is_err());
+
+        let valid = ClipboardImage {
+            width: 1,
+            height: 1,
+            rgba_base64: base64::engine::general_purpose::STANDARD.encode([1, 2, 3, 4]),
+        };
+        assert_eq!(
+            decode_clipboard_image(&valid).expect("one RGBA pixel should decode"),
+            [1, 2, 3, 4],
+        );
+
+        let malformed = ClipboardImage {
+            width: 2,
+            height: 1,
+            rgba_base64: valid.rgba_base64,
+        };
+        assert_eq!(
+            decode_clipboard_image(&malformed)
+                .expect_err("mismatched RGBA length must fail")
+                .code,
+            ErrorCode::InvalidPayload,
+        );
+
+        let overflow = ClipboardImage {
+            width: usize::MAX,
+            height: 2,
+            rgba_base64: String::new(),
+        };
+        assert_eq!(
+            decode_clipboard_image(&overflow)
+                .expect_err("overflowing dimensions must fail")
+                .code,
+            ErrorCode::InvalidPayload,
+        );
+    }
+
+    #[test]
+    fn persists_bounded_file_grants_atomically() {
+        let root = temporary_directory();
+        let selected = root.join("document.txt");
+        std::fs::write(&selected, "persistent").expect("fixture should exist");
+        let path = root.join("state/file-grants.json");
+        let id = "a".repeat(64);
+        let grants = HashMap::from([(
+            id.clone(),
+            PersistentGrant {
+                path: selected
+                    .canonicalize()
+                    .expect("fixture should canonicalize"),
+                access: FileAccess::Read,
+            },
+        )]);
+        persist_grants(&path, &grants).expect("grant store should persist");
+        let loaded = load_persistent_grants(&path).expect("grant store should reload");
+        assert_eq!(loaded[&id].access, FileAccess::Read);
+        assert!(create_file_grant(&loaded[&id].path, loaded[&id].access).is_ok());
+        std::fs::remove_dir_all(root).expect("fixture should be removable");
     }
 
     #[cfg(unix)]

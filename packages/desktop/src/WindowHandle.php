@@ -68,4 +68,11 @@ final readonly class WindowHandle
 
         return $this;
     }
+
+    public function attention(bool $active = true, bool $critical = false): self
+    {
+        $this->invocation->effect(WindowEffect::attention($active, $critical, $this->id));
+
+        return $this;
+    }
 }

@@ -16,6 +16,9 @@ final readonly class BackgroundJob
         public int $initialDelayMilliseconds,
         public int $timeoutMilliseconds,
         public JobOverlapPolicy $overlapPolicy,
+        public bool $persistent,
+        public int $maximumAttempts,
+        public int $retryBackoffMilliseconds,
     ) {
         if (
             $intervalMilliseconds < self::MIN_INTERVAL_MS
@@ -28,6 +31,12 @@ final readonly class BackgroundJob
                     self::MAX_INTERVAL_MS,
                 ),
             );
+        }
+        if ($maximumAttempts < 1 || $maximumAttempts > 10) {
+            throw new InvalidArgumentException('Background job attempts must be between 1 and 10.');
+        }
+        if ($retryBackoffMilliseconds < 100 || $retryBackoffMilliseconds > self::MAX_INTERVAL_MS) {
+            throw new InvalidArgumentException('Background job retry backoff must be between 100ms and one day.');
         }
         if (
             $initialDelayMilliseconds < 0
@@ -61,6 +70,9 @@ final readonly class BackgroundJob
             $milliseconds,
             min($milliseconds, 30_000),
             JobOverlapPolicy::Skip,
+            false,
+            1,
+            1_000,
         );
     }
 
@@ -71,6 +83,9 @@ final readonly class BackgroundJob
             $milliseconds,
             $this->timeoutMilliseconds,
             $this->overlapPolicy,
+            $this->persistent,
+            $this->maximumAttempts,
+            $this->retryBackoffMilliseconds,
         );
     }
 
@@ -86,6 +101,9 @@ final readonly class BackgroundJob
             $this->initialDelayMilliseconds,
             $milliseconds,
             $this->overlapPolicy,
+            $this->persistent,
+            $this->maximumAttempts,
+            $this->retryBackoffMilliseconds,
         );
     }
 
@@ -96,6 +114,22 @@ final readonly class BackgroundJob
             $this->initialDelayMilliseconds,
             $this->timeoutMilliseconds,
             $policy,
+            $this->persistent,
+            $this->maximumAttempts,
+            $this->retryBackoffMilliseconds,
+        );
+    }
+
+    public function persistent(int $maximumAttempts = 3, int $retryBackoffMilliseconds = 1_000): self
+    {
+        return new self(
+            $this->intervalMilliseconds,
+            $this->initialDelayMilliseconds,
+            $this->timeoutMilliseconds,
+            $this->overlapPolicy,
+            true,
+            $maximumAttempts,
+            $retryBackoffMilliseconds,
         );
     }
 
@@ -105,7 +139,10 @@ final readonly class BackgroundJob
      *     intervalMs: int,
      *     initialDelayMs: int,
      *     timeoutMs: int,
-     *     overlap: int
+     *     overlap: int,
+     *     persistent: bool,
+     *     maximumAttempts: int,
+     *     retryBackoffMs: int
      * }
      */
     public function toArray(string $id): array
@@ -118,6 +155,9 @@ final readonly class BackgroundJob
             'initialDelayMs' => $this->initialDelayMilliseconds,
             'timeoutMs' => $this->timeoutMilliseconds,
             'overlap' => $this->overlapPolicy->value,
+            'persistent' => $this->persistent,
+            'maximumAttempts' => $this->maximumAttempts,
+            'retryBackoffMs' => $this->retryBackoffMilliseconds,
         ];
     }
 }

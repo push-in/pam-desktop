@@ -4,7 +4,7 @@ use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use pam_desktop_protocol::{
     Bootstrap, Effect, EffectKind, MenuConfig, MenuItemConfig, MenuItemKind, ShellConfig,
-    ShortcutState, TrayCloseBehavior,
+    ShortcutState, TaskbarProgressState, TrayCloseBehavior,
 };
 use serde_json::Value;
 use winit::event_loop::EventLoopProxy;
@@ -17,6 +17,7 @@ pub struct NativeShell {
     shortcut_ids: HashMap<u32, String>,
     tray: Option<PlatformTray>,
     close_behavior: TrayCloseBehavior,
+    platform_status: PlatformStatus,
 }
 
 type PreparedHotkeys = (
@@ -34,6 +35,7 @@ impl NativeShell {
             shortcut_ids: HashMap::new(),
             tray: None,
             close_behavior: TrayCloseBehavior::Exit,
+            platform_status: PlatformStatus::empty(),
         }
     }
 
@@ -56,6 +58,7 @@ impl NativeShell {
         bootstrap: &Bootstrap,
         event_proxy: EventLoopProxy<HostEvent>,
     ) -> Result<Self, String> {
+        publish_packaged_quick_actions(bootstrap)?;
         let (hotkey_manager, hotkeys, shortcut_ids) =
             prepare_hotkeys(&bootstrap.shell, &event_proxy)?;
         let tray = bootstrap
@@ -88,6 +91,7 @@ impl NativeShell {
                 .tray
                 .as_ref()
                 .map_or(TrayCloseBehavior::Exit, |tray| tray.close_behavior),
+            platform_status: PlatformStatus::new(&bootstrap.manifest.identifier),
         })
     }
 
@@ -116,6 +120,42 @@ impl NativeShell {
     }
 
     pub fn apply_effect(&mut self, effect: &Effect) -> Result<bool, String> {
+        match effect.kind {
+            EffectKind::SetApplicationBadge => {
+                let visible = effect
+                    .payload
+                    .get("visible")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| "application badge effect is missing visibility".to_owned())?;
+                let count = effect
+                    .payload
+                    .get("count")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| "application badge effect is missing count".to_owned())?;
+                if count > 9_999 {
+                    return Err("application badge count exceeds 9,999".to_owned());
+                }
+                return self.platform_status.set_badge(visible, count);
+            }
+            EffectKind::SetTaskbarProgress => {
+                let progress = effect
+                    .payload
+                    .get("progress")
+                    .and_then(Value::as_f64)
+                    .filter(|progress| progress.is_finite() && (0.0..=1.0).contains(progress))
+                    .ok_or_else(|| "taskbar progress must be between 0 and 1".to_owned())?;
+                let state = serde_json::from_value::<TaskbarProgressState>(
+                    effect
+                        .payload
+                        .get("state")
+                        .cloned()
+                        .ok_or_else(|| "taskbar progress effect is missing state".to_owned())?,
+                )
+                .map_err(|error| format!("taskbar progress state is invalid: {error}"))?;
+                return self.platform_status.set_progress(progress, state);
+            }
+            _ => {}
+        }
         let Some(tray) = &mut self.tray else {
             return match effect.kind {
                 EffectKind::SetMenuItemEnabled
@@ -166,6 +206,121 @@ impl NativeShell {
             }
             _ => Ok(false),
         }
+    }
+}
+
+fn publish_packaged_quick_actions(bootstrap: &Bootstrap) -> Result<(), String> {
+    let Some(launcher) = std::env::var_os("PAM_DESKTOP_LAUNCHER") else {
+        return Ok(());
+    };
+    let actions = bootstrap
+        .shell
+        .quick_actions
+        .iter()
+        .map(|action| pam_desktop_platform::QuickAction {
+            id: &action.id,
+            label: &action.label,
+            description: &action.description,
+        })
+        .collect::<Vec<_>>();
+    pam_desktop_platform::publish_quick_actions(
+        &bootstrap.manifest.identifier,
+        &std::path::PathBuf::from(launcher),
+        &actions,
+    )
+}
+
+#[cfg(target_os = "linux")]
+struct PlatformStatus {
+    application_uri: String,
+    connection: Option<zbus::blocking::Connection>,
+}
+
+#[cfg(target_os = "linux")]
+impl PlatformStatus {
+    fn empty() -> Self {
+        Self {
+            application_uri: String::new(),
+            connection: None,
+        }
+    }
+
+    fn new(identifier: &str) -> Self {
+        Self {
+            application_uri: format!("application://{identifier}.desktop"),
+            connection: None,
+        }
+    }
+
+    fn set_badge(&mut self, visible: bool, count: u64) -> Result<bool, String> {
+        let count = i64::try_from(count)
+            .map_err(|_| "application badge count exceeds the Linux protocol".to_owned())?;
+        let properties = std::collections::HashMap::from([
+            ("count", zbus::zvariant::Value::I64(count)),
+            ("count-visible", zbus::zvariant::Value::Bool(visible)),
+        ]);
+        self.emit(properties)?;
+        Ok(true)
+    }
+
+    fn set_progress(&mut self, progress: f64, state: TaskbarProgressState) -> Result<bool, String> {
+        let visible = state != TaskbarProgressState::Hidden;
+        let urgent = state == TaskbarProgressState::Error;
+        let properties = std::collections::HashMap::from([
+            ("progress", zbus::zvariant::Value::F64(progress)),
+            ("progress-visible", zbus::zvariant::Value::Bool(visible)),
+            ("urgent", zbus::zvariant::Value::Bool(urgent)),
+        ]);
+        self.emit(properties)?;
+        Ok(true)
+    }
+
+    fn emit(
+        &mut self,
+        properties: std::collections::HashMap<&str, zbus::zvariant::Value<'_>>,
+    ) -> Result<(), String> {
+        if self.connection.is_none() {
+            self.connection = Some(zbus::blocking::Connection::session().map_err(|error| {
+                format!("cannot connect to the Linux desktop session bus: {error}")
+            })?);
+        }
+        self.connection
+            .as_ref()
+            .expect("the Linux desktop session connection was initialized")
+            .emit_signal(
+                None::<&str>,
+                "/",
+                "com.canonical.Unity.LauncherEntry",
+                "Update",
+                &(&self.application_uri, properties),
+            )
+            .map_err(|error| format!("cannot update Linux launcher status: {error}"))
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+struct PlatformStatus;
+
+#[cfg(not(target_os = "linux"))]
+impl PlatformStatus {
+    const fn empty() -> Self {
+        Self
+    }
+
+    fn new(_identifier: &str) -> Self {
+        Self
+    }
+
+    fn set_badge(&mut self, _visible: bool, _count: u64) -> Result<bool, String> {
+        Ok(false)
+    }
+
+    fn set_progress(
+        &mut self,
+        _progress: f64,
+        _state: TaskbarProgressState,
+    ) -> Result<bool, String> {
+        Ok(false)
     }
 }
 
@@ -677,3 +832,25 @@ mod platform {
 }
 
 use platform::{PlatformTray, install_platform_event_handlers};
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emits_bounded_launcher_badge_and_progress_signals() {
+        if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
+            return;
+        }
+        let mut status = PlatformStatus::new("dev.pam.taskbar-test");
+        status
+            .set_badge(true, 42)
+            .expect("badge signal should reach the session bus");
+        status
+            .set_progress(0.75, TaskbarProgressState::Normal)
+            .expect("progress signal should reach the session bus");
+        status
+            .set_progress(0.0, TaskbarProgressState::Hidden)
+            .expect("hidden progress signal should reach the session bus");
+    }
+}

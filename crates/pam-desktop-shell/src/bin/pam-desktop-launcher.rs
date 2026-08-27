@@ -40,6 +40,7 @@ fn launch() -> Result<std::process::ExitStatus, String> {
     command
         .arg("run")
         .arg(&app)
+        .args(forwarded_arguments(std::env::args_os()))
         .current_dir(&app)
         .env("PAM_BINARY", &pam)
         .env("PAM_DESKTOP_BUNDLE", "1")
@@ -55,6 +56,12 @@ fn launch() -> Result<std::process::ExitStatus, String> {
     command
         .status()
         .map_err(|error| format!("cannot start Pam Desktop: {error}"))
+}
+
+fn forwarded_arguments(
+    arguments: impl IntoIterator<Item = std::ffi::OsString>,
+) -> impl Iterator<Item = std::ffi::OsString> {
+    arguments.into_iter().skip(1)
 }
 
 fn prepend_library_path(command: &mut Command, library: PathBuf) {
@@ -79,4 +86,32 @@ fn log_failure(error: &str) {
     let _ = std::fs::write(path, format!("pam-desktop: {error}\n"));
     #[cfg(not(target_os = "windows"))]
     eprintln!("pam-desktop: {error}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forwards_deep_links_files_and_quick_actions_to_the_host() {
+        let arguments = [
+            "launcher",
+            "pam://open/item",
+            "/tmp/example.pam",
+            "--pam-quick-action=compose",
+        ]
+        .into_iter()
+        .map(std::ffi::OsString::from)
+        .collect::<Vec<_>>();
+        assert_eq!(
+            forwarded_arguments(arguments)
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "pam://open/item",
+                "/tmp/example.pam",
+                "--pam-quick-action=compose",
+            ]
+        );
+    }
 }

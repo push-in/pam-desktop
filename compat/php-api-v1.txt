@@ -13,10 +13,14 @@ case Pam\Desktop\DatabaseAccess::Read=1
 case Pam\Desktop\DatabaseAccess::ReadWrite=2
 case Pam\Desktop\EffectKind::CloseWindow=3
 case Pam\Desktop\EffectKind::FocusWindow=4
+case Pam\Desktop\EffectKind::QuitApplication=14
+case Pam\Desktop\EffectKind::SetApplicationBadge=12
 case Pam\Desktop\EffectKind::SetMenuItemChecked=6
 case Pam\Desktop\EffectKind::SetMenuItemEnabled=5
+case Pam\Desktop\EffectKind::SetTaskbarProgress=13
 case Pam\Desktop\EffectKind::SetTrayVisible=7
 case Pam\Desktop\EffectKind::SetWindowAlwaysOnTop=10
+case Pam\Desktop\EffectKind::SetWindowAttention=11
 case Pam\Desktop\EffectKind::SetWindowFullscreen=8
 case Pam\Desktop\EffectKind::SetWindowMaximized=9
 case Pam\Desktop\EffectKind::SetWindowTitle=1
@@ -50,6 +54,8 @@ case Pam\Desktop\ErrorCode::WorkerUnavailable=6
 case Pam\Desktop\FileAccess::Read=1
 case Pam\Desktop\FileAccess::ReadWrite=3
 case Pam\Desktop\FileAccess::Write=2
+case Pam\Desktop\InstallerScope::CurrentUser=1
+case Pam\Desktop\InstallerScope::Machine=2
 case Pam\Desktop\JobOverlapPolicy::Skip=1
 case Pam\Desktop\JobOverlapPolicy::Wait=2
 case Pam\Desktop\MenuItemKind::Checkbox=2
@@ -60,13 +66,33 @@ case Pam\Desktop\MessageKind::Request=1
 case Pam\Desktop\MessageKind::Response=2
 case Pam\Desktop\ProcessArgumentPolicy::Append=2
 case Pam\Desktop\ProcessArgumentPolicy::Fixed=1
+case Pam\Desktop\ProcessIsolation::PerWindow=2
+case Pam\Desktop\ProcessIsolation::PerWorkspace=3
+case Pam\Desktop\ProcessIsolation::Shared=1
+case Pam\Desktop\ReleaseChannel::Beta=2
+case Pam\Desktop\ReleaseChannel::Nightly=3
+case Pam\Desktop\ReleaseChannel::Stable=1
+case Pam\Desktop\RenderBackend::Automatic=1
+case Pam\Desktop\RenderBackend::Gpu=2
+case Pam\Desktop\RenderBackend::Software=3
 case Pam\Desktop\ResponseStatus::Failure=2
 case Pam\Desktop\ResponseStatus::Success=1
+case Pam\Desktop\TaskbarProgressState::Error=5
+case Pam\Desktop\TaskbarProgressState::Hidden=1
+case Pam\Desktop\TaskbarProgressState::Indeterminate=2
+case Pam\Desktop\TaskbarProgressState::Normal=3
+case Pam\Desktop\TaskbarProgressState::Paused=4
 case Pam\Desktop\TrayCloseBehavior::Exit=1
 case Pam\Desktop\TrayCloseBehavior::Hide=2
 case Pam\Desktop\UpdatePolicy::Automatic=3
 case Pam\Desktop\UpdatePolicy::Manual=1
 case Pam\Desktop\UpdatePolicy::Notify=2
+case Pam\Desktop\WindowRole::Child=2
+case Pam\Desktop\WindowRole::Modal=3
+case Pam\Desktop\WindowRole::Palette=6
+case Pam\Desktop\WindowRole::Panel=5
+case Pam\Desktop\WindowRole::Popover=4
+case Pam\Desktop\WindowRole::Primary=1
 case Pam\Desktop\WindowTheme::Dark=3
 case Pam\Desktop\WindowTheme::Light=2
 case Pam\Desktop\WindowTheme::System=1
@@ -106,6 +132,7 @@ method Pam\Desktop\Application::shell ($shell:Pam\Desktop\Shell):self
 method Pam\Desktop\Application::updates ($updates:Pam\Desktop\Updates):self
 method Pam\Desktop\Application::window ($id:string,$window:Pam\Desktop\Window):self
 method Pam\Desktop\Application::withoutUpdates ():self
+method Pam\Desktop\Application::workstation ($workstation:Pam\Desktop\Workstation):self
 method Pam\Desktop\ApplicationCategory::cases static ():array
 method Pam\Desktop\ApplicationCategory::from static ($value:string|int):static
 method Pam\Desktop\ApplicationCategory::tryFrom static ($value:string|int):?static
@@ -120,6 +147,7 @@ method Pam\Desktop\Attributes\Window::__construct ($name:string,$title:string,$p
 method Pam\Desktop\BackgroundJob::every static ($milliseconds:int):self
 method Pam\Desktop\BackgroundJob::initialDelay ($milliseconds:int):self
 method Pam\Desktop\BackgroundJob::overlap ($policy:Pam\Desktop\JobOverlapPolicy):self
+method Pam\Desktop\BackgroundJob::persistent ($maximumAttempts:int=3,$retryBackoffMilliseconds:int=1000):self
 method Pam\Desktop\BackgroundJob::runOnStart ():self
 method Pam\Desktop\BackgroundJob::timeout ($milliseconds:int):self
 method Pam\Desktop\BackgroundJob::toArray ($id:string):array
@@ -170,6 +198,7 @@ method Pam\Desktop\Desktop::windowClass ($class:string,$id:string,$window:Pam\De
 method Pam\Desktop\Desktop::windowClasses ():array
 method Pam\Desktop\Desktop::windowIds ():array
 method Pam\Desktop\Desktop::workers ($workers:int):self
+method Pam\Desktop\Desktop::workstation ($workstation:Pam\Desktop\Workstation):self
 method Pam\Desktop\DesktopWindow::__construct ($window:Pam\Desktop\WindowHandle):-
 method Pam\Desktop\DesktopWindow::close ():static
 method Pam\Desktop\DesktopWindow::focus ():static
@@ -207,6 +236,9 @@ method Pam\Desktop\GlobalShortcut::toArray ():array
 method Pam\Desktop\HttpOrigin::allow static ($name:string,$origin:string):self
 method Pam\Desktop\HttpOrigin::toArray ():array
 method Pam\Desktop\Identifier::assert static ($value:string,$label:string):void
+method Pam\Desktop\InstallerScope::cases static ():array
+method Pam\Desktop\InstallerScope::from static ($value:string|int):static
+method Pam\Desktop\InstallerScope::tryFrom static ($value:string|int):?static
 method Pam\Desktop\Invocation::effect ($effect:Pam\Desktop\Effect):void
 method Pam\Desktop\Invocation::event ($event:Pam\Desktop\ClientEvent):void
 method Pam\Desktop\Invocation::result ($payload:mixed):Pam\Desktop\CommandResult
@@ -245,6 +277,8 @@ method Pam\Desktop\MenuItemKind::tryFrom static ($value:string|int):?static
 method Pam\Desktop\MessageKind::cases static ():array
 method Pam\Desktop\MessageKind::from static ($value:string|int):static
 method Pam\Desktop\MessageKind::tryFrom static ($value:string|int):?static
+method Pam\Desktop\PerformanceBudget::__construct ($coldStartMilliseconds:int=1500,$warmStartMilliseconds:int=500,$idleMemoryMegabytes:int=180,$idleCpuBasisPoints:int=100,$ipcP95Microseconds:int=5000,$frameP95Microseconds:int=16667):-
+method Pam\Desktop\PerformanceBudget::toArray ():array
 method Pam\Desktop\Permissions::__construct ():-
 method Pam\Desktop\Permissions::capabilities ():Pam\Desktop\Capabilities
 method Pam\Desktop\Permissions::clipboard ($read:bool=true,$write:bool=true):self
@@ -267,6 +301,19 @@ method Pam\Desktop\ProcessCommand::allowArguments ($enabled:bool=true):self
 method Pam\Desktop\ProcessCommand::arguments (...$arguments:string):self
 method Pam\Desktop\ProcessCommand::executable static ($name:string,$path:string):self
 method Pam\Desktop\ProcessCommand::toArray ():array
+method Pam\Desktop\ProcessIsolation::cases static ():array
+method Pam\Desktop\ProcessIsolation::from static ($value:string|int):static
+method Pam\Desktop\ProcessIsolation::tryFrom static ($value:string|int):?static
+method Pam\Desktop\QuickAction::create static ($id:string,$label:string):self
+method Pam\Desktop\QuickAction::description ($description:string):self
+method Pam\Desktop\QuickAction::toArray ():array
+method Pam\Desktop\ReleaseChannel::cases static ():array
+method Pam\Desktop\ReleaseChannel::from static ($value:string|int):static
+method Pam\Desktop\ReleaseChannel::label ():string
+method Pam\Desktop\ReleaseChannel::tryFrom static ($value:string|int):?static
+method Pam\Desktop\RenderBackend::cases static ():array
+method Pam\Desktop\RenderBackend::from static ($value:string|int):static
+method Pam\Desktop\RenderBackend::tryFrom static ($value:string|int):?static
 method Pam\Desktop\ResponseStatus::cases static ():array
 method Pam\Desktop\ResponseStatus::from static ($value:string|int):static
 method Pam\Desktop\ResponseStatus::tryFrom static ($value:string|int):?static
@@ -277,12 +324,19 @@ method Pam\Desktop\RustPlugin::timeout ($milliseconds:int):self
 method Pam\Desktop\RustPlugin::toArray ():array
 method Pam\Desktop\Shell::menu (...$menus:Pam\Desktop\Menu):self
 method Pam\Desktop\Shell::none static ():self
+method Pam\Desktop\Shell::quickAction (...$quickActions:Pam\Desktop\QuickAction):self
 method Pam\Desktop\Shell::shortcut (...$shortcuts:Pam\Desktop\GlobalShortcut):self
 method Pam\Desktop\Shell::toArray ():array
 method Pam\Desktop\Shell::tray ($tray:Pam\Desktop\Tray):self
+method Pam\Desktop\ShellEffect::badge static ($count:?int):Pam\Desktop\Effect
 method Pam\Desktop\ShellEffect::menuChecked static ($id:string,$checked:bool=true):Pam\Desktop\Effect
 method Pam\Desktop\ShellEffect::menuEnabled static ($id:string,$enabled:bool=true):Pam\Desktop\Effect
+method Pam\Desktop\ShellEffect::quit static ():Pam\Desktop\Effect
+method Pam\Desktop\ShellEffect::taskbarProgress static ($progress:float,$state:Pam\Desktop\TaskbarProgressState=Pam\Desktop\TaskbarProgressState::Normal):Pam\Desktop\Effect
 method Pam\Desktop\ShellEffect::trayVisible static ($visible:bool=true):Pam\Desktop\Effect
+method Pam\Desktop\TaskbarProgressState::cases static ():array
+method Pam\Desktop\TaskbarProgressState::from static ($value:string|int):static
+method Pam\Desktop\TaskbarProgressState::tryFrom static ($value:string|int):?static
 method Pam\Desktop\Tray::closeBehavior ($behavior:Pam\Desktop\TrayCloseBehavior):self
 method Pam\Desktop\Tray::create static ($menuId:string,$tooltip:string):self
 method Pam\Desktop\Tray::toArray ():array
@@ -311,6 +365,7 @@ method Pam\Desktop\Window::toArray ($id:string="main"):array
 method Pam\Desktop\Window::transparent ($transparent:bool=true):self
 method Pam\Desktop\Window::visible ($visible:bool=true):self
 method Pam\Desktop\WindowEffect::alwaysOnTop static ($alwaysOnTop:bool=true,$windowId:string="main"):Pam\Desktop\Effect
+method Pam\Desktop\WindowEffect::attention static ($active:bool=true,$critical:bool=false,$windowId:string="main"):Pam\Desktop\Effect
 method Pam\Desktop\WindowEffect::close static ($windowId:string="main"):Pam\Desktop\Effect
 method Pam\Desktop\WindowEffect::focus static ($windowId:string="main"):Pam\Desktop\Effect
 method Pam\Desktop\WindowEffect::fullscreen static ($fullscreen:bool=true,$windowId:string="main"):Pam\Desktop\Effect
@@ -319,6 +374,7 @@ method Pam\Desktop\WindowEffect::title static ($title:string,$windowId:string="m
 method Pam\Desktop\WindowEffect::visible static ($visible:bool,$windowId:string="main"):Pam\Desktop\Effect
 method Pam\Desktop\WindowHandle::__construct ($id:string,$invocation:Pam\Desktop\Invocation):-
 method Pam\Desktop\WindowHandle::alwaysOnTop ($enabled:bool=true):self
+method Pam\Desktop\WindowHandle::attention ($active:bool=true,$critical:bool=false):self
 method Pam\Desktop\WindowHandle::close ():self
 method Pam\Desktop\WindowHandle::focus ():self
 method Pam\Desktop\WindowHandle::fullscreen ($enabled:bool=true):self
@@ -326,6 +382,16 @@ method Pam\Desktop\WindowHandle::hide ():self
 method Pam\Desktop\WindowHandle::maximize ($enabled:bool=true):self
 method Pam\Desktop\WindowHandle::show ():self
 method Pam\Desktop\WindowHandle::title ($title:string):self
+method Pam\Desktop\WindowProfile::child static ($parent:string="main"):self
+method Pam\Desktop\WindowProfile::modal static ($parent:string="main"):self
+method Pam\Desktop\WindowProfile::palette static ():self
+method Pam\Desktop\WindowProfile::panel static ():self
+method Pam\Desktop\WindowProfile::popover static ($parent:string="main"):self
+method Pam\Desktop\WindowProfile::primary static ():self
+method Pam\Desktop\WindowProfile::toArray ():array
+method Pam\Desktop\WindowRole::cases static ():array
+method Pam\Desktop\WindowRole::from static ($value:string|int):static
+method Pam\Desktop\WindowRole::tryFrom static ($value:string|int):?static
 method Pam\Desktop\WindowTheme::cases static ():array
 method Pam\Desktop\WindowTheme::from static ($value:string|int):static
 method Pam\Desktop\WindowTheme::tryFrom static ($value:string|int):?static
@@ -333,6 +399,18 @@ method Pam\Desktop\Windows::__construct ($invocation:Pam\Desktop\Invocation,$cur
 method Pam\Desktop\Windows::current ():Pam\Desktop\WindowHandle
 method Pam\Desktop\Windows::get ($id:string):Pam\Desktop\WindowHandle
 method Pam\Desktop\Windows::main ():Pam\Desktop\WindowHandle
+method Pam\Desktop\Workstation::agent ($background:bool=true,$persistentServices:bool=true):self
+method Pam\Desktop\Workstation::defaults static ():self
+method Pam\Desktop\Workstation::diagnostics ($devtools:bool=true,$crashReports:bool=true):self
+method Pam\Desktop\Workstation::instance ($single:bool=true,$forwardArguments:bool=true):self
+method Pam\Desktop\Workstation::performance ($budget:Pam\Desktop\PerformanceBudget):self
+method Pam\Desktop\Workstation::persistence ($autosaveMilliseconds:int=2000):self
+method Pam\Desktop\Workstation::processes ($isolation:Pam\Desktop\ProcessIsolation,$poolSize:int=2):self
+method Pam\Desktop\Workstation::release ($channel:Pam\Desktop\ReleaseChannel,$scope:Pam\Desktop\InstallerScope=Pam\Desktop\InstallerScope::CurrentUser):self
+method Pam\Desktop\Workstation::rendering ($backend:Pam\Desktop\RenderBackend=Pam\Desktop\RenderBackend::Automatic,$dirtyRegions:bool=true):self
+method Pam\Desktop\Workstation::runtime ($idleSleepMilliseconds:int=30000,$startupSnapshot:bool=true,$lazyPlugins:bool=true,$treeShaking:bool=true):self
+method Pam\Desktop\Workstation::toArray ():array
+method Pam\Desktop\Workstation::window ($id:string,$profile:Pam\Desktop\WindowProfile):self
 property Pam\Desktop\ApplicationCategory::$name readonly:string
 property Pam\Desktop\ApplicationCategory::$value readonly:int
 property Pam\Desktop\Attributes\Command::$execution readonly:Pam\Desktop\CommandExecution
@@ -371,7 +449,10 @@ property Pam\Desktop\Attributes\Window::$visible readonly:bool
 property Pam\Desktop\Attributes\Window::$width readonly:int
 property Pam\Desktop\BackgroundJob::$initialDelayMilliseconds readonly:int
 property Pam\Desktop\BackgroundJob::$intervalMilliseconds readonly:int
+property Pam\Desktop\BackgroundJob::$maximumAttempts readonly:int
 property Pam\Desktop\BackgroundJob::$overlapPolicy readonly:Pam\Desktop\JobOverlapPolicy
+property Pam\Desktop\BackgroundJob::$persistent readonly:bool
+property Pam\Desktop\BackgroundJob::$retryBackoffMilliseconds readonly:int
 property Pam\Desktop\BackgroundJob::$timeoutMilliseconds readonly:int
 property Pam\Desktop\Capabilities::$clipboardReadEnabled readonly:bool
 property Pam\Desktop\Capabilities::$clipboardWriteEnabled readonly:bool
@@ -422,6 +503,8 @@ property Pam\Desktop\GlobalShortcut::$accelerator readonly:string
 property Pam\Desktop\GlobalShortcut::$id readonly:string
 property Pam\Desktop\HttpOrigin::$name readonly:string
 property Pam\Desktop\HttpOrigin::$origin readonly:string
+property Pam\Desktop\InstallerScope::$name readonly:string
+property Pam\Desktop\InstallerScope::$value readonly:int
 property Pam\Desktop\JobContext::$id readonly:string
 property Pam\Desktop\JobContext::$requestId readonly:int
 property Pam\Desktop\JobContext::$runId readonly:int
@@ -455,12 +538,27 @@ property Pam\Desktop\MenuItemKind::$name readonly:string
 property Pam\Desktop\MenuItemKind::$value readonly:int
 property Pam\Desktop\MessageKind::$name readonly:string
 property Pam\Desktop\MessageKind::$value readonly:int
+property Pam\Desktop\PerformanceBudget::$coldStartMilliseconds readonly:int
+property Pam\Desktop\PerformanceBudget::$frameP95Microseconds readonly:int
+property Pam\Desktop\PerformanceBudget::$idleCpuBasisPoints readonly:int
+property Pam\Desktop\PerformanceBudget::$idleMemoryMegabytes readonly:int
+property Pam\Desktop\PerformanceBudget::$ipcP95Microseconds readonly:int
+property Pam\Desktop\PerformanceBudget::$warmStartMilliseconds readonly:int
 property Pam\Desktop\ProcessArgumentPolicy::$name readonly:string
 property Pam\Desktop\ProcessArgumentPolicy::$value readonly:int
 property Pam\Desktop\ProcessCommand::$argumentPolicy readonly:Pam\Desktop\ProcessArgumentPolicy
 property Pam\Desktop\ProcessCommand::$arguments readonly:array
 property Pam\Desktop\ProcessCommand::$executable readonly:string
 property Pam\Desktop\ProcessCommand::$name readonly:string
+property Pam\Desktop\ProcessIsolation::$name readonly:string
+property Pam\Desktop\ProcessIsolation::$value readonly:int
+property Pam\Desktop\QuickAction::$description readonly:string
+property Pam\Desktop\QuickAction::$id readonly:string
+property Pam\Desktop\QuickAction::$label readonly:string
+property Pam\Desktop\ReleaseChannel::$name readonly:string
+property Pam\Desktop\ReleaseChannel::$value readonly:int
+property Pam\Desktop\RenderBackend::$name readonly:string
+property Pam\Desktop\RenderBackend::$value readonly:int
 property Pam\Desktop\ResponseStatus::$name readonly:string
 property Pam\Desktop\ResponseStatus::$value readonly:int
 property Pam\Desktop\RustPlugin::$arguments readonly:array
@@ -469,8 +567,11 @@ property Pam\Desktop\RustPlugin::$id readonly:string
 property Pam\Desktop\RustPlugin::$sha256 readonly:?string
 property Pam\Desktop\RustPlugin::$timeoutMilliseconds readonly:int
 property Pam\Desktop\Shell::$menus readonly:array
+property Pam\Desktop\Shell::$quickActions readonly:array
 property Pam\Desktop\Shell::$shortcuts readonly:array
 property Pam\Desktop\Shell::$tray readonly:?Pam\Desktop\Tray
+property Pam\Desktop\TaskbarProgressState::$name readonly:string
+property Pam\Desktop\TaskbarProgressState::$value readonly:int
 property Pam\Desktop\Tray::$closeBehavior readonly:Pam\Desktop\TrayCloseBehavior
 property Pam\Desktop\Tray::$menuId readonly:string
 property Pam\Desktop\Tray::$tooltip readonly:string
@@ -497,8 +598,37 @@ property Pam\Desktop\Window::$transparent readonly:bool
 property Pam\Desktop\Window::$visible readonly:bool
 property Pam\Desktop\Window::$width readonly:int
 property Pam\Desktop\WindowHandle::$id readonly:string
+property Pam\Desktop\WindowProfile::$detachableTabs readonly:bool
+property Pam\Desktop\WindowProfile::$parent readonly:?string
+property Pam\Desktop\WindowProfile::$rememberMonitor readonly:bool
+property Pam\Desktop\WindowProfile::$restore readonly:bool
+property Pam\Desktop\WindowProfile::$role readonly:Pam\Desktop\WindowRole
+property Pam\Desktop\WindowRole::$name readonly:string
+property Pam\Desktop\WindowRole::$value readonly:int
 property Pam\Desktop\WindowTheme::$name readonly:string
 property Pam\Desktop\WindowTheme::$value readonly:int
+property Pam\Desktop\Workstation::$accessibility readonly:bool
+property Pam\Desktop\Workstation::$autosaveMilliseconds readonly:int
+property Pam\Desktop\Workstation::$backgroundAgent readonly:bool
+property Pam\Desktop\Workstation::$crashReports readonly:bool
+property Pam\Desktop\Workstation::$devtools readonly:bool
+property Pam\Desktop\Workstation::$dirtyRegions readonly:bool
+property Pam\Desktop\Workstation::$forwardArguments readonly:bool
+property Pam\Desktop\Workstation::$idleSleepMilliseconds readonly:int
+property Pam\Desktop\Workstation::$installerScope readonly:Pam\Desktop\InstallerScope
+property Pam\Desktop\Workstation::$isolation readonly:Pam\Desktop\ProcessIsolation
+property Pam\Desktop\Workstation::$lazyPlugins readonly:bool
+property Pam\Desktop\Workstation::$performance readonly:Pam\Desktop\PerformanceBudget
+property Pam\Desktop\Workstation::$persistentServices readonly:bool
+property Pam\Desktop\Workstation::$processPoolSize readonly:int
+property Pam\Desktop\Workstation::$recoveryJournal readonly:bool
+property Pam\Desktop\Workstation::$releaseChannel readonly:Pam\Desktop\ReleaseChannel
+property Pam\Desktop\Workstation::$renderBackend readonly:Pam\Desktop\RenderBackend
+property Pam\Desktop\Workstation::$singleInstance readonly:bool
+property Pam\Desktop\Workstation::$startupSnapshot readonly:bool
+property Pam\Desktop\Workstation::$treeShaking readonly:bool
+property Pam\Desktop\Workstation::$windows readonly:array
+property Pam\Desktop\Workstation::$workspaceRestore readonly:bool
 symbol class Pam\Desktop\Accelerator final
 symbol class Pam\Desktop\App
 symbol class Pam\Desktop\Application final
@@ -533,8 +663,10 @@ symbol class Pam\Desktop\Lifecycle final,readonly
 symbol class Pam\Desktop\Manifest final,readonly
 symbol class Pam\Desktop\Menu final,readonly
 symbol class Pam\Desktop\MenuItem final,readonly
+symbol class Pam\Desktop\PerformanceBudget final,readonly
 symbol class Pam\Desktop\Permissions final
 symbol class Pam\Desktop\ProcessCommand final,readonly
+symbol class Pam\Desktop\QuickAction final,readonly
 symbol class Pam\Desktop\RustPlugin final,readonly
 symbol class Pam\Desktop\Shell final,readonly
 symbol class Pam\Desktop\ShellEffect final
@@ -543,20 +675,28 @@ symbol class Pam\Desktop\Updates final,readonly
 symbol class Pam\Desktop\Window final,readonly
 symbol class Pam\Desktop\WindowEffect final
 symbol class Pam\Desktop\WindowHandle final,readonly
+symbol class Pam\Desktop\WindowProfile final,readonly
 symbol class Pam\Desktop\Windows final,readonly
+symbol class Pam\Desktop\Workstation final,readonly
 symbol enum Pam\Desktop\ApplicationCategory final
 symbol enum Pam\Desktop\CommandExecution final
 symbol enum Pam\Desktop\DatabaseAccess final
 symbol enum Pam\Desktop\EffectKind final
 symbol enum Pam\Desktop\ErrorCode final
 symbol enum Pam\Desktop\FileAccess final
+symbol enum Pam\Desktop\InstallerScope final
 symbol enum Pam\Desktop\JobOverlapPolicy final
 symbol enum Pam\Desktop\MenuItemKind final
 symbol enum Pam\Desktop\MessageKind final
 symbol enum Pam\Desktop\ProcessArgumentPolicy final
+symbol enum Pam\Desktop\ProcessIsolation final
+symbol enum Pam\Desktop\ReleaseChannel final
+symbol enum Pam\Desktop\RenderBackend final
 symbol enum Pam\Desktop\ResponseStatus final
+symbol enum Pam\Desktop\TaskbarProgressState final
 symbol enum Pam\Desktop\TrayCloseBehavior final
 symbol enum Pam\Desktop\UpdatePolicy final
+symbol enum Pam\Desktop\WindowRole final
 symbol enum Pam\Desktop\WindowTheme final
 symbol interface Pam\Desktop\Event
 symbol interface Pam\Desktop\Plugin

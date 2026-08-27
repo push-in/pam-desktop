@@ -51,6 +51,13 @@ final class Desktop
         return $this;
     }
 
+    public function workstation(Workstation $workstation): self
+    {
+        $this->application->workstation($workstation);
+
+        return $this;
+    }
+
     public function timeout(int $milliseconds): self
     {
         $this->application->commandTimeout($milliseconds);

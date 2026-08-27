@@ -94,7 +94,7 @@ All coded variants are sequential integers:
 | file entry kind | `1` file, `2` directory |
 | file operation | `1` read text through `5` create directory |
 | dialog kind | `1` open file through `4` open directory |
-| clipboard operation | `1` read, `2` write, `3` clear |
+| clipboard operation | `1` read text, `2` write text, `3` clear, `4` write HTML, `5` read RGBA image, `6` write RGBA image |
 | notification urgency | `1` low, `2` normal, `3` critical |
 | application category | `1` development through `8` education |
 | update policy | `1` manual, `2` notify, `3` automatic |

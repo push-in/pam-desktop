@@ -100,7 +100,8 @@
         "id": "show",
         "accelerator": "CmdOrCtrl+Shift+KeyP"
       }
-    ]
+    ],
+    "quickActions": []
   },
   "backgroundJobs": [
     {

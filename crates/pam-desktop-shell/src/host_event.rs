@@ -17,10 +17,19 @@ pub enum ShellEvent {
 #[derive(Debug)]
 pub enum HostEvent {
     ServoWake,
+    #[cfg(feature = "servo-engine")]
+    Accessibility(accesskit_winit::Event),
     ApplyEffects(Vec<Effect>),
     ReloadViews,
     Reconfigure(Box<Bootstrap>),
     Dialog(DialogRequest),
     Shell(ShellEvent),
     Exit,
+}
+
+#[cfg(feature = "servo-engine")]
+impl From<accesskit_winit::Event> for HostEvent {
+    fn from(event: accesskit_winit::Event) -> Self {
+        Self::Accessibility(event)
+    }
 }
