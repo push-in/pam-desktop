@@ -457,11 +457,11 @@ mod macos_status {
 pub fn set_badge(_native_window: isize, count: Option<u32>) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        return windows_status::set_badge(_native_window, count);
+        windows_status::set_badge(_native_window, count)
     }
     #[cfg(target_os = "macos")]
     {
-        return macos_status::set_badge(count);
+        macos_status::set_badge(count)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
@@ -483,12 +483,12 @@ pub fn set_progress(
 ) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        return windows_status::set_progress(native_window, progress, state);
+        windows_status::set_progress(native_window, progress, state)
     }
     #[cfg(target_os = "macos")]
     {
         let _ = native_window;
-        return macos_status::set_progress(progress, state);
+        macos_status::set_progress(progress, state)
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
