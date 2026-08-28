@@ -32,8 +32,11 @@ its process and token still match. It contains no application payloads. Keep
 descriptor. Production `run` builds never publish one.
 
 The snapshot contains total, failed and currently active PHP commands; average
-host-observed command time in microseconds; the primary worker generation;
-active parallel worker count; and the current event cursor.
+and rolling p95 host-observed command time; the primary worker generation;
+active parallel worker count; current event cursor; host uptime, first-command
+startup time and resident memory; open PTY sessions; active Rust plugin count;
+and rolling frame p95. The visual Runtime Inspector renders these counters and
+the configured Workstation budget result live.
 
 Worker generation increments after timeout, cancellation, crash or runtime hot
 reload. A rising generation paired with failures is therefore immediately
@@ -41,9 +44,28 @@ visible to application diagnostics. The average is intentionally aggregate and
 bounded: use the browser Performance API around individual calls when a local
 development build needs command-level timings.
 
+Command and frame percentiles use bounded 2,048-sample rolling windows, so a
+long session cannot grow diagnostic memory. A renderer records a measured frame
+interval with `pam.diagnostics.reportFrame(frameMicroseconds)`. The benchmark
+fixture exposes `capturePamFrameBenchmark()` for repeatable
+`requestAnimationFrame` sampling. Missing observations remain `null` and render
+as `collecting`; they are never silently treated as zero-latency evidence.
+
 Production applications may expose this data in a support panel. It contains
 operational counters only and is available solely to the authenticated local
 origin through the ephemeral bridge token.
+
+## Native crash reports
+
+When the workstation crash-report policy is enabled, the host installs a panic
+hook before creating the event loop. A native panic writes an atomic schema-1
+JSON report under the operating system's per-user state directory. Reports
+contain the application and host versions, process/thread identity, source
+location and a bounded symbolizable Rust backtrace. They never include bridge
+tokens, command payloads, clipboard data, SQL, document contents or secrets.
+
+Only the eight newest reports are retained. Unix reports are created with mode
+`0600`; applications decide explicitly whether and where to upload them.
 
 ## Opt-in OTLP command traces
 

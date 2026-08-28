@@ -56,12 +56,27 @@ requireFragments($platform, 'platform-compatibility.yml', [
     "        run: rustc --version | grep -E '^rustc 1\\.88\\.'\n",
     "            platform_code: 2\n",
     "            platform_code: 3\n",
-    "      - name: Build and smoke-test the real Servo desktop host\n",
+    "    timeout-minutes: 90\n",
+    "            executable: target/release/pam-desktop\n",
+    "            executable: target/release/pam-desktop.exe\n",
+    "      - name: Build and smoke-test the production Servo desktop host\n",
+    "          cargo build --locked --release -p pam-desktop --bins\n",
+    "      - name: Build and verify the production host archive\n",
+    '          name: pam-desktop-${{ matrix.target }}' . "\n",
+    "      - name: Attest the native host archive\n",
+    "          subject-path: |\n            dist/*.tar.gz\n            dist/*.sha256\n",
+    "        run: cargo clean\n",
     "          retention-days: 14\n",
     '          path: desktop-platform-evidence-${{ matrix.platform_code }}.json' . "\n",
     "      - scripts/desktop-platform-evidence.py\n",
     "      - tests/test_desktop_platform_evidence.py\n",
 ]);
+if (str_contains($platform, 'cargo build --locked -p pam-desktop --bins')) {
+    fail('platform-compatibility.yml must not compile a redundant debug host');
+}
+if (substr_count($platform, 'cargo build --locked --release -p pam-desktop --bins') !== 1) {
+    fail('platform-compatibility.yml must compile the production host exactly once');
+}
 foreach (['ci.yml' => $ci, 'platform-compatibility.yml' => $platform, 'release.yml' => $release] as $name => $workflow) {
     if (str_contains($workflow, 'dtolnay/rust-toolchain@stable')) {
         fail("{$name} must not claim a pinned MSRV while installing the moving stable toolchain");
@@ -74,6 +89,8 @@ requireFragments($release, 'release.yml', [
     "    uses: ./.github/workflows/platform-compatibility.yml\n",
     "  build:\n    needs:\n      - native-changes\n      - platform-contracts\n      - source-contracts\n",
     "  publish-api:\n    needs:\n      - native-changes\n      - platform-contracts\n      - source-contracts\n",
+    "      && needs.platform-contracts.result == 'success'\n",
+    "      && needs.source-contracts.result == 'success'\n",
 ]);
 
 echo "PAM Desktop release workflow contracts passed.\n";

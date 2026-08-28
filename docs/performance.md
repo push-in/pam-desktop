@@ -4,6 +4,23 @@ Pam Desktop performance claims must be reproducible. Compare release builds on
 the same machine, desktop session, application fixture and measurement window.
 Record the kernel, CPU governor, Servo/PAM versions and whether caches are warm.
 
+When `startupSnapshot` is enabled, the host persists a private, atomically
+replaced bootstrap snapshot in the operating-system cache directory. A snapshot
+is accepted only when its schema, PAM protocol, project fingerprint and complete
+bootstrap validation all match. The fingerprint covers Composer manifests and
+project PHP sources while deliberately excluding generated builds and `vendor`;
+`composer.lock` is the dependency identity. `pam-desktop doctor` reports
+`warm hit` or `cold/miss`, and the development ready event carries the same fact
+as `startupSnapshotHit`. A cache hit is evidence, not permission to skip the live
+PHP worker handshake: the live contract remains authoritative and a mismatch
+atomically replaces the snapshot.
+
+The runtime diagnostics envelope also records `startupSnapshotHit`. Cold misses
+are checked against `coldStartMilliseconds`; validated warm hits are checked
+against the independently configured `warmStartMilliseconds` and report a
+`warm-start` violation. A warm run can therefore never hide behind the looser
+cold-start budget.
+
 ## Required measurements
 
 | Metric | Definition |
@@ -75,3 +92,39 @@ latency/throughput JSON. Its companion fixture documentation fixes warm-up and
 sample counts so PAM, Electron and other runtimes can be measured under the
 same workload. Framework names never substitute for measurements: publish raw
 artifacts and machine metadata with every comparison.
+
+The harness also provides `capturePamFrameBenchmark({samples: 600})`. The
+runtime retains only the newest 2,048 IPC and frame observations and exposes
+`startupMilliseconds`, `ipcP95Microseconds`, `frameP95Microseconds`,
+`performancePassed`, and stable violation names from
+`pam.diagnostics.snapshot()`. Missing observations remain `null`, never an
+invented zero.
+
+Release automation converts a complete diagnostics snapshot plus an externally
+sampled idle CPU interval into schema-1, suite-4 evidence:
+
+```bash
+scripts/desktop-performance-evidence.py create \
+  --snapshot runtime-snapshot.json \
+  --idle-cpu-basis-points 50 \
+  --revision "$(git rev-parse HEAD)" \
+  --output performance-evidence.json
+scripts/desktop-performance-evidence.py verify \
+  --evidence performance-evidence.json
+```
+
+Creation fails when runtime samples are incomplete, any runtime budget failed,
+idle CPU exceeds its declared budget, or the source revision is not exact.
+Verification authenticates the canonical evidence digest and rejects missing,
+renamed or non-integer metrics.
+
+## GPU and software fallback
+
+`RenderBackend::Automatic` attempts Servo's native window GL context first. A
+context creation failure activates an offscreen software GL context and a
+cross-platform `softbuffer` presenter; `Gpu` instead fails explicitly and
+`Software` bypasses GPU creation. Software frames are compared with the
+previous frame and their changed bounding rectangle is sent to the compositor
+as damage when dirty regions are enabled. The framebuffer remains bounded by
+the live physical window size and is replaced, rather than accumulated, after
+every presentation.

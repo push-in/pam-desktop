@@ -80,6 +80,7 @@ const file = await pam.dialog.openFile({
     filters: [
         { name: "Text", extensions: ["txt", "md"] },
     ],
+    persistent: true,
 });
 
 const files = await pam.dialog.openFiles();
@@ -101,23 +102,59 @@ dialog returns an empty array. Selected values have this shape:
 
 Pass the object directly to `pam.fs`, optionally adding a relative `path` for a
 directory grant. Open-file grants are read-only, save-file grants are
-read-write, and directory access defaults to read-only. Grants last only for
-the current host process and expire on a successful PHP runtime hot reload.
+read-write, and directory access defaults to read-only. Grants are ephemeral
+unless the dialog sets `persistent: true`.
 
 Dialogs run on the native Winit event loop. They intentionally do not accept a
 timeout or `AbortSignal` because cancelling a fetch cannot safely dismiss an
 operating-system picker on every platform.
+
+Persistent grants retain at most 128 opaque IDs in a private atomic per-user
+store. PAM revalidates the selected resource and symlink policy on every host
+start and never exposes the absolute path to frontend code. Ephemeral grants
+still expire on process exit or a successful PHP runtime hot reload.
 
 ## Clipboard
 
 ```js
 await pam.clipboard.writeText("Copied by Pam Desktop");
 const text = await pam.clipboard.readText();
+await pam.clipboard.writeHtml("<strong>Rich text</strong>", "Rich text");
+
+const image = await pam.clipboard.readImage();
+await pam.clipboard.writeImage({
+    width: image.width,
+    height: image.height,
+    rgbaBase64: image.rgbaBase64,
+});
+const files = await pam.clipboard.readFiles();
+await pam.clipboard.writeFiles(files.map(({ grantId }) => ({
+    root: null,
+    grantId,
+    path: "",
+})));
+await pam.clipboard.writeCustom(
+    "application/vnd.example.selection+json",
+    btoa(JSON.stringify({ documentId: 42, blocks: [1, 2] })),
+);
+const custom = await pam.clipboard.readCustom(
+    "application/vnd.example.selection+json",
+);
+const formats = await pam.clipboard.availableFormats();
 await pam.clipboard.clear();
 ```
 
-PHP gates reads and writes independently. Text is limited to 1 MiB. The Rust
+PHP gates reads and writes independently. Text, HTML and decoded RGBA image
+data are each limited to 1 MiB. HTML accepts a plain-text fallback. Image
+dimensions are overflow-checked and must match the decoded RGBA length exactly.
+File lists contain at most 256 regular files/directories. Reading returns
+capability grants rather than ambient paths; writing accepts only readable
+declared-root or grant targets and rejects symbolic-link traversal. The Rust
 host retains one serialized clipboard instance for the application lifetime.
+Custom payloads are real operating-system clipboard formats, not process-local
+storage. Format names are restricted to printable `application/x-*` or
+`application/vnd.*`, payloads use base64 and the same 1 MiB bound, and format
+enumeration is capped at 256 entries.
 
 ## Notifications
 
@@ -126,12 +163,23 @@ await pam.notification.show({
     title: "Export complete",
     body: "report.pdf is ready.",
     urgency: 2,
+    actions: [
+        { id: "open", label: "Open file" },
+        { id: "folder", label: "Show in folder" },
+    ],
+});
+
+pam.on("pam.notification.action", ({ notificationId, action }) => {
+    console.log(notificationId, action);
 });
 ```
 
 Urgency is `1` low, `2` normal, or `3` critical. Titles are limited to 256
-bytes and bodies to 4 KiB. Delivery and presentation remain controlled by the
-desktop environment.
+bytes and bodies to 4 KiB. A notification accepts up to four actions, each with
+a unique bounded identifier and label. Linux publishes the selected action to
+the originating window; platforms whose notification service does not expose
+action callbacks still display the notification normally. Delivery and visual
+presentation remain controlled by the desktop environment.
 
 ## Drag and drop
 

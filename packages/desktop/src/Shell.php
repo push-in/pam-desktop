@@ -11,11 +11,13 @@ final readonly class Shell
     /**
      * @param list<Menu> $menus
      * @param list<GlobalShortcut> $shortcuts
+     * @param list<QuickAction> $quickActions
      */
     private function __construct(
         public array $menus,
         public ?Tray $tray,
         public array $shortcuts,
+        public array $quickActions,
     ) {
         $menuIds = [];
         $itemIds = [];
@@ -45,11 +47,21 @@ final readonly class Shell
             $shortcutIds[$shortcut->id] = true;
             $accelerators[$normalized] = true;
         }
+        $quickActionIds = [];
+        foreach ($quickActions as $quickAction) {
+            if (isset($quickActionIds[$quickAction->id])) {
+                throw new RuntimeException("Quick action {$quickAction->id} is already registered.");
+            }
+            $quickActionIds[$quickAction->id] = true;
+        }
+        if (count($quickActions) > 10) {
+            throw new RuntimeException('A desktop application can register at most ten quick actions.');
+        }
     }
 
     public static function none(): self
     {
-        return new self([], null, []);
+        return new self([], null, [], []);
     }
 
     public function menu(Menu ...$menus): self
@@ -58,12 +70,13 @@ final readonly class Shell
             array_values(array_merge($this->menus, $menus)),
             $this->tray,
             $this->shortcuts,
+            $this->quickActions,
         );
     }
 
     public function tray(Tray $tray): self
     {
-        return new self($this->menus, $tray, $this->shortcuts);
+        return new self($this->menus, $tray, $this->shortcuts, $this->quickActions);
     }
 
     public function shortcut(GlobalShortcut ...$shortcuts): self
@@ -72,6 +85,17 @@ final readonly class Shell
             $this->menus,
             $this->tray,
             array_values(array_merge($this->shortcuts, $shortcuts)),
+            $this->quickActions,
+        );
+    }
+
+    public function quickAction(QuickAction ...$quickActions): self
+    {
+        return new self(
+            $this->menus,
+            $this->tray,
+            $this->shortcuts,
+            array_values(array_merge($this->quickActions, $quickActions)),
         );
     }
 
@@ -79,7 +103,8 @@ final readonly class Shell
      * @return array{
      *     menus: list<array{id: string, label: string, items: list<array<string, mixed>>}>,
      *     tray: null|array{menuId: string, tooltip: string, closeBehavior: int},
-     *     shortcuts: list<array{id: string, accelerator: string}>
+     *     shortcuts: list<array{id: string, accelerator: string}>,
+     *     quickActions: list<array{id: string, label: string, description: string}>
      * }
      */
     public function toArray(): array
@@ -104,6 +129,10 @@ final readonly class Shell
             'shortcuts' => array_map(
                 static fn (GlobalShortcut $shortcut): array => $shortcut->toArray(),
                 $this->shortcuts,
+            ),
+            'quickActions' => array_map(
+                static fn (QuickAction $quickAction): array => $quickAction->toArray(),
+                $this->quickActions,
             ),
         ];
     }

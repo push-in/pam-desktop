@@ -16,4 +16,8 @@ enum EffectKind: int
     case SetWindowFullscreen = 8;
     case SetWindowMaximized = 9;
     case SetWindowAlwaysOnTop = 10;
+    case SetWindowAttention = 11;
+    case SetApplicationBadge = 12;
+    case SetTaskbarProgress = 13;
+    case QuitApplication = 14;
 }

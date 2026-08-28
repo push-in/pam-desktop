@@ -9,7 +9,7 @@ require dirname(__DIR__).'/vendor/autoload.php';
  * Reviewing an intentional additive API change should produce a small snapshot
  * diff, while removals and signature changes fail the compatibility suite.
  */
-function parameterSignature(ReflectionParameter $parameter): string
+function parameterSignature(ReflectionClass $class, ReflectionParameter $parameter): string
 {
     $signature = '';
     if ($parameter->isPassedByReference()) {
@@ -21,7 +21,13 @@ function parameterSignature(ReflectionParameter $parameter): string
 
     $signature .= '$'.$parameter->getName();
     if ($parameter->hasType()) {
-        $signature .= ':'.$parameter->getType();
+        $type = (string) $parameter->getType();
+        if ($type === $class->getName()) {
+            $type = 'self';
+        } elseif ($type === '?'.$class->getName()) {
+            $type = '?self';
+        }
+        $signature .= ':'.$type;
     }
     if ($parameter->isDefaultValueAvailable()) {
         $default = $parameter->isDefaultValueConstant()
@@ -39,10 +45,18 @@ function parameterSignature(ReflectionParameter $parameter): string
 function methodSignature(ReflectionClass $class, ReflectionMethod $method): string
 {
     $parameters = array_map(
-        parameterSignature(...),
+        static fn (ReflectionParameter $parameter): string => parameterSignature($class, $parameter),
         $method->getParameters(),
     );
     $returnType = $method->hasReturnType() ? (string) $method->getReturnType() : '-';
+    // PHP 8.5 resolves a declared `self` return to the declaring class while
+    // older supported engines preserve the source spelling. Keep the public
+    // API contract stable across engines by using the semantic spelling.
+    if ($returnType === $class->getName()) {
+        $returnType = 'self';
+    } elseif ($returnType === '?'.$class->getName()) {
+        $returnType = '?self';
+    }
 
     return sprintf(
         'method %s::%s %s(%s):%s',

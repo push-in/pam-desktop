@@ -69,7 +69,7 @@ The 1.x release and compatibility guarantee is:
 
 - Linux on x86-64;
 - glibc compatibility based on Ubuntu 22.04 release builds;
-- PHP 8.4 for application workers;
+- PHP 8.5 for application workers;
 - Rust 1.88 for rebuilding the host or Rust plugins;
 - X11 or Wayland environments supported by the pinned Winit/Servo stack.
 
@@ -77,24 +77,27 @@ Tray visibility and global shortcut registration depend on the desktop
 environment and compositor. Their documented graceful fallback is part of the
 contract.
 
-Windows/macOS packaging and update code remains experimental groundwork. A
-dedicated pre-release matrix runs the portable gateway/plugin tests and Clippy
-contracts, builds the real Servo host natively on macOS arm64 and Windows x64,
-executes its bounded version handshake and publishes a compact 14-day schema-1
-evidence artifact bound to the source commit, toolchain, binary hash and byte
-size. The large debug host remains disposable runner state and is not uploaded.
-Tagged releases cannot
+Windows and macOS have native-host preview support. A dedicated pre-release
+matrix runs the portable gateway/plugin tests and Clippy contracts, builds the
+real Servo host natively on macOS arm64 and Windows x64, executes its bounded
+version handshake, and creates target-labelled host archives with adjacent
+SHA-256 files and a schema-1 per-file integrity manifest. A separate compact
+14-day evidence artifact binds the source commit, toolchain, binary hash and
+byte size. Build intermediates are always removed. Tagged releases cannot
 publish through either the native-host or API-only path unless that platform
-matrix and the complete source CI both pass. This is compatibility evidence,
-not yet a packaging or support guarantee: a CLI handshake does not prove a
-graphical session, installer, signature, notarization or updater. Those remain
-separate gates before either platform joins the supported 1.x release matrix.
+matrix and the complete source CI both pass. Native host archives are therefore
+installable by the Composer bootstrap on all three platforms. This remains a
+preview—not the Linux 1.x compatibility guarantee—until graphical clean-room,
+installer, certificate signing/notarization and updater evidence also pass on
+the corresponding operating system.
 
 ## Trust boundary
 
-Local frontend assets and registered PHP/Rust plugins are trusted application
-code. Rust plugins are process-isolated for lifecycle, crash and ABI safety;
-they are not sandboxed and retain the operating-system authority of the user.
+Local frontend assets and registered PHP plugins are trusted application code.
+Rust plugins are process-isolated for lifecycle, crash and ABI safety. Their
+compatible default inherits user authority; Linux applications can select the
+fail-closed strict namespace sandbox and explicit per-plugin capabilities.
+Strict mode is rejected on platforms that have not yet earned sandbox evidence.
 Remote arbitrary pages, dynamic libraries in the host and generic shell or
 filesystem bridges are outside the public contract.
 

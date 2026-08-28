@@ -5,8 +5,11 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 FIXTURE=$(mktemp -d "${TMPDIR:-/tmp}/pam-desktop-cache.XXXXXX")
 trap 'rm -rf -- "$FIXTURE"' EXIT HUP INT TERM
+CURRENT_VERSION=$(sed -n "s/^const HOST_VERSION = '\([^']*\)';$/\1/p" \
+    "$ROOT/packages/desktop/bin/pam-desktop")
+[ -n "$CURRENT_VERSION" ]
 
-for version in 0.9.0 1.0.0 1.1.0 1.2.1 1.2.5 1.2.7
+for version in 0.9.0 1.0.0 1.1.0 1.2.1 1.2.5 1.2.7 "$CURRENT_VERSION"
 do
     directory="${FIXTURE}/${version}/x86_64-unknown-linux-gnu/bin"
     mkdir -p "$directory"
@@ -25,9 +28,10 @@ output=$(PAM_DESKTOP_CACHE_DIR="$FIXTURE" \
 [ ! -e "${FIXTURE}/0.9.0" ]
 [ ! -e "${FIXTURE}/1.0.0" ]
 [ ! -e "${FIXTURE}/1.1.0" ]
-[ -d "${FIXTURE}/1.2.1" ]
+[ ! -e "${FIXTURE}/1.2.1" ]
 [ -d "${FIXTURE}/1.2.5" ]
 [ -d "${FIXTURE}/1.2.7" ]
+[ -d "${FIXTURE}/${CURRENT_VERSION}" ]
 [ ! -e "${FIXTURE}/.download-1.2.0.stale" ]
 
 printf 'PAM Desktop host cache retention passed.\n'

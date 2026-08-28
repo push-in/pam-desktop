@@ -76,6 +76,21 @@ pub enum EffectKind {
     SetWindowFullscreen = 8,
     SetWindowMaximized = 9,
     SetWindowAlwaysOnTop = 10,
+    SetWindowAttention = 11,
+    SetApplicationBadge = 12,
+    SetTaskbarProgress = 13,
+    QuitApplication = 14,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum TaskbarProgressState {
+    #[default]
+    Hidden = 1,
+    Indeterminate = 2,
+    Normal = 3,
+    Paused = 4,
+    Error = 5,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
@@ -223,6 +238,14 @@ pub enum ClipboardOperation {
     ReadText = 1,
     WriteText = 2,
     Clear = 3,
+    WriteHtml = 4,
+    ReadImage = 5,
+    WriteImage = 6,
+    ReadFiles = 7,
+    WriteFiles = 8,
+    ReadCustom = 9,
+    WriteCustom = 10,
+    AvailableFormats = 11,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
@@ -278,6 +301,53 @@ pub enum CommandExecution {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
 #[repr(u8)]
+pub enum ProcessIsolation {
+    #[default]
+    Shared = 1,
+    PerWindow = 2,
+    PerWorkspace = 3,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum RenderBackend {
+    #[default]
+    Automatic = 1,
+    Gpu = 2,
+    Software = 3,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum WindowRole {
+    #[default]
+    Primary = 1,
+    Child = 2,
+    Modal = 3,
+    Popover = 4,
+    Panel = 5,
+    Palette = 6,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum InstallerScope {
+    #[default]
+    CurrentUser = 1,
+    Machine = 2,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum ReleaseChannel {
+    #[default]
+    Stable = 1,
+    Beta = 2,
+    Nightly = 3,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
 pub enum HttpMethod {
     #[default]
     Get = 1,
@@ -320,6 +390,19 @@ pub enum DesktopPortalOperation {
     OpenUri = 1,
     Screenshot = 2,
     PrintPdf = 3,
+    CameraStatus = 4,
+    RequestCamera = 5,
+    ListScanners = 6,
+    ScanImage = 7,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, PartialEq, Eq, Serialize_repr)]
+#[repr(u8)]
+pub enum ScannerImageFormat {
+    #[default]
+    Png = 1,
+    Jpeg = 2,
+    Pnm = 3,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -731,6 +814,8 @@ pub struct Bootstrap {
     pub rust_plugins: Vec<RustPluginConfig>,
     #[serde(default)]
     pub php_plugins: Vec<String>,
+    #[serde(default, skip_serializing_if = "WorkstationConfig::is_default")]
+    pub workstation: WorkstationConfig,
 }
 
 impl Bootstrap {
@@ -778,6 +863,7 @@ impl Bootstrap {
         }
         self.capabilities.validate()?;
         self.shell.validate()?;
+        self.workstation.validate(&identifiers)?;
 
         let mut jobs = HashSet::with_capacity(self.background_jobs.len());
         for job in &self.background_jobs {
@@ -809,6 +895,189 @@ impl Bootstrap {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PerformanceBudgetConfig {
+    pub cold_start_milliseconds: u32,
+    pub warm_start_milliseconds: u32,
+    pub idle_memory_megabytes: u32,
+    pub idle_cpu_basis_points: u16,
+    pub ipc_p95_microseconds: u32,
+    pub frame_p95_microseconds: u32,
+}
+
+impl Default for PerformanceBudgetConfig {
+    fn default() -> Self {
+        Self {
+            cold_start_milliseconds: 1_500,
+            warm_start_milliseconds: 500,
+            idle_memory_megabytes: 180,
+            idle_cpu_basis_points: 100,
+            ipc_p95_microseconds: 5_000,
+            frame_p95_microseconds: 16_667,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WindowProfileConfig {
+    pub role: WindowRole,
+    #[serde(default)]
+    pub parent: Option<String>,
+    #[serde(default)]
+    pub restore: bool,
+    #[serde(default)]
+    pub remember_monitor: bool,
+    #[serde(default)]
+    pub detachable_tabs: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "orthogonal workstation policies intentionally serialize as explicit booleans"
+)]
+pub struct WorkstationConfig {
+    #[serde(default = "default_true")]
+    pub single_instance: bool,
+    #[serde(default = "default_true")]
+    pub forward_arguments: bool,
+    #[serde(default)]
+    pub background_agent: bool,
+    #[serde(default)]
+    pub persistent_services: bool,
+    #[serde(default)]
+    pub isolation: ProcessIsolation,
+    #[serde(default = "default_parallel_worker_count")]
+    pub process_pool_size: u8,
+    #[serde(default = "default_true")]
+    pub workspace_restore: bool,
+    #[serde(default = "default_autosave_milliseconds")]
+    pub autosave_milliseconds: u32,
+    #[serde(default = "default_true")]
+    pub recovery_journal: bool,
+    #[serde(default = "default_idle_sleep_milliseconds")]
+    pub idle_sleep_milliseconds: u32,
+    #[serde(default = "default_true")]
+    pub startup_snapshot: bool,
+    #[serde(default = "default_true")]
+    pub lazy_plugins: bool,
+    #[serde(default = "default_true")]
+    pub tree_shaking: bool,
+    #[serde(default)]
+    pub render_backend: RenderBackend,
+    #[serde(default = "default_true")]
+    pub dirty_regions: bool,
+    #[serde(default = "default_true")]
+    pub accessibility: bool,
+    #[serde(default = "default_true")]
+    pub devtools: bool,
+    #[serde(default = "default_true")]
+    pub crash_reports: bool,
+    #[serde(default)]
+    pub installer_scope: InstallerScope,
+    #[serde(default)]
+    pub release_channel: ReleaseChannel,
+    #[serde(default)]
+    pub performance: PerformanceBudgetConfig,
+    #[serde(default)]
+    pub windows: std::collections::BTreeMap<String, WindowProfileConfig>,
+}
+
+impl Default for WorkstationConfig {
+    fn default() -> Self {
+        Self {
+            single_instance: true,
+            forward_arguments: true,
+            background_agent: false,
+            persistent_services: false,
+            isolation: ProcessIsolation::Shared,
+            process_pool_size: 2,
+            workspace_restore: true,
+            autosave_milliseconds: 2_000,
+            recovery_journal: true,
+            idle_sleep_milliseconds: 30_000,
+            startup_snapshot: true,
+            lazy_plugins: true,
+            tree_shaking: true,
+            render_backend: RenderBackend::Automatic,
+            dirty_regions: true,
+            accessibility: true,
+            devtools: true,
+            crash_reports: true,
+            installer_scope: InstallerScope::CurrentUser,
+            release_channel: ReleaseChannel::Stable,
+            performance: PerformanceBudgetConfig::default(),
+            windows: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+impl WorkstationConfig {
+    fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+impl WorkstationConfig {
+    fn validate(&self, windows: &HashSet<&str>) -> Result<(), String> {
+        if !(1..=16).contains(&self.process_pool_size) {
+            return Err("workstation process pool must contain 1 to 16 workers".to_owned());
+        }
+        if !(250..=3_600_000).contains(&self.autosave_milliseconds) {
+            return Err("workstation autosave must be between 250ms and one hour".to_owned());
+        }
+        if !(100..=3_600_000).contains(&self.idle_sleep_milliseconds) {
+            return Err("workstation idle sleep must be between 100ms and one hour".to_owned());
+        }
+        let budget = &self.performance;
+        if budget.cold_start_milliseconds == 0
+            || budget.warm_start_milliseconds == 0
+            || budget.idle_memory_megabytes == 0
+            || budget.idle_cpu_basis_points == 0
+            || budget.ipc_p95_microseconds == 0
+            || budget.frame_p95_microseconds == 0
+        {
+            return Err("workstation performance budgets must be positive".to_owned());
+        }
+        for (id, profile) in &self.windows {
+            validate_identifier(id, "workstation window")?;
+            if !windows.contains(id.as_str()) {
+                return Err(format!(
+                    "workstation window profile {id:?} is not registered"
+                ));
+            }
+            let needs_parent = matches!(
+                profile.role,
+                WindowRole::Child | WindowRole::Modal | WindowRole::Popover
+            );
+            if needs_parent != profile.parent.is_some() {
+                return Err(format!(
+                    "workstation window {id:?} has an invalid parent contract"
+                ));
+            }
+            if let Some(parent) = &profile.parent
+                && !windows.contains(parent.as_str())
+            {
+                return Err(format!(
+                    "workstation parent window {parent:?} is not registered"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+const fn default_autosave_milliseconds() -> u32 {
+    2_000
+}
+
+const fn default_idle_sleep_milliseconds() -> u32 {
+    30_000
 }
 
 const fn default_parallel_worker_count() -> u8 {
@@ -1164,6 +1433,8 @@ pub struct ShellConfig {
     pub tray: Option<TrayConfig>,
     #[serde(default)]
     pub shortcuts: Vec<GlobalShortcutConfig>,
+    #[serde(default)]
+    pub quick_actions: Vec<QuickActionConfig>,
 }
 
 impl ShellConfig {
@@ -1220,7 +1491,39 @@ impl ShellConfig {
                 ));
             }
         }
+        if self.quick_actions.len() > 10 {
+            return Err(
+                "desktop applications cannot register more than ten quick actions".to_owned(),
+            );
+        }
+        let mut quick_action_ids = HashSet::with_capacity(self.quick_actions.len());
+        for action in &self.quick_actions {
+            action.validate()?;
+            if !quick_action_ids.insert(action.id.as_str()) {
+                return Err(format!(
+                    "quick action identifier {:?} is duplicated",
+                    action.id
+                ));
+            }
+        }
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct QuickActionConfig {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+impl QuickActionConfig {
+    fn validate(&self) -> Result<(), String> {
+        validate_identifier(&self.id, "quick action")?;
+        validate_text(&self.label, "quick action label", 80, false)?;
+        validate_text(&self.description, "quick action description", 160, true)
     }
 }
 
@@ -1370,6 +1673,15 @@ pub struct BackgroundJobConfig {
     pub timeout_ms: u64,
     #[serde(default)]
     pub overlap: JobOverlapPolicy,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub persistent: bool,
+    #[serde(default = "default_job_attempts", skip_serializing_if = "is_one_u8")]
+    pub maximum_attempts: u8,
+    #[serde(
+        default = "default_job_backoff",
+        skip_serializing_if = "is_default_job_backoff"
+    )]
+    pub retry_backoff_ms: u64,
 }
 
 impl BackgroundJobConfig {
@@ -1400,8 +1712,48 @@ impl BackgroundJobConfig {
                 self.id
             ));
         }
+        if !(1..=10).contains(&self.maximum_attempts) {
+            return Err(format!(
+                "background job {:?} attempts must be between 1 and 10",
+                self.id
+            ));
+        }
+        if !(100..=MAX_INTERVAL_MS).contains(&self.retry_backoff_ms) {
+            return Err(format!(
+                "background job {:?} retry backoff must be between 100 and {MAX_INTERVAL_MS} milliseconds",
+                self.id
+            ));
+        }
         Ok(())
     }
+}
+
+const fn default_job_attempts() -> u8 {
+    1
+}
+const fn default_job_backoff() -> u64 {
+    1_000
+}
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip callback requires a reference"
+)]
+const fn is_one_u8(value: &u8) -> bool {
+    *value == 1
+}
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip callback requires a reference"
+)]
+const fn is_default_job_backoff(value: &u64) -> bool {
+    *value == 1_000
+}
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip callback requires a reference"
+)]
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1414,6 +1766,43 @@ pub struct RustPluginConfig {
     pub timeout_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "is_inherited_plugin_sandbox")]
+    pub sandbox: PluginSandboxMode,
+    #[serde(default, skip_serializing_if = "is_default_plugin_permissions")]
+    pub permissions: PluginPermissions,
+}
+
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip callback requires a reference"
+)]
+const fn is_inherited_plugin_sandbox(value: &PluginSandboxMode) -> bool {
+    matches!(value, PluginSandboxMode::Inherited)
+}
+
+fn is_default_plugin_permissions(value: &PluginPermissions) -> bool {
+    value == &PluginPermissions::default()
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize_repr, Eq, PartialEq, Serialize_repr)]
+#[repr(u8)]
+pub enum PluginSandboxMode {
+    #[default]
+    Inherited = 1,
+    Strict = 2,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PluginPermissions {
+    #[serde(default)]
+    pub filesystem_roots: Vec<String>,
+    #[serde(default)]
+    pub network: bool,
+    #[serde(default)]
+    pub shell: bool,
+    #[serde(default)]
+    pub devices: bool,
 }
 
 impl RustPluginConfig {
@@ -1448,6 +1837,22 @@ impl RustPluginConfig {
         }
         if let Some(digest) = &self.sha256 {
             validate_lower_hex(digest, 64, "Rust plugin SHA-256 digest")?;
+        }
+        if self.permissions.filesystem_roots.len() > 16 {
+            return Err(format!(
+                "Rust plugin {:?} cannot authorize more than 16 filesystem roots",
+                self.id
+            ));
+        }
+        let mut roots = HashSet::with_capacity(self.permissions.filesystem_roots.len());
+        for root in &self.permissions.filesystem_roots {
+            validate_relative_project_path(root, "Rust plugin filesystem root")?;
+            if !roots.insert(root) {
+                return Err(format!(
+                    "Rust plugin {:?} declares duplicate filesystem root {root:?}",
+                    self.id
+                ));
+            }
         }
         Ok(())
     }
@@ -1745,6 +2150,18 @@ mod tests {
         assert_eq!(EffectKind::SetMenuItemEnabled as u16, 5);
         assert_eq!(EffectKind::SetMenuItemChecked as u16, 6);
         assert_eq!(EffectKind::SetTrayVisible as u16, 7);
+        assert_eq!(EffectKind::SetWindowFullscreen as u16, 8);
+        assert_eq!(EffectKind::SetWindowMaximized as u16, 9);
+        assert_eq!(EffectKind::SetWindowAlwaysOnTop as u16, 10);
+        assert_eq!(EffectKind::SetWindowAttention as u16, 11);
+        assert_eq!(EffectKind::SetApplicationBadge as u16, 12);
+        assert_eq!(EffectKind::SetTaskbarProgress as u16, 13);
+        assert_eq!(EffectKind::QuitApplication as u16, 14);
+        assert_eq!(TaskbarProgressState::Hidden as u8, 1);
+        assert_eq!(TaskbarProgressState::Indeterminate as u8, 2);
+        assert_eq!(TaskbarProgressState::Normal as u8, 3);
+        assert_eq!(TaskbarProgressState::Paused as u8, 4);
+        assert_eq!(TaskbarProgressState::Error as u8, 5);
         assert_eq!(ApplicationCategory::Development as u8, 1);
         assert_eq!(ApplicationCategory::Productivity as u8, 2);
         assert_eq!(ApplicationCategory::Graphics as u8, 3);
@@ -1797,9 +2214,27 @@ mod tests {
         assert_eq!(ClipboardOperation::ReadText as u8, 1);
         assert_eq!(ClipboardOperation::WriteText as u8, 2);
         assert_eq!(ClipboardOperation::Clear as u8, 3);
+        assert_eq!(ClipboardOperation::WriteHtml as u8, 4);
+        assert_eq!(ClipboardOperation::ReadImage as u8, 5);
+        assert_eq!(ClipboardOperation::WriteImage as u8, 6);
+        assert_eq!(ClipboardOperation::ReadFiles as u8, 7);
+        assert_eq!(ClipboardOperation::WriteFiles as u8, 8);
+        assert_eq!(ClipboardOperation::ReadCustom as u8, 9);
+        assert_eq!(ClipboardOperation::WriteCustom as u8, 10);
+        assert_eq!(ClipboardOperation::AvailableFormats as u8, 11);
         assert_eq!(NotificationUrgency::Low as u8, 1);
         assert_eq!(NotificationUrgency::Normal as u8, 2);
         assert_eq!(NotificationUrgency::Critical as u8, 3);
+        assert_eq!(DesktopPortalOperation::OpenUri as u8, 1);
+        assert_eq!(DesktopPortalOperation::Screenshot as u8, 2);
+        assert_eq!(DesktopPortalOperation::PrintPdf as u8, 3);
+        assert_eq!(DesktopPortalOperation::CameraStatus as u8, 4);
+        assert_eq!(DesktopPortalOperation::RequestCamera as u8, 5);
+        assert_eq!(DesktopPortalOperation::ListScanners as u8, 6);
+        assert_eq!(DesktopPortalOperation::ScanImage as u8, 7);
+        assert_eq!(ScannerImageFormat::Png as u8, 1);
+        assert_eq!(ScannerImageFormat::Jpeg as u8, 2);
+        assert_eq!(ScannerImageFormat::Pnm as u8, 3);
     }
 
     #[test]
@@ -1907,6 +2342,7 @@ mod tests {
             background_jobs: Vec::new(),
             rust_plugins: Vec::new(),
             php_plugins: Vec::new(),
+            workstation: WorkstationConfig::default(),
         };
 
         assert!(bootstrap.validate().is_ok());
@@ -1948,6 +2384,11 @@ mod tests {
                 id: "show".to_owned(),
                 accelerator: "CmdOrCtrl+Shift+KeyP".to_owned(),
             }],
+            quick_actions: vec![QuickActionConfig {
+                id: "compose".to_owned(),
+                label: "New message".to_owned(),
+                description: "Open the message composer".to_owned(),
+            }],
         };
         assert!(shell.validate().is_ok());
         let mut menu_without_tray = shell.clone();
@@ -1975,6 +2416,9 @@ mod tests {
             initial_delay_ms: 1_000,
             timeout_ms: 5_000,
             overlap: JobOverlapPolicy::Skip,
+            persistent: false,
+            maximum_attempts: 1,
+            retry_backoff_ms: 1_000,
         };
         assert!(job.validate().is_ok());
 
@@ -1984,6 +2428,13 @@ mod tests {
             arguments: vec!["--quiet".to_owned()],
             timeout_ms: 5_000,
             sha256: None,
+            sandbox: PluginSandboxMode::Strict,
+            permissions: PluginPermissions {
+                filesystem_roots: vec!["workspace".to_owned()],
+                network: false,
+                shell: false,
+                devices: false,
+            },
         };
         assert!(plugin.validate().is_ok());
 

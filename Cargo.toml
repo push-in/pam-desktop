@@ -2,13 +2,14 @@
 members = [
     "compat/rust-plugin-v1",
     "crates/pam-desktop-plugin",
+    "crates/pam-desktop-platform",
     "crates/pam-desktop-protocol",
     "crates/pam-desktop-shell",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "1.2.9"
+version = "1.3.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Pushin <engineering@pushin.com.br>"]
@@ -16,11 +17,13 @@ license = "MIT"
 repository = "https://github.com/push-in/pam-desktop"
 
 [workspace.dependencies]
-arboard = { version = "3.6.1", default-features = false }
+arboard = { version = "3.6.1", default-features = false, features = ["image-data"] }
+accesskit_winit = { version = "0.33.2", default-features = true }
 ashpd = { version = "0.12.3", default-features = false, features = ["tokio"] }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 base64 = "0.22.1"
 cap-std = "4.0.2"
+clipboard-rs = { version = "0.3.5", default-features = false, features = ["wayland"] }
 # Keep the host cryptography aligned with Servo's stable dependency graph.
 ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["fast", "signature", "zeroize"] }
 euclid = "0.22.14"
@@ -31,6 +34,7 @@ ksni = { version = "0.3.6", default-features = false, features = ["blocking", "t
 # Keep the JavaScript engine and elliptic-curve primitives aligned with Servo.
 mozjs = "=0.21.0"
 pam-desktop-protocol = { path = "crates/pam-desktop-protocol" }
+pam-desktop-platform = { path = "crates/pam-desktop-platform" }
 png = "=0.18.1"
 primeorder = "=0.14.0"
 notify-rust = "=4.16.1"
@@ -43,6 +47,7 @@ serde_repr = "0.1.20"
 secret-service = { version = "4.0.0", default-features = false, features = ["rt-tokio-crypto-rust"] }
 sha2 = "0.10.9"
 servo = { version = "=0.5.0", default-features = false, features = ["baked-in-resources", "bundled_freetype", "clipboard", "js_jit"] }
+softbuffer = { version = "=0.4.8", default-features = true }
 tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { version = "0.7.19", features = ["io"] }
 tracing = "0.1.44"

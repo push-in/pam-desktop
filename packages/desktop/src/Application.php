@@ -52,6 +52,8 @@ final class Application
 
     private Shell $shell;
 
+    private Workstation $workstation;
+
     private function __construct(
         private Manifest $manifest,
         Window $window,
@@ -59,6 +61,7 @@ final class Application
         $this->windows = ['main' => $window];
         $this->capabilities = Capabilities::none();
         $this->shell = Shell::none();
+        $this->workstation = Workstation::defaults();
     }
 
     public static function create(Window $window, Manifest $manifest): self
@@ -189,6 +192,14 @@ final class Application
     public function shell(Shell $shell): self
     {
         $this->shell = $shell;
+
+        return $this;
+    }
+
+    public function workstation(Workstation $workstation): self
+    {
+        $this->workstation = $workstation;
+        $this->parallelWorkerCount = $workstation->processPoolSize;
 
         return $this;
     }
@@ -378,6 +389,7 @@ final class Application
                 ),
                 'capabilities' => $this->capabilities->toArray(),
                 'shell' => $this->shell->toArray(),
+                'workstation' => $this->workstation->toArray(),
                 'backgroundJobs' => array_map(
                     static fn (string $id, BackgroundJob $job): array => $job->toArray($id),
                     array_keys($this->backgroundJobs),

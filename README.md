@@ -56,6 +56,11 @@ should own the security and process boundary, and Servo should render the local
 experience directly. No Electron-sized Node runtime, no ambient filesystem
 access, and no pretending that a browser tab is an application architecture.
 
+Repository policy requires `cargo clean` after every local certification or
+release build. CI enforces the same cleanup in `always()` steps; temporary
+clean-room projects, package workspaces and downloaded toolchains must also be
+removed after their evidence has been captured.
+
 PAM Desktop pairs expressive authoring with explicit native authority:
 capabilities default to off, commands are registered deliberately, file access
 uses named roots or opaque grants, plugins run behind versioned contracts, and
@@ -205,6 +210,7 @@ For data-intensive applications, continue with [Native SQLite](docs/database.md)
 [binary streaming](docs/streaming.md), [native HTTP](docs/http.md), [Linux secrets](docs/secrets.md),
 [authorized processes](docs/processes.md),
 [file watching](docs/file-watching.md), [Linux desktop portals](docs/desktop-portals.md),
+[persistent full-text search](docs/search.md),
 [visual regression testing](docs/visual-testing.md),
 [permission auditing](docs/permission-audit.md),
 [command execution lanes](docs/execution.md),
@@ -212,6 +218,9 @@ For data-intensive applications, continue with [Native SQLite](docs/database.md)
 the [native windows guide](docs/windows.md), [Linux lifecycle](docs/lifecycle.md) and the
 [runtime diagnostics guide](docs/diagnostics.md), then enforce the
 [performance engineering contract](docs/performance.md).
+
+IDE-class applications can enable the complete [Native Workstation profile](docs/workstation.md):
+process isolation, recovery, command registry, virtualized data surfaces, accessibility and release gates.
 
 Native shell events use the same ordered channel: `pam.menu.selected`,
 `pam.tray.activated`, and `pam.shortcut.changed`. Continue with the
@@ -283,9 +292,11 @@ sudo apt-get install -y \
 cargo build --locked --release -p pam-desktop
 ```
 
-Tagged releases publish
-`pam-desktop-<version>-x86_64-unknown-linux-gnu.tar.gz`, a standalone host
-executable for PAM's signed registry installer, and adjacent SHA-256 files.
+Tagged releases publish target-labelled Linux x86-64, macOS arm64 and Windows
+x64 host archives for the Composer bootstrap, with adjacent SHA-256 files.
+Linux additionally ships rootless installation scripts and reproducibility and
+footprint evidence. Windows/macOS host delivery is preview support until their
+graphical installer/signing clean-room gates join the stable matrix.
 Verify, extract and install the portable archive without root privileges:
 
 ```bash
@@ -340,6 +351,7 @@ docs/
 ├── streaming.md           backpressured binary file streams
 ├── stability.md           1.x support, SemVer and compatibility policy
 ├── visual-testing.md      scoped pixel goldens and CI evidence
+├── workstation-certification.md 50-contract release evidence map
 ├── typed-commands.md       method/class commands, DTOs and typed events
 └── updates.md             signing, feeds and recoverable automatic updates
 packaging/linux/            rootless host installation templates
@@ -360,6 +372,7 @@ composer analyse --working-dir=packages/desktop
 composer validate --strict packages/desktop/composer.json
 scripts/test-host-reproducibility-evidence.sh
 scripts/test-desktop-footprint-evidence.sh
+scripts/clean-room-desktop.sh
 scripts/test-host-archive.sh dist/pam-desktop-1.0.0-x86_64-unknown-linux-gnu.tar.gz
 ```
 

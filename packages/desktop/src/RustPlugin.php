@@ -17,6 +17,8 @@ final readonly class RustPlugin
         public array $arguments,
         public int $timeoutMilliseconds,
         public ?string $sha256,
+        public PluginSandboxMode $sandboxMode,
+        public PluginPermissions $permissions,
     ) {
         Identifier::assert($id, 'The Rust plugin identifier');
         self::assertProjectPath($executable);
@@ -44,7 +46,15 @@ final readonly class RustPlugin
 
     public static function executable(string $id, string $path): self
     {
-        return new self($id, $path, [], 30_000, null);
+        return new self(
+            $id,
+            $path,
+            [],
+            30_000,
+            null,
+            PluginSandboxMode::Inherited,
+            new PluginPermissions(),
+        );
     }
 
     public function arguments(string ...$arguments): self
@@ -55,6 +65,8 @@ final readonly class RustPlugin
             array_values($arguments),
             $this->timeoutMilliseconds,
             $this->sha256,
+            $this->sandboxMode,
+            $this->permissions,
         );
     }
 
@@ -66,6 +78,8 @@ final readonly class RustPlugin
             $this->arguments,
             $milliseconds,
             $this->sha256,
+            $this->sandboxMode,
+            $this->permissions,
         );
     }
 
@@ -81,11 +95,28 @@ final readonly class RustPlugin
             $this->arguments,
             $this->timeoutMilliseconds,
             $sha256,
+            $this->sandboxMode,
+            $this->permissions,
+        );
+    }
+
+    public function sandbox(
+        PluginSandboxMode $mode = PluginSandboxMode::Strict,
+        ?PluginPermissions $permissions = null,
+    ): self {
+        return new self(
+            $this->id,
+            $this->executable,
+            $this->arguments,
+            $this->timeoutMilliseconds,
+            $this->sha256,
+            $mode,
+            $permissions ?? new PluginPermissions(),
         );
     }
 
     /**
-     * @return array{id: string, executable: string, arguments: list<string>, timeoutMs: int, sha256: null|string}
+     * @return array{id: string, executable: string, arguments: list<string>, timeoutMs: int, sha256: null|string, sandbox: int, permissions: array{filesystemRoots: list<string>, network: bool, shell: bool, devices: bool}}
      */
     public function toArray(): array
     {
@@ -95,10 +126,12 @@ final readonly class RustPlugin
             'arguments' => $this->arguments,
             'timeoutMs' => $this->timeoutMilliseconds,
             'sha256' => $this->sha256,
+            'sandbox' => $this->sandboxMode->value,
+            'permissions' => $this->permissions->toArray(),
         ];
     }
 
-    private static function assertProjectPath(string $path): void
+    public static function assertProjectPath(string $path): void
     {
         if (
             $path === ''

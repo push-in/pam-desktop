@@ -22,14 +22,17 @@ jobs:
         run: rustc --version | grep -E '^rustc 1\.88\.'
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.4"
+          php-version: "8.5"
           coverage: none
+      - name: Install strict sandbox test backend
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets --no-default-features --features gateway -- -D warnings
       - run: cargo test --locked --workspace --no-default-features --features gateway
       - name: Linux host archive contract
         run: |
-          sh -n scripts/package-host-linux.sh scripts/test-host-archive.sh scripts/test-host-cache.sh scripts/host-reproducibility-evidence.sh scripts/test-host-reproducibility-evidence.sh scripts/desktop-footprint-evidence.sh scripts/test-desktop-footprint-evidence.sh packages/desktop/bin/pam-desktop
+          sh -n scripts/package-host-linux.sh scripts/test-host-archive.sh scripts/test-host-cache.sh scripts/host-reproducibility-evidence.sh scripts/test-host-reproducibility-evidence.sh scripts/desktop-footprint-evidence.sh scripts/test-desktop-footprint-evidence.sh scripts/clean-room-desktop.sh
+          php -l packages/desktop/bin/pam-desktop
           test -x packages/desktop/bin/pam-desktop
           scripts/test-host-cache.sh
           scripts/test-host-reproducibility-evidence.sh
@@ -69,7 +72,14 @@ jobs:
       - run: composer analyse --working-dir=packages/desktop
       - run: php scripts/test-release-workflows.php
       - name: Validate native platform evidence contracts
-        run: python3 -m unittest tests/test_desktop_platform_evidence.py
+        run: >-
+          python3 -m unittest
+          tests/test_desktop_platform_evidence.py
+          tests/test_desktop_performance_evidence.py
+          tests/test_host_portable.py
+      - name: Remove build intermediates
+        if: always()
+        run: cargo clean
 
   otlp-collector:
     runs-on: ubuntu-22.04
@@ -88,3 +98,6 @@ jobs:
             'ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector:0.157.0@sha256:4019ce4d7e7791a1a255fffb2f407af66d5017cc65543469ba565c4f47f795b8'
       - name: Certify Desktop OTLP interoperability
         run: scripts/certify-desktop-otlp.sh
+      - name: Remove build intermediates
+        if: always()
+        run: cargo clean

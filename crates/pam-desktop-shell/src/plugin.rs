@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 
 use pam_desktop_protocol::{
     ClientEvent, ErrorCode, MAX_MESSAGE_BYTES, PLUGIN_BOOT_COMMAND, PLUGIN_PROTOCOL_VERSION,
-    PluginMetadata, PluginRequestEnvelope, PluginResponseEnvelope, ResponseStatus,
-    RustPluginConfig,
+    PluginMetadata, PluginRequestEnvelope, PluginResponseEnvelope, PluginSandboxMode,
+    ResponseStatus, RustPluginConfig,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -54,12 +54,17 @@ pub struct PluginSupervisor {
 }
 
 impl PluginSupervisor {
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.plugins.len()
+    }
+
     pub fn prepare(project: &Project, configs: &[RustPluginConfig]) -> Result<Self, String> {
         let mut plugins = HashMap::with_capacity(configs.len());
         for config in configs {
             let executable = project.resolve_plugin_executable(&config.executable)?;
             verify_integrity(&executable, config)?;
-            let slot = PluginSlot::start(project.root(), executable, config.clone())?;
+            let slot = PluginSlot::lazy(project.root(), executable, config.clone());
             plugins.insert(config.id.clone(), Mutex::new(slot));
         }
         Ok(Self { plugins })
@@ -87,34 +92,19 @@ struct PluginSlot {
     project_root: PathBuf,
     executable: PathBuf,
     config: RustPluginConfig,
-    metadata: PluginMetadata,
+    metadata: Option<PluginMetadata>,
     client: Option<PluginClient>,
 }
 
 impl PluginSlot {
-    fn start(
-        project_root: &Path,
-        executable: PathBuf,
-        config: RustPluginConfig,
-    ) -> Result<Self, String> {
-        let mut client = PluginClient::spawn(project_root, &executable, &config)?;
-        let metadata = client.boot()?;
-        metadata.validate()?;
-        if metadata.identifier != config.id {
-            return Err(format!(
-                "Rust plugin at {} identifies as {:?}, expected {:?}",
-                executable.display(),
-                metadata.identifier,
-                config.id
-            ));
-        }
-        Ok(Self {
+    fn lazy(project_root: &Path, executable: PathBuf, config: RustPluginConfig) -> Self {
+        Self {
             project_root: project_root.to_path_buf(),
             executable,
             config,
-            metadata,
-            client: Some(client),
-        })
+            metadata: None,
+            client: None,
+        }
     }
 
     fn invoke(
@@ -124,8 +114,13 @@ impl PluginSlot {
         timeout: Option<Duration>,
         cancellation: &CancellationToken,
     ) -> Result<PluginInvocation, PluginError> {
+        if self.client.is_none() {
+            self.restart().map_err(PluginError::unavailable)?;
+        }
         if !self
             .metadata
+            .as_ref()
+            .expect("plugin metadata is loaded with the client")
             .commands
             .iter()
             .any(|export| export == command)
@@ -137,9 +132,6 @@ impl PluginSlot {
                     self.config.id
                 ),
             });
-        }
-        if self.client.is_none() {
-            self.restart().map_err(PluginError::unavailable)?;
         }
         let deadline = timeout.unwrap_or_else(|| Duration::from_millis(self.config.timeout_ms));
         let result = self
@@ -176,11 +168,23 @@ impl PluginSlot {
         let mut client = PluginClient::spawn(&self.project_root, &self.executable, &self.config)?;
         let metadata = client.boot()?;
         metadata.validate()?;
-        if metadata != self.metadata {
+        if metadata.identifier != self.config.id {
             return Err(format!(
-                "Rust plugin {:?} changed metadata while recovering",
+                "Rust plugin at {} identifies as {:?}, expected {:?}",
+                self.executable.display(),
+                metadata.identifier,
                 self.config.id
             ));
+        }
+        if let Some(expected) = &self.metadata {
+            if &metadata != expected {
+                return Err(format!(
+                    "Rust plugin {:?} changed metadata while recovering",
+                    self.config.id
+                ));
+            }
+        } else {
+            self.metadata = Some(metadata);
         }
         self.client = Some(client);
         Ok(())
@@ -201,9 +205,8 @@ impl PluginClient {
         executable: &Path,
         config: &RustPluginConfig,
     ) -> Result<Self, String> {
-        let mut child = Command::new(executable)
-            .args(&config.arguments)
-            .current_dir(project_root)
+        let mut command = plugin_command(project_root, executable, config)?;
+        let mut child = command
             .env_clear()
             .env("PAM_DESKTOP_PLUGIN_ID", &config.id)
             .env(
@@ -361,6 +364,133 @@ impl PluginClient {
     }
 }
 
+fn plugin_command(
+    project_root: &Path,
+    executable: &Path,
+    config: &RustPluginConfig,
+) -> Result<Command, String> {
+    if config.sandbox == PluginSandboxMode::Inherited {
+        let mut command = Command::new(executable);
+        command.args(&config.arguments).current_dir(project_root);
+        return Ok(command);
+    }
+    strict_plugin_command(project_root, executable, config)
+}
+
+#[cfg(target_os = "linux")]
+fn strict_plugin_command(
+    project_root: &Path,
+    executable: &Path,
+    config: &RustPluginConfig,
+) -> Result<Command, String> {
+    let bubblewrap = ["/usr/bin/bwrap", "/bin/bwrap"]
+        .into_iter()
+        .map(Path::new)
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            format!(
+                "Rust plugin {:?} requires strict sandboxing, but bubblewrap is unavailable",
+                config.id
+            )
+        })?;
+    let canonical_root = project_root
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve plugin project root: {error}"))?;
+    let canonical_executable = executable
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve plugin executable: {error}"))?;
+    let mut command = Command::new(bubblewrap);
+    command.args([
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-all",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+    ]);
+    if config.permissions.network {
+        command.arg("--share-net");
+    }
+    for system_root in ["/usr/lib", "/usr/lib64", "/lib", "/lib64"] {
+        if Path::new(system_root).exists() {
+            command.args(["--ro-bind", system_root, system_root]);
+        }
+    }
+    // An empty project directory becomes the working directory; only the
+    // verified executable and explicitly granted roots are materialized.
+    append_parent_directories(&mut command, &canonical_root);
+    command.args(["--dir", canonical_root.to_string_lossy().as_ref()]);
+    append_parent_directories(&mut command, &canonical_executable);
+    command.args([
+        "--ro-bind",
+        canonical_executable.to_string_lossy().as_ref(),
+        canonical_executable.to_string_lossy().as_ref(),
+    ]);
+    for relative in &config.permissions.filesystem_roots {
+        let root = canonical_root
+            .join(relative)
+            .canonicalize()
+            .map_err(|error| {
+                format!("cannot resolve strict plugin filesystem root {relative:?}: {error}")
+            })?;
+        if !root.starts_with(&canonical_root) {
+            return Err(format!(
+                "strict plugin filesystem root {relative:?} escapes the project"
+            ));
+        }
+        append_parent_directories(&mut command, &root);
+        command.args([
+            "--bind",
+            root.to_string_lossy().as_ref(),
+            root.to_string_lossy().as_ref(),
+        ]);
+    }
+    if config.permissions.devices {
+        command.args(["--dev-bind", "/dev", "/dev"]);
+    }
+    if config.permissions.shell {
+        for root in ["/usr/bin", "/bin"] {
+            if Path::new(root).exists() {
+                command.args(["--ro-bind", root, root]);
+            }
+        }
+    }
+    command
+        .args(["--chdir", canonical_root.to_string_lossy().as_ref(), "--"])
+        .arg(&canonical_executable)
+        .args(&config.arguments)
+        .current_dir(&canonical_root);
+    Ok(command)
+}
+
+#[cfg(target_os = "linux")]
+fn append_parent_directories(command: &mut Command, path: &Path) {
+    let mut parents: Vec<_> = path
+        .ancestors()
+        .skip(1)
+        .filter(|path| path != &Path::new("/"))
+        .collect();
+    parents.reverse();
+    for parent in parents {
+        command.args(["--dir", parent.to_string_lossy().as_ref()]);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn strict_plugin_command(
+    _project_root: &Path,
+    _executable: &Path,
+    config: &RustPluginConfig,
+) -> Result<Command, String> {
+    Err(format!(
+        "Rust plugin {:?} requests strict sandboxing, which is not certified on this platform",
+        config.id
+    ))
+}
+
 impl Drop for PluginClient {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -399,6 +529,30 @@ mod tests {
 
     use super::*;
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn strict_sandbox_executes_only_the_materialized_plugin_surface() {
+        let fixture = Fixture::create();
+        let executable = fixture.root.join("plugins/strict-fixture");
+        fs::copy("/bin/true", &executable).expect("static sandbox fixture should copy");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+            .expect("sandbox fixture should be executable");
+        let config = RustPluginConfig {
+            id: "strict-fixture".to_owned(),
+            executable: "plugins/strict-fixture".to_owned(),
+            arguments: Vec::new(),
+            timeout_ms: 1_000,
+            sha256: None,
+            sandbox: PluginSandboxMode::Strict,
+            permissions: pam_desktop_protocol::PluginPermissions::default(),
+        };
+        let status = plugin_command(&fixture.root, &executable, &config)
+            .expect("strict sandbox command should materialize")
+            .status()
+            .expect("bubblewrap should start");
+        assert!(status.success(), "sandboxed fixture should complete");
+    }
+
     #[test]
     fn supervises_a_process_plugin_and_recovers_after_a_crash() {
         let fixture = Fixture::create();
@@ -409,9 +563,15 @@ mod tests {
             arguments: Vec::new(),
             timeout_ms: 1_000,
             sha256: None,
+            sandbox: PluginSandboxMode::Inherited,
+            permissions: pam_desktop_protocol::PluginPermissions::default(),
         };
         let supervisor =
-            PluginSupervisor::prepare(&project, &[config]).expect("plugin should start");
+            PluginSupervisor::prepare(&project, &[config]).expect("plugin should register");
+        assert!(
+            !fixture.root.join("plugin-booted").exists(),
+            "registered plugins must remain cold until their first invocation"
+        );
         let invocation = supervisor
             .invoke(
                 "fixture",
@@ -421,6 +581,7 @@ mod tests {
                 &CancellationToken::default(),
             )
             .expect("plugin command should succeed");
+        assert!(fixture.root.join("plugin-booted").is_file());
         assert_eq!(invocation.payload, serde_json::json!({"safe": true}));
 
         let crashed = supervisor.invoke(
@@ -479,13 +640,15 @@ mod tests {
             )
             .expect("icon should be written");
             let executable = root.join("plugins/fixture");
+            let staging = root.join("plugins/.fixture-staging");
             fs::write(
-                &executable,
+                &staging,
                 r#"#!/bin/sh
 while IFS= read -r line; do
     id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
     case "$line" in
         *'"command":"@pam/plugin/boot"'*)
+            : > "$PAM_DESKTOP_PROJECT_ROOT/plugin-booted"
             printf '{"version":1,"id":%s,"kind":2,"status":1,"payload":{"identifier":"fixture","name":"Fixture","version":"1.0.0","commands":["echo","crash"]},"events":[]}\n' "$id"
             ;;
         *'"command":"crash"'*)
@@ -502,8 +665,9 @@ done
 "#,
             )
             .expect("plugin should be written");
-            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))
+            fs::set_permissions(&staging, fs::Permissions::from_mode(0o755))
                 .expect("plugin should be executable");
+            fs::rename(&staging, &executable).expect("plugin should publish atomically");
             Self { root }
         }
     }

@@ -37,6 +37,7 @@ jobs:
           elif git diff --quiet "${previous_tag}" "${GITHUB_SHA}" -- \
             Cargo.toml Cargo.lock crates compat/rust-plugin-v1 \
             scripts/package-host-linux.sh scripts/test-host-archive.sh \
+            scripts/package-host-portable.py scripts/verify-host-portable.py \
             scripts/host-reproducibility-evidence.sh \
             scripts/test-host-reproducibility-evidence.sh \
             scripts/desktop-footprint-evidence.sh \
@@ -65,7 +66,7 @@ jobs:
           shared-key: pam-desktop-release
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: "8.4"
+          php-version: "8.5"
           coverage: none
       - name: Validate the public Composer package
         run: composer validate --strict composer.json
@@ -159,12 +160,29 @@ jobs:
           name: pam-desktop-x86_64-unknown-linux-gnu
           path: dist/pam-desktop-*
           if-no-files-found: error
+      - name: Clean-room create, dev, package, install and launch
+        run: |
+          curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --connect-timeout 15 --max-time 60 --max-filesize 1048576 \
+            -fsSL https://github.com/push-in/pam/releases/latest/download/install.sh | sh
+          PAM_CLEAN_ROOM_PAM="${HOME}/.local/bin/pam" \
+            PAM_DESKTOP_HOST_BINARY="${GITHUB_WORKSPACE}/target/release/pam-desktop" \
+            scripts/clean-room-desktop.sh
+      - name: Remove build intermediates
+        if: always()
+        run: cargo clean
 
   publish:
     needs:
       - native-changes
       - build
-    if: always() && needs.native-changes.outputs.rebuild == 'true' && needs.build.result == 'success'
+      - platform-contracts
+      - source-contracts
+    if: >-
+      always() && needs.native-changes.outputs.rebuild == 'true'
+      && needs.build.result == 'success'
+      && needs.platform-contracts.result == 'success'
+      && needs.source-contracts.result == 'success'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v4

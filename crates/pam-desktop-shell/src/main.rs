@@ -1,6 +1,11 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 #[cfg(feature = "gateway")]
+mod background_agent;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod crash_report;
+#[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod database;
 #[cfg(feature = "gateway")]
@@ -54,7 +59,13 @@ mod runtime;
 mod scheduler;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod search;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod secret_store;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod startup_snapshot;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod system_info;
@@ -63,6 +74,9 @@ mod visual;
 #[cfg(feature = "gateway")]
 #[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
 mod watcher;
+#[cfg(feature = "gateway")]
+#[cfg_attr(not(feature = "servo-engine"), allow(dead_code))]
+mod window_state;
 mod worker;
 
 #[cfg(feature = "servo-engine")]
@@ -118,6 +132,18 @@ fn run() -> Result<(), String> {
                 .next()
                 .map_or_else(|| PathBuf::from("."), PathBuf::from);
             run_desktop(Project::discover(&project)?, false)
+        }
+        "agent" => {
+            let project = arguments
+                .next()
+                .map_or_else(|| PathBuf::from("."), PathBuf::from);
+            if let Some(unknown) = arguments.next() {
+                return Err(format!(
+                    "unexpected argument for agent: {}",
+                    unknown.to_string_lossy()
+                ));
+            }
+            run_agent(Project::discover(&project)?)
         }
         "build" => run_build(&executable, arguments.collect()),
         "plugin" => run_plugin(&executable, arguments.collect()),
@@ -307,6 +333,14 @@ fn run_doctor(path: &std::path::Path) -> Result<(), String> {
         "[ok] PHP worker generation: {}",
         runtime.worker_generation()
     );
+    println!(
+        "[ok] Startup snapshot: {}",
+        if runtime.startup_snapshot_hit() {
+            "warm hit"
+        } else {
+            "cold/miss (published when enabled)"
+        }
+    );
     print_engine_diagnostic();
     Ok(())
 }
@@ -328,9 +362,22 @@ fn run_diagnostics(_path: &std::path::Path) -> Result<(), String> {
     Err("this binary was built without the gateway feature".to_owned())
 }
 
+#[cfg(feature = "gateway")]
+fn run_agent(project: Project) -> Result<(), String> {
+    background_agent::run(project)
+}
+
+#[cfg(not(feature = "gateway"))]
+fn run_agent(_project: Project) -> Result<(), String> {
+    Err("this binary was built without the gateway feature".to_owned())
+}
+
 #[cfg(feature = "servo-engine")]
 fn run_desktop(project: Project, watch: bool) -> Result<(), String> {
-    let runtime = DesktopRuntime::prepare(project)?;
+    let runtime = DesktopRuntime::prepare_interactive(project)?;
+    if runtime.bootstrap().workstation.background_agent {
+        background_agent::spawn(runtime.project(), &runtime.bootstrap().manifest.identifier)?;
+    }
     let arguments = std::env::args().skip(3).collect::<Vec<_>>();
     match lifecycle::InstanceGuard::acquire(&runtime.bootstrap().manifest.identifier, &arguments)? {
         lifecycle::Instance::Forwarded => Ok(()),

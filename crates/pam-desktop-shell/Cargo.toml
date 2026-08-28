@@ -17,20 +17,24 @@ default = ["servo-engine"]
 gateway = ["dep:url"]
 servo-engine = [
     "gateway",
+    "dep:accesskit_winit",
     "dep:euclid",
     "dep:mozjs",
     "dep:primeorder",
     "dep:rustls",
     "dep:servo",
+    "dep:softbuffer",
     "dep:tracing",
     "dep:url",
 ]
 
 [dependencies]
+accesskit_winit = { workspace = true, optional = true }
 arboard.workspace = true
 axum.workspace = true
 base64.workspace = true
 cap-std.workspace = true
+clipboard-rs.workspace = true
 ed25519-dalek.workspace = true
 euclid = { workspace = true, optional = true }
 getrandom.workspace = true
@@ -39,6 +43,7 @@ global-hotkey.workspace = true
 # Compatibility pins for Servo 0.5; see the workspace manifest.
 mozjs = { workspace = true, optional = true }
 pam-desktop-protocol.workspace = true
+pam-desktop-platform.workspace = true
 png.workspace = true
 primeorder = { workspace = true, optional = true }
 notify-rust.workspace = true
@@ -49,17 +54,21 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 servo = { workspace = true, optional = true }
+softbuffer = { workspace = true, optional = true }
 tokio.workspace = true
 tokio-util.workspace = true
 tracing = { workspace = true, optional = true }
 ureq.workspace = true
 url = { workspace = true, optional = true }
 winit.workspace = true
+portable-pty = "0.9.0"
+interprocess = "2.4.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd.workspace = true
 ksni.workspace = true
 secret-service.workspace = true
+zbus = "5.18.0"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 tray-icon.workspace = true

@@ -3,6 +3,18 @@ name: Desktop platform compatibility
 on:
   workflow_call:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - crates/**
+      - compat/rust-plugin-v1/**
+      - scripts/desktop-platform-evidence.py
+      - scripts/package-host-portable.py
+      - scripts/verify-host-portable.py
+      - tests/test_desktop_platform_evidence.py
+      - tests/test_host_portable.py
+      - .github/workflows/platform-compatibility.yml
   push:
     branches: [main]
     paths:
@@ -11,11 +23,16 @@ on:
       - crates/**
       - compat/rust-plugin-v1/**
       - scripts/desktop-platform-evidence.py
+      - scripts/package-host-portable.py
+      - scripts/verify-host-portable.py
       - tests/test_desktop_platform_evidence.py
+      - tests/test_host_portable.py
       - .github/workflows/platform-compatibility.yml
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
 
 concurrency:
   group: desktop-platform-${{ github.ref }}
@@ -25,7 +42,10 @@ jobs:
   native:
     name: ${{ matrix.name }} native contracts
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    # A clean Windows release build of Servo can legitimately exceed 45 minutes
+    # after the test, clippy and debug smoke gates. Keep the timeout bounded, but
+    # leave enough room for the production archive and unconditional cleanup.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -34,13 +54,17 @@ jobs:
             runner: macos-15
             platform_code: 2
             architecture_code: 1
-            executable: target/debug/pam-desktop
+            executable: target/release/pam-desktop
+            release_directory: target/release
+            target: aarch64-apple-darwin
             python: python3
           - name: Windows x64
             runner: windows-2025
             platform_code: 3
             architecture_code: 2
-            executable: target/debug/pam-desktop.exe
+            executable: target/release/pam-desktop.exe
+            release_directory: target/release
+            target: x86_64-pc-windows-msvc
             python: python
     steps:
       - uses: actions/checkout@v7
@@ -61,10 +85,10 @@ jobs:
         run: >-
           cargo clippy --locked --workspace --all-targets
           --no-default-features --features gateway -- -D warnings
-      - name: Build and smoke-test the real Servo desktop host
+      - name: Build and smoke-test the production Servo desktop host
         shell: bash
         run: |
-          cargo build --locked -p pam-desktop --bins
+          cargo build --locked --release -p pam-desktop --bins
           rust_version=$(rustc --version)
           '${{ matrix.python }}' scripts/desktop-platform-evidence.py create \
             --binary '${{ matrix.executable }}' \
@@ -76,9 +100,38 @@ jobs:
           '${{ matrix.python }}' scripts/desktop-platform-evidence.py verify \
             --binary '${{ matrix.executable }}' \
             --evidence 'desktop-platform-evidence-${{ matrix.platform_code }}.json'
+      - name: Build and verify the production host archive
+        shell: bash
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | '${{ matrix.python }}' -c 'import json,sys; data=json.load(sys.stdin); print(next(package["version"] for package in data["packages"] if package["name"] == "pam-desktop"))')
+          source_epoch=$(git log -1 --format=%ct)
+          mkdir -p dist
+          SOURCE_DATE_EPOCH="${source_epoch}" '${{ matrix.python }}' scripts/package-host-portable.py \
+            '${{ matrix.release_directory }}' dist "${version}" '${{ matrix.target }}'
+          '${{ matrix.python }}' scripts/verify-host-portable.py \
+            "dist/pam-desktop-${version}-${{ matrix.target }}.tar.gz" \
+            '${{ matrix.target }}'
       - uses: actions/upload-artifact@v7
         with:
           name: pam-desktop-${{ matrix.platform_code }}-native-smoke
           path: desktop-platform-evidence-${{ matrix.platform_code }}.json
           if-no-files-found: error
           retention-days: 14
+      - name: Attest the native host archive
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pam-desktop-${{ matrix.target }}
+          path: dist/pam-desktop-*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove build intermediates
+        if: always()
+        shell: bash
+        run: cargo clean
