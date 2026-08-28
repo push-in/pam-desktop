@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 1.3.1 - 2026-08-27
+
+- Run the mandatory graphical release clean-room inside an isolated Xvfb
+  display, preserving real create/dev/package/install/launch certification on
+  headless Linux runners.
+
 ## 1.3.0 - 2026-08-27
 
 - Turn PAM Desktop into a Native Workstation runtime with configurable
