@@ -95,7 +95,7 @@ requireFragments($release, 'release.yml', [
     "  publish-api:\n    needs:\n      - native-changes\n      - platform-contracts\n      - source-contracts\n",
     "      && needs.platform-contracts.result == 'success'\n",
     "      && needs.source-contracts.result == 'success'\n",
-    "          sudo apt-get install -y curl jq libfontconfig1-dev libxkbcommon-x11-0 pkg-config xvfb\n",
+    "          sudo apt-get install -y \\\n            curl jq libegl1 libfontconfig1-dev libgl1-mesa-dri \\\n            libxkbcommon-x11-0 pkg-config xvfb\n",
     "            xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' \\\n",
 ]);
 

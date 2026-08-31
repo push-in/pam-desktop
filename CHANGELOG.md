@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Certify the Linux graphical clean-room with the EGL loader and Mesa software
+  driver installed explicitly, so a freshly provisioned runner can launch the
+  Servo host under Xvfb instead of depending on the runner image by accident.
+
 ## 1.3.3 - 2026-08-31
 
 - Align the Linux AccessKit executor with the host's unified Tokio-backed D-Bus
