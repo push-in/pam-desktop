@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.4 - 2026-08-31
 
 - Certify the Linux graphical clean-room with the EGL loader and Mesa software
   driver installed explicitly, so a freshly provisioned runner can launch the
