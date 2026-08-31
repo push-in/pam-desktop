@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.3.2 - 2026-08-31
+
+- Install the XKB X11 runtime in Linux release jobs so the mandatory graphical
+  clean-room can launch the production host under Xvfb before publication.
+
 ## 1.3.1 - 2026-08-27
 
 - Run the mandatory graphical release clean-room inside an isolated Xvfb
