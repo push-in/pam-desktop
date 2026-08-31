@@ -5514,7 +5514,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop"
-version = "1.3.2"
+version = "1.3.3"
 dependencies = [
  "accesskit_winit",
  "arboard",
@@ -5558,7 +5558,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-platform"
-version = "1.3.2"
+version = "1.3.3"
 dependencies = [
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
@@ -5568,7 +5568,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-plugin"
-version = "1.3.2"
+version = "1.3.3"
 dependencies = [
  "pam-desktop-protocol",
  "serde_json",
@@ -5576,7 +5576,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-protocol"
-version = "1.3.2"
+version = "1.3.3"
 dependencies = [
  "serde",
  "serde_json",
