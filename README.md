@@ -288,7 +288,8 @@ On Ubuntu 22.04 or compatible distributions:
 
 ```bash
 sudo apt-get install -y \
-  build-essential clang libclang-dev libfontconfig1-dev pkg-config
+  build-essential clang libclang-dev libegl1 libfontconfig1-dev \
+  libgl1-mesa-dri libxkbcommon-x11-0 pkg-config
 cargo build --locked --release -p pam-desktop
 ```
 
