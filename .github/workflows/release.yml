@@ -73,7 +73,7 @@ jobs:
       - name: Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl jq libfontconfig1-dev pkg-config xvfb
+          sudo apt-get install -y curl jq libfontconfig1-dev libxkbcommon-x11-0 pkg-config xvfb
           curl --fail --location --silent --show-error \
             --output "${RUNNER_TEMP}/llvm.sh" \
             https://apt.llvm.org/llvm.sh
