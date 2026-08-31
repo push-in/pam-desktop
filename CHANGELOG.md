@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.3.3 - 2026-08-31
+
+- Align the Linux AccessKit executor with the host's unified Tokio-backed D-Bus
+  runtime, preserving AT-SPI accessibility without a startup reactor abort.
+
 ## 1.3.2 - 2026-08-31
 
 - Install the XKB X11 runtime in Linux release jobs so the mandatory graphical
