@@ -39,8 +39,12 @@ if ($manifest === false || $patchedFont === false) {
     fail('cannot read the Servo macOS source override');
 }
 requireFragments($manifest, 'Cargo.toml', [
+    'accesskit_winit = { version = "0.33.2", default-features = false, features = ["accesskit_unix", "rwh_06", "tokio"] }',
     'servo-fonts = { path = "third_party/servo-fonts-0.5.0" }',
 ]);
+if (str_contains($manifest, 'accesskit_winit = { version = "0.33.2", default-features = true }')) {
+    fail('AccessKit must not mix its async-io executor with the unified zbus Tokio backend');
+}
 requireFragments($patchedFont, 'patched servo-fonts macOS source', [
     'Some(CFString::from_str(options.language.as_str()))',
     'language.as_deref()',
