@@ -168,7 +168,7 @@ To get the real path of a user's file instead of a private copy, use `Dialog`: s
 
 ### Not available on desktop
 
-`Share` and the file-sharing calls fail with "Sharing is not available on this platform". `Files::importUri()` fails with "Only content URIs can be imported".
+`Share::text()` and `Share::files()` open the share sheet of the system on macOS (the sharing service picker) and on Windows (the share dialog); neither was run on a real machine. Linux has no share sheet: the calls fail with "Sharing is not available on this platform". Sharing with one application (`packageName`, `fileToPackage()`) is refused everywhere: the user picks the application in the sheet. `Files::importUri()` fails with "Only content URIs can be imported".
 
 ## HTTP
 

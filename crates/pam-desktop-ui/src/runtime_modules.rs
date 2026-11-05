@@ -242,6 +242,13 @@ impl<B: Backend> Runtime<B> {
             Ok(map) => map,
             Err(error) => return reply.failure(error),
         };
+        // Choosing the receiving application is the user's, in the sheet.
+        if map
+            .text("packageName")
+            .is_some_and(|package| !package.is_empty())
+        {
+            return reply.failure("Sharing with one application is not available on this platform");
+        }
         let paths: Vec<String> = map
             .text("paths")
             .and_then(|json| serde_json::from_str(json).ok())

@@ -79,6 +79,7 @@ System:
 - A modal window with a parent is a sheet.
 - Links arrive through `application:openURLs:`, also the one that launched the application, so `Linking::listen()` receives it and `Linking::initial()` may be empty.
 - Battery, network and Low Power Mode are read with `pmset`, `route` and `networksetup`, at most every 10 seconds.
+- `Share::text()` and `Share::files()` open the sharing service picker at the pointer, or in the middle of the window when the pointer is outside it.
 - `Screen::secure()` sets the sharing type of every window to none. Capture tools built on ScreenCaptureKit may still record the window on recent systems.
 - Reduce Motion is followed while the application runs; macOS has no system text scale for applications.
 
@@ -128,9 +129,8 @@ Shell:
 - Notifications: the host registers the `applicationId` as the AppUserModelID under `HKCU\Software\Classes\AppUserModelId`; when a toast cannot be shown, a balloon is.
 - Only copy drags; the drag image hides over the own window.
 
-## What neither backend got
+## What was left out
 
-- `Share::text()` and `Share::files()` report that sharing is not available, as on Linux.
 - An application icon in the executable on Windows: the launcher of a bundle is a copy of the host, with the host's resources.
 
 ## Reporting what you find

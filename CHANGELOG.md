@@ -107,6 +107,8 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
   keychain, timers, device information and links.
 - Device status (battery, network type, power saving) read from each system,
   once or as a watch.
+- `Share::text()` and `Share::files()` through the share sheet of the system
+  on macOS and Windows; Linux has none.
 - Capabilities that only exist on phones in PAM Native (location, contacts,
   sensors, biometrics, SMS and others) are not included; their class names
   throw a `PluginException` naming the optional package.

@@ -23,8 +23,9 @@ final class Share
     }
 
     /**
-     * Shares plain text through the platform share sheet. Not available on
-     * desktop: the call fails with "Sharing is not available on this platform".
+     * Shares plain text through the share sheet of the system (macOS and
+     * Windows). Linux has none: the call fails with "Sharing is not available
+     * on this platform".
      *
      * `$opened` fires once the sheet was presented. When the native side
      * fails, `$failure` receives its message; without `$failure` the failure
@@ -78,7 +79,7 @@ final class Share
         );
     }
 
-    /** Shares a file with one application package. Fails on desktop, like every share. */
+    /** Shares a file with one application package. Fails on desktop: the user picks the application in the sheet. */
     public static function fileToPackage(
         string $path,
         string $packageName,
@@ -100,9 +101,10 @@ final class Share
     }
 
     /**
-     * Shares private sandbox files through the platform share sheet. Not
-     * available on desktop: the call fails with "Sharing is not available on
-     * this platform".
+     * Shares private sandbox files through the share sheet of the system
+     * (macOS and Windows). Linux has none: the call fails with "Sharing is
+     * not available on this platform". `$packageName` targets one application
+     * and is refused on desktop, where the user picks it in the sheet.
      *
      * `$text` (optional) travels beside the files, so a picture can be shared
      * with its caption/link.
