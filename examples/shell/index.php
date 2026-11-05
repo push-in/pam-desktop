@@ -57,6 +57,10 @@ final class Shell extends Component
             $this->status = 'Shortcut: quick search';
         });
         Shortcut::register('Delete', fn () => $this->remove($this->selected));
+        // Reaches the application even while another one has the focus.
+        Shortcut::register('Ctrl+Alt+P', function (): void {
+            $this->status = 'Global shortcut: Ctrl+Alt+P';
+        }, global: true);
         Window::onStateChange(function (WindowState $state): void {
             $this->window = match (true) {
                 $state->fullScreen => 'full screen',

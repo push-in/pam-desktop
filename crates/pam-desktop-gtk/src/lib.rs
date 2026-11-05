@@ -10,6 +10,8 @@
 
 mod accessibility;
 mod backend;
+#[cfg(feature = "hotkeys")]
+mod hotkeys;
 mod input;
 mod media;
 mod paint;

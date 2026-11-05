@@ -71,6 +71,8 @@ pub struct GtkBackend {
     last_press: Rc<RefCell<Option<(gdk::Device, i32, f64, f64, u32)>>>,
     #[cfg(feature = "tray")]
     tray: Option<crate::tray::TrayHost>,
+    #[cfg(feature = "hotkeys")]
+    hotkeys: Option<crate::hotkeys::Hotkeys>,
 }
 
 impl GtkBackend {
@@ -91,6 +93,8 @@ impl GtkBackend {
             last_press: Rc::new(RefCell::new(None)),
             #[cfg(feature = "tray")]
             tray: None,
+            #[cfg(feature = "hotkeys")]
+            hotkeys: None,
         }
     }
 
@@ -933,8 +937,19 @@ impl Backend for GtkBackend {
         self.windows.get(&window).map(|entry| shell::window_state(&entry.window)).unwrap_or_default()
     }
 
-    /// Shortcuts of the focused window are matched by the core; global ones
-    /// need the desktop portal and are not registered here.
+    /// Shortcuts of the focused window are matched by the core; only the
+    /// global ones are registered with the system.
+    #[cfg(feature = "hotkeys")]
+    fn set_shortcuts(&mut self, shortcuts: &[Shortcut]) {
+        if self.hotkeys.is_none() && shortcuts.iter().any(|shortcut| shortcut.global) {
+            self.hotkeys = Some(crate::hotkeys::Hotkeys::new(&self.events));
+        }
+        if let Some(hotkeys) = &mut self.hotkeys {
+            hotkeys.set(shortcuts);
+        }
+    }
+
+    #[cfg(not(feature = "hotkeys"))]
     fn set_shortcuts(&mut self, _shortcuts: &[Shortcut]) {}
 
     fn set_cursor(&mut self, id: NodeId, cursor: Cursor) {
