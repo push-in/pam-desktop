@@ -32,9 +32,6 @@ foreach ([
 }
 
 foreach ([
-    'Pam\\Desktop\\System\\Toast' => 'pushinbr/pam-desktop-toast',
-    'Pam\\Desktop\\System\\ToastType' => 'pushinbr/pam-desktop-toast',
-    'Pam\\Desktop\\System\\ToastPosition' => 'pushinbr/pam-desktop-toast',
     'Pam\\Desktop\\UI\\DrawerLayoutAndroid' => 'pushinbr/pam-desktop-drawer',
     'Pam\\Desktop\\Navigation\\DrawerNavigator' => 'pushinbr/pam-desktop-drawer',
     'Pam\\Desktop\\Navigation\\DrawerRouter' => 'pushinbr/pam-desktop-drawer',

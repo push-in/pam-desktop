@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.toast",
+    "name": "PAM Desktop toast",
+    "entry": "index.php",
+    "window": {
+        "width": 640,
+        "height": 420
+    }
+}

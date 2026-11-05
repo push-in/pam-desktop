@@ -85,6 +85,9 @@ impl<B: Backend> Runtime<B> {
         if module == "files" && matches!(method, "pick" | "pickMany") {
             return self.pick_files(method == "pickMany", payload, reply);
         }
+        if module == "toast" && method == "show" {
+            return self.show_toast(payload, reply);
+        }
         let Some(reply) = self.modules.call(module, method, payload, reply) else { return };
         match module {
             "appearance" => self.appearance_module(method, payload, reply),
@@ -100,6 +103,22 @@ impl<B: Backend> Runtime<B> {
             // Unknown modules fail fast so application callbacks never hang.
             other => reply.failure(format!("Unknown native module {other}")),
         }
+    }
+
+    /// `toast.show`: a message over the application, drawn by the host.
+    fn show_toast(&mut self, payload: &[u8], reply: Reply) {
+        let request = match request_map(payload) {
+            Ok(request) => request,
+            Err(error) => return reply.failure(error),
+        };
+        {
+            let backend = &mut self.backend;
+            let mut measure = |block: &crate::text::TextBlock, width: f32| backend.measure_text(block, width);
+            let mut ctx = ctx!(self);
+            self.toasts.show(&mut ctx, &mut measure, &request);
+        }
+        self.update_host_overlays();
+        reply.done();
     }
 
     /// `files.pick` / `files.pickMany`: the native open dialog, then a copy of
@@ -171,7 +190,7 @@ impl<B: Backend> Runtime<B> {
             2 => route(self, "storage", "get", reply),
             3 => route(self, "storage", "set", reply),
             4 => self.alert(&map, reply),
-            5 => route(self, "toast", "show", reply),
+            5 => self.show_toast(payload, reply),
             6 => reply.failure("Sharing is not available on this platform"),
             7 => match map.text("url") {
                 Some(url) => match open_url(url) {

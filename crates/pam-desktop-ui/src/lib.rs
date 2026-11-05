@@ -8,6 +8,7 @@
 pub mod accessibility;
 pub mod animator;
 pub mod backend;
+pub mod chrome;
 pub mod color;
 pub mod context;
 pub mod controls;
@@ -34,6 +35,7 @@ pub mod shell;
 pub mod style;
 pub mod testing;
 pub mod text;
+pub mod toast;
 pub mod watch;
 pub mod webview;
 pub mod wiremap;

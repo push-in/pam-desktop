@@ -14,11 +14,9 @@ use std::collections::HashSet;
 use pam_desktop_wire::{NodeKind, PropKey, PropValue};
 
 use crate::backend::NodeId;
+use crate::chrome::{Builder, Measure, TextStyle};
 use crate::context::Ctx;
 use crate::geometry::{Rect, Size};
-use crate::props::PropMap;
-use crate::scene::Action;
-use crate::text::{TextBlock, TextMetrics};
 
 const MAX_QUEUE: usize = 50;
 const MAX_MESSAGE_CHARS: usize = 12_000;
@@ -220,108 +218,6 @@ fn palette(dark: bool) -> Palette {
     }
 }
 
-/// The fixed-pitch family of each system.
-const MONOSPACE: &str = if cfg!(target_os = "macos") {
-    "Menlo"
-} else if cfg!(target_os = "windows") {
-    "Consolas"
-} else {
-    "monospace"
-};
-
-/// Measures a paragraph with the platform's text engine.
-pub type Measure<'a> = &'a mut dyn FnMut(&TextBlock, f32) -> TextMetrics;
-
-/// Builds synthetic nodes with frames in window coordinates.
-struct Builder<'a, 'b, 'c> {
-    ctx: &'a mut Ctx<'b>,
-    measure: Measure<'c>,
-    order: u32,
-}
-
-struct TextStyle {
-    size: f32,
-    weight: i64,
-    color: i64,
-    mono: bool,
-    max_lines: i64,
-    centered: bool,
-}
-
-impl TextStyle {
-    const fn new(size: f32, weight: i64, color: i64) -> Self {
-        Self { size, weight, color, mono: false, max_lines: 0, centered: false }
-    }
-
-    const fn mono(mut self) -> Self {
-        self.mono = true;
-        self
-    }
-
-    const fn lines(mut self, lines: i64) -> Self {
-        self.max_lines = lines;
-        self
-    }
-
-    const fn centered(mut self) -> Self {
-        self.centered = true;
-        self
-    }
-}
-
-impl Builder<'_, '_, '_> {
-    fn view(&mut self, parent: NodeId, kind: NodeKind, frame: Rect, props: &[(PropKey, PropValue)], command: Option<u16>) -> NodeId {
-        self.order += 1;
-        let map: PropMap = props.iter().cloned().collect();
-        self.ctx.scene.add_synthetic(parent, kind, map, frame, self.order, command.map(|command| Action::Chrome { command }))
-    }
-
-    /// A paragraph at `(x, y)` wrapped to `width`; returns its height.
-    fn text(&mut self, parent: NodeId, x: f32, y: f32, width: f32, content: &str, style: &TextStyle) -> f32 {
-        let mut props = vec![
-            (PropKey::Text, PropValue::String(content.to_owned())),
-            (PropKey::FontSize, PropValue::Float(f64::from(style.size))),
-            (PropKey::FontWeight, PropValue::Integer(style.weight)),
-            (PropKey::TextColor, PropValue::Integer(style.color)),
-            // Chrome never takes the pointer away from the row it sits in.
-            (PropKey::PointerEvents, PropValue::Integer(2)),
-        ];
-        if style.mono {
-            props.push((PropKey::FontFamily, PropValue::String(MONOSPACE.to_owned())));
-        }
-        if style.max_lines > 0 {
-            props.push((PropKey::NumberOfLines, PropValue::Integer(style.max_lines)));
-        }
-        if style.centered {
-            props.push((PropKey::TextAlign, PropValue::Integer(2)));
-        }
-        let id = self.view(parent, NodeKind::Text, Rect::new(x, y, width, style.size * 1.4), &props, None);
-        let height = self.ctx.scene.text_block(id).map_or(style.size * 1.4, |block| (self.measure)(&block, width).height);
-        self.ctx.scene.set_synthetic_frame(id, Rect::new(x, y, width, height));
-        height
-    }
-
-    /// A push button with a centered label.
-    fn button(&mut self, parent: NodeId, frame: Rect, label: &str, background: i64, color: i64, border: Option<i64>, command: u16) {
-        let mut props = vec![
-            (PropKey::Text, PropValue::String(label.to_owned())),
-            (PropKey::FontSize, PropValue::Float(14.0)),
-            (PropKey::FontWeight, PropValue::Integer(600)),
-            (PropKey::TextColor, PropValue::Integer(color)),
-            (PropKey::TextAlign, PropValue::Integer(2)),
-            (PropKey::BackgroundColor, PropValue::Integer(background)),
-            (PropKey::BorderRadius, PropValue::Float(10.0)),
-            (PropKey::Cursor, PropValue::String("pointer".into())),
-            (PropKey::AccessibilityRole, PropValue::Integer(2)),
-        ];
-        if let Some(border) = border {
-            props.push((PropKey::BorderWidth, PropValue::Float(1.0)));
-            props.push((PropKey::BorderColor, PropValue::Integer(border)));
-        }
-        self.view(parent, NodeKind::Text, frame, &props, Some(command));
-    }
-}
-
 pub struct ErrorOverlay {
     /// Development shows details; production recovers silently.
     development: bool,
@@ -494,7 +390,7 @@ impl ErrorOverlay {
         }
         let viewport = ctx.viewport;
         let colors = palette(dark);
-        let mut builder = Builder { ctx, measure, order: 0 };
+        let mut builder = Builder::new(ctx, measure);
         let root = match self.view {
             View::Hidden => None,
             View::Toast => self.queue.get(self.current).map(|report| Self::toast(&mut builder, report, self.queue.len(), viewport, &colors)),
@@ -502,7 +398,12 @@ impl ErrorOverlay {
             View::Fallback => Some(Self::fallback(&mut builder, self.portuguese, viewport, &colors)),
         };
         self.roots.extend(root);
-        ctx.scene.set_host_overlays(self.roots.clone());
+    }
+
+    /// The overlay's top-level nodes, for the scene's host overlays.
+    #[must_use]
+    pub fn roots(&self) -> &[NodeId] {
+        &self.roots
     }
 
     fn toast(builder: &mut Builder<'_, '_, '_>, report: &Report, queued: usize, viewport: Size, colors: &Palette) -> NodeId {
@@ -626,7 +527,7 @@ impl ErrorOverlay {
                     let place = format!("{}:{}", frame.file.as_deref().unwrap_or("[internal]"), frame.line);
                     let place_height = builder.text(row, MARGIN + 10.0, top + 6.0 + call_height + 1.0, content_width - 20.0, &place, &TextStyle::new(12.0, 400, colors.muted).mono().lines(1));
                     let row_height = 12.0 + call_height + 1.0 + place_height;
-                    builder.ctx.scene.set_synthetic_frame(row, Rect::new(MARGIN, top, content_width, row_height));
+                    builder.set_frame(row, Rect::new(MARGIN, top, content_width, row_height));
                     y += row_height + 2.0;
                     index += 1;
                     continue;

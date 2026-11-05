@@ -299,6 +299,8 @@ pub enum Owner {
     Scroll(NodeId),
     /// Fade-in of an image that arrived from the network.
     Image(NodeId),
+    /// The toast sliding in or out.
+    Toast,
 }
 
 impl Owner {
@@ -314,6 +316,8 @@ impl Owner {
             | Self::Control(id)
             | Self::Scroll(id)
             | Self::Image(id) => *id,
+            // Host chrome belongs to no node of the application.
+            Self::Toast => 0,
         }
     }
 }
@@ -418,6 +422,8 @@ pub enum Timer {
     WebViewTimeout(NodeId),
     /// A production application reloads after a fatal error.
     ErrorRecovery,
+    /// The toast on screen has been shown long enough.
+    ToastDismiss,
 }
 
 #[derive(Default)]

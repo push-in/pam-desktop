@@ -258,6 +258,7 @@ pub struct Runtime<B: Backend> {
     pub(crate) selection: crate::selection::TextSelection,
     drag_drop: crate::dragdrop::DragDrop,
     pub(crate) error_overlay: crate::error_overlay::ErrorOverlay,
+    pub(crate) toasts: crate::toast::Toasts,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
     pub(crate) shell: Shell,
@@ -405,6 +406,7 @@ impl<B: Backend> Runtime<B> {
             selection: crate::selection::TextSelection::default(),
             drag_drop: crate::dragdrop::DragDrop::default(),
             error_overlay: crate::error_overlay::ErrorOverlay::new(config.development, &crate::modules::system::locale_tag()),
+            toasts: crate::toast::Toasts::default(),
             modules,
             directories,
             shell: Shell::default(),
@@ -638,6 +640,10 @@ impl<B: Backend> Runtime<B> {
         self.modules.reset();
         self.shell.reset();
         self.error_overlay.reset();
+        {
+            let mut ctx = ctx!(self);
+            self.toasts.remove(&mut ctx);
+        }
         self.refresh_error_overlay();
         match spawn_worker(&self.worker_command, &self.metrics, self.system_dark, self.settings.appearance_mode, &self.inbox, self.generation) {
             Ok(worker) => self.worker = Some(worker),
@@ -676,6 +682,13 @@ impl<B: Backend> Runtime<B> {
         let mut measure = |block: &crate::text::TextBlock, width: f32| backend.measure_text(block, width);
         let mut ctx = ctx!(self);
         self.error_overlay.rebuild(&mut ctx, &mut measure, dark);
+        self.update_host_overlays();
+    }
+
+    /// Stacks the host chrome above the application: toasts, then errors.
+    pub(crate) fn update_host_overlays(&mut self) {
+        let overlays: Vec<NodeId> = self.toasts.roots().iter().chain(self.error_overlay.roots()).copied().collect();
+        self.scene.set_host_overlays(overlays);
     }
 
     fn commit(&mut self, frame: &[u8]) {
@@ -856,12 +869,14 @@ impl<B: Backend> Runtime<B> {
                 self.armed_wake = None;
                 let due = self.timers.take_due(self.now_ms());
                 let mut recover = false;
+                let mut toast_changed = false;
                 let mut ctx = ctx!(self);
                 for timer in due {
                     match timer {
                         Timer::InputDebounce(id) => self.inputs.on_timer(&mut ctx, id),
                         Timer::WebViewTimeout(id) => self.web_views.on_timer(&mut ctx, id),
                         Timer::ErrorRecovery => recover = true,
+                        Timer::ToastDismiss => toast_changed |= self.toasts.dismiss(&mut ctx),
                         Timer::MediaProgress(id) | Timer::MediaRelease(id) => {
                             let position = self.backend.media_position(id);
                             self.media.on_timer(&mut ctx, timer, position);
@@ -872,6 +887,9 @@ impl<B: Backend> Runtime<B> {
                         Timer::ScrollRest(_) | Timer::ListWindow(_) | Timer::RefreshFallback(_) => self.scrolling.on_timer(&mut ctx, timer),
                         _ => self.interaction.on_timer(&mut ctx, timer),
                     }
+                }
+                if toast_changed {
+                    self.update_host_overlays();
                 }
                 if recover {
                     self.reload();
@@ -943,6 +961,7 @@ impl<B: Backend> Runtime<B> {
     fn tick(&mut self) {
         let now = self.now_ms();
         let samples = self.animator.tick(now);
+        let mut toast_changed = false;
         let mut ctx = ctx!(self);
         for sample in samples {
             match sample.owner {
@@ -959,8 +978,12 @@ impl<B: Backend> Runtime<B> {
                 Owner::Control(id) => self.controls.on_sample(&mut ctx, id, sample.value, sample.finished),
                 Owner::Scroll(id) => self.scrolling.on_sample(&mut ctx, id, sample.value),
                 Owner::Image(id) => self.images.on_sample(&mut ctx, id, sample.value),
+                Owner::Toast => toast_changed |= self.toasts.on_sample(&mut ctx, sample.value, sample.finished),
                 Owner::Transition(..) | Owner::Motion(..) => self.motion.on_sample(&mut ctx, sample.owner, sample.value, sample.finished),
             }
+        }
+        if toast_changed {
+            self.update_host_overlays();
         }
     }
 
@@ -973,6 +996,12 @@ impl<B: Backend> Runtime<B> {
             }
             Action::ModalBackdrop { modal } => self.modals.backdrop_pressed(&mut ctx, modal),
             Action::Toggle { id } => self.controls.toggle(&mut ctx, id),
+            Action::Chrome { command: crate::toast::DISMISS_COMMAND } => {
+                let changed = self.toasts.dismiss(&mut ctx);
+                if changed {
+                    self.update_host_overlays();
+                }
+            }
             Action::Chrome { command } => {
                 drop(ctx);
                 match self.error_overlay.run(command) {
