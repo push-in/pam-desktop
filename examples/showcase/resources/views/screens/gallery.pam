@@ -5,7 +5,7 @@
             <Column padding="20" gap="16" backgroundColor="#FF08111F">
                 <Row height="56" gap="12" alignItems="center">
                     <Column flexGrow="1">
-                        <Text height="24" textColor="#FF63E6BE" fontSize="11" fontWeight="700" letterSpacing="0.1">PAM NATIVE GALLERY</Text>
+                        <Text height="24" textColor="#FF63E6BE" fontSize="11" fontWeight="700" letterSpacing="0.1">PAM DESKTOP GALLERY</Text>
                         <Text height="32" textColor="#FFF7FAFC" fontSize="22" fontWeight="700">PHP that feels impossible.</Text>
                     </Column>
                     <Pressable
@@ -34,12 +34,12 @@
                     <Text height="72" textColor="#FFB7C5D8" fontSize="15" lineHeight="22">Open each experience and interact with it. Every control below is native and reconciled in Rust.</Text>
                     <Row height="64" gap="8">
                         <Column flexGrow="1" padding="10" borderRadius="14" backgroundColor="#FF163149">
-                            <Text height="25" textColor="#FFFFFFFF" fontSize="19" fontWeight="700">5.8 MiB</Text>
-                            <Text height="20" textColor="#FF8FA8C0" fontSize="12">APK benchmark</Text>
+                            <Text height="25" textColor="#FFFFFFFF" fontSize="19" fontWeight="700">10.5 MB</Text>
+                            <Text height="20" textColor="#FF8FA8C0" fontSize="12">Linux host binary</Text>
                         </Column>
                         <Column flexGrow="1" padding="10" borderRadius="14" backgroundColor="#FF163149">
-                            <Text height="25" textColor="#FFFFFFFF" fontSize="19" fontWeight="700">408 ms</Text>
-                            <Text height="20" textColor="#FF8FA8C0" fontSize="12">fully drawn</Text>
+                            <Text height="25" textColor="#FFFFFFFF" fontSize="19" fontWeight="700">0.2 s</Text>
+                            <Text height="20" textColor="#FF8FA8C0" fontSize="12">to the first frame</Text>
                         </Column>
                     </Row>
                 </Column>
@@ -134,7 +134,7 @@
                     </Row>
                 </Pressable>
 
-                <Text height="42" textColor="#FF71859D" textAlign="center" fontSize="12">Android API 26–36 · iOS UIKit · PHP 8.5 · Rust</Text>
+                <Text height="42" textColor="#FF71859D" textAlign="center" fontSize="12">GTK 4 · AppKit · Win32 · PHP 8.5 · Rust</Text>
             </Column>
         </ScrollView>
     </SafeAreaView>

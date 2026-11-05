@@ -573,6 +573,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "embed-manifest"
+version = "1.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba92c8f4591bf29f89716b45e5f5f56577adbb81426e5620c6e994da7c88bb7a"
+
+[[package]]
 name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1816,6 +1822,7 @@ dependencies = [
  "aes-gcm",
  "base64 0.22.1",
  "ed25519-dalek",
+ "embed-manifest",
  "getrandom 0.3.4",
  "keyring",
  "pam-desktop-appkit",

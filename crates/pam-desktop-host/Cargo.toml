@@ -60,5 +60,9 @@ pam-desktop-gtk = { path = "../pam-desktop-gtk", default-features = false }
 # The Secret Service over a pure Rust D-Bus implementation: no libdbus.
 keyring = { version = "3.6", default-features = false, features = ["async-secret-service", "async-io", "crypto-rust"] }
 
+[build-dependencies]
+# Pure Rust: writes the manifest resource without the Windows SDK tools.
+embed-manifest = "1.4"
+
 [lints]
 workspace = true

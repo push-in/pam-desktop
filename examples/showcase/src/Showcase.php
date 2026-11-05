@@ -56,7 +56,7 @@ final class Showcase
             StatusBar::make(0xFF0F172A, StatusBarAppearance::Light),
             SafeAreaView::make(Scroll::make(
                 Column::make(
-                    Text::make('PAM NATIVE LAB')
+                    Text::make('PAM DESKTOP LAB')
                         ->key('eyebrow')
                         ->style(new Style(
                             height: 28,
@@ -102,7 +102,7 @@ final class Showcase
                             fontWeight: 700,
                             lineHeight: 36,
                         )),
-                    Text::make('Real Android views, persistent PHP and incremental Rust diffing.')
+                    Text::make('Real platform views, persistent PHP and incremental Rust diffing.')
                         ->key('subtitle')
                         ->style(new Style(
                             height: 52,
