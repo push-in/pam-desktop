@@ -1,15 +1,19 @@
-//! Image decoding with ImageIO, off the main thread.
+//! Image decoding off the main thread: ImageIO for pictures, `NSImage`
+//! for SVG documents, which ImageIO does not read.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, mpsc};
 
+use objc2::AnyThread;
 use objc2::rc::autoreleasepool;
+use objc2_app_kit::NSImage;
 use objc2_core_foundation::{
     CFBoolean, CFData, CFDictionary, CFNumber, CFRetained, CFString, CFType, CFURL,
 };
 use objc2_core_graphics::CGImage;
+use objc2_foundation::{NSData, NSPoint, NSRect, NSSize};
 use objc2_image_io::{
     CGImageSource, kCGImageSourceCreateThumbnailFromImageAlways,
     kCGImageSourceCreateThumbnailWithTransform, kCGImageSourceShouldCacheImmediately,
@@ -44,11 +48,76 @@ thread_local! {
     static STORE: RefCell<Option<Rc<ImageStore>>> = const { RefCell::new(None) };
 }
 
+/// The largest side an SVG is drawn at, in pixels.
+const SVG_LIMIT: f64 = 4096.0;
+
+/// Whether `bytes` start an SVG document: the root element, possibly after
+/// a byte order mark, an XML declaration, a doctype or comments.
+fn is_svg(bytes: &[u8]) -> bool {
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(2048)]);
+    let head = head.trim_start_matches('\u{feff}').trim_start();
+    head.starts_with("<svg")
+        || (["<?xml", "<!--", "<!DOCTYPE", "<!doctype"]
+            .iter()
+            .any(|prefix| head.starts_with(prefix))
+            && head.contains("<svg"))
+}
+
+/// The pixel size an SVG of `natural` size is drawn at. A drawing has no
+/// pixels of its own: it is drawn at the size it will be shown at
+/// (`max_dimension`), or at twice its natural size when that is unknown, so
+/// that it stays sharp on a dense display.
+fn svg_pixels(natural: (f64, f64), max_dimension: Option<u32>) -> Option<(f64, f64)> {
+    let (width, height) = natural;
+    if !(width > 0.0 && height > 0.0 && width.is_finite() && height.is_finite()) {
+        return None;
+    }
+    let larger = width.max(height);
+    let wanted = max_dimension
+        .filter(|limit| *limit > 0)
+        .map_or(larger * 2.0, f64::from)
+        .min(SVG_LIMIT);
+    let scale = wanted / larger;
+    Some((
+        (width * scale).round().max(1.0),
+        (height * scale).round().max(1.0),
+    ))
+}
+
+/// Draws an SVG document into pixels on the calling (worker) thread.
+/// `NSImage` reads SVG from macOS 10.15 on.
+fn decode_svg(bytes: &[u8], max_dimension: Option<u32>) -> Result<CFRetained<CGImage>, String> {
+    let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(bytes))
+        .ok_or_else(|| String::from("Image could not be decoded"))?;
+    let natural = image.size();
+    let (width, height) = svg_pixels((natural.width, natural.height), max_dimension)
+        .ok_or_else(|| String::from("Image could not be decoded"))?;
+    let mut area = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(width, height));
+    // SAFETY: the rectangle is a valid pointer for the call; without a
+    // context it is taken in pixels, and no hints are passed.
+    unsafe { image.CGImageForProposedRect_context_hints(&mut area, None, None) }
+        .map(CFRetained::from)
+        .ok_or_else(|| String::from("Image format is not supported"))
+}
+
 /// Decodes on the calling (worker) thread. The image always goes through
 /// ImageIO's thumbnail path: it decodes straight to the wanted size, so
 /// large photos never exist at full size in memory, applies the
 /// orientation the file records, and yields pixels that are ready to draw.
 fn decode(source: &ImageSource, max_dimension: Option<u32>) -> Result<CFRetained<CGImage>, String> {
+    match source {
+        ImageSource::Bytes(bytes) if is_svg(bytes) => return decode_svg(bytes, max_dimension),
+        ImageSource::File(path)
+            if path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("svg")) =>
+        {
+            let bytes =
+                std::fs::read(path).map_err(|_| String::from("Image file could not be read"))?;
+            return decode_svg(&bytes, max_dimension);
+        }
+        _ => {}
+    }
     // SAFETY: the data, the address and the options outlive the calls, and
     // the option values have the types ImageIO documents for their keys.
     unsafe {
@@ -185,5 +254,36 @@ impl ImageStore {
 
     pub fn get(&self, key: ImageKey) -> Option<CFRetained<CGImage>> {
         self.images.borrow().get(&key).cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn svg_documents_are_recognised_by_their_root() {
+        assert!(is_svg(b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>"));
+        assert!(is_svg(
+            b"\xEF\xBB\xBF  <?xml version=\"1.0\"?>\n<!-- logo -->\n<svg/>"
+        ));
+        assert!(is_svg(
+            b"<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"\">\n<svg/>"
+        ));
+        assert!(!is_svg(b"\x89PNG\r\n\x1a\n"));
+        assert!(!is_svg(b"<?xml version=\"1.0\"?><plist/>"));
+        assert!(!is_svg(b""));
+    }
+
+    #[test]
+    fn svg_is_drawn_at_the_size_it_is_shown_at() {
+        // The larger side takes the wanted size; the ratio is kept.
+        assert_eq!(svg_pixels((24.0, 12.0), Some(96)), Some((96.0, 48.0)));
+        // Unknown: twice the natural size.
+        assert_eq!(svg_pixels((24.0, 24.0), None), Some((48.0, 48.0)));
+        assert_eq!(svg_pixels((24.0, 24.0), Some(0)), Some((48.0, 48.0)));
+        // Never larger than the limit.
+        assert_eq!(svg_pixels((8000.0, 4000.0), None), Some((4096.0, 2048.0)));
+        assert_eq!(svg_pixels((0.0, 10.0), Some(64)), None);
     }
 }

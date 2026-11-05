@@ -29,7 +29,7 @@ use objc2_foundation::{
 use pam_desktop_ui::backend::{
     BackendEvent, ImageFit, MediaEvent, MediaSource, MediaState, NodeId,
 };
-use pam_desktop_ui::geometry::Size;
+use pam_desktop_ui::geometry::{Rect, Size};
 
 use crate::events::Events;
 use crate::util::{cg_size, ns_string};
@@ -115,6 +115,33 @@ struct Shared {
     playing: Cell<bool>,
     /// Playback reached the end and nothing moved it since.
     ended: Cell<bool>,
+    /// The node's box, how the video fits in it and the size of the video
+    /// (zero until it is known): together, where the surface sits.
+    bounds: Cell<Size>,
+    fit: Cell<ImageFit>,
+    natural: Cell<Size>,
+}
+
+/// Where the video sits in a box of `bounds`. It covers the box, where the
+/// layer scales it, except under `Center` and `Repeat`: a video smaller
+/// than the box is then shown at its own size in the middle, and only a
+/// larger one is scaled down to fit (what the GTK backend does).
+fn surface_frame(bounds: Size, fit: ImageFit, natural: Size) -> Rect {
+    let own_size = matches!(fit, ImageFit::Center | ImageFit::Repeat)
+        && natural.width > 0.0
+        && natural.height > 0.0
+        && natural.width <= bounds.width
+        && natural.height <= bounds.height;
+    if own_size {
+        Rect::new(
+            ((bounds.width - natural.width) / 2.0).floor(),
+            ((bounds.height - natural.height) / 2.0).floor(),
+            natural.width,
+            natural.height,
+        )
+    } else {
+        Rect::new(0.0, 0.0, bounds.width, bounds.height)
+    }
 }
 
 fn seconds(time: CMTime) -> f64 {
@@ -135,6 +162,27 @@ fn time(seconds: f64) -> CMTime {
 impl Shared {
     fn emit(&self, event: MediaEvent) {
         self.events.push(BackendEvent::Media { id: self.id, event });
+    }
+
+    /// Puts the surface where the fit, the box and the video say.
+    fn place_surface(&self) {
+        // The cell is free again before AppKit is called.
+        let placed = self.surface.borrow().as_ref().map(|surface| {
+            // Inline controls belong to the whole box.
+            let fit = match surface {
+                Surface::Controls(_) => ImageFit::Contain,
+                Surface::Layer { .. } => self.fit.get(),
+            };
+            (surface.view(), fit)
+        });
+        let Some((view, fit)) = placed else {
+            return;
+        };
+        let frame = surface_frame(self.bounds.get(), fit, self.natural.get());
+        view.setFrame(CGRect::new(
+            CGPoint::new(f64::from(frame.x), f64::from(frame.y)),
+            cg_size(frame.size()),
+        ));
     }
 
     fn seek(&self, player: &AVPlayer, position: f64) {
@@ -170,6 +218,11 @@ impl Shared {
                     height: natural.height.max(0.0) as u32,
                     duration,
                 });
+                self.natural.set(Size::new(
+                    natural.width.max(0.0) as f32,
+                    natural.height.max(0.0) as f32,
+                ));
+                self.place_surface();
                 if self.start_at.get() > 0.0 {
                     self.seek(&player, self.start_at.get());
                 }
@@ -298,6 +351,9 @@ impl MediaHost {
             buffering: Cell::new(false),
             playing: Cell::new(false),
             ended: Cell::new(false),
+            bounds: Cell::new(Size::ZERO),
+            fit: Cell::new(ImageFit::Contain),
+            natural: Cell::new(Size::ZERO),
         });
         let this = MediaObserver::alloc(mtm).set_ivars(Rc::clone(&shared));
         // SAFETY: `init` is the designated initializer of `NSObject`.
@@ -384,6 +440,7 @@ impl MediaHost {
         );
         self.observe(surface.display(), "readyForDisplay");
         *self.shared.surface.borrow_mut() = Some(surface);
+        self.shared.place_surface();
         // A new surface shows its first frame again.
         self.shared.rendered.set(false);
     }
@@ -425,6 +482,7 @@ impl MediaHost {
         shared.buffering.set(false);
         shared.playing.set(false);
         shared.ended.set(false);
+        shared.natural.set(Size::ZERO);
     }
 
     fn open(&mut self, source: &MediaSource) {
@@ -490,12 +548,11 @@ impl MediaHost {
         }
     }
 
-    /// The video covers the node's box.
+    /// The video is placed in the node's box.
     pub fn layout(&mut self, size: Size) {
         self.size = size;
-        if let Some(view) = self.view() {
-            view.setFrame(CGRect::new(CGPoint::ZERO, cg_size(size)));
-        }
+        self.shared.bounds.set(size);
+        self.shared.place_surface();
     }
 
     pub fn apply(&mut self, state: &MediaState, parent: &NSView) {
@@ -540,6 +597,8 @@ impl MediaHost {
                 surface.set_gravity(gravity);
             }
         }
+        shared.fit.set(state.fit);
+        shared.place_surface();
         let Some(player) = shared.player.borrow().clone() else {
             self.state = Some(state.clone());
             return;
@@ -613,5 +672,34 @@ impl Drop for MediaHost {
     /// never destroyed, when the application ends).
     fn drop(&mut self) {
         self.destroy();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_small_video_keeps_its_size_only_under_center_and_repeat() {
+        let (bounds, small, large) = (
+            Size::new(400.0, 300.0),
+            Size::new(200.0, 100.0),
+            Size::new(800.0, 600.0),
+        );
+        let whole = Rect::new(0.0, 0.0, 400.0, 300.0);
+        assert_eq!(
+            surface_frame(bounds, ImageFit::Center, small),
+            Rect::new(100.0, 100.0, 200.0, 100.0)
+        );
+        assert_eq!(
+            surface_frame(bounds, ImageFit::Repeat, small),
+            Rect::new(100.0, 100.0, 200.0, 100.0)
+        );
+        // A larger video is scaled down by the layer, in the whole box.
+        assert_eq!(surface_frame(bounds, ImageFit::Center, large), whole);
+        assert_eq!(surface_frame(bounds, ImageFit::Contain, small), whole);
+        assert_eq!(surface_frame(bounds, ImageFit::Cover, small), whole);
+        // Until the size of the video is known it has the box.
+        assert_eq!(surface_frame(bounds, ImageFit::Center, Size::ZERO), whole);
     }
 }

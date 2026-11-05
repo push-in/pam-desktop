@@ -77,7 +77,7 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
 
 - Images from HTTPS, bundled assets, sandbox files, absolute paths and data
   URIs, with a disk cache, cache policies, placeholders, tinting and load
-  events.
+  events. SVG is drawn at the size it is shown at on Linux and macOS.
 - A media player with play intent, seeking, a disk cache, visible autoplay,
   and clock and progress views bound to the player by the host.
 - An embedded web view with a message bridge, an allowed-host policy and an

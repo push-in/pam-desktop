@@ -33,6 +33,8 @@ Linux is the reference: every example under `examples/` was run and checked ther
 15. **Context menu choice** is read one turn after the menu closes: a choice that arrives later is reported as cancelled.
 16. **Animated `scrollTo`** uses an implicit animation; if it jumps instead, only the animation is lost.
 17. **A frame requested while the window is hidden or minimized** arrives when the window comes back (the display link of a view does not fire, macOS 14 and later).
+18. **SVG images** (an `Image` with an `.svg` file or SVG bytes): they are drawn by `NSImage` on a worker thread and rasterized with `CGImageForProposedRect:`. Check that one shows, that it is sharp at the size of its box, and that it is not upside down.
+19. **Media `Center` fit** (`examples/media` with `->fit(ImageFit::Center)` and a video smaller than its box): the surface view is resized to the video and centered once the player reports its size. Check that it re-centers when the window is resized and when the source changes.
 
 ### Known differences from the GTK backend
 
@@ -68,8 +70,8 @@ Painting:
 
 Images, media and web:
 
-- EXIF orientation is applied; SVG is not decoded.
-- Media `Center` and `Repeat` fits are shown as aspect fit.
+- EXIF orientation is applied. An SVG document is drawn by `NSImage` (macOS 10.15 or newer) at the size it is shown at, or at twice its natural size when that is not known.
+- Media `Center` and `Repeat` show a video smaller than the box at its own size, in the middle, like the GTK backend. With `controls()` the player view always fills the box.
 - `domStorage: false` uses a non-persistent data store; changing `domStorage` or `inlineMedia` recreates the view and reloads the page.
 
 System:

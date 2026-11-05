@@ -35,7 +35,7 @@ Give the image a size in its style, as the examples do.
 | An absolute path or `file://` URL | That file. This is what file dialogs and file drops hand out. |
 | `data:image/…` | The encoded bytes, base64 or percent-encoded, up to 8 MiB. |
 
-Decoding is done by the platform, off the UI thread, so the formats are the ones the platform decodes. An image is decoded no larger than the box that shows it needs, so a thumbnail of a large photo stays small in memory.
+Decoding is done by the platform, off the UI thread, so the formats are the ones the platform decodes. PNG, JPEG and GIF are read everywhere, and WebP where the system has its codec. SVG is read on Linux when the gdk-pixbuf SVG loader is installed (`librsvg2-common`) and on macOS 10.15 or newer; on Windows it is not. An image is decoded no larger than the box that shows it needs, so a thumbnail of a large photo stays small in memory. An SVG is drawn at the size of its box, so it is sharp at any size.
 
 ### Fit
 
@@ -137,7 +137,7 @@ The intent follows the property only when the property changes. If the user paus
 | `controls(bool)` | Shows the platform's transport controls. On by default. |
 | `loop(bool)`, `muted(bool)`, `volume(0..1)` | Applied live. |
 | `playbackRate(0.25..4)` | Backends without rate control play at normal speed. |
-| `fit(ImageFit)` | How the video fills the box. |
+| `fit(ImageFit)` | How the video fills the box. `Center` and `Repeat` show a video smaller than the box at its own size, in the middle, and scale a larger one down. |
 | `thumbnail($source)` | A poster shown until the first video frame is drawn. |
 
 ### Seeking

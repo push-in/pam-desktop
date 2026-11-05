@@ -1474,27 +1474,44 @@ struct DecodedImage {
     pixels: glib::Bytes,
 }
 
-/// Decodes on the calling (worker) thread. With `max_dimension` the decoder
-/// is told the target size up front, so large photos never exist at full
-/// size in memory.
+/// The largest side a drawing (SVG) is rasterized at, in pixels.
+const VECTOR_LIMIT: i32 = 4096;
+
+/// The longest side to decode an image at, when it is not its own. A
+/// picture is only ever made smaller, to `limit`. A drawing has no pixels
+/// of its own: it is rasterized at the size it will be shown at, or at
+/// twice its natural size when that is unknown, so that it stays sharp.
+fn decode_side(longest: i32, limit: Option<i32>, vector: bool) -> Option<i32> {
+    let wanted = match (limit, vector) {
+        (Some(limit), true) => limit.min(VECTOR_LIMIT),
+        (None, true) => longest.saturating_mul(2).min(VECTOR_LIMIT),
+        (Some(limit), false) if longest > limit => limit,
+        _ => return None,
+    };
+    (wanted != longest && longest > 0).then_some(wanted)
+}
+
+/// Decodes on the calling (worker) thread. The decoder is told the target
+/// size up front, so large photos never exist at full size in memory.
 fn decode_image(source: ImageSource, max_dimension: Option<u32>) -> Result<DecodedImage, String> {
     use gtk::gdk_pixbuf::prelude::*;
     let loader = gtk::gdk_pixbuf::PixbufLoader::new();
-    if let Some(limit) = max_dimension
+    let limit = max_dimension
         .and_then(|limit| i32::try_from(limit).ok())
-        .filter(|limit| *limit > 0)
-    {
-        loader.connect_size_prepared(move |loader, width, height| {
-            let longest = width.max(height);
-            if longest > limit {
-                let ratio = f64::from(limit) / f64::from(longest);
-                loader.set_size(
-                    ((f64::from(width) * ratio).round() as i32).max(1),
-                    ((f64::from(height) * ratio).round() as i32).max(1),
-                );
-            }
-        });
-    }
+        .filter(|limit| *limit > 0);
+    loader.connect_size_prepared(move |loader, width, height| {
+        let vector = loader
+            .format()
+            .is_some_and(|format| format.name().is_some_and(|name| name == "svg"));
+        let longest = width.max(height);
+        if let Some(side) = decode_side(longest, limit, vector) {
+            let ratio = f64::from(side) / f64::from(longest);
+            loader.set_size(
+                ((f64::from(width) * ratio).round() as i32).max(1),
+                ((f64::from(height) * ratio).round() as i32).max(1),
+            );
+        }
+    });
     let written = match &source {
         ImageSource::Bytes(bytes) => loader.write(bytes),
         ImageSource::File(path) => match std::fs::read(path) {
@@ -1520,4 +1537,23 @@ fn decode_image(source: ImageSource, max_dimension: Option<u32>) -> Result<Decod
         alpha: pixbuf.has_alpha(),
         pixels: pixbuf.read_pixel_bytes(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pictures_shrink_and_drawings_take_the_shown_size() {
+        // A picture is never enlarged.
+        assert_eq!(decode_side(4000, Some(512), false), Some(512));
+        assert_eq!(decode_side(100, Some(512), false), None);
+        assert_eq!(decode_side(100, None, false), None);
+        // A drawing is rasterized at the size it is shown at.
+        assert_eq!(decode_side(100, Some(512), true), Some(512));
+        assert_eq!(decode_side(100, Some(48), true), Some(48));
+        assert_eq!(decode_side(100, None, true), Some(200));
+        assert_eq!(decode_side(100, Some(100), true), None);
+        assert_eq!(decode_side(3000, None, true), Some(VECTOR_LIMIT));
+    }
 }
