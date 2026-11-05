@@ -14,73 +14,16 @@ use crate::wiremap::WireMap;
 
 // ---- device ---------------------------------------------------------------
 
-const NETWORK_NONE: i64 = 1;
-const NETWORK_WIFI: i64 = 2;
-const NETWORK_ETHERNET: i64 = 4;
-
 /// Battery and connectivity as the OS reports them right now.
 #[must_use]
 pub fn device_status() -> WireMap {
-    let (level, charging) = battery();
+    let status = super::probe::status();
     WireMap::new()
-        .with("batteryLevel", level)
-        .with("charging", charging)
-        .with("networkType", network_type())
-        .with("expensiveNetwork", false)
-        .with("lowPowerMode", false)
-}
-
-/// Charge in `0..=1` (`-1` when unknown) and whether it is charging.
-fn battery() -> (f64, bool) {
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(entries) = fs::read_dir("/sys/class/power_supply") {
-            for entry in entries.filter_map(Result::ok) {
-                let path = entry.path();
-                let kind = fs::read_to_string(path.join("type")).unwrap_or_default();
-                if kind.trim() != "Battery" {
-                    continue;
-                }
-                let Some(capacity) = fs::read_to_string(path.join("capacity")).ok().and_then(|value| value.trim().parse::<f64>().ok())
-                else {
-                    continue;
-                };
-                let status = fs::read_to_string(path.join("status")).unwrap_or_default();
-                return ((capacity / 100.0).clamp(0.0, 1.0), matches!(status.trim(), "Charging" | "Full"));
-            }
-        }
-    }
-    (-1.0, false)
-}
-
-fn network_type() -> i64 {
-    #[cfg(target_os = "linux")]
-    {
-        let mut connected = NETWORK_NONE;
-        if let Ok(entries) = fs::read_dir("/sys/class/net") {
-            for entry in entries.filter_map(Result::ok) {
-                let path = entry.path();
-                if entry.file_name() == "lo" {
-                    continue;
-                }
-                let up = fs::read_to_string(path.join("operstate")).is_ok_and(|state| state.trim() == "up");
-                if !up {
-                    continue;
-                }
-                if path.join("wireless").exists() {
-                    connected = connected.max(NETWORK_WIFI);
-                } else {
-                    return NETWORK_ETHERNET;
-                }
-            }
-        }
-        connected
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        // Desktops are assumed to be on a wired or equivalent connection.
-        NETWORK_ETHERNET
-    }
+        .with("batteryLevel", status.battery_level)
+        .with("charging", status.charging)
+        .with("networkType", status.network)
+        .with("expensiveNetwork", status.network == super::probe::NETWORK_CELLULAR)
+        .with("lowPowerMode", status.low_power)
 }
 
 struct Subscription {

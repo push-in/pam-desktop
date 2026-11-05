@@ -761,7 +761,9 @@ impl Scrolling {
         let frame = node.frame;
         let refreshing = props.flag_or(PropKey::Refreshing, false);
         let offset = props.number_or(PropKey::RefreshProgressViewOffset, 0.0);
-        let color = props.integer(PropKey::TintColor).unwrap_or(0xFF8E_8E93);
+        // The tint, else the first of the refresh colours, else a neutral grey.
+        let first_color = props.text_or_empty(PropKey::RefreshColors).split(',').next().and_then(|color| color.trim().parse::<i64>().ok());
+        let color = props.integer(PropKey::TintColor).or(first_color).unwrap_or(0xFF8E_8E93);
         let Some(refresh) = self.refreshes.get_mut(&id) else { return };
         refresh.sync = false;
         if refreshing {

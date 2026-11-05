@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.counter",
+    "name": "PAM Desktop counter",
+    "entry": "index.php",
+    "window": {
+        "width": 420,
+        "height": 520
+    }
+}

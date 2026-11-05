@@ -374,12 +374,13 @@ impl<B: Backend> Runtime<B> {
         match method {
             "announce" => match request.text("text").map(str::trim) {
                 Some(text) if !text.is_empty() && text.chars().count() <= 4096 => {
-                    reply.map(&WireMap::new().with("delivered", false));
+                    let delivered = self.backend.announce(text, false);
+                    reply.map(&WireMap::new().with("delivered", delivered));
                 }
                 Some(_) => reply.failure("Announcement text is invalid"),
                 None => reply.failure("Announcement text is required"),
             },
-            "status" => reply.map(&WireMap::new().with("enabled", false).with("touchExploration", false)),
+            "status" => reply.map(&WireMap::new().with("enabled", self.backend.screen_reader_active()).with("touchExploration", false)),
             "textScale" => reply.map(&self.text_scale_snapshot()),
             "setTextScale" => {
                 let Some(multiplier) = request.number("multiplier") else { return reply.failure("Text scale multiplier is required") };

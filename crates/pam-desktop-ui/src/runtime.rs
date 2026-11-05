@@ -148,6 +148,9 @@ pub struct RuntimeConfig {
     pub build_number: String,
     /// The URL the application was launched with, if any.
     pub launch_url: Option<String>,
+    /// One running instance per application: a second launch hands its URL
+    /// to the first (`BackendEvent::OpenUrl`) and exits.
+    pub single_instance: bool,
     /// Modules provided by the host binary (network, database, files…).
     pub modules: Vec<(String, Box<dyn crate::modules::Module>)>,
     /// The HTTP stack of the host binary; without one, network features fail.
@@ -975,6 +978,7 @@ impl<B: Backend> Runtime<B> {
                 self.system_dark = dark;
                 self.apply_appearance();
             }
+            BackendEvent::OpenUrl(url) => self.linking.deliver(&url),
             BackendEvent::Frame { .. } => self.tick(),
             BackendEvent::Wake => {
                 self.armed_wake = None;

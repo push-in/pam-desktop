@@ -738,6 +738,18 @@ impl Backend for GtkBackend {
         }
     }
 
+    fn announce(&mut self, message: &str, assertive: bool) -> bool {
+        let active = self.application.active_window().and_then(|active| self.windows.values().find(|entry| entry.window == active));
+        let Some(entry) = active.or_else(|| self.windows.get(&pam_desktop_ui::backend::MAIN_WINDOW)).filter(|entry| entry.host.is_realized()) else { return false };
+        let priority = if assertive { gtk::AccessibleAnnouncementPriority::High } else { gtk::AccessibleAnnouncementPriority::Medium };
+        entry.host.announce(message, priority);
+        crate::accessibility::screen_reader_active()
+    }
+
+    fn screen_reader_active(&self) -> bool {
+        crate::accessibility::screen_reader_active()
+    }
+
     fn begin_text_drag(&mut self, window: WindowId, source: NodeId, text: &str) {
         let finished = |events: &Rc<EventQueue>, dropped: bool| events.push(BackendEvent::DragFinished { source, dropped });
         let surface = self.windows.get(&window).and_then(|entry| entry.window.surface());
@@ -1064,7 +1076,27 @@ const STYLESHEET: &str = "
 
 /// Runs a PAM Desktop application on GTK until its window closes.
 pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
-    let application = gtk::Application::new(Some(application_id), gio::ApplicationFlags::NON_UNIQUE);
+    // One instance per application: a second launch hands its URL over.
+    let flags = if config.single_instance { gio::ApplicationFlags::HANDLES_OPEN } else { gio::ApplicationFlags::NON_UNIQUE };
+    let application = gtk::Application::new(Some(application_id), flags);
+    if config.single_instance && application.register(gio::Cancellable::NONE).is_ok() && application.is_remote() {
+        match &config.launch_url {
+            Some(url) => application.open(&[gio::File::for_uri(url)], ""),
+            None => application.activate(),
+        }
+        return ExitCode::SUCCESS;
+    }
+    let queue: Rc<RefCell<Option<Rc<EventQueue>>>> = Rc::new(RefCell::new(None));
+    let links = Rc::clone(&queue);
+    application.connect_open(move |application, files, _| {
+        let Some(events) = links.borrow().clone() else { return };
+        if let Some(window) = application.windows().into_iter().next_back() {
+            window.present();
+        }
+        for file in files {
+            events.push(BackendEvent::OpenUrl(file.uri().to_string()));
+        }
+    });
     let config = RefCell::new(Some(config));
     let shared: Rc<RefCell<Option<Rc<Shared<GtkBackend>>>>> = Rc::new(RefCell::new(None));
     let failed = Rc::new(Cell::new(false));
@@ -1072,13 +1104,20 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
     let keep = Rc::clone(&shared);
     let failure = Rc::clone(&failed);
     application.connect_activate(move |application| {
-        let Some(config) = config.borrow_mut().take() else { return };
+        let Some(config) = config.borrow_mut().take() else {
+            // A second launch without a link: bring the application forward.
+            if let Some(window) = application.windows().into_iter().next_back() {
+                window.present();
+            }
+            return;
+        };
         if let Some(display) = gdk::Display::default() {
             let provider = gtk::CssProvider::new();
             provider.load_from_string(STYLESHEET);
             gtk::style_context_add_provider_for_display(&display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
         }
         let events = EventQueue::new();
+        *queue.borrow_mut() = Some(Rc::clone(&events));
         let inbox = Inbox::new(|| {
             glib::MainContext::default().invoke(runtime::pump);
         });

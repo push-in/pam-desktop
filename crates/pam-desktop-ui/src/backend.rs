@@ -130,6 +130,9 @@ pub enum BackendEvent {
     WindowCloseRequested { window: WindowId },
     WindowFocusChanged { window: WindowId, focused: bool },
     AppearanceChanged { dark: bool },
+    /// The application was asked to open a link: a registered URL scheme was
+    /// activated, or a second launch handed its URL to this instance.
+    OpenUrl(String),
     /// A display frame for running animations (monotonic milliseconds).
     Frame { time_ms: u64 },
     /// The deadline asked with `schedule_wake` passed.
@@ -564,6 +567,16 @@ pub trait Backend {
     /// handled in `window`, with a snapshot of the `source` view under the
     /// pointer. Reports `DragFinished` when the drag ends.
     fn begin_text_drag(&mut self, window: WindowId, source: NodeId, text: &str);
+    /// Speaks `message` through the assistive technology of the system;
+    /// `assertive` interrupts what is being said. Answers whether it was
+    /// handed over.
+    fn announce(&mut self, _message: &str, _assertive: bool) -> bool {
+        false
+    }
+    /// Whether a screen reader is running.
+    fn screen_reader_active(&self) -> bool {
+        false
+    }
     /// Brings the player of a `Media` view to `state`.
     fn set_media(&mut self, id: NodeId, state: &MediaState);
     /// Current position and duration of a prepared player, in seconds.

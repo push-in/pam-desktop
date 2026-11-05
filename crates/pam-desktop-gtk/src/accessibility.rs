@@ -118,3 +118,40 @@ pub fn apply(widget: &gtk::Widget, accessibility: Option<&Accessibility>, text: 
     announced.clear();
     announced.push_str(name);
 }
+
+/// Whether a screen reader is running (`org.a11y.Status`), asked at most
+/// once every few seconds.
+pub fn screen_reader_active() -> bool {
+    use std::cell::Cell;
+    use std::time::{Duration, Instant};
+
+    thread_local! {
+        static KNOWN: Cell<Option<(Instant, bool)>> = const { Cell::new(None) };
+    }
+    if let Some((asked, active)) = KNOWN.get()
+        && asked.elapsed() < Duration::from_secs(5)
+    {
+        return active;
+    }
+    let active = gtk::gio::bus_get_sync(gtk::gio::BusType::Session, gtk::gio::Cancellable::NONE)
+        .ok()
+        .and_then(|connection| {
+            connection
+                .call_sync(
+                    Some("org.a11y.Bus"),
+                    "/org/a11y/bus",
+                    "org.freedesktop.DBus.Properties",
+                    "Get",
+                    Some(&("org.a11y.Status", "ScreenReaderEnabled").to_variant()),
+                    Some(gtk::glib::VariantTy::new("(v)").ok()?),
+                    gtk::gio::DBusCallFlags::NO_AUTO_START,
+                    250,
+                    gtk::gio::Cancellable::NONE,
+                )
+                .ok()
+        })
+        .and_then(|reply| reply.child_value(0).as_variant()?.get::<bool>())
+        .unwrap_or(false);
+    KNOWN.set(Some((Instant::now(), active)));
+    active
+}

@@ -10,6 +10,7 @@ pub mod fetch;
 pub mod files;
 pub mod http;
 pub mod image;
+pub mod probe;
 pub mod storage;
 pub mod support;
 pub mod system;

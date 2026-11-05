@@ -48,7 +48,7 @@ const TRANSFER_COMPLETE: i64 = 2;
 const TRANSFER_FAILED: i64 = 3;
 
 const DEFAULT_ACCEPT: &str = "application/json, text/plain, */*";
-const RESPONSE_LIMIT: &str = "HTTP response exceeds one MiB";
+const RESPONSE_LIMIT: &str = "HTTP response exceeds 900 KiB";
 const REQUEST_FAILED: &str = "HTTP request failed";
 const TRANSFER_CANCELLED: &str = "HTTP transfer cancelled";
 const OUTSIDE_SANDBOX: &str = "File is outside the private files directory or missing";
