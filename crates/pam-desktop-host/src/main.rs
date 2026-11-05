@@ -1,13 +1,17 @@
 //! `pam-desktop`: the native host of PAM Desktop applications.
 
+mod http_client;
+mod modules;
 mod paths;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use pam_desktop_ui::backend::WindowConfig;
 
+use crate::http_client::UreqClient;
 use crate::paths::AppPaths;
 use pam_desktop_ui::geometry::Size;
 use pam_desktop_ui::runtime::{Directories, RuntimeConfig};
@@ -159,6 +163,7 @@ fn run(target: &Path, development: bool) -> ExitCode {
         return ExitCode::from(73);
     }
     environment.extend(app_paths.environment());
+    let http_client: Arc<dyn pam_desktop_ui::modules::fetch::HttpClient> = Arc::new(UreqClient::new());
     let config = RuntimeConfig {
         worker: WorkerCommand { program, arguments, entry, working_directory: Some(project.clone()), environment },
         window: window_config(&project),
@@ -169,8 +174,8 @@ fn run(target: &Path, development: bool) -> ExitCode {
         app_version: manifest_text(&project, "version").unwrap_or_default(),
         build_number: manifest_text(&project, "build").unwrap_or_default(),
         launch_url: std::env::var("PAM_DESKTOP_LAUNCH_URL").ok().filter(|url| !url.is_empty()),
-        modules: Vec::new(),
-        http_client: None,
+        modules: modules::host_modules(&app_paths.data, &app_paths.cache, &application_id, Arc::clone(&http_client), development),
+        http_client: Some(http_client),
     };
 
     #[cfg(target_os = "linux")]

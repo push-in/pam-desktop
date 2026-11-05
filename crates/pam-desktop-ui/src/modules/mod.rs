@@ -5,9 +5,15 @@
 //! reply is tagged with the worker generation that asked, so results of a
 //! worker that was hot-reloaded away are dropped.
 
+pub mod channel;
 pub mod fetch;
+pub mod files;
+pub mod http;
+pub mod image;
 pub mod storage;
+pub mod support;
 pub mod system;
+pub mod test_support;
 pub mod timers;
 
 use std::collections::HashMap;
