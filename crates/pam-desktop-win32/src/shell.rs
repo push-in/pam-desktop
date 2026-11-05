@@ -201,6 +201,21 @@ pub fn set_appearance(app: &Rc<App>, dark: Option<bool>) {
     }
 }
 
+/// A system setting changed: tells the core when it was the text scale or
+/// the animation setting.
+pub fn system_metrics_changed(app: &Rc<App>) {
+    let (motion, scale) = (reduced_motion(), text_scale());
+    let changed = app.with_state(|state| {
+        let changed = state.reduced_motion != motion || (state.text_scale - scale).abs() > f32::EPSILON;
+        state.reduced_motion = motion;
+        state.text_scale = scale;
+        changed
+    });
+    if changed == Some(true) {
+        app.emit(BackendEvent::MetricsChanged);
+    }
+}
+
 /// The system's light / dark setting may have changed.
 pub fn system_appearance_changed(app: &Rc<App>) {
     let dark = system_prefers_dark();

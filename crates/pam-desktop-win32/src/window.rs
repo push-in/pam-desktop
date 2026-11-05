@@ -1515,6 +1515,7 @@ fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPA
                     crate::shell::system_appearance_changed(app);
                 }
             }
+            crate::shell::system_metrics_changed(app);
             None
         }
         WM_GETOBJECT => crate::accessibility::get_object(app, hwnd, window, wparam, lparam),

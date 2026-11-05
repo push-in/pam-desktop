@@ -235,6 +235,8 @@ pub struct State {
     /// The appearance the application forced, if any.
     pub forced_dark: Option<bool>,
     pub reduced_motion: bool,
+    /// The text scale of the system last reported to the core.
+    pub text_scale: f32,
     /// Windows are kept out of screenshots and recordings.
     pub content_protected: bool,
     /// The core asked for a `Frame` event.
@@ -411,6 +413,7 @@ impl App {
             system_dark,
             forced_dark: None,
             reduced_motion: crate::shell::reduced_motion(),
+            text_scale: crate::shell::text_scale(),
             content_protected: false,
             core_frame_requested: false,
             tick_pending: false,
