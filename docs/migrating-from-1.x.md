@@ -15,7 +15,7 @@ PAM Desktop 2.0 is not an upgrade of 1.x. It is a different product under the sa
 | Declarative windows and menus of 1.x | Replaced by the 2.0 shell API. | `UI\Window`, `App::menu()`, `Tray`, `Shortcut`: [Desktop shell](desktop-shell.md). |
 | Rust plugins and their versioned contracts | The plugin host was part of the 1.x shell. | Not available. |
 | Workstation features: multi-process window isolation, the background agent, workstation certification | They belonged to the 1.x host. | Not available. |
-| The `pam desktop` commands of 1.x | They drove the 1.x host. | The host is run directly: `pam-desktop dev` and `pam-desktop run`. Packaging is in [Distribution](distribution.md). |
+| The `pam desktop` commands of 1.x | They drove the 1.x host. | The 2.0 host has its own commands, run through `vendor/bin/pam-desktop` or directly: `pam-desktop init`, `dev` and `run`. Packaging is in [Distribution](distribution.md). |
 
 A 1.x capability with no row above and no section in [Modules](modules.md) or [Desktop shell](desktop-shell.md) is not provided by 2.0.
 
@@ -26,15 +26,12 @@ Class names are not a guide. `Pam\Desktop\App`, for instance, exists in both ver
 - **PHP runs in a worker process** started by a Rust host, as before. The host and the worker now exchange binary frames over the worker's standard input and output: [Architecture](architecture.md).
 - **PHP 8.5.**
 - **The Composer package name**, `pushinbr/pam-desktop`, and the `Pam\Desktop` namespace.
-- **The host binary name**, `pam-desktop`.
+- **The host binary name**, `pam-desktop`, and the Composer launcher `vendor/bin/pam-desktop`. The launcher still reads `PAM_DESKTOP_HOST_BINARY`, the 1.x name of `PAM_DESKTOP_HOST`.
 - **The repository and the license.**
 
 ## Where the 1.x code is
 
-The 1.x sources are kept for reference and are not built or loaded by 2.0:
-
-- `legacy/`: the 1.x Rust crates, excluded from the Cargo workspace.
-- `packages/desktop/legacy-src` and `packages/desktop/legacy-tests`: the 1.x PHP package and its tests.
+The 1.x sources are not part of the 2.0 tree. They are in the history of the repository, at the `v1.*` tags; the last one is `v1.3.4`.
 
 The 1.x entries of the [changelog](../CHANGELOG.md) are unchanged.
 

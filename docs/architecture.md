@@ -146,13 +146,13 @@ Before starting the worker the host exports the highest identifiers it implement
 | `pam-desktop-engine` | Keeps the last tree, applies patches, runs layout (flexbox, grids, text measured through a callback) and emits mutation batches. |
 | `pam-desktop-ui` | The platform-neutral render core: the worker channel, the scene, one controller per feature, the modules that need only the standard library, and the `Backend` trait. |
 | `pam-desktop-gtk`, `pam-desktop-appkit`, `pam-desktop-win32` | One implementation of `Backend` each. |
-| `pam-desktop-host` | The binary: command line, `pam-desktop.json`, application directories, the HTTP client with a TLS stack, SQLite, the keychain, packaging and updates. |
+| `pam-desktop-host` | The binary: command line, `pam-desktop.json`, `init`, application directories, the HTTP client with a TLS stack, SQLite, the keychain, packaging and updates. It starts the backend of the system it was built for. |
 
 The wire and engine crates started as a copy of PAM Native's and are licensed under Apache 2.0; the rest is MIT. See `NOTICE`.
 
 ## The render core
 
-Everything in the core runs on the UI thread. `runtime.rs` is the glue: one `drain` applies all the work that is queued, then flushes the scene to the backend and the outgoing events to the worker, once.
+Everything in the core runs on the UI thread. `runtime.rs` is the glue: one pass of `drain` applies all the work that is queued, then flushes the scene to the backend and the outgoing events to the worker, once.
 
 ```text
 backend events ─┐
@@ -165,7 +165,8 @@ inbox (threads) ┘
 3. A committed frame goes to the engine, which answers with a mutation batch. The scene applies it and records what changed.
 4. Every **controller** sees each change and reacts. Controllers may change the scene themselves (add chrome, set overrides), so the runtime repeats until the scene is quiet.
 5. The **scene** pushes the minimal set of commands to the backend: frames, decorations, text, layers, children.
-6. Events produced for PHP during the drain are sent, followed by one flush marker.
+6. Events produced for PHP during the pass are sent, followed by one flush marker.
+7. A backend may report events from inside a `Backend` call made during the pass (a scroll that lands, a focus that moves). `drain` then runs another pass for them, up to eight passes in a row.
 
 ### The scene
 
@@ -200,7 +201,7 @@ Each feature is one module with the same shape: `on_change` for scene changes, `
 | `observers.rs` | Intersect, resize and mutate observers. |
 | `error_overlay.rs`, `toast.rs`, `chrome.rs` | Host chrome: error reports and toasts. |
 | `runtime_shell.rs`, `shell.rs` | The `desktop` module: menus, tray, shortcuts, dialogs, notifications, window commands. |
-| `modules/*`, `runtime_modules.rs` | Storage, files, HTTP, image prefetch, timers, system information; calls that need the window or the backend. |
+| `modules/*`, `runtime_modules.rs` | Storage, files, HTTP, image prefetch, timers, system information, device status (`probe.rs`), links; calls that need the window or the backend. |
 | `watch.rs` | The development file watcher. |
 
 Navigation, tabs and modals are implemented here, on top of plain scene nodes, instead of with each platform's navigation controllers and dialogs. That is why they behave identically on every backend.
@@ -232,11 +233,13 @@ The commands, by group:
 | Scrolling | `set_scroll_content`, `set_scroll_config`, `scroll_to` |
 | Text | `measure_text` |
 | Frames | `request_frame`, `schedule_wake` |
-| System services | `clipboard_set_text`, `clipboard_text`, `show_alert`, `set_appearance` |
+| System services | `clipboard_set_text`, `clipboard_text`, `show_alert`, `set_appearance`, `announce`, `screen_reader_active`, `set_content_protection` |
 | Desktop shell | `set_menu_bar`, `popup_menu`, `set_tray`, `pick_files`, `notify`, `window_command`, `window_state`, `set_shortcuts`, `set_cursor`, `set_tooltip`, `begin_window_drag` |
 | Application | `quit` |
 
-What a backend reports is one enum, `BackendEvent`: pointer and key events, focus changes, input edits, scroll offsets, wheel, magnify and rotate gestures, dropped files and text, window state and size, appearance changes, menu, shortcut, tray and notification activations, media and web view events, decoded images, accessibility actions, and the two clock events `Frame` and `Wake`.
+`announce`, `screen_reader_active` and `set_content_protection` have default implementations that answer `false`: a backend that cannot do one of them leaves it out.
+
+What a backend reports is one enum, `BackendEvent`: pointer and key events, focus changes, input edits, scroll offsets, wheel, magnify and rotate gestures, dropped files and text, window state and size, appearance changes (`AppearanceChanged`), text scale and reduced motion changes (`MetricsChanged`, after which the core reads `window_metrics` again), links handed to the running application (`OpenUrl`), menu, shortcut, tray and notification activations, media and web view events, decoded images, accessibility actions, and the two clock events `Frame` and `Wake`.
 
 Three properties of the contract are worth knowing:
 
@@ -272,6 +275,7 @@ A slow PHP handler delays the next frame of *content*; it does not stall an anim
 | `pam-worker-write` | Writes to the worker, coalescing whatever is queued into one write. |
 | `pam-watch` | Development only: polls the project for changes. |
 | `pam-timers` | Sleeps until the next deadline. Started with the first timer. |
+| `pam-device` | Samples the device status while a watch is open. |
 | `pam-storage`, `pam-files`, `pam-sqlite`, `pam-secure-storage` | One serial thread each, so results arrive in call order. |
 | `pam-http`, `pam-http-transfer`, `pam-files-download`, `pam-image`, `pam-image-prefetch`, `pam-media-cache` | Bounded pools for network work. |
 | Backend threads | Image decoding; on Linux the X11 hotkey listener and the tray service. |

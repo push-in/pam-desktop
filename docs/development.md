@@ -1,6 +1,6 @@
 # Development
 
-This page covers the tools you use while building an application or working on the host: the error overlay, screenshots on a virtual display, the test suites and the debugging switches.
+This page covers the tools you use while building an application or working on the host: the error overlay, screenshots on a virtual display, the test suites, static analysis, continuous integration and the debugging switches.
 
 Hot reload and state preservation are described in [Getting started](getting-started.md#hot-reload).
 
@@ -96,7 +96,7 @@ scripts/shot.sh examples/controls /tmp/typed.png 520x600 4 -- mousemove 200 290 
 What the script does:
 
 - starts `Xvfb` on display `:99` if it is not running (set `PAM_SHOT_DISPLAY` for another display);
-- disables the desktop portals so that file dialogs stay on the virtual display;
+- disables the desktop portals (`GDK_DEBUG=no-portals`, `GTK_USE_PORTAL=0`) so that file dialogs stay on the virtual display; dark mode then comes from the GTK settings, not from the portal;
 - gives the application fresh data, cache and state directories, so every capture starts clean;
 - runs `target/debug/pam-desktop run <app dir>` (set `PAM_SHOT_MODE=dev` for development mode) with `PAM_DESKTOP_WINDOW` set to the requested size;
 - captures the window with ImageMagick's `import`, stops the host and prints the first lines of its log.
@@ -108,13 +108,18 @@ It needs `Xvfb`, `xdpyinfo`, `xdotool` and ImageMagick.
 ### Rust
 
 ```bash
-cargo test -j4 -p pam-desktop-ui -p pam-desktop-host
+cargo test --locked --workspace
 ```
 
+- `pam-desktop-wire` and `pam-desktop-engine` test the frame formats, layout and the tree diff.
 - `pam-desktop-ui` tests the render core against a backend that records every command (`testing.rs`). They need no display and no PHP.
-- `pam-desktop-host` tests the host modules: SQLite, secure storage, the HTTP client against a loopback server, the application paths.
+- `pam-desktop-host` tests the host modules and the command line: SQLite, secure storage, the HTTP client against a loopback server, the application paths, the manifest, `init`, packaging and updates.
 
-`-j4` limits the number of parallel build jobs.
+The backend of the current system is built with the workspace; the other two compile to nothing. To test two crates with a bound on the parallel build jobs:
+
+```bash
+cargo test -j4 -p pam-desktop-ui -p pam-desktop-host
+```
 
 ### PHP
 
@@ -122,7 +127,23 @@ cargo test -j4 -p pam-desktop-ui -p pam-desktop-host
 php packages/desktop/tests/run.php
 ```
 
-The PHP suite runs the component core without a host: rendering, the encoder, navigation, lists, gestures, the desktop shell classes and the module APIs against test transports.
+The PHP suite runs the component core without a host: rendering, the encoder, navigation, lists, gestures, the desktop shell classes and the module APIs against test transports. `composer test --working-dir=packages/desktop` runs the same script.
+
+### Static analysis
+
+```bash
+composer install --working-dir=packages/desktop
+composer analyse --working-dir=packages/desktop
+```
+
+`composer analyse` runs PHPStan with `packages/desktop/phpstan.neon`: level 9 over the paths that file lists. That is a subset of the package, not all of `src`: the classes written for the desktop (`Window`, `Menu`, `Tray`, `Dialog`, `Shortcut`, `Notification`, `Updates`, `UI\Window`, `UI\WebView`, toasts) and the parts of the shared core that are held to that level.
+
+### Formatting and lints
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+```
 
 ### Testing your own components
 
@@ -141,6 +162,57 @@ $counter->unmount();
 
 `text()` returns the text of the rendered tree; `render()` renders again and returns the root element.
 
+## Continuous integration
+
+Two workflows live in `.github/workflows/`. **Neither has run yet**: what follows is what they are written to do.
+
+### `ci.yml`
+
+Runs on pushes to `main`, on pull requests, by hand, and as a job of the release workflow.
+
+The Linux job (Ubuntu 24.04, PHP 8.5, `libgtk-4-dev`, `libwebkitgtk-6.0-dev`, `gstreamer1.0-plugins-good`, `xvfb`, `xdotool`) runs these checks, which you can run locally in the same order:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
+cargo check --locked -p pam-desktop-host --no-default-features
+
+composer validate --strict composer.json
+composer validate --strict packages/desktop/composer.json
+composer install --working-dir=packages/desktop --no-interaction --prefer-dist
+composer test --working-dir=packages/desktop
+composer analyse --working-dir=packages/desktop
+
+sh -n scripts/package-host.sh scripts/test-host-cache.sh
+php -l packages/desktop/bin/pam-desktop
+scripts/test-host-cache.sh
+```
+
+It then runs `composer install` at the root, builds the host, starts `examples/counter` under `xvfb-run` and waits for a window named "PAM Desktop counter", and packs the host twice with `scripts/package-host.sh` to check that both archives are identical.
+
+A second job runs on a macOS runner and on a Windows runner: `cargo clippy`, `cargo test --locked --workspace`, `cargo build --locked -p pam-desktop-host` and the PHP suite. It starts no application.
+
+### `release.yml`
+
+Runs when a tag `v*` is pushed:
+
+1. Fails unless the tag is the version in `Cargo.toml` and the `HOST_VERSION` of `packages/desktop/bin/pam-desktop`.
+2. Builds the host in release mode for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-apple-darwin` and `x86_64-pc-windows-msvc`. The Linux hosts are built on Ubuntu 24.04.
+3. Packs each one with `scripts/package-host.sh` and attests the archive and its checksum.
+4. Runs the checks of `ci.yml` beside the builds.
+5. Once the checks and every build passed, publishes `pam-desktop-<version>-<target>.tar.gz` and its `.sha256` on the GitHub release of the tag. These are the files `vendor/bin/pam-desktop` downloads.
+
+### Packing a host by hand
+
+```bash
+scripts/package-host.sh <host binary> <output directory> <version> <target>
+```
+
+The script writes `pam-desktop-<version>-<target>.tar.gz` and its `.sha256` in the output directory. The archive holds `pam-desktop-<version>-<target>/bin/pam-desktop` (`pam-desktop.exe` for a Windows target) next to `LICENSE` and `NOTICE`, with fixed owners, modes and dates (`SOURCE_DATE_EPOCH`, zero by default), so the same binary always gives the same archive. A binary that runs on the build machine must report the version it is packed as.
+
+`scripts/test-host-cache.sh` checks how the launcher prunes its cache: it keeps the host of the installed version and the two most recent other versions, and removes download directories left behind for more than a day.
+
 ## Debugging switches
 
 | Switch | Effect |
@@ -153,6 +225,8 @@ $counter->unmount();
 | `PAM_DESKTOP_STRICT=1` | Makes `BuildConfiguration::strict()` true in development. |
 | `PAM_DESKTOP_FRAME_GC=0` | Leaves PHP's cycle collector on its own schedule. |
 | `PAM_DESKTOP_FULL_PRESENT=1` | Windows backend: presents every frame whole instead of the changed regions. |
+| `GTK_USE_PORTAL=0` | Linux: dark mode is read from the GTK settings instead of the desktop portal. |
+| `PAM_DESKTOP_HOST=/path/to/pam-desktop` | `vendor/bin/pam-desktop` runs that host instead of the downloaded one. |
 
 Other things that help:
 

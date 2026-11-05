@@ -127,7 +127,6 @@ Shell:
 - `destructive` menu items look like the others; menus do not follow dark mode.
 - Notifications: the host registers the `applicationId` as the AppUserModelID under `HKCU\Software\Classes\AppUserModelId`; when a toast cannot be shown, a balloon is.
 - Only copy drags; the drag image hides over the own window.
-- Text scale and reduced motion are read at startup.
 
 ## What neither backend got
 

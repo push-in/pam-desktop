@@ -49,7 +49,27 @@ Window::onCloseRequested(function (): void {
 
 `WindowState` has `maximized`, `minimized`, `fullScreen`, `focused`, `width` and `height`.
 
-On Linux, `center()`, `alwaysOnTop()` and `progress()` do nothing: Wayland gives applications no say on placement, stacking or taskbar progress, and GTK 4 exposes none of them.
+On Linux, `center()` and `alwaysOnTop()` do nothing: Wayland gives applications no say on placement or stacking, and GTK 4 exposes neither.
+
+`progress()` takes a fraction from 0 to 1, or `null` to remove the indicator:
+
+| System | Where it shows |
+| --- | --- |
+| Linux | On the launcher icon, in docks that listen to the Unity launcher entry API (Ubuntu Dock, Dash to Dock, the Plasma task manager), for an installed application. See [Platforms](platforms.md#wayland-and-x11). |
+| macOS | As a badge on the Dock icon ("42%"). |
+| Windows | As the progress of the taskbar button. |
+
+### Application state
+
+The state of the main window is the state of the application:
+
+| `AppState` | When |
+| --- | --- |
+| `Active` | The main window has the focus. |
+| `Inactive` | The main window is visible without the focus. `inactive()` runs on mounted components, and `activated()` when the focus returns. |
+| `Background` | The main window is minimized or hidden. `paused()` runs on mounted components, and `resumed()` when the window comes back. |
+
+In the background the timers a component made with `$this->timers()` follow their `TimerBackgroundPolicy`: `Suspend` (the default), `Cancel` or `Continue`. `App::onStateChange($listener)` runs `$listener(AppState)` on every transition and returns an id for `App::offStateChange()`.
 
 `App::quit()` ends the application.
 
@@ -157,7 +177,7 @@ A role is an item the operating system implements. It gets the conventional labe
 
 ## Context menus
 
-`contextMenu()` exists on every element. The menu opens on a secondary click (the right mouse button) over the element. Each item runs its own handler.
+`contextMenu()` exists on every element. The menu opens on a secondary click (the right mouse button) over the element. From the keyboard, the menu key and Shift+F10 open the menu of the focused element, or of its nearest ancestor that has one, in the middle of that element. Each item runs its own handler.
 
 ```php
 Pressable::make(Text::make($name))

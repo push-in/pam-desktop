@@ -37,11 +37,12 @@ A PHP developer should be able to ship a desktop application whose interface is 
 ## Quick start
 
 ```bash
-git clone https://github.com/push-in/pam-desktop.git
-cd pam-desktop
-cargo build -p pam-desktop-host
-target/debug/pam-desktop dev examples/counter
+composer require pushinbr/pam-desktop
+vendor/bin/pam-desktop init
+vendor/bin/pam-desktop dev
 ```
+
+`vendor/bin/pam-desktop` downloads the native host of the installed version for the current system, verifies its SHA-256 and runs it. Version 2.0.0 is not released yet: there is no `v2.0.0` tag for Composer to install and no host archive to download. Until there is, work from a checkout (see below); `PAM_DESKTOP_HOST` points the launcher at a host built from source.
 
 [Getting started](docs/getting-started.md) covers the requirements, the project layout and the `pam-desktop.json` reference.
 <!-- pam:product-page:end -->
@@ -108,20 +109,25 @@ Assigning to a `#[State]` property schedules a render. The host receives a patch
 | Requirement | Notes |
 | --- | --- |
 | PHP 8.5 | The `php` executable on `PATH`, or `pam` (the host then runs `pam exec`), or the path in `PAM_DESKTOP_PHP`. |
-| Rust 1.92 or newer | Only to build the host. `rust-toolchain.toml` selects the stable channel. |
-| Linux: `libgtk-4-dev` | GTK 4.14 or newer. |
-| Linux: `libwebkitgtk-6.0-dev` | Only for the `webview` cargo feature (on by default). |
+| Composer | To install the `pushinbr/pam-desktop` package. |
+| Linux, to run a released host | glibc 2.39 or newer, GTK 4.14 or newer, WebKitGTK 6 (`libwebkitgtk-6.0-4`) and the GStreamer plugins for media. The released host is built on Ubuntu 24.04. |
+| Rust 1.92 or newer | Only to build the host from a checkout. `rust-toolchain.toml` selects the stable channel. |
+| Linux, to build: `libgtk-4-dev` | GTK 4.14 or newer. |
+| Linux, to build: `libwebkitgtk-6.0-dev` | Only for the `webview` cargo feature of the host (on by default). |
 
-The other default features of the Linux backend, `tray` and `hotkeys`, need no extra system library. [Platforms](docs/platforms.md) lists what each feature does.
+The other optional features of the host on Linux, `tray` and `hotkeys`, need no extra system library. [Platforms](docs/platforms.md) lists what each feature does.
 
 ## Run an example from a checkout
 
 ```bash
+git clone https://github.com/push-in/pam-desktop.git
+cd pam-desktop
+composer install
 cargo build -p pam-desktop-host
 target/debug/pam-desktop dev examples/counter
 ```
 
-`dev` restarts the PHP worker when a source file changes and keeps `#[State]` values across the restart. `run` starts the application without the watcher, with production error handling:
+`composer install` writes the `vendor/autoload.php` that the examples load. `dev` restarts the PHP worker when a source file changes and keeps `#[State]` values across the restart. `run` starts the application without the watcher, with production error handling:
 
 ```bash
 target/debug/pam-desktop run examples/showcase
@@ -142,6 +148,7 @@ Every directory under `examples/` is a runnable application that exercises one f
 | `shell`, `windows` | Menu bar, context menus, tray, shortcuts, dialogs, notifications; secondary windows |
 | `dragdrop`, `text` | Drag and drop between elements; selectable text |
 | `modules` | Timers, storage, alerts, clipboard, device information, appearance |
+| `links` | A URL scheme, a single instance that receives the link of every later launch, a screen reader announcement |
 | `toast`, `errors` | Toasts; the development error overlay |
 
 ## Platforms
@@ -152,9 +159,9 @@ Every directory under `examples/` is a runnable application that exercises one f
 | macOS | AppKit (`pam-desktop-appkit`) | Written against the same `Backend` contract and type-checked by cross compilation. Not yet run on a real machine: first runs are expected to need fixes. |
 | Windows | Win32 + Direct2D/DirectWrite (`pam-desktop-win32`) | Same as macOS: written and type-checked, not yet run on a real machine. |
 
-Two things were not verified on Linux either: the accessibility tree with a real screen reader, and global shortcuts through the Wayland portal (X11 key grabs were verified).
+The host starts the backend of the system it was built for. Two things were not verified on Linux either: the accessibility tree with a real screen reader, and global shortcuts through the Wayland portal (X11 key grabs were verified).
 
-Details, dependencies and the commands that cross-check the macOS and Windows backends from Linux are in [Platforms](docs/platforms.md).
+Details, dependencies and the commands that cross-check the macOS and Windows backends from Linux are in [Platforms](docs/platforms.md). [First run on macOS and Windows](docs/first-run-macos-windows.md) is the checklist for the first run on those systems and the list of known differences from the GTK backend.
 
 ## Features
 
@@ -165,9 +172,9 @@ Details, dependencies and the commands that cross-check the macOS and Windows ba
 | Desktop shell | Main window control, secondary windows, menu bar, context menus, tray, local and global shortcuts, file dialogs, notifications, drag and drop, clipboard | [Desktop shell](docs/desktop-shell.md) |
 | Media and web | Images with a disk cache, video and audio, embedded web pages, vector and freehand canvases | [Media and web](docs/media-and-web.md) |
 | Motion | Transitions, presets, animation programs, gesture detectors, drag contracts, swipeable rows, native pan and zoom | [Animation and gestures](docs/animation-and-gestures.md) |
-| Modules | Key/value storage, file sandbox, HTTP, SQLite, secure storage, timers, device information, links, toasts, alerts | [Modules](docs/modules.md) |
-| Accessibility | Roles, labels, states and actions mapped to AT-SPI, NSAccessibility and UI Automation; text selection; keyboard navigation | [Accessibility](docs/accessibility.md) |
-| Development | Hot reload with state preservation, the error overlay, screenshots on a virtual display, test suites | [Development](docs/development.md) |
+| Modules | Key/value storage, file sandbox, HTTP, SQLite, secure storage, timers, device information and status, links and deep links with a single instance, toasts, alerts | [Modules](docs/modules.md) |
+| Accessibility | Roles, labels, states and actions mapped to AT-SPI, NSAccessibility and UI Automation; announcements; text selection; keyboard navigation | [Accessibility](docs/accessibility.md) |
+| Development | Hot reload with state preservation, the error overlay, screenshots on a virtual display, test suites, static analysis, CI | [Development](docs/development.md) |
 | Internals | Processes, the frame protocol, the render core, the `Backend` contract, threading | [Architecture](docs/architecture.md) |
 | Shipping | Packaging and installers | [Distribution](docs/distribution.md) |
 | Updates | Application updates | [Updates](docs/updates.md) |
@@ -185,14 +192,12 @@ crates/
   pam-desktop-appkit   macOS backend (AppKit)
   pam-desktop-win32    Windows backend (Win32, Direct2D, DirectWrite)
   pam-desktop-host     the pam-desktop binary; SQLite, secure storage, packaging and updates
-packages/desktop/      the PHP package (Pam\Desktop), its worker bootstrap and tests
+packages/desktop/      the PHP package (Pam\Desktop), the Composer launcher, the worker bootstrap and tests
 examples/              one runnable application per feature
-scripts/shot.sh        runs an example on a virtual display and captures the window
+scripts/               shot.sh captures an example on a virtual display; package-host.sh packs a release archive
+.github/workflows/     ci.yml (checks) and release.yml (host archives of a tag)
 docs/                  this documentation
-legacy/                the 1.x Rust crates, excluded from the workspace
 ```
-
-`packages/desktop/legacy-src` and `packages/desktop/legacy-tests` hold the 1.x PHP package for reference; nothing in 2.0 loads them.
 
 ## Documentation
 
@@ -207,6 +212,7 @@ legacy/                the 1.x Rust crates, excluded from the workspace
 - [Development](docs/development.md)
 - [Architecture](docs/architecture.md)
 - [Platforms](docs/platforms.md)
+- [First run on macOS and Windows](docs/first-run-macos-windows.md)
 - [Distribution](docs/distribution.md)
 - [Updates](docs/updates.md)
 - [Migrating from 1.x](docs/migrating-from-1.x.md)

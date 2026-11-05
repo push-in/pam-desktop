@@ -12,8 +12,9 @@ PAM Desktop has one render core and three backends. Each backend implements the 
 
 What this means in practice:
 
-- **Linux is what you can use today.** The `pam-desktop` binary starts the GTK backend.
-- **macOS and Windows have never run.** Type-checking proves that the code agrees with the platform bindings, not that it behaves. The first runs on real machines are expected to need fixes. At the time of writing the host binary does not start these backends: on macOS and Windows `pam-desktop` exits with "this platform is not supported yet". Both crates export the same entry point as the GTK one, `run(application_id, config)`.
+- **Linux is what you can use today.**
+- **The host starts the backend of the system it was built for:** `pam_desktop_gtk::run` on Linux, `pam_desktop_appkit::run` on macOS and `pam_desktop_win32::run` on Windows. The three crates export the same entry point, `run(application_id, config)`.
+- **macOS and Windows have never run.** Type-checking proves that the code agrees with the platform bindings, not that it behaves. The first runs on real machines are expected to need fixes. [First run on macOS and Windows](first-run-macos-windows.md) is the checklist for those runs and the list of known differences from the GTK backend.
 - **Two things were not verified on Linux either:** the accessibility tree with a real screen reader, and global shortcuts through the Wayland portal. Global shortcuts with X11 key grabs were verified.
 
 ## Linux
@@ -27,19 +28,39 @@ What this means in practice:
 
 At run time the application uses what GTK uses: Pango for text, gdk-pixbuf for image decoding (the formats are those of the installed loaders) and GStreamer, through `GtkMediaFile`, for media.
 
+### Running a released host
+
+The host that `vendor/bin/pam-desktop` downloads is built on Ubuntu 24.04, for x86_64 and arm64. It needs:
+
+| Requirement | Debian and Ubuntu package |
+| --- | --- |
+| glibc 2.39 or newer | `libc6` |
+| GTK 4.14 or newer | `libgtk-4-1` |
+| WebKitGTK 6 | `libwebkitgtk-6.0-4` |
+| GStreamer plugins, for media | `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good` |
+
+A host built from a checkout needs what the machine that built it had.
+
 ### Optional features
 
-The backend crate has three cargo features, all on by default:
+The host crate (`crates/pam-desktop-host/Cargo.toml`) has four cargo features, all on by default. Three of them are the optional parts of the backends:
 
 | Feature | Provides | Extra system library |
 | --- | --- | --- |
-| `webview` | The `WebView` element, through WebKitGTK 6. | `libwebkitgtk-6.0` |
-| `tray` | The tray icon, as a StatusNotifierItem on the session bus. | none |
-| `hotkeys` | Global shortcuts: X11 key grabs, or the desktop portal on Wayland. | none |
+| `webview` | The `WebView` element: WebKitGTK 6 on Linux, WebView2 on Windows. | Linux: `libwebkitgtk-6.0` |
+| `tray` | Linux: the tray icon, as a StatusNotifierItem on the session bus. | none |
+| `hotkeys` | Linux: global shortcuts, as X11 key grabs or through the desktop portal on Wayland. | none |
+| `sqlite` | The [SQLite module](modules.md#sqlite). SQLite is compiled from C. | none |
 
 Without `webview`, a `WebView` element reports an error through `onError`. Without `tray`, `Tray::show()` does nothing. Without `hotkeys`, shortcuts registered with `global: true` are not bound; local shortcuts and menu shortcuts are handled by the core and keep working.
 
-The features belong to `crates/pam-desktop-gtk/Cargo.toml`. The host depends on the backend with its default features, so building without one means changing that dependency in the workspace manifest (`default-features = false` and the features you keep).
+A leaner host is built by naming the features to keep:
+
+```bash
+cargo build -p pam-desktop-host --no-default-features --features tray,sqlite
+```
+
+On macOS the tray, global shortcuts and `WKWebView` are always built.
 
 ### Wayland and X11
 
@@ -49,7 +70,9 @@ GTK chooses the display server; the application code is the same. The difference
 | --- | --- | --- |
 | Global shortcuts | Keys are grabbed on the root window. A combination that another application already holds is refused by the server. **Verified.** | Applications cannot grab keys. The backend binds them through the GlobalShortcuts desktop portal, with the consent of the user. **Not verified.** |
 
-`Window::center()`, `alwaysOnTop()` and `progress()` do nothing on either: Wayland gives applications no say on placement, stacking or taskbar progress, and GTK 4 exposes none of them.
+`Window::center()` and `alwaysOnTop()` do nothing on either: Wayland gives applications no say on placement or stacking, and GTK 4 exposes neither.
+
+`Window::progress()` is sent on the session bus as a `com.canonical.Unity.LauncherEntry` update, the launcher entry API that the Ubuntu Dock, Dash to Dock and the Plasma task manager listen to. The update names the desktop entry `<applicationId>.desktop`, so it reaches an installed application, not a loose `pam-desktop run`. A desktop that does not listen shows nothing.
 
 ### Global shortcuts
 
@@ -71,8 +94,9 @@ GTK 4 has no tray icon of its own. The backend registers a StatusNotifierItem on
 - **Notifications** go through the GTK application, named by the `applicationId`.
 - **File dialogs** are GTK's. `scripts/shot.sh` sets `GDK_DEBUG=no-portals` and `GTK_USE_PORTAL=0` so that dialogs stay on the virtual display during captures.
 - **Links and files** open with `xdg-open`.
-- **Dark mode, text scale and reduced motion** are read from the GTK settings.
-- Each launch is its own process: the GTK application is registered as non-unique.
+- **Dark mode** is the `color-scheme` setting of the desktop portal (`org.freedesktop.appearance`), which GNOME, KDE and others publish. A desktop without the portal, or a run with `GTK_USE_PORTAL=0`, falls back to the GTK settings: a theme whose name contains "dark", or the `gtk-application-prefer-dark-theme` setting. **Text scale** and **reduced motion** are the GTK settings `gtk-xft-dpi` and `gtk-enable-animations`. All three are followed while the application runs.
+- **Screen capture protection** (`Screen::secure()`) is not enforced: the GTK backend does not implement it and the call reports `false`.
+- **Single instance.** Without `singleInstance` each launch is its own process: the GTK application is registered as non-unique. With it the GTK application is unique: a second launch forwards its link to the first, which presents its window, and exits. See [Distribution](distribution.md#links-and-single-instance).
 
 ## macOS
 
@@ -89,7 +113,12 @@ Design of `pam-desktop-appkit`:
 - The shell uses the system menu bar, `NSStatusItem` for the tray, open and save panels, `NSAlert` and the notification center.
 - The frame clock is a display link that is paused between frames.
 - Accessibility maps to `NSAccessibility`, including custom actions.
+- Links arrive through `application:openURLs:`, at launch and later. The backend does not read `singleInstance`.
+- `Window::progress()` is a badge on the Dock icon; `Screen::secure()` sets the sharing type of every window to none.
+- The appearance and Reduce Motion are followed while the application runs. The text scale of the system is always 1.
 - The host uses the system TLS stack and the Keychain.
+
+[First run on macOS and Windows](first-run-macos-windows.md#macos-pam-desktop-appkit) lists what to check first and the known differences from the GTK backend.
 
 ## Windows
 
@@ -102,10 +131,17 @@ Design of `pam-desktop-win32` (Windows 10 version 1809 and later, and Windows 11
 - A frame is rendered only when something changed.
 - Images are decoded with WIC on worker threads and kept as Direct2D bitmaps.
 - Media uses a Media Foundation media engine in frame-server mode: each video frame lands in a Direct3D texture drawn inside the Direct2D scene, so video is clipped, rounded and overlaid like the rest of the tree.
-- Web pages use WebView2, the Evergreen runtime of Edge. A missing runtime is reported through `onError`. `webview` is a cargo feature of the crate, on by default.
+- Web pages use WebView2, the Evergreen runtime of Edge. A missing runtime is reported through `onError`. `webview` is a cargo feature of the crate, on by default and forwarded by the `webview` feature of the host.
 - The shell uses the window menu bar with accelerators, the notification area for the tray, the system file dialogs, global hot keys and OLE drag and drop.
 - Accessibility is a UI Automation provider tree over the retained views.
+- With `singleInstance`, a named mutex tells a second launch that the application runs; the second launch hands its link to the first with `WM_COPYDATA` and exits.
+- `Window::progress()` is the progress of the taskbar button. `Screen::secure()` excludes every window from captures (`WDA_EXCLUDEFROMCAPTURE`), or shows it black where the system only supports that.
+- Dark mode, text scale and the animation setting are read again on `WM_SETTINGCHANGE`.
+- A release build of the host is a windowed program, so starting an application opens no console. Started from a terminal, the host attaches to the console of its parent, so `build`, `init` and the other commands still print. A debug build is a console program.
+- The host embeds an application manifest: version 6 of the common controls, per-monitor DPI awareness, long paths and UTF-8 as the code page of the process.
 - The host uses the system TLS stack and the Credential Manager.
+
+[First run on macOS and Windows](first-run-macos-windows.md#windows-pam-desktop-win32) lists what to check first and the known differences from the GTK backend.
 
 ## Cross-checking macOS and Windows from Linux
 
@@ -125,6 +161,8 @@ cargo check -p pam-desktop-win32 --target x86_64-pc-windows-msvc
 `cargo check` compiles without linking. It catches type errors against the platform bindings and against the `Backend` trait. It does not catch a wrong selector, a wrong message, a layout that is off by a pixel or anything else that only shows when the code runs.
 
 The `sqlite` feature of the host compiles SQLite from C. A build of the host that only type-checks for another system turns it off.
+
+The CI workflow has a job that builds and tests the workspace on a macOS runner and on a Windows runner; see [Development](development.md#continuous-integration). The workflow has not run yet.
 
 ## Related
 

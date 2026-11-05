@@ -259,9 +259,10 @@ The host binary of a release is fetched by the Composer launcher
 published SHA-256 and keeps it in the cache of the user. `PAM_DESKTOP_HOST`
 points the launcher at a local binary instead, with no download.
 
-Building from this repository, the optional parts of the Linux backend are
-Cargo features of `pam-desktop-host`, all enabled by default: `webview`
-(embedded web pages through WebKitGTK 6), `tray` (the tray icon) and `hotkeys`
-(global shortcuts), next to `sqlite`. A leaner host is built with, for
+Building from this repository, the optional parts of the backends are Cargo
+features of `pam-desktop-host`, all enabled by default: `webview` (embedded
+web pages through WebKitGTK 6 on Linux and WebView2 on Windows), `tray` (the
+tray icon on Linux) and `hotkeys` (global shortcuts on Linux), next to
+`sqlite`. A leaner host is built with, for
 example, `cargo build -p pam-desktop-host --no-default-features --features
 tray,sqlite`; its packages then no longer depend on WebKitGTK.

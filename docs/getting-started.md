@@ -1,38 +1,86 @@
 # Getting started
 
-This page takes you from a checkout to a running application, then explains the project layout, the `pam-desktop.json` manifest, the two run modes and where an application keeps its files.
+This page takes you from an empty directory to a running application, then explains the project layout, the `pam-desktop.json` manifest, the two run modes and where an application keeps its files.
 
 ## Requirements
 
-- PHP 8.5.
-- A Rust toolchain, 1.92 or newer, to build the host. `rust-toolchain.toml` selects the stable channel.
-- On Linux: `libgtk-4-dev` (GTK 4.14 or newer) and, for the `webview` feature, `libwebkitgtk-6.0-dev`.
+- PHP 8.5 and Composer.
+- On Linux, to run a released host: glibc 2.39 or newer, GTK 4.14 or newer, WebKitGTK 6 (`libwebkitgtk-6.0-4`) and the GStreamer plugins for media. The released host is built on Ubuntu 24.04.
+- To build the host from a checkout instead: a Rust toolchain, 1.92 or newer (`rust-toolchain.toml` selects the stable channel) and, on Linux, `libgtk-4-dev` and `libwebkitgtk-6.0-dev`.
 
 [Platforms](platforms.md) has the details for each system.
 
-## Build the host and run an example
+## A new project
 
 ```bash
+mkdir my-app && cd my-app
+composer require pushinbr/pam-desktop
+vendor/bin/pam-desktop init
+vendor/bin/pam-desktop dev
+```
+
+A window opens with a counter. Edit `index.php` while it runs: the window updates and the count is kept.
+
+`vendor/bin/pam-desktop` is the launcher of the PHP package. It runs the native host with the arguments it was given:
+
+- The first time, it downloads `pam-desktop-<version>-<target>.tar.gz` from the GitHub release of the installed version, verifies it against the published SHA-256 and keeps the host in the cache of the user: `$XDG_CACHE_HOME/pam-desktop` or `~/.cache/pam-desktop` on Linux, `~/Library/Caches/pam-desktop` on macOS, `%LOCALAPPDATA%\pam-desktop` on Windows. The first installation needs the Phar extension of PHP.
+- `PAM_DESKTOP_HOST` is the absolute path of a host binary to run instead, with no download.
+- A release has archives for Linux and macOS on x86_64 and arm64 and for Windows on x86_64.
+
+Version 2.0.0 is not released yet: there is no `v2.0.0` tag for Composer to install and no host archive to download. Until there is, work from a checkout, as described below.
+
+### `pam-desktop init`
+
+```text
+pam-desktop init [directory] [--name NAME] [--id APPLICATION-ID]
+```
+
+`init` writes the files a new application starts from, in the current directory or in `directory` (created when missing):
+
+| File | Contents |
+| --- | --- |
+| `pam-desktop.json` | `applicationId`, `name`, `version` `0.1.0`, `entry` `index.php` and a 960 × 640 window. |
+| `index.php` | A component with a counter. |
+| `composer.json` | Requires PHP 8.5 and `pushinbr/pam-desktop`. |
+| `.gitignore` | `vendor`, `.pam-desktop` and `dist`. |
+
+A file that already exists is kept: the command prints `[new]` or `[kept]` for each one, so it is safe to run in a directory where Composer already wrote `composer.json`. Without `--name` the name is the name of the directory; without `--id` the identifier is `com.example.<directory name>`, in lower case with dashes. An identifier that [`build`](distribution.md) would refuse stops the command.
+
+## From a checkout
+
+To work on PAM Desktop itself, or to run the examples, build the host from the repository:
+
+```bash
+git clone https://github.com/push-in/pam-desktop.git
+cd pam-desktop
+composer install
 cargo build -p pam-desktop-host
 target/debug/pam-desktop dev examples/counter
 ```
 
-A window opens with a counter. Edit `examples/counter/index.php` while it runs: the window updates and the count is kept.
+`composer install` writes the `vendor/autoload.php` that the examples load. A project of your own uses that host through the launcher:
+
+```bash
+PAM_DESKTOP_HOST=/path/to/pam-desktop/target/debug/pam-desktop vendor/bin/pam-desktop dev
+```
 
 ## The command line
 
 ```text
-pam-desktop dev [app]                 run with hot reload (default: current directory)
-pam-desktop run [app]                 run the application
+pam-desktop init [directory]          write the files of a new application
+pam-desktop dev [app] [url]           run with hot reload (default: current directory)
+pam-desktop run [app] [url]           run the application, opened with a link
 pam-desktop build [app] [options]     bundle the application and build its installers
 pam-desktop update-key --output FILE  create the key that signs updates
 pam-desktop publish-update [app] ...  sign the update feed of a release
 pam-desktop --version
 ```
 
-This page covers `dev` and `run`. `build` is described in [Distribution](distribution.md); `update-key` and `publish-update` in [Updates](updates.md).
+`vendor/bin/pam-desktop` takes the same commands. This page covers `init`, `dev` and `run`. `build` is described in [Distribution](distribution.md); `update-key` and `publish-update` in [Updates](updates.md).
 
-`app` is a project directory or a PHP file. With a directory the entry script is `index.php` inside it. With a file, the file is the entry script and its directory is the project.
+`app` is a project directory or a PHP file. With a directory the entry script is the `entry` of its manifest, `index.php` by default. With a file, the file is the entry script and its directory is the project.
+
+`url` is the link the application is opened with: `Linking::initial()` reports it. See [Modules](modules.md#linking).
 
 Exit codes of `dev` and `run`:
 
@@ -42,7 +90,8 @@ Exit codes of `dev` and `run`:
 | 66 | The entry script does not exist. |
 | 69 | The worker bootstrap of the `pushinbr/pam-desktop` package was not found. |
 | 73 | The application directories could not be created. |
-| 1 | The PHP worker could not be started, or the platform is not supported. |
+| 1 | The PHP worker could not be started, or the host was built for a system other than Linux, macOS and Windows. |
+| 0 | The application ended, or it is a [single instance](distribution.md#links-and-single-instance) that already runs and was handed the link. |
 
 ## A first application
 
@@ -101,12 +150,13 @@ my-app/
   index.php           entry script
   pam-desktop.json    manifest (optional)
   composer.json
+  .gitignore          written by `pam-desktop init`
   vendor/             Composer autoloader and the pushinbr/pam-desktop package
   assets/             files the application loads with asset:// URLs
   .pam-desktop/       created by `pam-desktop dev`: data, cache and state
 ```
 
-Only the entry script is required. The project directory is:
+Only the entry script is required to run. The project directory is:
 
 - the working directory of the PHP worker;
 - the root that `asset://` URLs resolve in (`asset://assets/logo.png` is `assets/logo.png` in the project);
@@ -136,6 +186,8 @@ The manifest is optional, and running an application never fails because of it: 
 | `name` | string | `PAM Desktop` | Title of the first window. |
 | `version` | string or number | empty | Reported as `DeviceInfo::$appVersion`. |
 | `build` | string or number | empty | Reported as `DeviceInfo::$buildNumber`. |
+| `entry` | string | `index.php` | The script a project directory starts with, as a path inside the project. An unsafe path is ignored. |
+| `singleInstance` | boolean | `true` under `run` when `urlSchemes` is not empty, otherwise `false` | A second launch hands its link to the running application and exits. See [Distribution](distribution.md#links-and-single-instance). |
 | `window.title` | string | `name` | Title of the first window; wins over `name`. |
 | `window.width`, `window.height` | number | 960 × 640 | Initial size in logical units. Both must be present. Each is clamped to 120…16384. |
 | `window.minWidth`, `window.minHeight` | number | none | Smallest size the user can give the window. Both must be present. |
@@ -157,9 +209,9 @@ An `applicationId` is valid when it has at least two segments separated by dots,
 }
 ```
 
-`dev` and `run` do not read the `entry` key that the example manifests carry: they start `index.php` of the directory, or the file passed on the command line.
+The manifest holds more keys that matter when the application is packaged and updated: `description`, `publisher`, `category`, `icon`, `exclude`, `extensions`, `urlSchemes` and the `updates` block. They are described in [Distribution](distribution.md) and [Updates](updates.md).
 
-The manifest holds more keys that matter when the application is packaged and updated: `entry`, `description`, `publisher`, `category`, `icon`, `exclude`, `extensions` and the `updates` block. They are described in [Distribution](distribution.md) and [Updates](updates.md).
+`packages/desktop/resources/pam-desktop.schema.json` is a JSON Schema of the manifest. The file that `init` writes points its `$schema` at the copy inside `vendor`, so an editor can complete and check the keys.
 
 ## `dev` and `run`
 
@@ -202,13 +254,15 @@ Variables you can set before starting the host:
 | `PAM_DESKTOP_DATA_DIR` | Absolute path that replaces the data directory. |
 | `PAM_DESKTOP_CACHE_DIR` | Absolute path that replaces the cache directory. |
 | `PAM_DESKTOP_STATE_DIR` | Absolute path that replaces the state directory. |
-| `PAM_DESKTOP_LAUNCH_URL` | The URL the application was launched with; `Linking::initial()` reports it. |
+| `PAM_DESKTOP_LAUNCH_URL` | The URL the application was launched with; `Linking::initial()` reports it. A `url` argument on the command line wins. |
+| `PAM_DESKTOP_HOST` | Read by `vendor/bin/pam-desktop` only: the absolute path of the host binary to run, with no download. |
+| `GTK_USE_PORTAL` | Linux: `0` keeps the host from asking the desktop portal for the dark mode setting, as it keeps GTK from the portal. |
 | `PAM_DESKTOP_DEBUG` | Any value other than empty or `0` logs every pointer press and every event sent to PHP. |
 | `PAM_DESKTOP_STRICT` | `1` makes `BuildConfiguration::strict()` true in development as well. |
 | `PAM_DESKTOP_FRAME_GC` | `0` leaves PHP's cycle collector on its own schedule instead of running it between frames. |
 | `TZ`, `LC_ALL`, `LC_NUMERIC`, `LANG` | Read for `DeviceInfo::$timeZone`, `DeviceInfo::$locale` and currency input formatting. |
 
-A relative path in one of the three directory variables is ignored. Variables that only affect `pam-desktop build` are listed in [Distribution](distribution.md).
+A relative path in one of the three directory variables is ignored. `vendor/bin/pam-desktop` reads `PAM_DESKTOP_CACHE_DIR` as well: when it is set, the launcher keeps the downloaded host there. Variables that only affect `pam-desktop build` are listed in [Distribution](distribution.md).
 
 Variables the host sets for the worker (read them, do not set them):
 
@@ -219,6 +273,7 @@ Variables the host sets for the worker (read them, do not set them):
 | `PAM_DESKTOP_DATA_DIR`, `PAM_DESKTOP_CACHE_DIR`, `PAM_DESKTOP_STATE_DIR` | The directories in use. |
 | `PAM_DESKTOP_PLATFORM` | `linux`, `macos` or `windows`; `Platform::os()` returns it. |
 | `PAM_DESKTOP_MODE` | `development` or `production`. |
+| `PAM_DESKTOP_LAUNCH_URL` | The link the application was opened with, when there is one. |
 | `PAM_BOOT_METRICS`, `PAM_APPEARANCE_MODE`, `PAM_SYSTEM_APPEARANCE`, `PAM_SYSTEM_DARK`, `PAM_RENDERER_CONTRACT` | The window as it is when PHP starts (size, scale, text scale, appearance) and the protocol range of the host. |
 
 ## Where application data lives

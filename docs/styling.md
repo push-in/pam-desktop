@@ -160,7 +160,7 @@ Column::make(/* … */)->style(new Style(
 | `Appearance::set($mode)` | Chooses and persists the preference. |
 | `Appearance::onChange($listener)` | Runs `$listener(UserInterfaceAppearance, AppearanceMode)` when the scheme or the preference changes. Returns an id for `unsubscribe()`. |
 
-With `AppearanceMode::System` the application follows the operating system. `set()` stores the choice in the state directory, so the next launch opens with it, and switches the native chrome and the default look of buttons with it.
+With `AppearanceMode::System` the application follows the operating system, also when the setting changes while it runs. On Linux the setting is the `color-scheme` of the desktop portal, with the GTK settings as the fallback; see [Platforms](platforms.md#other-notes). `set()` stores the choice in the state directory, so the next launch opens with it, and switches the native chrome and the default look of buttons with it.
 
 To follow changes while the application runs, keep the scheme in state:
 
@@ -194,6 +194,8 @@ Accessibility::textScale(function (TextScale $scale): void {
 // An in-app "text size" setting: 1.25 times the system scale.
 Accessibility::setTextScale(1.25);
 ```
+
+A change of the system scale is applied while the application runs; [Accessibility](accessibility.md#text-scale-and-reduced-motion) says where each system reads it.
 
 `setTextScale($multiplier, $maxSystemScale)` accepts a multiplier from 0.5 to 3 and an optional cap on the system scale (0 means no cap). On desktop the new scale is stored and applied at once: the host measures the text again and lays the tree out again.
 

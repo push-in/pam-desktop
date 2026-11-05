@@ -102,7 +102,7 @@ View::make()
 
 ## Reduced motion
 
-When the system asks for reduced motion, the host skips press feedback animation, animated programmatic scrolling and the settle animations of gestures: they land at their end state at once.
+When the system asks for reduced motion, the host skips press feedback animation, animated programmatic scrolling and the settle animations of gestures: they land at their end state at once. The setting is followed while the application runs.
 
 ## Gesture detectors
 

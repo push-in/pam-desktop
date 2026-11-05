@@ -18,9 +18,8 @@ independently.
 Applications built for 1.x do not run on 2.0. The web interface, the Servo
 host, the typed command gateway, capabilities, the protocol 6 manifest declared
 in PHP and the plugin contracts are gone, and there is no compatibility layer.
-The 1.x sources are kept under `legacy/`, `packages/desktop/legacy-src` and
-`packages/desktop/legacy-tests` for reference only. See
-`docs/migrating-from-1.x.md`.
+The 1.x sources are not part of the 2.0 tree; they are in the history of the
+repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
 
 ### Rendering and layout
 
@@ -33,7 +32,10 @@ The 1.x sources are kept under `legacy/`, `packages/desktop/legacy-src` and
 - Backgrounds, per-side borders, per-corner radii, shadows, opacity, transforms,
   clipping and z-order.
 - Light and dark appearance (system or chosen by the application, persisted)
-  and a text scale applied live.
+  and a text scale applied live. The dark mode, text scale and reduced motion
+  settings of the system are followed while the application runs.
+- `.pam` templates rendered with `View::make()`, looked up in
+  `resources/views` by default.
 
 ### Interaction and input
 
@@ -52,7 +54,9 @@ The 1.x sources are kept under `legacy/`, `packages/desktop/legacy-src` and
 - Native scroll views with scroll events, programmatic scrolling and sticky
   headers.
 - Virtualized lists that build rows on demand, with columns, sections,
-  inverted lists, end-reached reports and refresh.
+  inverted lists and end-reached reports.
+- Refresh with F5 or Ctrl/Cmd+R (there is no pull gesture), with a host-drawn
+  spinner whose color, backdrop, size and offset the application sets.
 
 ### Animation and gestures
 
@@ -79,43 +83,88 @@ The 1.x sources are kept under `legacy/`, `packages/desktop/legacy-src` and
 ### Desktop shell
 
 - Main window control and state, secondary windows described as elements.
-- Application menu bar with platform roles, context menus and a tray icon.
+- Application menu bar with platform roles, a tray icon, and context menus
+  opened by a secondary click, the menu key or Shift+F10.
 - Application and global shortcuts, native file dialogs and notifications.
 - Drag and drop of text between elements and applications, files dropped from
   the system, window dragging from custom title bars.
 - Clipboard, alerts and toasts.
+- Deep links: URL schemes declared in `pam-desktop.json` and registered by the
+  installers, a single instance that receives the link of every later launch,
+  and `Linking::listen()` to read them.
+- Application state: a minimized or hidden main window is the background
+  state (`paused()`, timer background policies) and a visible window without
+  the focus is the inactive state.
+- `Window::progress()` on the launcher icon (the Unity launcher entry API on
+  Linux, a Dock badge on macOS, the taskbar button on Windows).
+- Screen capture protection (`Screen::secure()`, secure routes) on macOS and
+  Windows. It is not enforced on Linux.
 
 ### Modules
 
 - Key/value storage, a private file sandbox with pickers and downloads, HTTP
   requests and transfers, SQLite databases, secure storage in the system
   keychain, timers, device information and links.
+- Device status (battery, network type, power saving) read from each system,
+  once or as a watch.
 - Capabilities that only exist on phones in PAM Native (location, contacts,
   sensors, biometrics, SMS and others) are not included; their class names
   throw a `PluginException` naming the optional package.
 
+### Distribution
+
+- `pam-desktop build` bundles the application with the host and a PHP runtime
+  and builds the installers of the system it runs on: AppImage, `.deb` and
+  `.rpm` on Linux, `.dmg` and `.pkg` on macOS, MSIX and MSI on Windows, and a
+  portable archive on each.
+- Signed updates: an Ed25519-signed feed, `pam-desktop update-key` and
+  `pam-desktop publish-update`, and the `Updates` API.
+
 ### Development experience
 
+- `composer require pushinbr/pam-desktop` installs `vendor/bin/pam-desktop`, a
+  launcher that downloads the host archive of its version from the GitHub
+  release, verifies its SHA-256 and keeps it in the cache of the user.
+  `PAM_DESKTOP_HOST` runs a host built from source instead.
+- `pam-desktop init` writes `pam-desktop.json`, `index.php`, `composer.json`
+  and `.gitignore` for a new application and keeps the files that exist.
 - `pam-desktop dev` restarts the PHP worker when sources change and restores
   `#[State]` values; `pam-desktop run` starts the application for production.
+  Both start the `entry` of the manifest and take the link the application is
+  opened with.
 - An error overlay drawn by the host: a toast for errors in handlers and a
   full report with source and call stack for fatal ones; in production the
   application reloads by itself and falls back to a retry screen.
 - One runnable example per feature under `examples/` and `scripts/shot.sh` to
   capture them on a virtual display.
+- PHPStan at level 9 over a listed subset of the PHP package
+  (`composer analyse`).
+- A CI workflow (Linux: build, tests, clippy, rustfmt, PHP tests and PHPStan;
+  macOS and Windows: build and tests) and a release workflow that builds the
+  host for five targets and publishes the archives of a tag. Neither has run
+  yet.
 
 ### Accessibility
 
 - Roles, labels, hints, values, states, live regions and custom actions
   resolved in the core and mapped to AT-SPI (through GTK), NSAccessibility and
   UI Automation.
+- `Accessibility::announce()` speaks through the screen reader of the system
+  and `Accessibility::screenReaderEnabled()` reports whether one is running.
 
 ### Platforms
 
+- The host starts the backend of the system it was built for.
 - Linux (GTK 4) is the reference backend and the only one exercised so far.
+  The released Linux host is built on Ubuntu 24.04: it needs glibc 2.39,
+  GTK 4.14 and WebKitGTK 6 or newer.
 - The macOS (AppKit) and Windows (Win32, Direct2D) backends are written
   against the same `Backend` contract and type-check by cross compilation, but
-  have not been run on real machines yet.
+  have not been run on real machines yet. `docs/first-run-macos-windows.md`
+  is the checklist for their first run and the list of known differences.
+- On Windows a release host is a windowed program that attaches to the
+  console of the terminal it was started from, and embeds an application
+  manifest.
 - Not verified on Linux: the accessibility tree with a real screen reader, and
   global shortcuts through the Wayland portal (X11 grabs were verified).
 

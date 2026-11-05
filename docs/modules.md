@@ -296,7 +296,7 @@ DeviceInfo::get(function (DeviceInfo $info): void {
 | Property | On desktop |
 | --- | --- |
 | `width`, `height`, `density` | The window's content size and the display scale. |
-| `appearance`, `appState` | Light or dark; active or inactive (the main window has focus or not). |
+| `appearance`, `appState` | Light or dark; `AppState::Active` (the main window has the focus), `Inactive` (visible, without the focus) or `Background` (minimized or hidden). |
 | `timeZone` | IANA id from `TZ`, `/etc/localtime` or `/etc/timezone`; `UTC` when unknown. |
 | `locale` | BCP 47 tag from `LC_ALL`, `LC_NUMERIC` or `LANG`; `en-US` when unknown. |
 | `appVersion`, `buildNumber` | `version` and `build` of `pam-desktop.json`. |
@@ -305,6 +305,48 @@ DeviceInfo::get(function (DeviceInfo $info): void {
 **Failure: failure closure.** `DeviceInfo::get($callback, $failure)`.
 
 `Platform::os()` tells the operating system synchronously; see [Desktop shell](desktop-shell.md#platform-checks).
+
+## Device status
+
+`Pam\Desktop\System\DeviceStatus` reports the battery, the kind of network and the power saving mode, once or on every change.
+
+```php
+use Pam\Desktop\DeviceStatus as Status;
+use Pam\Desktop\NetworkType;
+use Pam\Desktop\System\DeviceStatus;
+
+DeviceStatus::read(function (Status $status): void {
+    $this->battery = $status->batteryLevel;
+});
+
+$watch = DeviceStatus::watch(function (Status $status): void {
+    $this->offline = $status->networkType === NetworkType::None;
+});
+
+DeviceStatus::unwatch($watch);
+```
+
+| Property | Meaning |
+| --- | --- |
+| `batteryLevel` | Charge from 0 to 1; `-1` when the machine has no battery or the level is unknown. |
+| `charging` | The battery is charging, or full. |
+| `networkType` | `NetworkType::None`, `Wifi`, `Cellular`, `Ethernet` or `Other`. |
+| `expensiveNetwork` | `true` on a cellular network. |
+| `lowPowerMode` | The system is saving energy. |
+
+`watch($callback, $intervalMs)` calls back with the current status and then only when something changed. The host samples every `$intervalMs`, 1000 by default, from 250 to 60,000; a watch costs one polling thread, which exits with the last `unwatch()`.
+
+Where the values come from:
+
+| | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| Battery | The system battery under `/sys/class/power_supply`; batteries of peripherals are skipped. | `pmset -g batt` | `GetSystemPowerStatus` |
+| Network | `/sys/class/net`: a wired interface that is up, else a wireless one, else none. Never `Cellular`. | The interface of the default route (`route`), Wi-Fi or Ethernet according to `networksetup`. Never `Cellular`. | `GetAdaptersAddresses`: the connected adapters that have a gateway. |
+| Power saving | The ACPI platform profile is `low-power` or `quiet`. | Low Power Mode in `pmset -g`. | Battery saver is on. |
+
+On macOS the system tools are asked at most every 10 seconds. The macOS and Windows columns are written and type-checked but have not run on a real machine.
+
+**Failure: thrown.** A failed read throws a `RuntimeException` from the callback.
 
 ## Linking
 
@@ -331,7 +373,62 @@ Linking::initial(function (?string $url): void {
 | `initial($callback, $failure)` | `?string`: the launch URL, once | Failure closure |
 | `listen($callback)` | Each URL that arrives while the application runs | Thrown |
 
-The launch URL is the value of `PAM_DESKTOP_LAUNCH_URL` when the host starts. Only one `listen()` may be active at a time. At the time of writing no backend forwards a URL to an application that is already running, so the listener is accepted but never called.
+The launch URL is the `url` argument of `pam-desktop run` or `dev`, or else the value of `PAM_DESKTOP_LAUNCH_URL` when the host starts. `initial()` reports it once.
+
+`listen()` receives each link that reaches the application while it runs and returns an id for `Linking::unsubscribe()`. Only one `listen()` may be active at a time. Links that arrive while no listener waits are kept, 32 at most, and delivered to the next one; a link longer than 8192 bytes is dropped.
+
+### Deep links
+
+An application is opened by links when its manifest declares `urlSchemes`; the installers register the schemes with the system. With `singleInstance` (the default under `run` for an application that declares schemes) the application runs once, and a later launch hands its link to the running instance. Both keys are described in [Distribution](distribution.md#links-and-single-instance).
+
+How a link reaches an application that already runs:
+
+| System | Mechanism |
+| --- | --- |
+| Linux | With `singleInstance` the GTK application is unique: the second launch forwards its link to the first, which presents its window, and exits. |
+| macOS | The system calls `application:openURLs:` of the running application. The link that launched the application arrives the same way, so `listen()` receives it and `initial()` may be empty. |
+| Windows | With `singleInstance` a named mutex tells the second launch that the application runs; it hands its link over with `WM_COPYDATA` and exits. |
+
+A second launch without a link brings the running application to the front on Linux.
+
+`examples/links` claims the `pamlinks` scheme and shows the launch link and every link received later:
+
+```bash
+target/debug/pam-desktop run examples/links pamlinks://first
+target/debug/pam-desktop run examples/links pamlinks://second
+```
+
+The second command hands `pamlinks://second` to the window of the first and returns. The Linux mechanism runs; the macOS and Windows ones are written and type-checked but have not run on a real machine.
+
+## Screen capture protection
+
+`Pam\Desktop\System\Screen` asks the system to keep every window of the application, current and future, out of screenshots and screen recordings.
+
+```php
+use Pam\Desktop\System\Screen;
+
+Screen::secure(true, function (bool $enforced): void {
+    $this->protected = $enforced;
+});
+
+Screen::claim('app-lock');
+Screen::release('app-lock');
+```
+
+| Call | Meaning |
+| --- | --- |
+| `Screen::secure($enabled, $callback)` | Turns the protection on or off for the whole application. `$callback` receives whether the system enforces it. |
+| `Screen::claim($owner, $callback)`, `Screen::release($owner, $callback)` | A named claim, for independent features. The protection stays on while any claim is held. |
+| `Screen::claimed($owner)` | Whether that claim is held. |
+| `Screen::isSecure()` | Whether the application asks for protection, by `secure()`, a claim or a route. It does not tell whether the system enforces it. |
+
+A route asks for protection while it is the active route of its navigator: `new ScreenOptions(secure: true)`, or `->secure()` on a route declared with `Route::screen()`.
+
+| System | What happens |
+| --- | --- |
+| Linux | Not enforced. The GTK backend does not implement it and the callback receives `false`. |
+| macOS | The sharing type of every window is set to none. Not run on a real machine. |
+| Windows | Every window is excluded from captures; on a system that cannot exclude a window, it is captured as a black rectangle. Not run on a real machine. |
 
 ## Toasts
 
@@ -399,4 +496,4 @@ Pam\Desktop\System\Location is not part of PAM Desktop: it belongs to the option
 pushinbr/pam-desktop-location (Pam\Desktop\Location\Location), which is not installed.
 ```
 
-A few calls of the shared API exist but have nothing to do on a desktop and answer with a fixed value: permission checks report "granted", haptics and vibration succeed without effect, and `Accessibility::screenReaderEnabled()` reports `false`.
+A few calls of the shared API exist but have nothing to do on a desktop and answer with a fixed value: permission checks report "granted", and haptics and vibration succeed without effect.

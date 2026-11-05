@@ -94,7 +94,30 @@ Text::make($this->status)
 | `accessibilityValue($minimum, $maximum, $current, $text)` | A range and its current value; `$text` is how the value reads. The call throws when `$current` is outside the range. |
 | `accessibilityLiveRegion(AccessibilityLiveRegion)` | `Polite` or `Assertive`: the new name of the element is announced when it changes. |
 
-A live region is the way to announce something on desktop. `Accessibility::announce()` exists for code shared with PAM Native, but the desktop host accepts it without delivering it, and `Accessibility::screenReaderEnabled()` always reports `false`.
+## Announcements and the screen reader
+
+A live region announces the new name of an element. `Pam\Desktop\System\Accessibility` announces a message that is not an element, and tells whether a screen reader is running:
+
+```php
+use Pam\Desktop\System\Accessibility;
+
+Accessibility::announce('Upload finished', function (bool $delivered): void {
+    // false when no screen reader was there to speak it
+});
+
+Accessibility::screenReaderEnabled(function (bool $enabled): void {
+    $this->screenReader = $enabled;
+});
+```
+
+`announce($text, $callback)` hands a polite announcement to the screen reader: it does not interrupt what is being said. The text holds 1 to 4096 characters after trimming; anything else throws `InvalidArgumentException` before the call. The optional callback receives whether a screen reader was running to receive it.
+
+| | Linux (GTK 4, AT-SPI) | macOS (AppKit) | Windows (UI Automation) |
+| --- | --- | --- | --- |
+| Announcement | `announce()` on the active window, or else the main window, at medium priority | An announcement notification of the key window, or else the main window, at medium priority | A notification event raised by the main window |
+| Screen reader running | `ScreenReaderEnabled` of `org.a11y.Status` on the session bus, asked at most every 5 seconds | The VoiceOver flag of `NSWorkspace` | `SPI_GETSCREENREADER` |
+
+`examples/links` shows whether a screen reader is running and has a button that announces.
 
 ## Actions
 
@@ -169,6 +192,7 @@ The selection is painted with the selection colors of the platform. Text inside 
 - **Escape** closes the topmost modal or bottom sheet (`onRequestClose` runs).
 - **Alt+Left** (Linux and Windows) and **Cmd+[** (macOS), and the back button of a mouse, go back in a navigator.
 - **F5** and **Ctrl+R** (Cmd+R) ask a visible scroll view or list with `onRefresh` to refresh.
+- The **menu key** and **Shift+F10** open the [context menu](desktop-shell.md#context-menus) of the focused element, or of its nearest ancestor that has one.
 - Keys that no control consumed are delivered to `onKeyDown` and `onKeyUp` of the focused element, and to [application shortcuts](desktop-shell.md#shortcuts).
 - The tab bar of a `TabNavigator` is made of ordinary nodes of the scene: its tabs take focus and are activated like the rest of the interface.
 
@@ -178,4 +202,12 @@ Scroll views, text fields and web views keep the native keyboard behaviour of th
 
 ## Text scale and reduced motion
 
-The host reads the text scale and the reduced-motion setting of the system. Text follows the scale ([Styling](styling.md#text-scale)); with reduced motion, feedback and settle animations land at their end state at once ([Animation and gestures](animation-and-gestures.md#reduced-motion)).
+The host reads the text scale and the reduced-motion setting of the system and follows their changes while the application runs. Text follows the scale ([Styling](styling.md#text-scale)); with reduced motion, feedback and settle animations land at their end state at once ([Animation and gestures](animation-and-gestures.md#reduced-motion)).
+
+| System | Text scale | Reduced motion |
+| --- | --- | --- |
+| Linux | The GTK setting `gtk-xft-dpi`, which carries the text scaling factor of the desktop. | The GTK setting `gtk-enable-animations`. |
+| macOS | Always 1. | Reduce Motion. |
+| Windows | The text size setting of the system, read again on `WM_SETTINGCHANGE`. | The animation setting of the system, read again on `WM_SETTINGCHANGE`. |
+
+The macOS and Windows rows are written and type-checked but have not run on a real machine.

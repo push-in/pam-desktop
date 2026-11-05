@@ -210,6 +210,21 @@ Scroll::make(
 
 A child marked `stickyHeader()` stays pinned to the top of the scroll view once scrolled past, until the next sticky sibling pushes it away.
 
+### Refresh
+
+There is no pull gesture on desktop. F5 or Ctrl+R (Cmd+R) asks the visible scroll view or list that has `onRefresh` to refresh: the handler runs and the host shows a spinner at the top of the view while `refreshing` is `true`.
+
+| Method | Meaning |
+| --- | --- |
+| `refreshEnabled(false)` | The keys no longer ask for a refresh. `refreshing(true)` still shows the spinner. |
+| `refreshTintColor($color)` | The color of the spinner. |
+| `refreshColors(...$colors)` | The first color is the color of the spinner, unless a tint is set. |
+| `refreshProgressBackgroundColor($color)` | A disc of that color behind the spinner. |
+| `refreshIndicatorSize(RefreshIndicatorSize::Large)` | A larger spinner. |
+| `progressViewOffset($offset)` | Moves the spinner down, for example below a header. |
+
+`Scroll`, `VirtualizedList`, `FlatList` and `SectionList` take these methods.
+
 ## Lists
 
 `VirtualizedList` shows long lists. PHP builds only the rows near the viewport and the host asks for more as the user scrolls, so a list of thousands of items costs what is on screen.
