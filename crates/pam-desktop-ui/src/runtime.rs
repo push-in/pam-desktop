@@ -263,6 +263,7 @@ pub struct Runtime<B: Backend> {
     gestures: crate::gestures::Gestures,
     headers: crate::presenter::header::Headers,
     windows: crate::windows::Windows,
+    text_layouts: crate::textlayout::TextLayouts,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
     pub(crate) shell: Shell,
@@ -415,6 +416,7 @@ impl<B: Backend> Runtime<B> {
             gestures: crate::gestures::Gestures::default(),
             headers: crate::presenter::header::Headers::default(),
             windows: crate::windows::Windows::default(),
+            text_layouts: crate::textlayout::TextLayouts::default(),
             modules,
             directories,
             shell: Shell::default(),
@@ -574,6 +576,7 @@ impl<B: Backend> Runtime<B> {
                 self.observers.on_change(&mut ctx, change);
                 self.gestures.on_change(&mut ctx, change);
                 self.windows.on_change(&mut ctx, change);
+                self.text_layouts.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             self.headers.after_commit(&mut ctx, self.metrics.dark);
@@ -600,9 +603,12 @@ impl<B: Backend> Runtime<B> {
             self.inputs.retry_autofocus();
         }
         {
+            let backend = &mut self.backend;
+            let mut measure = |block: &crate::text::TextBlock, width: f32| backend.measure_text(block, width);
             let mut ctx = ctx!(self);
             self.coverage.evaluate(&mut ctx);
             self.observers.evaluate(&mut ctx);
+            self.text_layouts.evaluate(&mut ctx, &mut measure);
         }
         // A window that opened or changed size lays its surface out again.
         if self.windows.has_resized() {
@@ -828,6 +834,9 @@ impl<B: Backend> Runtime<B> {
                     eprintln!("pointer {:?} at {:?} hit {:?}", pointer.phase, pointer.position, self.scene.hit_test(pointer.position));
                 }
                 if self.select_text(&pointer) {
+                    return;
+                }
+                if self.press_span(&pointer) {
                     return;
                 }
                 {
@@ -1203,6 +1212,32 @@ impl<B: Backend> Runtime<B> {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// A press on a pressable run of a paragraph (a link). `true` means the
+    /// run took the pointer event.
+    fn press_span(&mut self, pointer: &crate::backend::PointerEvent) -> bool {
+        use crate::backend::{PointerButton, PointerPhase};
+        use crate::textlayout::TextLayouts;
+        if pointer.button != PointerButton::Primary || !matches!(pointer.phase, PointerPhase::Down | PointerPhase::Up | PointerPhase::Cancel) {
+            return false;
+        }
+        // The paragraph under the pointer and the text offset there.
+        let located = self.scene.hit_test(pointer.position).filter(|id| {
+            let ctx = ctx!(self);
+            TextLayouts::listens(&ctx, *id)
+        });
+        let located = located.and_then(|id| {
+            let origin = self.scene.window_origin(id);
+            let point = crate::geometry::Point::new(pointer.position.x - origin.x, pointer.position.y - origin.y);
+            self.backend.text_index_at(id, point).map(|index| (id, index))
+        });
+        let mut ctx = ctx!(self);
+        match pointer.phase {
+            PointerPhase::Down => located.is_some_and(|(id, index)| self.text_layouts.press_down(&ctx, id, index)),
+            PointerPhase::Up => self.text_layouts.press_up(&mut ctx, located),
+            _ => self.text_layouts.press_up(&mut ctx, None),
         }
     }
 

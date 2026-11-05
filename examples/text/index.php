@@ -22,6 +22,9 @@ final class Paragraphs extends Component
     #[State]
     public string $clipboard = '(press the button after copying with Ctrl+C)';
 
+    #[State]
+    public string $lines = '';
+
     public function render(): Column
     {
         return Column::make(
@@ -31,6 +34,27 @@ final class Paragraphs extends Component
                 ->style(new Style(fontSize: 16, lineHeight: 25, textColor: 0xFF2A3140)),
             Text::make('This second paragraph is not selectable: pressing it does nothing.')
                 ->style(new Style(fontSize: 14, lineHeight: 21, textColor: 0xFF6B7485)),
+            Text::rich(
+                'Runs inside a paragraph can be pressed: ',
+                Text::make('open the terms')
+                    ->style(new Style(textColor: 0xFF2F6BFF, fontWeight: 600))
+                    ->on(\Pam\Desktop\EventKind::Press, function (): void {
+                        $this->clipboard = 'Link pressed: terms';
+                    }),
+                ' or ',
+                Text::make('the privacy policy')
+                    ->style(new Style(textColor: 0xFF2F6BFF, fontWeight: 600))
+                    ->on(\Pam\Desktop\EventKind::Press, function (): void {
+                        $this->clipboard = 'Link pressed: privacy';
+                    }),
+                '. The host also reports how this paragraph wrapped.',
+            )
+                ->on(\Pam\Desktop\EventKind::TextLayout, function (string $payload): void {
+                    $layout = \Pam\Desktop\TextLayoutEvent::fromPayload($payload);
+                    $this->lines = "{$layout->lines} line(s), ".($layout->truncated ? 'truncated' : 'complete');
+                })
+                ->style(new Style(fontSize: 14, lineHeight: 21, textColor: 0xFF2A3140)),
+            Text::make($this->lines)->style(new Style(fontSize: 12, textColor: 0xFF6B7485)),
             Button::make('Show the clipboard')->onPress(function (): void {
                 Clipboard::getText(function (?string $text): void {
                     $this->clipboard = $text ?? '(empty)';

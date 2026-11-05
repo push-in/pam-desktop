@@ -37,6 +37,7 @@ pub mod shell;
 pub mod style;
 pub mod testing;
 pub mod text;
+pub mod textlayout;
 pub mod toast;
 pub mod watch;
 pub mod webview;
