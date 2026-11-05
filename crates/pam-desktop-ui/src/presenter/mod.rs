@@ -3,6 +3,7 @@
 //! plain scene nodes, so every desktop backend behaves the same.
 
 pub mod coverage;
+pub mod header;
 pub mod modal;
 pub mod navigation;
 pub mod tabs;

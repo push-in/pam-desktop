@@ -5,13 +5,14 @@
 //! transition whenever `NavigationRevision` changes and must report
 //! `AnimationComplete` afterwards: PHP only releases the outgoing route then.
 
-use pam_desktop_wire::{NodeKind, PropKey};
+use pam_desktop_wire::{NodeKind, PropKey, PropValue};
 
 use crate::animator::{Curve, Easing, Owner};
 use crate::backend::NodeId;
 use crate::context::{event_kind, Ctx};
 use crate::geometry::{Affine, Point};
-use crate::scene::{Change, IdMap, LayerOverride, LayerSlot};
+use crate::props::PropMap;
+use crate::scene::{Change, IdMap, LayerOverride, LayerSlot, StyleLayer};
 
 const OPERATION_PUSH: i64 = 2;
 const OPERATION_POP: i64 = 3;
@@ -35,6 +36,8 @@ struct Host {
     active: Option<NodeId>,
     /// The previous route, kept visible under a modal presentation.
     underlay: Option<NodeId>,
+    /// The route presented as a form sheet and the fraction of the host it covers.
+    sheet: Option<(NodeId, f32)>,
     run: Option<Run>,
     /// `NavigationRevision` changed in the commit being applied.
     navigate: bool,
@@ -46,6 +49,22 @@ struct Host {
 pub struct Navigation {
     hosts: IdMap<Host>,
     dirty: bool,
+}
+
+/// Where a form sheet rests: pushed down so only its detent shows.
+fn sheet_offset(ctx: &Ctx<'_>, host: NodeId, sheet: Option<(NodeId, f32)>, route: NodeId) -> Affine {
+    match sheet {
+        Some((sheet, detent)) if sheet == route => {
+            let height = ctx.scene.node(host).map_or(0.0, |node| node.frame.height);
+            Affine::translation(0.0, (height * (1.0 - detent)).min(height - 48.0).max(0.0))
+        }
+        _ => Affine::IDENTITY,
+    }
+}
+
+/// A route at rest: in place, or at its sheet position.
+fn resting(ctx: &Ctx<'_>, host: NodeId, sheet: Option<(NodeId, f32)>, route: NodeId) -> LayerOverride {
+    LayerOverride { transform: sheet_offset(ctx, host, sheet, route), ..LayerOverride::NONE }
 }
 
 /// Engine children of a host, bottom to top (chrome excluded).
@@ -75,7 +94,8 @@ impl Navigation {
                     self.dirty = true;
                 }
             }
-            Change::Children(id) => {
+            // A resized host moves its sheet.
+            Change::Children(id) | Change::Frame(id) => {
                 if let Some(host) = self.hosts.get_mut(&id) {
                     host.sync = true;
                     self.dirty = true;
@@ -131,15 +151,15 @@ impl Navigation {
         if !host.underlay.is_some_and(|underlay| routes.contains(&underlay)) {
             host.underlay = None;
         }
-        let (active, underlay) = (host.active, host.underlay);
+        if !host.sheet.is_some_and(|(sheet, _)| routes.contains(&sheet)) {
+            host.sheet = None;
+        }
+        let (active, underlay, sheet) = (host.active, host.underlay, host.sheet);
         for route in routes {
             // A route under a modal presentation stays visible below the active one.
             let shown = Some(route) == active || Some(route) == underlay;
-            ctx.scene.set_layer_override(
-                route,
-                LayerSlot::Presenter,
-                if shown { LayerOverride::NONE } else { LayerOverride::HIDDEN },
-            );
+            let value = if shown { resting(ctx, id, sheet, route) } else { LayerOverride::HIDDEN };
+            ctx.scene.set_layer_override(route, LayerSlot::Presenter, value);
         }
     }
 
@@ -160,6 +180,18 @@ impl Navigation {
         };
         let duration = props.integer_or(PropKey::NavigationDurationMs, 240).clamp(0, 2000) as u32;
         let presentation = props.integer_or(PropKey::NavigationPresentation, 1);
+        // The detent a form sheet opens at, and its corner radius.
+        let detent = props
+            .text_or_empty(PropKey::NavigationSheetDetents)
+            .split(',')
+            .filter_map(|detent| detent.trim().parse::<f32>().ok())
+            .nth(props.integer_or(PropKey::NavigationSheetInitialDetentIndex, 1).max(1) as usize - 1)
+            .unwrap_or(1.0)
+            .clamp(0.05, 1.0);
+        let corner = match props.number_or(PropKey::NavigationSheetCornerRadius, 0.0) {
+            radius if radius > 0.0 => radius,
+            _ => 20.0,
+        };
         let Some(host) = self.hosts.get_mut(&id) else { return };
         if host.revision == revision {
             return self.sync(ctx, id);
@@ -188,6 +220,16 @@ impl Navigation {
         };
         let outgoing = outgoing.filter(|outgoing| *outgoing != incoming);
         host.run = Some(Run { operation, transition, presentation, incoming, outgoing });
+        if presentation == 7 && operation != OPERATION_POP {
+            host.sheet = Some((incoming, detent));
+            // A sheet has rounded top corners and floats over the route below.
+            let mut look = PropMap::new();
+            look.insert(PropKey::BorderTopLeftRadius, PropValue::Float(f64::from(corner)));
+            look.insert(PropKey::BorderTopRightRadius, PropValue::Float(f64::from(corner)));
+            look.insert(PropKey::Overflow, PropValue::Integer(2));
+            look.insert(PropKey::BoxShadows, PropValue::String("[[0,-4,24,0,1023410176,0]]".into()));
+            ctx.scene.set_style_overlay(incoming, StyleLayer::Presenter, Some(look));
+        }
 
         // Only the two routes of the transition are visible while it runs.
         for route in &routes {
@@ -302,8 +344,12 @@ impl Navigation {
             }
             _ => {}
         }
+        // A form sheet moves between below the host and its detent.
+        let sheet = self.hosts.get(&id).and_then(|host| host.sheet);
+        incoming.transform = incoming.transform.then(&sheet_offset(ctx, id, sheet, run.incoming));
         ctx.scene.set_layer_override(run.incoming, LayerSlot::Presenter, incoming);
         if let Some(route) = run.outgoing {
+            outgoing.transform = outgoing.transform.then(&sheet_offset(ctx, id, sheet, route));
             ctx.scene.set_layer_override(route, LayerSlot::Presenter, outgoing);
         }
     }
@@ -316,16 +362,19 @@ impl Navigation {
         if host.underlay == Some(run.incoming) || run.outgoing.is_none() {
             host.underlay = None;
         }
-        ctx.scene.set_layer_override(run.incoming, LayerSlot::Presenter, LayerOverride::NONE);
+        let stays = run.operation != OPERATION_POP && (3..=7).contains(&run.presentation);
         if let Some(outgoing) = run.outgoing {
             // Modal presentations keep the previous route visible underneath.
-            let stays = run.operation != OPERATION_POP && (3..=7).contains(&run.presentation);
             host.underlay = stays.then_some(outgoing);
-            ctx.scene.set_layer_override(
-                outgoing,
-                LayerSlot::Presenter,
-                if stays { LayerOverride::NONE } else { LayerOverride::HIDDEN },
-            );
+            if host.sheet.is_some_and(|(sheet, _)| sheet == outgoing) && !stays {
+                host.sheet = None;
+            }
+        }
+        let sheet = host.sheet;
+        ctx.scene.set_layer_override(run.incoming, LayerSlot::Presenter, resting(ctx, id, sheet, run.incoming));
+        if let Some(outgoing) = run.outgoing {
+            let value = if stays { resting(ctx, id, sheet, outgoing) } else { LayerOverride::HIDDEN };
+            ctx.scene.set_layer_override(outgoing, LayerSlot::Presenter, value);
         }
         ctx.emit_if(id, PropKey::OnAnimationComplete, event_kind::ANIMATION_COMPLETE, Vec::new());
     }

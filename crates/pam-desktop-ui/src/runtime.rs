@@ -261,6 +261,7 @@ pub struct Runtime<B: Backend> {
     pub(crate) toasts: crate::toast::Toasts,
     observers: crate::observers::Observers,
     gestures: crate::gestures::Gestures,
+    headers: crate::presenter::header::Headers,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
     pub(crate) shell: Shell,
@@ -411,6 +412,7 @@ impl<B: Backend> Runtime<B> {
             toasts: crate::toast::Toasts::default(),
             observers: crate::observers::Observers::default(),
             gestures: crate::gestures::Gestures::default(),
+            headers: crate::presenter::header::Headers::default(),
             modules,
             directories,
             shell: Shell::default(),
@@ -500,7 +502,14 @@ impl<B: Backend> Runtime<B> {
             }
         }
         if let Some(worker) = &mut self.worker {
-            for event in self.outbox.drain(..) {
+            for mut event in self.outbox.drain(..) {
+                // The search field of a header speaks for its navigation host.
+                if event.node & crate::scene::SYNTHETIC_BIT != 0 {
+                    match self.headers.search_host(event.node) {
+                        Some(host) if event.kind == event_kind::CHANGE => event.node = host,
+                        _ => continue,
+                    }
+                }
                 if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() {
                     eprintln!("event node={} kind={} payload={:?}", event.node, event.kind, String::from_utf8_lossy(&event.payload));
                 }
@@ -543,6 +552,7 @@ impl<B: Backend> Runtime<B> {
                     ctx.animator.forget(id);
                 }
                 self.navigation.on_change(&mut ctx, change);
+                self.headers.on_change(&mut ctx, change);
                 self.tabs.on_change(&mut ctx, change);
                 self.modals.on_change(&mut ctx, change);
                 self.coverage.on_change(&mut ctx, change);
@@ -560,6 +570,7 @@ impl<B: Backend> Runtime<B> {
                 self.gestures.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
+            self.headers.after_commit(&mut ctx, self.metrics.dark);
             self.tabs.after_commit(&mut ctx);
             self.modals.after_commit(&mut ctx);
             self.inputs.after_commit(&mut ctx);
