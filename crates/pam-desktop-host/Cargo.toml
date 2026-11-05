@@ -11,12 +11,38 @@ repository.workspace = true
 name = "pam-desktop"
 path = "src/main.rs"
 
+[features]
+default = ["sqlite"]
+# The `sqlite` module. SQLite is compiled from C, so a build that only
+# type-checks for another system turns this off.
+sqlite = ["dep:rusqlite"]
+
 [dependencies]
 pam-desktop-ui.workspace = true
 serde_json.workspace = true
+aes-gcm = "0.10"
+base64 = "0.22"
+getrandom = "0.3"
+rusqlite = { version = "0.38", features = ["bundled"], optional = true }
+
+# HTTPS uses the TLS stack of the system where it has one (Secure Transport,
+# SChannel) and rustls elsewhere; certificates are always verified against the
+# system's trust store. Secrets go to the keychain of the system.
+[target.'cfg(target_os = "macos")'.dependencies]
+ureq = { version = "3.5", default-features = false, features = ["native-tls"] }
+keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+ureq = { version = "3.5", default-features = false, features = ["native-tls"] }
+keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(not(any(target_os = "macos", target_os = "windows")))'.dependencies]
+ureq = { version = "3.5", default-features = false, features = ["rustls", "platform-verifier"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 pam-desktop-gtk.workspace = true
+# The Secret Service over a pure Rust D-Bus implementation: no libdbus.
+keyring = { version = "3.6", default-features = false, features = ["async-secret-service", "async-io", "crypto-rust"] }
 
 [lints]
 workspace = true
