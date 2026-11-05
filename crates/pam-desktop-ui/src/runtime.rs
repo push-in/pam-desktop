@@ -46,8 +46,11 @@ pub const MODULE_FAILURE: u8 = 2;
 
 /// Work posted to the UI thread from other threads.
 pub enum Inbound {
-    Worker(WorkerMessage),
+    /// A message from the worker process of the given generation.
+    Worker(u64, WorkerMessage),
     ModuleResult { request: u64, status: u8, payload: Vec<u8> },
+    /// Development: application sources changed, restart the worker.
+    Reload,
 }
 
 /// Thread-safe queue into the UI thread.
@@ -130,6 +133,10 @@ pub struct RuntimeConfig {
     pub window: WindowConfig,
     /// Operating system keyword exposed to style queries: `linux`, `macos`, `windows`.
     pub platform: &'static str,
+    /// Development keeps the window open when PHP stops and reloads on changes.
+    pub development: bool,
+    /// Directories whose changes restart the worker (development only).
+    pub watch: Vec<std::path::PathBuf>,
 }
 
 struct MeasureContext<B: Backend> {
@@ -198,6 +205,10 @@ pub struct Runtime<B: Backend> {
     engine: Engine,
     scene: Scene,
     worker: Option<Worker>,
+    worker_command: WorkerCommand,
+    /// Bumped on every worker restart; messages of older workers are dropped.
+    generation: u64,
+    development: bool,
     inbox: Arc<Inbox>,
     events: Rc<EventQueue>,
     measure: Box<MeasureContext<B>>,
@@ -222,7 +233,6 @@ impl<B: Backend> Runtime<B> {
         let _ = engine.set_viewport(metrics.size.width, metrics.size.height);
         let _ = engine.set_text_scale(metrics.font_scale);
         let _ = engine.set_refresh_rate(f64::from(metrics.refresh_rate));
-        let _ = engine.set_safe_area_insets(0.0, 0.0, 0.0, 0.0);
 
         let mut measure = Box::new(MeasureContext::<B> { backend: std::ptr::null_mut() });
         // SAFETY: the context is heap allocated, owned by this runtime and
@@ -239,19 +249,25 @@ impl<B: Backend> Runtime<B> {
         scene.environment.font_scale = metrics.font_scale;
 
         let mut command = config.worker;
-        command.environment.push(("PAM_BOOT_METRICS".into(), boot_metrics_json(&metrics)));
-        command.environment.push(("PAM_SYSTEM_DARK".into(), if metrics.dark { "1" } else { "0" }.into()));
-        command.environment.push(("PAM_SYSTEM_APPEARANCE".into(), if metrics.dark { "dark" } else { "light" }.into()));
         command.environment.push(("PAM_DESKTOP_PLATFORM".into(), config.platform.into()));
         command.environment.push(("PAM_RENDERER_CONTRACT".into(), renderer_contract_json()));
-        let worker_inbox = Arc::clone(&inbox);
-        let worker = Worker::spawn(&command, move |message| worker_inbox.post(Inbound::Worker(message)))?;
+        command.environment.push((
+            "PAM_DESKTOP_MODE".into(),
+            if config.development { "development" } else { "production" }.into(),
+        ));
+        let worker = spawn_worker(&command, &metrics, &inbox, 1)?;
+        if config.development && !config.watch.is_empty() {
+            crate::watch::watch(config.watch, Arc::clone(&inbox));
+        }
 
         Ok(Self {
             backend,
             engine,
             scene,
             worker: Some(worker),
+            worker_command: command,
+            generation: 1,
+            development: config.development,
             inbox,
             events,
             measure,
@@ -266,6 +282,12 @@ impl<B: Backend> Runtime<B> {
             quit_requested: false,
             finished: false,
         })
+    }
+
+    /// The queue other threads use to reach the UI thread.
+    #[must_use]
+    pub fn inbox(&self) -> Arc<Inbox> {
+        Arc::clone(&self.inbox)
     }
 
     #[must_use]
@@ -313,26 +335,49 @@ impl<B: Backend> Runtime<B> {
 
     fn handle_inbound(&mut self, item: Inbound) {
         match item {
-            Inbound::Worker(WorkerMessage::Commit(frame)) => self.commit(&frame),
-            Inbound::Worker(WorkerMessage::Call { request, module, method, payload }) => {
+            Inbound::Worker(generation, _) if generation != self.generation => {}
+            Inbound::Worker(_, WorkerMessage::Commit(frame)) => self.commit(&frame),
+            Inbound::Worker(_, WorkerMessage::Call { request, module, method, payload }) => {
                 self.call_module(request, &module, &method, &payload);
             }
-            Inbound::Worker(WorkerMessage::CallTyped { request, operation, payload }) => {
+            Inbound::Worker(_, WorkerMessage::CallTyped { request, operation, payload }) => {
                 self.call_typed(request, operation, &payload);
             }
-            Inbound::Worker(WorkerMessage::Error(message)) => {
+            Inbound::Worker(_, WorkerMessage::Error(message)) => {
                 eprintln!("[pam-desktop] PHP error: {message}");
             }
-            Inbound::Worker(WorkerMessage::Ready | WorkerMessage::Idle) => {}
-            Inbound::Worker(WorkerMessage::Exited(_)) => {
+            Inbound::Worker(_, WorkerMessage::Ready | WorkerMessage::Idle) => {}
+            Inbound::Worker(_, WorkerMessage::Exited(_)) => {
                 self.worker = None;
-                self.finished = true;
+                if self.development {
+                    // Keep the last frame on screen; the next change restarts PHP.
+                    eprintln!("[pam-desktop] the PHP worker stopped; waiting for a change to restart it");
+                } else {
+                    self.finished = true;
+                }
             }
             Inbound::ModuleResult { request, status, payload } => {
                 if let Some(worker) = &mut self.worker {
                     worker.send_module_result(request, status, &payload);
                 }
             }
+            Inbound::Reload => self.reload(),
+        }
+    }
+
+    /// Restarts the PHP worker keeping the window: component state is
+    /// checkpointed, and the first frame of the new worker is diffed against
+    /// the tree that is already mounted.
+    pub fn reload(&mut self) {
+        if let Some(mut worker) = self.worker.take() {
+            worker.checkpoint();
+            worker.shutdown();
+        }
+        self.generation += 1;
+        self.pressed = None;
+        match spawn_worker(&self.worker_command, &self.metrics, &self.inbox, self.generation) {
+            Ok(worker) => self.worker = Some(worker),
+            Err(error) => eprintln!("[pam-desktop] could not restart the PHP worker: {error}"),
         }
     }
 
@@ -384,7 +429,6 @@ impl<B: Backend> Runtime<B> {
             let _ = engine.set_viewport(self.metrics.size.width, self.metrics.size.height);
             let _ = engine.set_text_scale(self.metrics.font_scale);
             let _ = engine.set_refresh_rate(f64::from(self.metrics.refresh_rate));
-            let _ = engine.set_safe_area_insets(0.0, 0.0, 0.0, 0.0);
             // SAFETY: same contract as in `new`.
             unsafe {
                 engine.set_text_measurer(Some((
@@ -625,6 +669,21 @@ impl<B: Backend> Runtime<B> {
     pub fn platform(&self) -> &'static str {
         self.platform
     }
+}
+
+/// Starts a worker that sees the window exactly as it is now.
+fn spawn_worker(
+    command: &WorkerCommand,
+    metrics: &WindowMetrics,
+    inbox: &Arc<Inbox>,
+    generation: u64,
+) -> std::io::Result<Worker> {
+    let mut command = command.clone();
+    command.environment.push(("PAM_BOOT_METRICS".into(), boot_metrics_json(metrics)));
+    command.environment.push(("PAM_SYSTEM_DARK".into(), if metrics.dark { "1" } else { "0" }.into()));
+    command.environment.push(("PAM_SYSTEM_APPEARANCE".into(), if metrics.dark { "dark" } else { "light" }.into()));
+    let inbox = Arc::clone(inbox);
+    Worker::spawn(&command, move |message| inbox.post(Inbound::Worker(generation, message)))
 }
 
 fn boot_metrics_json(metrics: &WindowMetrics) -> String {

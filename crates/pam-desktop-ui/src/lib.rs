@@ -14,6 +14,7 @@ pub mod scene;
 pub mod style;
 pub mod testing;
 pub mod text;
+pub mod watch;
 pub mod wiremap;
 pub mod worker;
 

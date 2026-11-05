@@ -6599,8 +6599,8 @@ final class TemplateRenderer
                 ? $data['__pamStyleEnvironment']
                 : [];
             $environment = [
-                // React Native Platform.OS: the iOS runtime is PHP's Darwin build.
-                'platform' => PHP_OS_FAMILY === 'Darwin' ? 'ios' : 'android',
+                // The desktop host exports the system it runs on.
+                'platform' => \Pam\Desktop\Platform::os(),
                 ...$providedEnvironment,
                 'width' => $width,
                 'height' => $height,

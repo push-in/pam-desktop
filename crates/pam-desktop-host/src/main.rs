@@ -10,7 +10,14 @@ use pam_desktop_ui::runtime::RuntimeConfig;
 use pam_desktop_ui::worker::WorkerCommand;
 
 fn usage() -> ExitCode {
-    eprintln!("usage: pam-desktop run <app directory or entry.php>");
+    eprintln!(
+        "PAM Desktop {}\n\n\
+         usage:\n  \
+         pam-desktop dev [app]   run with hot reload (default: current directory)\n  \
+         pam-desktop run [app]   run the application\n  \
+         pam-desktop --version",
+        env!("CARGO_PKG_VERSION"),
+    );
     ExitCode::from(64)
 }
 
@@ -84,7 +91,7 @@ fn window_config(project: &Path) -> WindowConfig {
     config
 }
 
-fn run(target: &Path) -> ExitCode {
+fn run(target: &Path, development: bool) -> ExitCode {
     let entry = if target.is_dir() { target.join("index.php") } else { target.to_path_buf() };
     let Ok(entry) = entry.canonicalize() else {
         eprintln!("pam-desktop: {} does not exist", entry.display());
@@ -105,16 +112,20 @@ fn run(target: &Path) -> ExitCode {
     } else {
         "linux"
     };
+    let mut environment = vec![("PAM_DESKTOP_PROJECT_ROOT".into(), project.display().to_string())];
+    if development {
+        // Component state survives a hot reload through this directory.
+        let state = project.join(".pam-desktop").join("state");
+        if std::fs::create_dir_all(&state).is_ok() {
+            environment.push(("PAM_DESKTOP_STATE_DIR".into(), state.display().to_string()));
+        }
+    }
     let config = RuntimeConfig {
-        worker: WorkerCommand {
-            program,
-            arguments,
-            entry,
-            working_directory: Some(project.clone()),
-            environment: vec![("PAM_DESKTOP_PROJECT_ROOT".into(), project.display().to_string())],
-        },
+        worker: WorkerCommand { program, arguments, entry, working_directory: Some(project.clone()), environment },
         window: window_config(&project),
         platform,
+        development,
+        watch: if development { vec![project.clone()] } else { Vec::new() },
     };
 
     #[cfg(target_os = "linux")]
@@ -132,10 +143,10 @@ fn run(target: &Path) -> ExitCode {
 fn main() -> ExitCode {
     let mut arguments = std::env::args_os().skip(1);
     match arguments.next().as_deref().and_then(|argument| argument.to_str()) {
-        Some("run") => match arguments.next() {
-            Some(target) => run(Path::new(&target)),
-            None => usage(),
-        },
+        Some(command @ ("run" | "dev")) => {
+            let target = arguments.next().map_or_else(|| PathBuf::from("."), PathBuf::from);
+            run(&target, command == "dev")
+        }
         Some("--version" | "-V") => {
             println!("pam-desktop {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
