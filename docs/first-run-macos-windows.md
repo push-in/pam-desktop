@@ -11,6 +11,7 @@ Linux is the reference: every example under `examples/` was run and checked ther
    - Windows: the backend keeps its state in a `RefCell`. A re-entrant borrow is ignored in release and is a `debug_assert` in debug.
 2. Then walk through the examples in this order, which goes from the least to the most platform code: `counter`, `controls`, `lists`, `text`, `images`, `motion`, `navigation`, `shell`, `windows`, `dragdrop`, `canvas`, `media`, `webview`, `links`, `showcase`.
 3. `PAM_DESKTOP_DEBUG=1` prints every event the host sends to PHP.
+4. Two things the core does with ordinary views were only seen on Linux. The sliding line at the bottom of `examples/text` is a text view moved inside a clipping view: check that it is clipped at the padding of its box and slides smoothly. The blue card of `examples/navigation` flies to its route as two copies that are scaled and faded: check that the copies stretch from the top-left corner of the card, not from its center.
 
 ## macOS (`pam-desktop-appkit`)
 
@@ -122,6 +123,7 @@ Painting, pointer and media:
 
 - `backdropBlur` blurs a copy of what the window has painted behind the view. It is left out where that copy cannot be taken: inside a rounded or rotated clipping box (`overflow: hidden`), inside a translucent ancestor, on a view that also has `blur` or a color matrix, and in the image that follows the pointer during a drag. Text inputs and web views are child windows and are not part of what is blurred.
 - `Magnify` and `Rotate` come from touch only; a touchpad pinch arrives as Control plus wheel, which the core treats as a pinch.
+- SVG images are not decoded: the Windows imaging component has no codec for them.
 
 Web view and accessibility:
 
