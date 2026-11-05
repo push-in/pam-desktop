@@ -1,82 +1,97 @@
 # Signed updates
 
-Pam Desktop updates are opt-in application policy. PHP pins an HTTPS endpoint,
-channel, Ed25519 public key and integer-backed policy; the private signing seed
-never ships with the application.
+Updates are opt-in. The application pins an HTTPS endpoint, a channel, an
+Ed25519 public key and a policy in `pam-desktop.json`; the private signing key
+never ships with the application. A release is accepted only when its feed was
+signed by the holder of that key and the downloaded archive has the signed
+size and SHA-256.
 
-## PHP policy
+## Manifest
 
-```php
-use Pam\Desktop\UpdatePolicy;
-use Pam\Desktop\Updates;
-
-$manifest = Manifest::create('com.example.my-app', 'My application', '1.0.0')
-    ->updates(
-        Updates::from(
-            'https://updates.example.com/my-app/stable.json',
-            '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-        )
-            ->channel('stable')
-            ->policy(UpdatePolicy::Notify),
-    );
+```json
+{
+    "applicationId": "com.example.my-app",
+    "version": "1.0.0",
+    "updates": {
+        "endpoint": "https://updates.example.com/my-app/stable.json",
+        "publicKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "channel": "stable",
+        "policy": "notify"
+    }
+}
 ```
 
-Policies are transmitted as sequential integers:
-
-| Value | Policy | Behavior |
+| Field | Default | Rules |
 | --- | --- | --- |
-| `1` | Manual | only explicit frontend calls |
-| `2` | Notify | check in the background and emit state events |
-| `3` | Automatic | check, download, verify, install and restart |
+| `endpoint` | required | HTTPS URL of the feed, without credentials or fragment, at most 2048 bytes |
+| `publicKey` | required | the 32-byte Ed25519 public key as 64 lowercase hexadecimal characters |
+| `channel` | `stable` | starts with a letter; at most 64 letters, digits, `.`, `-`, `_` |
+| `policy` | `manual` | `manual`, `notify` or `automatic` |
 
-Omitting `updates()` disables every update route. Remote endpoints and artifact
-URLs require HTTPS. Debug hosts also accept loopback HTTP for local integration
-tests; redirects from HTTPS remain HTTPS-only.
+| Policy | Behavior |
+| --- | --- |
+| `manual` | nothing happens until the application calls `Updates::check()` |
+| `notify` | the host checks the feed when the application starts and reports what it found |
+| `automatic` | the host checks, downloads, verifies, installs and restarts the application |
+
+Without `updates` the state is `disabled` and every operation is refused. An
+invalid `updates` block stops `pam-desktop build` and `publish-update`; a
+running application reports the problem on standard error and runs with
+updates disabled rather than with a feed it did not mean to trust. Other
+fields are not accepted inside `updates`.
+
+The `notify` and `automatic` policies act when the application starts, outside
+`pam-desktop dev`: a development run is not an installed bundle, so it only
+checks when the application asks.
+
+The feed, the artifact and every redirect on the way to them (at most three)
+must be HTTPS. Debug builds of the host also accept plain HTTP to the local
+machine, for integration tests.
 
 ## Signing keys
 
-Generate a key once on an offline or tightly controlled release machine:
+Generate a key once, on an offline or tightly controlled release machine:
 
 ```bash
-pam desktop update-key --output /secure/my-app-update.key
+pam-desktop update-key --output /secure/my-app-update.key
 ```
 
-The command creates a 32-byte Ed25519 seed as lowercase hexadecimal with mode
-`0600` on Unix. It prints only the public key. Put that public value in
-`Updates::from()` and store the private file in a secret manager. The publisher
-refuses group/world-readable Unix key files and refuses a key whose public half
-does not match the PHP manifest.
+The command creates a 32-byte Ed25519 seed as lowercase hexadecimal, with mode
+`0600` on Unix, and refuses to overwrite a file. It prints only the public
+key: put that value in `updates.publicKey` and keep the file in a secret
+manager. `publish-update` refuses a key file that its group or others can read
+and a key whose public half is not the one of the manifest.
 
 ## Feed publication
 
-Build artifacts on their native hosts, collect them in the trusted release job,
-then sign one feed containing every target:
+Build the artifacts on their systems (`pam-desktop build --format portable`),
+collect them in the trusted release job, then sign one feed with every target:
 
 ```bash
-pam desktop publish-update \
+pam-desktop publish-update path/to/app \
   --key /secure/my-app-update.key \
   --output dist/stable.json \
   --published-at 2026-07-23T14:00:00Z \
   --notes-url https://example.com/releases/1.0.0 \
-  --artifact linux,x86_64,portable,dist/app-linux.tar.gz,https://cdn.example.com/app-linux.tar.gz
+  --artifact linux,x86_64,portable,dist/my-app-1.0.0-linux-x86_64.tar.gz,https://cdn.example.com/my-app-1.0.0-linux-x86_64.tar.gz \
+  --artifact macos,aarch64,portable,dist/my-app-1.0.0-macos-aarch64.zip,https://cdn.example.com/my-app-1.0.0-macos-aarch64.zip
 ```
 
-Each `--artifact` tuple is:
+The application (the current directory by default) provides the identifier and
+the version of the release. `--channel` defaults to `stable`; `--key`,
+`--output`, `--published-at` and at least one `--artifact` are required. Each
+`--artifact` is:
 
 ```text
 platform,architecture,kind,local-path,HTTPS-URL
 ```
 
-The 1.x supported release target is `linux,x86_64`; kinds are `portable` and
-`installer`. Historical Windows/macOS feed parsing remains in the codebase but
-is outside current artifact generation and support. The publisher calculates
-byte lengths and SHA-256 values itself. It writes the feed through a
-same-directory staging file and refuses an existing destination unless
-`--force` is explicit.
-
-The signed payload is the compact JSON serialization of the typed `release`
-object in protocol field order. Unknown feed fields are rejected. The outer
-document contains only:
+Platforms are `linux`, `macos` and `windows`; the architecture is the one in
+the name of the artifact (`x86_64`, `aarch64`); kinds are `portable` and
+`installer`. The updater installs portable archives; installers can be listed
+for download pages. The publisher computes byte lengths and SHA-256 values
+itself, writes the feed through a staging file in the same directory, and
+refuses an existing destination without `--force`.
 
 ```json
 {
@@ -86,65 +101,129 @@ document contains only:
     "channel": "stable",
     "version": "1.0.0",
     "publishedAt": "2026-07-23T14:00:00Z",
-    "artifacts": []
+    "notesUrl": "https://example.com/releases/1.0.0",
+    "artifacts": [
+      {
+        "platform": 1,
+        "architecture": "x86_64",
+        "kind": 1,
+        "url": "https://cdn.example.com/my-app-1.0.0-linux-x86_64.tar.gz",
+        "bytes": 22916595,
+        "sha256": "64-lowercase-hex-characters"
+      }
+    ]
   },
   "signature": "128-lowercase-hex-characters"
 }
 ```
 
-The updater matches application ID, channel, newer version, integer platform,
-exact architecture and portable artifact kind only after strict Ed25519
-verification.
+Platforms are the integers `1` (Linux), `2` (Windows) and `3` (macOS); kinds
+are `1` (portable archive) and `2` (installer). The signature covers the
+compact JSON serialization of `release` in the field order above (`notesUrl`
+left out when absent). Unknown fields are rejected. A feed is at most one MiB.
 
-## Frontend API
+The updater verifies the signature strictly, then requires the identifier and
+the channel of the application, a version newer than the running one (numeric
+parts compared as numbers, a release above its pre-releases, build metadata
+ignored) and a portable artifact for the running platform and architecture.
 
-```js
-const current = await window.pam.updater.status();
-const checked = await window.pam.updater.check();
+## PHP API
 
-if (checked.state === 4) { // Available
-    const ready = await window.pam.updater.download();
-    if (ready.state === 6) { // Ready
-        await window.pam.updater.install();
-    }
-}
+```php
+use Pam\Desktop\Updates;
+use Pam\Desktop\UpdateState;
+
+Updates::onChange(function (UpdateState $state): void {
+    match ($state->status) {
+        UpdateState::AVAILABLE => Updates::download(),
+        UpdateState::DOWNLOADING => $this->progress = $state->progress(),
+        UpdateState::READY => $this->canRestart = true,
+        UpdateState::FAILED => $this->error = $state->error,
+        default => null,
+    };
+});
+
+Updates::check();
+
+// From a button, once the state is ready:
+Updates::install();
 ```
 
-Lifecycle states are integer-backed: disabled `1`, idle `2`, checking `3`,
-available `4`, downloading `5`, ready `6`, applying `7`, up-to-date `8`, and
-failed `9`. Applications can also subscribe to `pam.update.changed`,
-`pam.update.ready`, `pam.update.applying`, and `pam.update.error`.
+| Method | Effect |
+| --- | --- |
+| `Updates::state(Closure $completed)` | reads the current `UpdateState` |
+| `Updates::check(?Closure $completed = null)` | asks the feed for a newer release |
+| `Updates::download(?Closure $completed = null)` | downloads and verifies the available release |
+| `Updates::install(?Closure $completed = null)` | applies the downloaded release: the application closes and starts again |
+| `Updates::onChange(Closure $listener): int` | runs the listener on every change; returns a subscription |
+| `Updates::offChange(int $subscription)` | removes the listener |
 
-Every bridge call repeats origin, ephemeral token and source-window checks.
-Downloads run outside Tokio workers, are bounded by the signed byte length, and
-must match both length and SHA-256. Installation uses a copied helper, waits for
-the host process, verifies the extracted bundle, swaps within one filesystem,
-retains the previous version for rollback and relaunches the declared launcher.
+`UpdateState` is immutable: `status`, `currentVersion`, `availableVersion`,
+`downloadedBytes`, `totalBytes`, `notesUrl`, `error`, `policy`, with
+`isEnabled()`, `isAvailable()`, `isReady()`, `isFailed()`, `isBusy()` and
+`progress()` (0 to 1). The statuses are the constants `DISABLED`, `IDLE`,
+`CHECKING`, `AVAILABLE`, `DOWNLOADING`, `READY`, `APPLYING`, `UP_TO_DATE` and
+`FAILED`.
+
+An operation that is refused (no release to download, another operation
+running, a feed that does not verify) completes with a `FAILED` state carrying
+the reason. Listeners see every change, whoever caused it: a call from the
+application or the policy working by itself. During a download they receive one
+change per percent.
+
+The native module behind this API is `updates`, with the methods `state`,
+`check`, `download`, `install` and the long poll `next`. Operations run one at
+a time on a worker thread of the host, never on the interface thread.
+
+## Installation
+
+Downloads are staged beside the installed bundle, so the swap is a rename on
+one file system; they are bounded by the signed byte length and must match
+both the length and the SHA-256 of the feed.
+
+`install` copies the host into the staging directory and starts it as a
+helper, then the application exits. The helper:
+
+1. verifies the archive against the signed SHA-256 again;
+2. waits for the application to exit (up to two minutes);
+3. extracts the archive, which must hold exactly one bundle directory;
+4. verifies every file of the new bundle against its `manifest.json`, and that
+   it is the same application as the installed one (on macOS also the code
+   signature of the `.app`, so only applications built with `--sign` update);
+5. moves the installed bundle to `.<name>.previous`, moves the new one into
+   place and verifies it again, rolling back if anything fails;
+6. starts the launcher of the new bundle.
+
+Only an application that runs from a bundle it may replace can be updated: the
+portable bundle (extracted, or installed with `install.sh`) and the macOS
+`.app`. A development run, a system package below `/opt`, an AppImage or an
+MSIX report a failure at `download` or `install`; their package managers
+update them. On Linux the helper needs `tar`; on macOS `ditto`; on Windows
+PowerShell.
 
 ## Interrupted installation recovery
 
-Immediately before the first bundle rename, the helper persists a sibling
-schema-1 transaction bound to the verified archive SHA-256. Re-running the same
-helper operation reconciles the filesystem rather than blindly repeating the
-swap:
+Immediately before the first rename, the helper writes a journal beside the
+bundle, bound to the SHA-256 of the verified archive. Running the same
+installation again reconciles the file system instead of repeating the swap
+blindly:
 
-- missing current bundle plus a valid `.previous` bundle restores the previous
-  version and safely restarts installation;
-- valid current and previous bundles mean the replacement completed before the
-  helper stopped, so the operation finishes idempotently without consuming the
-  rollback version;
+- a missing bundle with a valid `.previous` bundle restores the previous
+  version and starts over;
+- valid current and previous bundles mean the swap completed before the helper
+  stopped: the installation finishes without consuming the rollback version;
 - an invalid current bundle is moved to the single `.failed` quarantine slot
-  only after `.previous` verifies, then the previous version is restored;
-- missing current and previous bundles, symlinks, malformed/oversized journals,
-  or a journal bound to another archive fail closed without deleting anything.
+  once `.previous` verifies, and the previous version is restored;
+- missing current and previous bundles, symbolic links, a malformed or
+  oversized journal, or a journal of another archive fail without deleting
+  anything.
 
-Successful installation removes the archive and expanded extraction tree. The
-running helper may remain in its stage on platforms that lock executables; the
-next download retains at most one existing stage before creating the new one,
-so at most two application-specific update stages coexist. `.previous` and
-`.failed` are each single deterministic paths rather than timestamped history.
+A successful installation removes the archive and the extraction directory.
+The helper itself stays in its staging directory, because a running program
+cannot always be deleted; the next download keeps at most one earlier staging
+directory before creating its own. `.previous` and `.failed` are single fixed
+paths, not a history.
 
-This recovery contract covers helper termination and restart at every swap
-boundary. Filesystem and hardware durability still depend on the operating
-system; release testing should include abrupt process termination and the
-supported platform's normal crash-consistency guarantees.
+This covers a helper that stops at any point of the swap. Durability on power
+loss still depends on the file system: test abrupt termination on the systems
+you support.

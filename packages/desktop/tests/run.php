@@ -7587,6 +7587,7 @@ require __DIR__.'/launch_url.php';
 require __DIR__.'/handler_purity.php';
 require __DIR__.'/protocol_extension.php';
 require __DIR__.'/desktop_shell.php';
+require __DIR__.'/desktop_updates.php';
 require __DIR__.'/memory_bounds.php';
 // Heap measurements need an isolated process, without prior tests' retained fixtures.
 passthru(escapeshellarg(PHP_BINARY).' '.escapeshellarg(__DIR__.'/navigation_memory.php'), $navigationMemoryStatus);

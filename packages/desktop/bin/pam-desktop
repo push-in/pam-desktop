@@ -3,7 +3,19 @@
 
 declare(strict_types=1);
 
-const HOST_VERSION = '1.3.4';
+/*
+ * Runs the native PAM Desktop host with the arguments it was given:
+ *
+ *     vendor/bin/pam-desktop dev
+ *     vendor/bin/pam-desktop build --format deb
+ *
+ * The host of this package's version is downloaded once from the GitHub
+ * release, verified against its published SHA-256 and kept in the cache of
+ * the user. PAM_DESKTOP_HOST points at a host binary to run instead, with no
+ * download (a build of this repository, an air-gapped machine).
+ */
+
+const HOST_VERSION = '2.0.0';
 const REPOSITORY = 'push-in/pam-desktop';
 const MAX_ARCHIVE_BYTES = 536_870_912;
 const MAX_EXTRACTED_BYTES = 1_073_741_824;
@@ -40,6 +52,11 @@ function absolutePath(string $path): bool
 /** @param list<string> $arguments */
 function execute(string $binary, array $arguments): never
 {
+    // Become the host where the system allows it: no PHP process is left
+    // waiting behind the application.
+    if (PHP_OS_FAMILY !== 'Windows' && function_exists('pcntl_exec')) {
+        @pcntl_exec($binary, $arguments);
+    }
     $process = proc_open([$binary, ...$arguments], [STDIN, STDOUT, STDERR], $pipes, null, null, ['bypass_shell' => true]);
     if (!is_resource($process)) {
         fail("cannot start native host {$binary}");
@@ -110,8 +127,14 @@ function download(string $url, string $destination): void
     }
 }
 
-function extractArchive(string $archive, string $work, string $package): string
+/**
+ * Extracts the archive and returns the host binary inside it. A release
+ * archive holds `pam-desktop[.exe]`, at its root or inside a directory named
+ * after the archive (optionally below `bin`).
+ */
+function extractArchive(string $archive, string $work, string $package, string $binaryName): string
 {
+    $extracted = $work . DIRECTORY_SEPARATOR . 'extracted';
     try {
         $compressed = new PharData($archive);
         $compressed->decompress();
@@ -130,24 +153,38 @@ function extractArchive(string $archive, string $work, string $package): string
                 fail('native host archive exceeds the 1 GiB extraction limit');
             }
         }
-        $tar->extractTo($work, null, false);
+        if (!mkdir($extracted, 0700)) {
+            fail('cannot create native host extraction directory');
+        }
+        $tar->extractTo($extracted, null, false);
     } catch (Throwable $error) {
         fail("cannot extract native host archive: {$error->getMessage()}");
     }
-    $directory = $work . DIRECTORY_SEPARATOR . $package;
-    if (!is_dir($directory)) {
-        fail('native host archive has no expected package directory');
+    $separator = DIRECTORY_SEPARATOR;
+    $candidates = [
+        "{$extracted}{$separator}{$binaryName}",
+        "{$extracted}{$separator}{$package}{$separator}{$binaryName}",
+        "{$extracted}{$separator}{$package}{$separator}bin{$separator}{$binaryName}",
+        "{$extracted}{$separator}bin{$separator}{$binaryName}",
+    ];
+    foreach ($candidates as $candidate) {
+        if (is_file($candidate) && !is_link($candidate)) {
+            return $candidate;
+        }
     }
-    return $directory;
+    fail('verified archive does not contain the native desktop host');
 }
 
 $arguments = array_slice($argv, 1);
-$override = getenv('PAM_DESKTOP_HOST_BINARY');
-if (is_string($override) && $override !== '') {
-    if (!absolutePath($override) || !is_file($override) || is_link($override)) {
-        fail('PAM_DESKTOP_HOST_BINARY must be an absolute regular non-symlink file');
+// PAM_DESKTOP_HOST_BINARY is the name PAM Desktop 1.x used.
+foreach (['PAM_DESKTOP_HOST', 'PAM_DESKTOP_HOST_BINARY'] as $variable) {
+    $override = getenv($variable);
+    if (is_string($override) && $override !== '') {
+        if (!absolutePath($override) || !is_file($override) || is_link($override)) {
+            fail("{$variable} must be an absolute regular non-symlink file");
+        }
+        execute($override, $arguments);
     }
-    execute($override, $arguments);
 }
 
 $target = target();
@@ -204,17 +241,21 @@ $actual = hash_file('sha256', $archive);
 if (!is_string($actual) || strlen($expected) !== 64 || !hash_equals($expected, strtolower($actual))) {
     fail('native host archive checksum verification failed');
 }
-$packageDirectory = extractArchive($archive, $work, $package);
-$candidate = $packageDirectory . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . "pam-desktop{$suffix}";
-if (!is_file($candidate)) {
-    fail('verified archive does not contain the native desktop host');
+$candidate = extractArchive($archive, $work, $package, "pam-desktop{$suffix}");
+// The cache keeps one layout whatever the archive looked like.
+$staged = $work . DIRECTORY_SEPARATOR . 'host';
+$stagedBinary = $staged . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . "pam-desktop{$suffix}";
+if (!mkdir(dirname($stagedBinary), 0700, true) || !rename($candidate, $stagedBinary) || !chmod($stagedBinary, 0755)) {
+    fail('cannot stage the native desktop host');
 }
 if (!is_dir(dirname($hostDirectory)) && !mkdir(dirname($hostDirectory), 0700, true) && !is_dir(dirname($hostDirectory))) {
     fail('cannot create the versioned native host cache');
 }
-if (!@rename($packageDirectory, $hostDirectory) && !is_file($hostBinary)) {
+if (!@rename($staged, $hostDirectory) && !is_file($hostBinary)) {
     fail('cannot atomically publish the native desktop host');
 }
+// Shutdown functions do not run once this process becomes the host.
+removeTree($work);
 flock($lock, LOCK_UN);
 fclose($lock);
 @unlink($lockPath);

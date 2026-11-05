@@ -4,6 +4,8 @@ members = [
     "crates/pam-desktop-engine",
     "crates/pam-desktop-ui",
     "crates/pam-desktop-gtk",
+    "crates/pam-desktop-win32",
+    "crates/pam-desktop-appkit",
     "crates/pam-desktop-host",
 ]
 exclude = ["legacy"]
@@ -22,6 +24,8 @@ pam-desktop-wire = { path = "crates/pam-desktop-wire" }
 pam-desktop-engine = { path = "crates/pam-desktop-engine" }
 pam-desktop-ui = { path = "crates/pam-desktop-ui" }
 pam-desktop-gtk = { path = "crates/pam-desktop-gtk" }
+pam-desktop-win32 = { path = "crates/pam-desktop-win32" }
+pam-desktop-appkit = { path = "crates/pam-desktop-appkit" }
 serde_json = "1"
 
 [workspace.lints.rust]

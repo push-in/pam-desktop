@@ -1,19 +1,21 @@
 //! `pam-desktop`: the native host of PAM Desktop applications.
 
+mod bundle;
 mod http_client;
+mod manifest;
 mod modules;
+mod packager;
 mod paths;
+mod updater;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use pam_desktop_ui::backend::WindowConfig;
-
 use crate::http_client::UreqClient;
+use crate::manifest::Manifest;
 use crate::paths::AppPaths;
-use pam_desktop_ui::geometry::Size;
 use pam_desktop_ui::runtime::{Directories, RuntimeConfig};
 use pam_desktop_ui::worker::WorkerCommand;
 
@@ -21,8 +23,11 @@ fn usage() -> ExitCode {
     eprintln!(
         "PAM Desktop {}\n\n\
          usage:\n  \
-         pam-desktop dev [app]   run with hot reload (default: current directory)\n  \
-         pam-desktop run [app]   run the application\n  \
+         pam-desktop dev [app] [url]           run with hot reload (default: current directory)\n  \
+         pam-desktop run [app] [url]           run the application, opened with a link\n  \
+         pam-desktop build [app] [options]     bundle the application and build its installers\n  \
+         pam-desktop update-key --output FILE  create the key that signs updates\n  \
+         pam-desktop publish-update [app] ...  sign the update feed of a release\n  \
          pam-desktop --version",
         env!("CARGO_PKG_VERSION"),
     );
@@ -62,80 +67,21 @@ fn worker_bootstrap(project: &Path) -> Option<PathBuf> {
     candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
-/// A string (or number) field of `pam-desktop.json`.
-fn manifest_text(project: &Path, key: &str) -> Option<String> {
-    let manifest = std::fs::read_to_string(project.join("pam-desktop.json")).ok()?;
-    let manifest = serde_json::from_str::<serde_json::Value>(&manifest).ok()?;
-    match manifest.get(key)? {
-        serde_json::Value::String(text) => Some(text.clone()),
-        serde_json::Value::Number(number) => Some(number.to_string()),
-        _ => None,
-    }
-}
-
-/// `applicationId` of `pam-desktop.json`, or one derived from the folder name.
-fn application_id(project: &Path) -> String {
-    let declared = std::fs::read_to_string(project.join("pam-desktop.json"))
-        .ok()
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
-        .and_then(|manifest| manifest.get("applicationId").and_then(serde_json::Value::as_str).map(str::to_owned))
-        .filter(|id| paths::valid_application_id(id));
-    declared.unwrap_or_else(|| {
-        let name: String = project
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("app")
-            .chars()
-            .map(|character| if character.is_ascii_alphanumeric() { character.to_ascii_lowercase() } else { '_' })
-            .collect();
-        format!("dev.pam.desktop.app_{name}")
-    })
-}
-
-/// The first window, from `pam-desktop.json` (`window.title`, `width`,
-/// `height`, `minWidth`, `minHeight`, `resizable`) with the app name as the
-/// default title. `PAM_DESKTOP_WINDOW=WIDTHxHEIGHT` overrides the size.
-fn window_config(project: &Path) -> WindowConfig {
-    let mut config = WindowConfig::default();
-    let manifest = std::fs::read_to_string(project.join("pam-desktop.json"))
-        .ok()
-        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok());
-    if let Some(manifest) = &manifest {
-        if let Some(name) = manifest.get("name").and_then(serde_json::Value::as_str) {
-            config.title = name.to_owned();
-        }
-        if let Some(window) = manifest.get("window") {
-            let number = |key: &str| window.get(key).and_then(serde_json::Value::as_f64).map(|value| value as f32);
-            if let Some(title) = window.get("title").and_then(serde_json::Value::as_str) {
-                config.title = title.to_owned();
-            }
-            if let (Some(width), Some(height)) = (number("width"), number("height")) {
-                config.size = Size::new(width.clamp(120.0, 16_384.0), height.clamp(120.0, 16_384.0));
-            }
-            if let (Some(width), Some(height)) = (number("minWidth"), number("minHeight")) {
-                config.min_size = Some(Size::new(width.max(1.0), height.max(1.0)));
-            }
-            if let Some(resizable) = window.get("resizable").and_then(serde_json::Value::as_bool) {
-                config.resizable = resizable;
-            }
-        }
-    }
-    if let Some((width, height)) = std::env::var("PAM_DESKTOP_WINDOW").ok().and_then(|value| {
-        let (width, height) = value.split_once('x')?;
-        Some((width.parse::<f32>().ok()?, height.parse::<f32>().ok()?))
-    }) {
-        config.size = Size::new(width.clamp(120.0, 16_384.0), height.clamp(120.0, 16_384.0));
-    }
-    config
-}
-
-fn run(target: &Path, development: bool) -> ExitCode {
-    let entry = if target.is_dir() { target.join("index.php") } else { target.to_path_buf() };
+/// Runs the application at `target`: a project directory, started with the
+/// `entry` of its manifest (`index.php` by default), or a script, whose
+/// directory is the project. `link` is the URL the application was opened
+/// with, when the system passed one.
+fn run(target: &Path, development: bool, link: Option<String>) -> ExitCode {
+    let directory = target.is_dir().then(|| target.canonicalize().ok()).flatten();
+    let entry = match &directory {
+        Some(directory) => directory.join(Manifest::load(directory).entry()),
+        None => target.to_path_buf(),
+    };
     let Ok(entry) = entry.canonicalize() else {
         eprintln!("pam-desktop: {} does not exist", entry.display());
         return ExitCode::from(66);
     };
-    let project = entry.parent().map(Path::to_path_buf).unwrap_or_default();
+    let project = directory.unwrap_or_else(|| entry.parent().map(Path::to_path_buf).unwrap_or_default());
     let Some(bootstrap) = worker_bootstrap(&project) else {
         eprintln!("pam-desktop: the pushinbr/pam-desktop package is not installed in {}", project.display());
         return ExitCode::from(69);
@@ -150,7 +96,8 @@ fn run(target: &Path, development: bool) -> ExitCode {
     } else {
         "linux"
     };
-    let application_id = application_id(&project);
+    let manifest = Manifest::load(&project);
+    let application_id = manifest.application_id();
     let mut environment = vec![
         ("PAM_DESKTOP_PROJECT_ROOT".into(), project.display().to_string()),
         ("PAM_DESKTOP_APPLICATION_ID".into(), application_id.clone()),
@@ -166,15 +113,16 @@ fn run(target: &Path, development: bool) -> ExitCode {
     let http_client: Arc<dyn pam_desktop_ui::modules::fetch::HttpClient> = Arc::new(UreqClient::new());
     let config = RuntimeConfig {
         worker: WorkerCommand { program, arguments, entry, working_directory: Some(project.clone()), environment },
-        window: window_config(&project),
+        window: manifest.window(),
         platform,
         development,
         watch: if development { vec![project.clone()] } else { Vec::new() },
         directories: Directories { data: app_paths.data.clone(), cache: app_paths.cache.clone(), state: app_paths.state.clone(), assets: project.clone() },
-        app_version: manifest_text(&project, "version").unwrap_or_default(),
-        build_number: manifest_text(&project, "build").unwrap_or_default(),
-        launch_url: std::env::var("PAM_DESKTOP_LAUNCH_URL").ok().filter(|url| !url.is_empty()),
-        modules: modules::host_modules(&app_paths.data, &app_paths.cache, &application_id, Arc::clone(&http_client), development),
+        app_version: manifest.text("version").unwrap_or_default(),
+        build_number: manifest.text("build").unwrap_or_default(),
+        launch_url: link.or_else(|| std::env::var("PAM_DESKTOP_LAUNCH_URL").ok()).filter(|url| !url.is_empty()),
+        single_instance: manifest.single_instance(development),
+        modules: modules::host_modules(&app_paths.data, &app_paths.cache, &application_id, Arc::clone(&http_client), development, &manifest),
         http_client: Some(http_client),
     };
 
@@ -190,13 +138,75 @@ fn run(target: &Path, development: bool) -> ExitCode {
     }
 }
 
+/// The outcome of a command that prints what it did.
+fn report(result: Result<(), String>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("pam-desktop: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_build(arguments: impl Iterator<Item = OsString>) -> Result<(), String> {
+    match packager::BuildOptions::parse(arguments)? {
+        packager::BuildCommand::Help => packager::print_build_usage(),
+        packager::BuildCommand::Build(options) => {
+            let result = packager::build(&options)?;
+            println!("[ok] Built {} artifact(s):", result.artifacts.len());
+            for artifact in result.artifacts {
+                println!("  {}", artifact.display());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_update_key(arguments: &[OsString]) -> Result<(), String> {
+    let path = match arguments {
+        [flag, path] if flag == "--output" || flag == "-o" => PathBuf::from(path),
+        _ => return Err("usage: pam-desktop update-key --output <private-key-file>".to_owned()),
+    };
+    let public_key = updater::generate_key(&path)?;
+    println!("[ok] Private update key: {}", path.display());
+    println!("[ok] Public update key: {public_key}");
+    Ok(())
+}
+
+fn run_publish_update(mut arguments: Vec<OsString>) -> Result<(), String> {
+    let has_project = arguments.first().is_some_and(|argument| argument.to_str().is_some_and(|argument| !argument.starts_with('-')));
+    let project = if has_project { PathBuf::from(arguments.remove(0)) } else { PathBuf::from(".") };
+    let options = updater::PublishOptions::parse(arguments)?;
+    let project = project.canonicalize().map_err(|error| format!("cannot resolve {}: {error}", project.display()))?;
+    let application =
+        Manifest::read(&project)?.application().map_err(|error| format!("{}: {error}", project.join(manifest::FILE_NAME).display()))?;
+    let output = updater::publish_feed(&application, options)?;
+    println!("[ok] Signed update feed: {}", output.display());
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let mut arguments = std::env::args_os().skip(1);
+    // Inside a Windows bundle the launcher is this host under the name of
+    // the application: whatever it was started with belongs to the application.
+    if let Some(launch) = std::env::current_exe().ok().and_then(|executable| {
+        let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
+        bundle::Launch::for_executable(&executable, &arguments)
+    }) {
+        return launch.run();
+    }
     match arguments.next().as_deref().and_then(|argument| argument.to_str()) {
         Some(command @ ("run" | "dev")) => {
             let target = arguments.next().map_or_else(|| PathBuf::from("."), PathBuf::from);
-            run(&target, command == "dev")
+            let link = arguments.next().and_then(|link| link.into_string().ok());
+            run(&target, command == "dev", link)
         }
+        Some("build") => report(run_build(arguments)),
+        Some("update-key") => report(run_update_key(&arguments.collect::<Vec<_>>())),
+        Some("publish-update") => report(run_publish_update(arguments.collect())),
+        // Private: the running application starts it from a copy of the host.
+        Some("apply-update") => report(updater::ApplyOptions::parse(arguments).and_then(updater::apply)),
         Some("--version" | "-V") => {
             println!("pam-desktop {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
