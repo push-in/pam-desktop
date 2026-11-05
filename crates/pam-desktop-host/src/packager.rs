@@ -171,6 +171,8 @@ fn parse_format(value: &str) -> Result<Vec<PackageFormat>, String> {
 /// Paths published by one successful build.
 pub struct BuildResult {
     pub artifacts: Vec<PathBuf>,
+    /// What the build decided on its own, for the person who ran it.
+    pub notes: Vec<String>,
 }
 
 /// The binaries a bundle is made of and where packaging tools are looked up.
@@ -237,7 +239,7 @@ fn build_with(options: &BuildOptions, toolchain: &Toolchain) -> Result<BuildResu
         &php,
         php_name,
         &toolchain.php_arguments,
-        application.extensions.as_deref(),
+        ExtensionChoice::of(application.extensions.as_deref()),
     )?;
     let bundle = workspace.path.join(&names.bundle);
     let context = BundleContext {
@@ -249,7 +251,7 @@ fn build_with(options: &BuildOptions, toolchain: &Toolchain) -> Result<BuildResu
         output: &output,
         sign: options.sign,
     };
-    let system = materialize_bundle(&context, &bundle)?;
+    let Materialized { system, notes } = materialize_bundle(&context, &bundle)?;
 
     let source_date_epoch = source_date_epoch()?;
     let package = PackageContext {
@@ -308,7 +310,7 @@ fn build_with(options: &BuildOptions, toolchain: &Toolchain) -> Result<BuildResu
         })?;
         artifacts.push(destination);
     }
-    Ok(BuildResult { artifacts })
+    Ok(BuildResult { artifacts, notes })
 }
 
 fn validate_platform_formats(options: &BuildOptions) -> Result<(), String> {
@@ -772,7 +774,44 @@ impl Drop for BuildWorkspace {
 
 // ---- the PHP runtime ------------------------------------------------------
 
+/// Which of the shared extensions PHP loads on the build machine are shipped.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExtensionChoice<'a> {
+    /// Those the application refers to, and the ones listed next to `auto`.
+    Used(&'a [String]),
+    /// Every one (`"all"`).
+    All,
+    /// Exactly the listed ones.
+    Listed(&'a [String]),
+}
+
+impl<'a> ExtensionChoice<'a> {
+    /// `extensions` of the manifest: absent, or a list that may hold the
+    /// words `auto` and `all`.
+    fn of(extensions: Option<&'a [String]>) -> Self {
+        match extensions {
+            None => Self::Used(&[]),
+            Some(names) if names.iter().any(|name| name == "all") => Self::All,
+            Some(names) if names.iter().any(|name| name == "auto") => Self::Used(names),
+            Some(names) => Self::Listed(names),
+        }
+    }
+
+    /// The extensions named by hand.
+    fn listed(self) -> impl Iterator<Item = &'a String> {
+        let names = match self {
+            Self::Used(names) | Self::Listed(names) => names,
+            Self::All => &[],
+        };
+        names.iter().filter(|name| *name != "auto")
+    }
+}
+
+/// Finds the extensions an application refers to; see the file.
+const EXTENSION_USAGE: &str = include_str!("extension_usage.php");
+
 /// The PHP that runs the application and the shared extensions it ships with.
+#[derive(Clone)]
 struct PhpRuntime {
     binary: PathBuf,
     /// `php`, `php.exe` or `pam`: the name of the binary inside the bundle.
@@ -781,6 +820,9 @@ struct PhpRuntime {
     version: String,
     /// `(name, file)` of the shared extensions to ship, in load order.
     extensions: Vec<(String, PathBuf)>,
+    /// Extensions that stay even when the application does not refer to
+    /// them; `None` when the shipped set is not reduced to what is used.
+    pinned: Option<Vec<String>>,
 }
 
 impl PhpRuntime {
@@ -790,7 +832,7 @@ impl PhpRuntime {
         binary: &Path,
         file_name: &str,
         arguments: &[OsString],
-        wanted: Option<&[String]>,
+        choice: ExtensionChoice<'_>,
     ) -> Result<Self, String> {
         if cfg!(windows) && !arguments.is_empty() {
             return Err(format!(
@@ -804,6 +846,10 @@ impl PhpRuntime {
             arguments: arguments.to_vec(),
             version: String::from("unknown"),
             extensions: Vec::new(),
+            pinned: match choice {
+                ExtensionChoice::Used(_) => Some(choice.listed().cloned().collect()),
+                ExtensionChoice::All | ExtensionChoice::Listed(_) => None,
+            },
         };
         let probe = "echo json_encode(['version' => PHP_VERSION, 'extensionDir' => ini_get('extension_dir'), 'extensions' => get_loaded_extensions()]);";
         let answer = if arguments.is_empty() {
@@ -852,12 +898,13 @@ impl PhpRuntime {
                 .filter(|path| !directory.as_os_str().is_empty() && path.is_file())
         };
         // Loaded extensions first, in the order PHP sorted their dependencies.
+        let exact = matches!(choice, ExtensionChoice::Listed(_));
         let mut names: Vec<&str> = loaded
             .iter()
             .map(String::as_str)
-            .filter(|name| wanted.is_none_or(|wanted| wanted.iter().any(|item| item == name)))
+            .filter(|name| !exact || choice.listed().any(|item| item == name))
             .collect();
-        for name in wanted.unwrap_or_default() {
+        for name in choice.listed() {
             if !loaded.contains(name) {
                 names.push(name);
             }
@@ -876,6 +923,63 @@ impl PhpRuntime {
             }
         }
         Ok(runtime)
+    }
+
+    /// The runtime with only the extensions the application in `app` refers
+    /// to, and a note about the ones left out. Nothing changes when the
+    /// manifest chose the extensions, or when PHP cannot tell.
+    fn for_application(&self, app: &Path) -> (Self, Option<String>) {
+        let Some(pinned) = &self.pinned else {
+            return (self.clone(), None);
+        };
+        if self.extensions.is_empty() {
+            return (self.clone(), None);
+        }
+        let script = EXTENSION_USAGE.trim_start_matches("<?php");
+        let answer = Command::new(&self.binary)
+            .args(["-r", script, "--"])
+            .arg(app)
+            .args(self.extensions.iter().map(|(name, _)| name))
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| serde_json::from_slice::<serde_json::Value>(&output.stdout).ok());
+        let Some(used) = answer
+            .as_ref()
+            .and_then(|answer| answer.get("used"))
+            .and_then(serde_json::Value::as_array)
+        else {
+            return (self.clone(), None);
+        };
+        let used: HashSet<&str> = used.iter().filter_map(serde_json::Value::as_str).collect();
+        let mut runtime = self.clone();
+        let mut left_out = Vec::new();
+        runtime.extensions.retain(|(name, _)| {
+            let keep = used.contains(name.as_str()) || pinned.contains(name);
+            if !keep {
+                left_out.push(name.clone());
+            }
+            keep
+        });
+        if left_out.is_empty() {
+            return (runtime, None);
+        }
+        let shipped: Vec<&str> = runtime
+            .extensions
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let note = format!(
+            "PHP extensions: shipped {}; left out, as the application does not refer to them: {}. \
+             To ship one anyway, set \"extensions\": [\"auto\", \"<name>\"] in pam-desktop.json (or \"all\").",
+            if shipped.is_empty() {
+                "none".to_owned()
+            } else {
+                shipped.join(", ")
+            },
+            left_out.join(", ")
+        );
+        (runtime, Some(note))
     }
 
     fn ini(&self) -> String {
@@ -927,10 +1031,14 @@ struct SystemDependencies {
     rpm: Vec<&'static str>,
 }
 
-fn materialize_bundle(
-    context: &BundleContext<'_>,
-    bundle: &Path,
-) -> Result<SystemDependencies, String> {
+/// A bundle on disk: what it needs from the system and what was decided
+/// while it was put together.
+struct Materialized {
+    system: SystemDependencies,
+    notes: Vec<String>,
+}
+
+fn materialize_bundle(context: &BundleContext<'_>, bundle: &Path) -> Result<Materialized, String> {
     let project = context.project;
     let application = &project.application;
     let app = bundle.join("app");
@@ -948,15 +1056,15 @@ fn materialize_bundle(
     if !bundled_bootstrap(&app, &project.relative).is_some_and(|bootstrap| bootstrap.is_file()) {
         return Err("the bundle has no PAM Desktop PHP package: `vendor/pushinbr/pam-desktop` is missing or was excluded".to_owned());
     }
+    // Decided on the files that are shipped, not on the whole project.
+    let (runtime, note) = context.runtime.for_application(&app);
+    let runtime = &runtime;
+    let notes: Vec<String> = note.into_iter().collect();
 
     let exe = std::env::consts::EXE_SUFFIX;
     copy_binary(context.host, &bin.join(format!("pam-desktop{exe}")))?;
-    copy_binary(
-        &context.runtime.binary,
-        &php_bin.join(&context.runtime.file_name),
-    )?;
-    let extension_sources: Vec<&Path> = context
-        .runtime
+    copy_binary(&runtime.binary, &php_bin.join(&runtime.file_name))?;
+    let extension_sources: Vec<&Path> = runtime
         .extensions
         .iter()
         .map(|(_, path)| path.as_path())
@@ -976,8 +1084,8 @@ fn materialize_bundle(
     let launcher = bin.join(format!("{}{exe}", context.names.executable));
     let mut system = SystemDependencies::default();
     if cfg!(target_os = "linux") {
-        let php_objects = std::iter::once(context.runtime.binary.as_path())
-            .chain(extension_sources.iter().copied());
+        let php_objects =
+            std::iter::once(runtime.binary.as_path()).chain(extension_sources.iter().copied());
         copy_libraries(&linux_libraries(php_objects)?, &bundle.join(PHP_LIB))?;
         let host_libraries = linux_libraries([context.host])?;
         let platform = platform_libraries(&host_libraries)?;
@@ -989,11 +1097,11 @@ fn materialize_bundle(
         copy_libraries(&own, &bundle.join("lib"))?;
     } else if cfg!(target_os = "macos") {
         copy_adjacent_libraries(context.host, &bundle.join("lib"), "dylib")?;
-        copy_adjacent_libraries(&context.runtime.binary, &bundle.join(PHP_LIB), "dylib")?;
+        copy_adjacent_libraries(&runtime.binary, &bundle.join(PHP_LIB), "dylib")?;
     } else {
         // Windows finds the DLLs of an executable beside it.
         copy_adjacent_libraries(context.host, &bin, "dll")?;
-        copy_adjacent_libraries(&context.runtime.binary, &php_bin, "dll")?;
+        copy_adjacent_libraries(&runtime.binary, &php_bin, "dll")?;
     }
     let bundled_project_path = project.bundle_project()?;
     if cfg!(windows) {
@@ -1001,10 +1109,10 @@ fn materialize_bundle(
         // the host, started under the application's name, launches the bundle.
         copy_binary(context.host, &launcher)?;
     } else {
-        write_script(&bin.join(PHP_WRAPPER), &php_wrapper(context.runtime)?)?;
+        write_script(&bin.join(PHP_WRAPPER), &php_wrapper(runtime)?)?;
         write_script(&launcher, &launcher_script(&bundled_project_path)?)?;
     }
-    fs::write(bundle.join(PHP_INI), context.runtime.ini())
+    fs::write(bundle.join(PHP_INI), runtime.ini())
         .map_err(|error| format!("cannot write the bundled php.ini: {error}"))?;
 
     let icon_destination = bundle_icon_path(bundle, application, context.icon)?;
@@ -1057,8 +1165,8 @@ fn materialize_bundle(
         launcher: format!("bin/{}{exe}", context.names.executable),
         runtime: BundleRuntime {
             pam_desktop: env!("CARGO_PKG_VERSION").to_owned(),
-            php: context.runtime.version.clone(),
-            php_binary: context.runtime.file_name.clone(),
+            php: runtime.version.clone(),
+            php_binary: runtime.file_name.clone(),
         },
         target: BundleTarget::current(),
         source_date_epoch: source_date_epoch()?,
@@ -1066,7 +1174,7 @@ fn materialize_bundle(
     };
     bundle::write_manifest(bundle, manifest)?;
     normalize_permissions(bundle)?;
-    Ok(system)
+    Ok(Materialized { system, notes })
 }
 
 /// Where the host will find the worker bootstrap of the bundled project: in
@@ -3735,6 +3843,148 @@ mod tests {
             .err()
             .expect("an unavailable extension stops the build");
         assert!(error.contains("\"imagick\" is not available"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ships_only_the_extensions_the_application_refers_to() {
+        let fixture = Fixture::create("used-extensions");
+        let extensions = fixture.root.join("php-extensions");
+        fs::create_dir(&extensions).unwrap();
+        for name in ["ctype", "tokenizer", "intl"] {
+            fs::write(extensions.join(format!("{name}.so")), name).unwrap();
+        }
+        // The second question is which extensions the application uses.
+        fs::write(
+            &fixture.php,
+            format!(
+                "#!/bin/sh\nif [ \"$3\" = \"--\" ]; then\n  printf '%s' '{{\"used\":[\"ctype\"]}}'\nelif [ \"$1\" = \"-r\" ]; then\n  printf '%s' '{{\"version\":\"8.5.1\",\"extensionDir\":\"{}\",\"extensions\":[\"Core\",\"ctype\",\"tokenizer\",\"intl\"]}}'\nfi\n",
+                extensions.display()
+            ),
+        )
+        .unwrap();
+        let shipped = |bundle: &Path| -> BTreeSet<String> {
+            fs::read_dir(bundle.join("runtime/php/ext"))
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect()
+        };
+
+        let detected = fixture
+            .build(&["--format", "directory"])
+            .expect("bundle with the used extensions");
+        assert_eq!(
+            shipped(&detected.artifacts[0]),
+            BTreeSet::from(["ctype.so".to_owned()])
+        );
+        let ini = fs::read_to_string(detected.artifacts[0].join("etc/php.ini")).unwrap();
+        assert!(
+            ini.ends_with("extension=ctype\n") && !ini.contains("extension=intl"),
+            "{ini}"
+        );
+        assert_eq!(detected.notes.len(), 1);
+        assert!(
+            detected.notes[0].contains("shipped ctype;")
+                && detected.notes[0].contains("tokenizer, intl"),
+            "{}",
+            detected.notes[0]
+        );
+
+        let manifest = |extensions: &str| {
+            fs::write(
+                fixture.project.join("pam-desktop.json"),
+                format!(
+                    r#"{{"applicationId": "com.pushin.hello", "version": "0.4.0", "extensions": {extensions}}}"#
+                ),
+            )
+            .unwrap();
+        };
+        manifest(r#"["auto", "intl"]"#);
+        let pinned = fixture
+            .build(&["--format", "directory", "--force"])
+            .expect("bundle with a pinned extension");
+        assert_eq!(
+            shipped(&pinned.artifacts[0]),
+            BTreeSet::from(["ctype.so".to_owned(), "intl.so".to_owned()])
+        );
+
+        manifest(r#"["all"]"#);
+        let all = fixture
+            .build(&["--format", "directory", "--force"])
+            .expect("bundle with every extension");
+        assert_eq!(shipped(&all.artifacts[0]).len(), 3);
+        assert!(all.notes.is_empty());
+    }
+
+    /// The analysis itself, with the PHP of the machine when it has one.
+    #[cfg(unix)]
+    #[test]
+    fn extension_usage_reads_php_sources() {
+        let script = EXTENSION_USAGE.trim_start_matches("<?php");
+        let loaded = |name: &str| {
+            Command::new("php")
+                .args(["-r", &format!("exit(extension_loaded('{name}') ? 0 : 1);")])
+                .status()
+                .is_ok_and(|status| status.success())
+        };
+        if !["tokenizer", "ctype", "mbstring", "intl", "curl"]
+            .into_iter()
+            .all(loaded)
+        {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("pam-extension-usage-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("vendor/composer")).unwrap();
+        fs::create_dir_all(root.join("vendor/dev/tool")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        // `Locale` is a class of the application, the string is a guard,
+        // `->curl_init()` is a method: none of them is the extension.
+        fs::write(
+            root.join("src/App.php"),
+            "<?php\nnamespace App;\nfinal class Locale {}\nfunction f(Locale $l) { return new Locale(); }\nif (extension_loaded('intl')) {}\n$a->curl_init();\necho ctype_digit('1');\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("vendor/composer/installed.json"),
+            r#"{"packages": [], "dev-package-names": ["dev/tool"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("vendor/dev/tool/Tool.php"),
+            "<?php curl_init(); new \\Collator('en');",
+        )
+        .unwrap();
+        let used = |root: &Path| -> Vec<String> {
+            let output = Command::new("php")
+                .args(["-r", script, "--"])
+                .arg(root)
+                .args(["ctype", "mbstring", "intl", "curl"])
+                .output()
+                .unwrap();
+            let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            answer["used"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|name| name.as_str().unwrap().to_owned())
+                .collect()
+        };
+        assert_eq!(used(&root), ["ctype"]);
+
+        // A callable in a string, an imported class and a requirement.
+        fs::write(
+            root.join("src/More.php"),
+            "<?php\nnamespace App;\nuse Collator as Sorter;\n$n = array_map('mb_strtolower', $names);\n$s = new Sorter('en');\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("composer.json"),
+            r#"{"require": {"ext-curl": "*"}}"#,
+        )
+        .unwrap();
+        assert_eq!(used(&root), ["ctype", "mbstring", "intl", "curl"]);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     /// A project with a vendored PHP package, and scripts standing in for

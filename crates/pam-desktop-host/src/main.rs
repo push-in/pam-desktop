@@ -225,6 +225,9 @@ fn run_build(arguments: impl Iterator<Item = OsString>) -> Result<(), String> {
             for artifact in result.artifacts {
                 println!("  {}", artifact.display());
             }
+            for note in result.notes {
+                println!("[info] {note}");
+            }
         }
     }
     Ok(())

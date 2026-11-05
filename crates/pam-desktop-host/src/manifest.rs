@@ -133,8 +133,9 @@ pub struct Application {
     pub icon: Option<String>,
     /// Project-relative paths left out of the bundle.
     pub exclude: Vec<String>,
-    /// PHP extensions to ship; `None` ships every shared extension the PHP
-    /// of the build machine loads.
+    /// PHP extensions to ship; `None` ships the shared extensions the
+    /// application refers to. `auto` in the list stands for those, `all` for
+    /// every shared extension the PHP of the build machine loads.
     pub extensions: Option<Vec<String>>,
     /// Schemes of the links that open the application (`myapp://…`).
     pub url_schemes: Vec<String>,

@@ -23,7 +23,7 @@ and calls the packaging tools of the system.
     "category": "productivity",
     "icon": "resources/icon.png",
     "exclude": ["storage/cache", "storage/development.sqlite"],
-    "extensions": ["ctype", "mbstring", "tokenizer"],
+    "extensions": ["auto", "intl"],
     "urlSchemes": ["my-app"],
     "singleInstance": true,
     "window": { "width": 1100, "height": 720 }
@@ -44,7 +44,7 @@ Every distribution field is optional:
 | `category` | `utility` | `development`, `productivity`, `graphics`, `audio-video`, `network`, `utility`, `game`, `education` |
 | `icon` | a generic icon | project-relative PNG (square, 64 to 1024 px) or self-contained SVG, at most 2 MiB |
 | `exclude` | nothing | project-relative paths left out of the bundle |
-| `extensions` | every shared extension PHP loads on the build machine | lowercase PHP extension names to ship instead |
+| `extensions` | the shared PHP extensions the application refers to | lowercase PHP extension names to ship instead; `"auto"` in the list adds the ones the application refers to, `"all"` ships every one PHP loads on the build machine |
 | `urlSchemes` | none | up to 8 schemes of the links that open the application |
 | `singleInstance` | `true` when `urlSchemes` is not empty (never by default under `dev`) | `true` or `false` |
 | `updates` | none | see [Signed updates](updates.md) |
@@ -151,10 +151,30 @@ the host you mean to ship.
 
 **PHP** is found the way `run` finds it: `PAM_DESKTOP_PHP`, then `pam` on
 `PATH` (started as `pam exec`), then `php` on `PATH`. The build asks it for its
-version, its extension directory and the extensions it loads, and ships the
-shared ones, or only those of `extensions`. An extension compiled into the
-binary needs nothing; one that is listed and is neither loaded nor present in
-the extension directory stops the build. Extensions are loaded from the
+version, its extension directory and the extensions it loads. An extension
+compiled into the binary needs nothing; a shared one is a file to ship, with
+the libraries it links against, and those add up: on Ubuntu, every extension
+of a common PHP installation is about 90 MB, of which `intl` alone is 39 MB.
+
+So the build ships the shared extensions the application refers to. It runs
+PHP over the `.php` and `.pam` files that go into the bundle, the packages in
+`vendor` included (those Composer installed for development only are skipped),
+and keeps an extension when a file names one of its functions, classes or
+constants, when a string holds one of its functions as a callable, a PDO data
+source (`sqlite:`) or a stream wrapper it provides (`phar://`), or when a
+`composer.json` requires it (`ext-intl`). Extensions another kept extension
+cannot load without are kept too, and so are `openssl` and `zlib`. A name that
+only appears in a guard, such as `extension_loaded('intl')`, does not count:
+that code works without the extension. The build prints what it shipped and
+what it left out; `PAM_DESKTOP_EXTENSION_USAGE=1` also prints the first
+reference found to each extension.
+
+What the search cannot see is a name put together at run time
+(`$function = 'mb_'.$name`). For that, list the extension: `"extensions":
+["auto", "intl"]` ships `intl` and whatever is referred to. A list without
+`"auto"` ships exactly the listed extensions, and `["all"]` every shared
+extension PHP loads on the build machine. An extension that is listed and is
+neither loaded nor present in the extension directory stops the build. Extensions are loaded from the
 bundled `php.ini` only: the configuration of the build machine is not shipped,
 and the configuration of the machine the application runs on is not read
 (`PHPRC` points at the bundle and `PHP_INI_SCAN_DIR` is empty). On Linux the

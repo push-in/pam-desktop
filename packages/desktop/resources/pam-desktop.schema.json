@@ -86,7 +86,7 @@
             "items": { "type": "string" }
         },
         "extensions": {
-            "description": "PHP extensions shipped in the bundle instead of every shared extension loaded on the build machine.",
+            "description": "PHP extensions shipped in the bundle. Without this key, the shared extensions the application refers to. A list ships exactly the listed ones; \"auto\" in the list adds the ones the application refers to and \"all\" ships every shared extension loaded on the build machine.",
             "type": "array",
             "maxItems": 128,
             "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }

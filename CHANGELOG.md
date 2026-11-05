@@ -119,6 +119,9 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
   and builds the installers of the system it runs on: AppImage, `.deb` and
   `.rpm` on Linux, `.dmg` and `.pkg` on macOS, MSIX and MSI on Windows, and a
   portable archive on each.
+- A bundle ships only the shared PHP extensions the application refers to
+  (`extensions` in the manifest overrides the choice): a small application
+  bundled with the PHP of Ubuntu is 40 MB instead of 120 MB.
 - Signed updates: an Ed25519-signed feed, `pam-desktop update-key` and
   `pam-desktop publish-update`, and the `Updates` API.
 
