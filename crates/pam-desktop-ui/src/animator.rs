@@ -295,6 +295,8 @@ pub enum Owner {
     Motion(NodeId, u32),
     /// A host-drawn control (switch position, spinner angle).
     Control(NodeId),
+    /// A gliding scroll offset.
+    Scroll(NodeId),
 }
 
 impl Owner {
@@ -307,7 +309,8 @@ impl Owner {
             | Self::Press(id)
             | Self::Transition(id, _)
             | Self::Motion(id, _)
-            | Self::Control(id) => *id,
+            | Self::Control(id)
+            | Self::Scroll(id) => *id,
         }
     }
 }
@@ -398,7 +401,12 @@ pub enum Timer {
     DeferredPress(NodeId),
     PressIn(NodeId),
     InputDebounce(NodeId),
+    /// A windowed list re-checks whether rows near the viewport are unbuilt.
     ListWindow(NodeId),
+    /// No scroll offset arrived for a while: the gesture is over.
+    ScrollRest(NodeId),
+    /// The refresh indicator falls back to its controlled state.
+    RefreshFallback(NodeId),
 }
 
 #[derive(Default)]

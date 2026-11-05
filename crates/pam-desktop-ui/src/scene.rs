@@ -810,6 +810,10 @@ impl Scene {
             self.style_overlays.remove(&id);
         }
         self.touch(id, Dirty::DECORATION.union(Dirty::TEXT).union(Dirty::LAYER));
+        // An overlay may change the paint order among siblings.
+        if let Some(parent) = self.nodes.get(&id).map(|node| node.parent) {
+            self.touch(parent, Dirty::CHILDREN);
+        }
     }
 
     fn overlaid<'a>(&'a self, node: &'a SceneNode) -> Props<'a> {
@@ -864,7 +868,8 @@ impl Scene {
                 if child_node.kind == NodeKind::Modal {
                     return None;
                 }
-                Some((child_node.props().number_or(PropKey::ZIndex, 0.0), child_node.index, *child))
+                // Overlays may raise a node (a pinned sticky header).
+                Some((self.overlaid(child_node).number_or(PropKey::ZIndex, 0.0), child_node.index, *child))
             })
             .collect();
         children.sort_by(|left, right| left.0.total_cmp(&right.0).then(left.1.cmp(&right.1)));

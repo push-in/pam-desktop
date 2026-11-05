@@ -31,6 +31,7 @@ use crate::presenter::modal::Modals;
 use crate::presenter::navigation::Navigation;
 use crate::presenter::tabs::Tabs;
 use crate::scene::{Action, Change, Scene};
+use crate::scrolling::Scrolling;
 use crate::text::TextSource;
 use crate::wiremap::WireMap;
 use crate::worker::{Worker, WorkerCommand, WorkerMessage};
@@ -238,6 +239,7 @@ pub struct Runtime<B: Backend> {
     pub(crate) inputs: Inputs,
     motion: Motion,
     pub(crate) controls: Controls,
+    scrolling: Scrolling,
     pub(crate) modules: Registry,
     pub(crate) settings: Settings,
     /// What the operating system reports, before the app's own preference.
@@ -349,6 +351,7 @@ impl<B: Backend> Runtime<B> {
             inputs: Inputs::default(),
             motion: Motion::default(),
             controls: Controls::new(metrics.dark),
+            scrolling: Scrolling::default(),
             modules,
             settings,
             system_dark: system.dark,
@@ -412,6 +415,7 @@ impl<B: Backend> Runtime<B> {
         {
             let mut ctx = ctx!(self);
             self.interaction.flush(&mut ctx);
+            self.scrolling.flush(&mut ctx);
         }
         self.scene.flush(&mut self.backend, MAIN_WINDOW);
         for command in std::mem::take(&mut self.commands) {
@@ -474,6 +478,7 @@ impl<B: Backend> Runtime<B> {
                 self.inputs.on_change(&mut ctx, change);
                 self.motion.on_change(&mut ctx, change);
                 self.controls.on_change(&mut ctx, change);
+                self.scrolling.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             self.tabs.after_commit(&mut ctx);
@@ -481,6 +486,7 @@ impl<B: Backend> Runtime<B> {
             self.inputs.after_commit(&mut ctx);
             self.motion.after_commit(&mut ctx);
             self.controls.after_commit(&mut ctx);
+            self.scrolling.after_commit(&mut ctx);
             self.coverage.invalidate();
             self.inputs.retry_autofocus();
         }
@@ -499,7 +505,7 @@ impl<B: Backend> Runtime<B> {
                 self.call_typed(request, operation, &payload);
             }
             Inbound::Worker(_, WorkerMessage::Error(message)) => {
-                eprintln!("[pam-desktop] PHP error: {message}");
+                eprintln!("[pam-desktop] {}", describe_php_error(&message));
             }
             Inbound::Worker(_, WorkerMessage::Ready | WorkerMessage::Idle) => {}
             Inbound::Worker(_, WorkerMessage::Exited(_)) => {
@@ -705,15 +711,14 @@ impl<B: Backend> Runtime<B> {
                 for timer in due {
                     match timer {
                         Timer::InputDebounce(id) => self.inputs.on_timer(&mut ctx, id),
+                        Timer::ScrollRest(_) | Timer::ListWindow(_) | Timer::RefreshFallback(_) => self.scrolling.on_timer(&mut ctx, timer),
                         _ => self.interaction.on_timer(&mut ctx, timer),
                     }
                 }
             }
             BackendEvent::ScrollChanged { id, offset } => {
-                if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() {
-                    eprintln!("scroll {id} -> {offset:?}");
-                }
-                self.scene.set_scroll_offset(id, offset);
+                let mut ctx = ctx!(self);
+                self.scrolling.on_scroll(&mut ctx, id, offset);
             }
             BackendEvent::ImageLoaded { .. } | BackendEvent::ImageFailed { .. } => {}
         }
@@ -737,6 +742,7 @@ impl<B: Backend> Runtime<B> {
                 }
                 Owner::Press(id) => self.interaction.on_press_sample(&mut ctx, id, sample.value),
                 Owner::Control(id) => self.controls.on_sample(&mut ctx, id, sample.value, sample.finished),
+                Owner::Scroll(id) => self.scrolling.on_sample(&mut ctx, id, sample.value),
                 Owner::Transition(..) | Owner::Motion(..) => self.motion.on_sample(&mut ctx, sample.owner, sample.value, sample.finished),
             }
         }
@@ -784,6 +790,12 @@ impl<B: Backend> Runtime<B> {
             if back {
                 return self.go_back();
             }
+            {
+                let mut ctx = ctx!(self);
+                if self.scrolling.on_key(&mut ctx, key) {
+                    return;
+                }
+            }
             if key.key == "Escape" {
                 let mut ctx = ctx!(self);
                 if self.modals.request_close_top(&mut ctx) {
@@ -827,6 +839,34 @@ fn new_engine<B: Backend>(metrics: &WindowMetrics, measure: &mut MeasureContext<
         )));
     }
     engine
+}
+
+/// A one-paragraph description of an error report from PHP
+/// (`PAMERR1\n<json>` or a plain `Class: message`).
+fn describe_php_error(report: &str) -> String {
+    let Some(json) = report.strip_prefix("PAMERR1\n") else { return format!("PHP error: {report}") };
+    let Ok(error) = serde_json::from_str::<serde_json::Value>(json) else { return format!("PHP error: {json}") };
+    let text = |key: &str| error.get(key).and_then(serde_json::Value::as_str).unwrap_or("");
+    let mut description = format!(
+        "PHP {} in {} phase: {}\n    at {}:{}",
+        text("type"),
+        text("phase"),
+        text("message"),
+        text("file"),
+        error.get("line").and_then(serde_json::Value::as_i64).unwrap_or(0),
+    );
+    if let Some(frames) = error.get("frames").and_then(serde_json::Value::as_array) {
+        for frame in frames.iter().take(6) {
+            let field = |key: &str| frame.get(key).and_then(serde_json::Value::as_str).unwrap_or("");
+            description.push_str(&format!(
+                "\n    {} ({}:{})",
+                field("call"),
+                field("file"),
+                frame.get("line").and_then(serde_json::Value::as_i64).unwrap_or(0),
+            ));
+        }
+    }
+    description
 }
 
 /// Starts a worker that sees the window exactly as it is now.

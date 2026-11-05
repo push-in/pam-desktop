@@ -21,6 +21,7 @@ pub mod props;
 pub mod runtime;
 mod runtime_modules;
 pub mod scene;
+pub mod scrolling;
 pub mod style;
 pub mod testing;
 pub mod text;
