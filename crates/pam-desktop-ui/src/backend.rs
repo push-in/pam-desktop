@@ -131,6 +131,9 @@ pub enum BackendEvent {
     /// The deadline asked with `schedule_wake` passed.
     Wake,
     ScrollChanged { id: NodeId, offset: Point },
+    /// Assistive technology ran an action on a view: `activate` (the default
+    /// press) or the name of one of its custom actions.
+    AccessibilityAction { id: NodeId, name: String },
     /// An image finished decoding; `size` is in image pixels.
     ImageLoaded { key: ImageKey, size: Size },
     ImageFailed { key: ImageKey, message: String },
@@ -394,6 +397,9 @@ pub trait Backend {
     fn set_text(&mut self, id: NodeId, text: Option<&TextContent>);
     /// Whether the view takes part in keyboard focus traversal (Tab).
     fn set_focusable(&mut self, id: NodeId, focusable: bool);
+    /// What assistive technology is told about a view; `None` restores the
+    /// plain defaults (a group, or static text when the view shows text).
+    fn set_accessibility(&mut self, id: NodeId, accessibility: Option<&crate::accessibility::Accessibility>);
     /// Moves keyboard focus to a view, or clears it with `None`.
     fn focus(&mut self, id: Option<NodeId>);
 

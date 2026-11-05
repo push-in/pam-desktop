@@ -15,6 +15,7 @@ use crate::geometry::{Affine, Insets, Point, Rect, Size};
 use crate::props::{PropMap, Props};
 use crate::shell::Cursor;
 use crate::style::{compose_transform, resolve_transform, transform_origin, Decoration, LayerState};
+use crate::accessibility::Accessibility;
 use crate::text::{Ellipsize, TextAlign, TextBlock, TextShadow, TextSource};
 
 /// Node ids are already well distributed 64-bit values: hashing them again
@@ -261,6 +262,8 @@ pub struct SceneNode {
     pushed_focusable: bool,
     pushed_cursor: Cursor,
     has_tooltip: bool,
+    /// Fingerprint of the accessibility last pushed; zero for the defaults.
+    pushed_accessibility: u64,
 }
 
 impl SceneNode {
@@ -597,6 +600,7 @@ impl Scene {
                 pushed_focusable: false,
                 pushed_cursor: Cursor::Default,
                 has_tooltip: false,
+                pushed_accessibility: 0,
             },
         );
         self.touch(id, Dirty::ALL);
@@ -968,6 +972,74 @@ impl Scene {
 
     /// The node's origin on screen: its frame moved by every scroll offset above it.
     #[must_use]
+    /// Pushes the accessibility of a node when it changed; returns the
+    /// number of backend commands issued.
+    fn push_accessibility<B: Backend>(&mut self, backend: &mut B, id: NodeId) -> u64 {
+        let Some(node) = self.nodes.get(&id) else { return 0 };
+        if node.is_synthetic() {
+            return 0;
+        }
+        let pressable = node.is_pressable();
+        let mut resolved = Accessibility::resolve(node.kind, node.props(), pressable);
+        if let Some(accessibility) = &mut resolved {
+            if pressable && accessibility.label.is_empty() && !node.is_text_bearing() && !accessibility.hidden {
+                accessibility.label = self.descendant_text(id);
+            }
+        }
+        let fingerprint = resolved.as_ref().map_or(0, Accessibility::fingerprint);
+        if fingerprint == node.pushed_accessibility {
+            return 0;
+        }
+        backend.set_accessibility(id, resolved.as_ref());
+        if let Some(node) = self.nodes.get_mut(&id) {
+            node.pushed_accessibility = fingerprint;
+        }
+        1
+    }
+
+    /// The texts inside a node joined by ", ", bounded in size and effort.
+    fn descendant_text(&self, id: NodeId) -> String {
+        let mut label = String::new();
+        let mut stack = vec![id];
+        let mut visited = 0;
+        while let Some(current) = stack.pop() {
+            visited += 1;
+            if visited > 64 || label.len() > 240 {
+                break;
+            }
+            let Some(node) = self.nodes.get(&current) else { continue };
+            if current != id {
+                if let Some(text) = node.is_text_bearing().then(|| node.props().text_or_empty(PropKey::Text)).filter(|text| !text.is_empty()) {
+                    if !label.is_empty() {
+                        label.push_str(", ");
+                    }
+                    label.push_str(text);
+                    // Nested spans are part of the text already read.
+                    continue;
+                }
+            }
+            stack.extend(node.children.iter().rev());
+        }
+        label
+    }
+
+    /// The nearest pressable above a text node that has no label of its own.
+    fn unnamed_pressable_ancestor(&self, id: NodeId) -> Option<NodeId> {
+        let node = self.nodes.get(&id)?;
+        if !node.is_text_bearing() {
+            return None;
+        }
+        let mut current = node.parent;
+        for _ in 0..8 {
+            let ancestor = self.nodes.get(&current)?;
+            if ancestor.is_pressable() && !ancestor.is_text_bearing() {
+                return (!ancestor.handles(PropKey::AccessibilityLabel)).then_some(current);
+            }
+            current = ancestor.parent;
+        }
+        None
+    }
+
     pub fn window_origin(&self, id: NodeId) -> Point {
         let Some(node) = self.nodes.get(&id) else { return Point::ZERO };
         let mut origin = node.frame.origin();
@@ -1142,6 +1214,7 @@ impl Scene {
         }
 
         // 3. Paint state.
+        let mut relabel: Vec<NodeId> = Vec::new();
         for id in &touched {
             let Some(node) = self.nodes.get(id) else { continue };
             let dirty = node.dirty;
@@ -1204,6 +1277,17 @@ impl Scene {
                     }
                 }
             }
+            if dirty.contains(Dirty::CONFIG) {
+                commands += self.push_accessibility(backend, *id);
+            }
+            if dirty.contains(Dirty::TEXT) {
+                // A pressable is named after the text inside it.
+                if let Some(ancestor) = self.unnamed_pressable_ancestor(*id) {
+                    if !relabel.contains(&ancestor) {
+                        relabel.push(ancestor);
+                    }
+                }
+            }
             let Some(node) = self.nodes.get(id) else { continue };
             if dirty.contains(Dirty::CONFIG) && node.class == ViewClass::Box {
                 // Pressable boxes take part in keyboard focus traversal.
@@ -1216,6 +1300,10 @@ impl Scene {
                     }
                 }
             }
+        }
+
+        for id in relabel {
+            commands += self.push_accessibility(backend, id);
         }
 
         // 4. Structure.

@@ -704,6 +704,11 @@ impl Interaction {
             return None;
         }
         let focused = self.focused?;
+        Self::activate(ctx, focused)
+    }
+
+    /// Presses a node without a pointer (keyboard, assistive technology).
+    pub fn activate(ctx: &mut Ctx<'_>, focused: NodeId) -> Option<Action> {
         let node = ctx.scene.node(focused)?;
         if !node.is_pressable() || !node.props().flag_or(PropKey::Enabled, true) {
             return None;

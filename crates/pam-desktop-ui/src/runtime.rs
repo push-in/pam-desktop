@@ -797,6 +797,20 @@ impl<B: Backend> Runtime<B> {
                 let mut ctx = ctx!(self);
                 self.scrolling.on_scroll(&mut ctx, id, offset);
             }
+            BackendEvent::AccessibilityAction { id, name } => {
+                if name == "activate" {
+                    let action = {
+                        let mut ctx = ctx!(self);
+                        crate::interaction::Interaction::activate(&mut ctx, id)
+                    };
+                    if let Some(action) = action {
+                        self.run_action(action);
+                    }
+                } else {
+                    let mut ctx = ctx!(self);
+                    ctx.emit_if(id, pam_desktop_wire::PropKey::OnAccessibilityAction, event_kind::ACCESSIBILITY_ACTION, name.into_bytes());
+                }
+            }
             BackendEvent::ImageLoaded { key, size } => {
                 let mut ctx = ctx!(self);
                 self.images.loaded(&mut ctx, key, size);

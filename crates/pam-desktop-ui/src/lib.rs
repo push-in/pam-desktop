@@ -5,6 +5,7 @@
 //! [`backend::Backend`] (GTK, AppKit or Win32) with resolved, ready-to-paint
 //! state.
 
+pub mod accessibility;
 pub mod animator;
 pub mod backend;
 pub mod color;

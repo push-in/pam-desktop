@@ -26,6 +26,7 @@ pub enum Command {
     Layer(NodeId, LayerState),
     Text(NodeId, Option<String>),
     Focusable(NodeId, bool),
+    Accessibility(NodeId, Option<crate::accessibility::Accessibility>),
     Focus(Option<NodeId>),
     InputConfig(NodeId, Box<InputConfig>),
     InputText(NodeId, String, Option<(u32, u32)>),
@@ -204,6 +205,10 @@ impl Backend for RecordingBackend {
 
     fn release_image(&mut self, key: ImageKey) {
         self.commands.push(Command::ReleaseImage(key));
+    }
+
+    fn set_accessibility(&mut self, id: NodeId, accessibility: Option<&crate::accessibility::Accessibility>) {
+        self.commands.push(Command::Accessibility(id, accessibility.cloned()));
     }
 
     fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>) {

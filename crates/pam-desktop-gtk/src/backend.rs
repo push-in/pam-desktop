@@ -33,6 +33,11 @@ struct ViewEntry {
     class: ViewClass,
     /// The native text control of input classes.
     input: Option<InputHost>,
+    /// What assistive technology was told, when it is more than the defaults.
+    accessibility: Option<Box<pam_desktop_ui::accessibility::Accessibility>>,
+    /// The text the view shows and the accessible name last applied.
+    plain_text: Option<String>,
+    announced: String,
 }
 
 struct WindowEntry {
@@ -374,7 +379,7 @@ impl Backend for GtkBackend {
             ViewClass::TextArea => Some(InputHost::new(id, true, &container, &self.events)),
             _ => None,
         };
-        self.views.insert(id, ViewEntry { widget, container, class, input });
+        self.views.insert(id, ViewEntry { widget, container, class, input, accessibility: None, plain_text: None, announced: String::new() });
     }
 
     fn destroy_view(&mut self, id: NodeId) {
@@ -443,8 +448,23 @@ impl Backend for GtkBackend {
     }
 
     fn set_text(&mut self, id: NodeId, text: Option<&TextContent>) {
-        if let Some(entry) = self.views.get(&id) {
+        if let Some(entry) = self.views.get_mut(&id) {
             entry.container.set_text(text);
+            // The text is the accessible name unless a label was given.
+            entry.plain_text = text.map(|content| content.block.runs.iter().map(|run| run.text.as_str()).collect());
+            crate::accessibility::apply(entry.container.upcast_ref(), entry.accessibility.as_deref(), entry.plain_text.as_deref(), &mut entry.announced, false);
+        }
+    }
+
+    fn set_accessibility(&mut self, id: NodeId, accessibility: Option<&pam_desktop_ui::accessibility::Accessibility>) {
+        if let Some(entry) = self.views.get_mut(&id) {
+            entry.accessibility = accessibility.cloned().map(Box::new);
+            // Native text controls describe themselves; only the name and state are added.
+            let target: gtk::Widget = match &entry.input {
+                Some(input) => input.focus_target(),
+                None => entry.container.clone().upcast(),
+            };
+            crate::accessibility::apply(&target, accessibility, entry.plain_text.as_deref(), &mut entry.announced, entry.input.is_some());
         }
     }
 

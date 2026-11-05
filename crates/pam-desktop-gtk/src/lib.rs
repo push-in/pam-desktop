@@ -8,6 +8,7 @@
 
 #![cfg(target_os = "linux")]
 
+mod accessibility;
 mod backend;
 mod input;
 mod paint;
