@@ -13,9 +13,9 @@ path = "src/main.rs"
 
 [features]
 default = ["sqlite", "webview", "tray", "hotkeys"]
-# Optional parts of the GTK backend (Linux): embedded web pages through
-# WebKitGTK, the tray icon and global shortcuts.
-webview = ["pam-desktop-gtk/webview"]
+# Optional parts of the backends: embedded web pages (WebKitGTK on Linux,
+# WebView2 on Windows), and on Linux the tray icon and global shortcuts.
+webview = ["pam-desktop-gtk/webview", "pam-desktop-win32/webview"]
 tray = ["pam-desktop-gtk/tray"]
 hotkeys = ["pam-desktop-gtk/hotkeys"]
 # The `sqlite` module. SQLite is compiled from C, so a build that only
@@ -39,10 +39,14 @@ rusqlite = { version = "0.38", features = ["bundled"], optional = true }
 # SChannel) and rustls elsewhere; certificates are always verified against the
 # system's trust store. Secrets go to the keychain of the system.
 [target.'cfg(target_os = "macos")'.dependencies]
+pam-desktop-appkit.workspace = true
 ureq = { version = "3.5", default-features = false, features = ["native-tls"] }
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+# By path for the same reason as the GTK backend below.
+pam-desktop-win32 = { path = "../pam-desktop-win32", default-features = false }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console"] }
 ureq = { version = "3.5", default-features = false, features = ["native-tls"] }
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
 

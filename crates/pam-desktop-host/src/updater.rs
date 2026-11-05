@@ -1274,7 +1274,7 @@ fn wait_for_parent(parent_pid: u32) -> Result<(), String> {
 
 fn process_exists(pid: u32) -> Result<bool, String> {
     if cfg!(windows) {
-        let output = Command::new("tasklist")
+        let output = crate::console::hidden(&mut Command::new("tasklist"))
             .args(["/FI", &format!("PID eq {pid}"), "/NH"])
             .output()
             .map_err(|error| format!("cannot inspect the parent process with tasklist: {error}"))?;
@@ -1296,7 +1296,7 @@ fn extract_archive(archive: &Path, destination: &Path) -> Result<(), String> {
     } else if cfg!(target_os = "macos") {
         Command::new("ditto").args(["-x", "-k"]).arg(archive).arg(destination).status()
     } else if cfg!(windows) {
-        Command::new("powershell.exe")
+        crate::console::hidden(&mut Command::new("powershell.exe"))
             .args(["-NoProfile", "-NonInteractive", "-Command", "Expand-Archive", "-LiteralPath"])
             .arg(archive)
             .arg("-DestinationPath")

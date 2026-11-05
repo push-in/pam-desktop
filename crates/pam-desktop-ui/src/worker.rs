@@ -124,6 +124,13 @@ impl Worker {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // PHP is a console program: started plainly from a windowed
+            // application it would open a console of its own (CREATE_NO_WINDOW).
+            process.creation_flags(0x0800_0000);
+        }
         if let Some(directory) = &command.working_directory {
             process.current_dir(directory);
         }

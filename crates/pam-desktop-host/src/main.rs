@@ -1,6 +1,10 @@
 //! `pam-desktop`: the native host of PAM Desktop applications.
 
+// A release build is a windowed program on Windows: see `console`.
+#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+
 mod bundle;
+mod console;
 mod http_client;
 mod manifest;
 mod modules;
@@ -130,10 +134,18 @@ fn run(target: &Path, development: bool, link: Option<String>) -> ExitCode {
     {
         pam_desktop_gtk::run(&application_id, config)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        pam_desktop_appkit::run(&application_id, config)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        pam_desktop_win32::run(&application_id, config)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         let _ = (config, application_id);
-        eprintln!("pam-desktop: this platform is not supported yet");
+        eprintln!("pam-desktop: this platform is not supported");
         ExitCode::FAILURE
     }
 }
@@ -187,6 +199,7 @@ fn run_publish_update(mut arguments: Vec<OsString>) -> Result<(), String> {
 }
 
 fn main() -> ExitCode {
+    console::attach();
     let mut arguments = std::env::args_os().skip(1);
     // Inside a Windows bundle the launcher is this host under the name of
     // the application: whatever it was started with belongs to the application.
