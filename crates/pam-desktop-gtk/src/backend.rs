@@ -296,6 +296,7 @@ impl Backend for GtkBackend {
         self.install_pointer_events(window, &host);
         self.install_key_events(window, &native);
         shell::accept_file_drops(&host, window, &self.events);
+        shell::accept_text_drops(&host, window, &self.events);
         shell::watch_window_state(&native, window, &self.events);
 
         let events = Rc::clone(&self.events);
@@ -622,7 +623,35 @@ impl Backend for GtkBackend {
         }
     }
 
-    fn begin_text_drag(&mut self, _window: WindowId, _source: NodeId, _text: &str) {}
+    fn begin_text_drag(&mut self, window: WindowId, source: NodeId, text: &str) {
+        let finished = |events: &Rc<EventQueue>, dropped: bool| events.push(BackendEvent::DragFinished { source, dropped });
+        let surface = self.windows.get(&window).and_then(|entry| entry.window.surface());
+        let (Some(surface), Some((device, _, x, y, _))) = (surface, self.last_press.borrow().clone()) else {
+            return finished(&self.events, false);
+        };
+        let content = gdk::ContentProvider::for_value(&text.to_value());
+        let Some(drag) = gdk::Drag::begin(&surface, &device, &content, gdk::DragAction::COPY, x, y) else {
+            return finished(&self.events, false);
+        };
+        // The dragged view follows the pointer.
+        if let Some(entry) = self.views.get(&source) {
+            let icon = gtk::DragIcon::for_drag(&drag);
+            let picture = gtk::Picture::for_paintable(&gtk::WidgetPaintable::new(Some(&entry.widget)));
+            picture.set_opacity(0.85);
+            icon.set_child(Some(&picture));
+        }
+        let dropped = Rc::new(Cell::new(false));
+        {
+            let dropped = Rc::clone(&dropped);
+            drag.connect_drop_performed(move |_| dropped.set(true));
+        }
+        {
+            let (events, dropped) = (Rc::clone(&self.events), Rc::clone(&dropped));
+            drag.connect_dnd_finished(move |_| events.push(BackendEvent::DragFinished { source, dropped: dropped.get() }));
+        }
+        let events = Rc::clone(&self.events);
+        drag.connect_cancel(move |_, _| events.push(BackendEvent::DragFinished { source, dropped: false }));
+    }
 
     fn set_media(&mut self, id: NodeId, state: &pam_desktop_ui::backend::MediaState) {
         if let Some(media) = self.views.get_mut(&id).and_then(|entry| entry.media.as_mut()) {

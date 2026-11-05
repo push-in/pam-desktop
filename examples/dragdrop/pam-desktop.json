@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.dragdrop",
+    "name": "PAM Desktop drag and drop",
+    "entry": "index.php",
+    "window": {
+        "width": 720,
+        "height": 440
+    }
+}

@@ -56,6 +56,9 @@ pub mod event_kind {
     pub const MEDIA_PROGRESS: u16 = 52;
     pub const MEDIA_END: u16 = 53;
     pub const MEDIA_ERROR: u16 = 54;
+    pub const DRAG_START: u16 = 55;
+    pub const DRAG_END: u16 = 56;
+    pub const DROP: u16 = 57;
     pub const MENU_ACTION: u16 = 58;
     pub const MEDIA_CACHE_HIT: u16 = 61;
     pub const MEDIA_CACHE_MISS: u16 = 62;
@@ -110,6 +113,8 @@ pub enum HostCommand {
     SetImage { id: NodeId, content: Option<crate::backend::ImageContent> },
     SetDrawing { id: NodeId, commands: Vec<crate::backend::DrawCommand> },
     SetTextSelection { id: NodeId, range: Option<(u32, u32)> },
+    /// Starts a system drag of text from the press being handled.
+    BeginTextDrag { source: NodeId, text: String },
     SetMedia { id: NodeId, state: Box<crate::backend::MediaState> },
     SetWebView { id: NodeId, state: Box<crate::backend::WebViewState> },
 }

@@ -386,6 +386,18 @@ pub fn accept_file_drops(host: &PamView, window: WindowId, events: &Rc<EventQueu
     host.add_controller(target);
 }
 
+/// Text dragged from the application itself or from another one.
+pub fn accept_text_drops(host: &PamView, window: WindowId, events: &Rc<EventQueue>) {
+    let target = gtk::DropTarget::new(String::static_type(), gdk::DragAction::COPY);
+    let events = Rc::clone(events);
+    target.connect_drop(move |_, value, x, y| {
+        let Ok(text) = value.get::<String>() else { return false };
+        events.push(BackendEvent::TextDropped { window, position: Point::new(x as f32, y as f32), text });
+        true
+    });
+    host.add_controller(target);
+}
+
 pub fn cursor_name(cursor: Cursor) -> Option<&'static str> {
     Some(match cursor {
         Cursor::Default => return None,

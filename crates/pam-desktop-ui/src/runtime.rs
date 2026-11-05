@@ -256,6 +256,7 @@ pub struct Runtime<B: Backend> {
     media: crate::media::Media,
     web_views: crate::webview::WebViews,
     pub(crate) selection: crate::selection::TextSelection,
+    drag_drop: crate::dragdrop::DragDrop,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
     pub(crate) shell: Shell,
@@ -401,6 +402,7 @@ impl<B: Backend> Runtime<B> {
             media,
             web_views: crate::webview::WebViews::default(),
             selection: crate::selection::TextSelection::default(),
+            drag_drop: crate::dragdrop::DragDrop::default(),
             modules,
             directories,
             shell: Shell::default(),
@@ -483,6 +485,7 @@ impl<B: Backend> Runtime<B> {
                 HostCommand::SetImage { id, content } => self.backend.set_image(id, content.as_ref()),
                 HostCommand::SetDrawing { id, commands } => self.backend.set_drawing(id, &commands),
                 HostCommand::SetTextSelection { id, range } => self.backend.set_text_selection(id, range),
+                HostCommand::BeginTextDrag { source, text } => self.backend.begin_text_drag(MAIN_WINDOW, source, &text),
                 HostCommand::SetMedia { id, state } => self.backend.set_media(id, &state),
                 HostCommand::SetWebView { id, state } => self.backend.set_web_view(id, &state),
             }
@@ -731,6 +734,15 @@ impl<B: Backend> Runtime<B> {
                     return;
                 }
                 {
+                    let mut ctx = ctx!(self);
+                    if self.drag_drop.on_pointer(&mut ctx, pointer) {
+                        // The system owns the pointer now: the press never completes.
+                        let cancel = crate::backend::PointerEvent { phase: crate::backend::PointerPhase::Cancel, ..pointer };
+                        self.interaction.on_pointer(&mut ctx, cancel);
+                        return;
+                    }
+                }
+                {
                     // A freehand canvas owns the pointer while a stroke is drawn.
                     let mut ctx = ctx!(self);
                     if self.drawings.on_pointer(&mut ctx, pointer) {
@@ -843,7 +855,17 @@ impl<B: Backend> Runtime<B> {
             }
             // Gestures, text selection and drag and drop are wired below as
             // their controllers land.
-            BackendEvent::Wheel { .. } | BackendEvent::Magnify { .. } | BackendEvent::Rotate { .. } | BackendEvent::TextDropped { .. } | BackendEvent::DragFinished { .. } => {}
+            BackendEvent::Wheel { .. } | BackendEvent::Magnify { .. } | BackendEvent::Rotate { .. } => {}
+            BackendEvent::TextDropped { window, position, text } => {
+                if window == MAIN_WINDOW {
+                    let mut ctx = ctx!(self);
+                    self.drag_drop.on_text_dropped(&mut ctx, position, &text);
+                }
+            }
+            BackendEvent::DragFinished { source, .. } => {
+                let mut ctx = ctx!(self);
+                self.drag_drop.on_drag_finished(&mut ctx, source);
+            }
             BackendEvent::WebView { id, event } => {
                 let mut ctx = ctx!(self);
                 self.web_views.on_event(&mut ctx, id, event);
