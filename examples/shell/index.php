@@ -50,6 +50,9 @@ final class Shell extends Component
     #[State]
     public string $window = 'normal';
 
+    #[State]
+    public bool $pinned = false;
+
     public function mount(): void
     {
         $this->installMenu();
@@ -110,6 +113,12 @@ final class Shell extends Component
                 MenuItem::separator(),
                 MenuItem::make('Maximize', Window::maximize(...)),
                 MenuItem::make('Restore', Window::restore(...)),
+                MenuItem::make('Center', Window::center(...), 'CmdOrCtrl+Shift+M'),
+                MenuItem::checkbox('Always on top', $this->pinned, function (bool $pinned): void {
+                    $this->pinned = $pinned;
+                    Window::alwaysOnTop($pinned);
+                    $this->installMenu();
+                }, 'CmdOrCtrl+Shift+T'),
                 MenuItem::make('Show progress', fn () => Window::progress(0.4), 'CmdOrCtrl+Shift+P'),
                 MenuItem::make('Clear progress', fn () => Window::progress(null)),
                 MenuItem::role(MenuRole::ToggleFullScreen),

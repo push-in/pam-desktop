@@ -439,9 +439,14 @@ pub fn window_command(window: &gtk::ApplicationWindow, host: &PamView, command: 
         WindowCommand::Hide => window.set_visible(false),
         WindowCommand::Close => window.destroy(),
         WindowCommand::SetProgress(progress) => launcher_progress(window, *progress),
-        // Wayland gives applications no say on placement or stacking, and
-        // GTK exposes neither.
-        WindowCommand::Center | WindowCommand::SetAlwaysOnTop(_) => {}
+        // Through the window manager on X11; Wayland gives applications no
+        // say on placement or stacking.
+        WindowCommand::Center => {
+            crate::x11::center(window.upcast_ref());
+        }
+        WindowCommand::SetAlwaysOnTop(enabled) => {
+            crate::x11::set_always_on_top(window.upcast_ref(), *enabled)
+        }
     }
 }
 

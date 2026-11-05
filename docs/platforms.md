@@ -68,8 +68,7 @@ GTK chooses the display server; the application code is the same. The difference
 | Topic | X11 | Wayland |
 | --- | --- | --- |
 | Global shortcuts | Keys are grabbed on the root window. A combination that another application already holds is refused by the server. **Verified.** | Applications cannot grab keys. The backend binds them through the GlobalShortcuts desktop portal, with the consent of the user. **Not verified.** |
-
-`Window::center()` and `alwaysOnTop()` do nothing on either: Wayland gives applications no say on placement or stacking, and GTK 4 exposes neither.
+| `Window::center()`, `alwaysOnTop()` | Sent to the window manager (a position request and the `_NET_WM_STATE_ABOVE` state). **Verified** with Xfwm. | Do nothing: Wayland gives applications no say on placement or stacking. |
 
 `Window::progress()` is sent on the session bus as a `com.canonical.Unity.LauncherEntry` update, the launcher entry API that the Ubuntu Dock, Dash to Dock and the Plasma task manager listen to. The update names the desktop entry `<applicationId>.desktop`, so it reaches an installed application, not a loose `pam-desktop run`. A desktop that does not listen shows nothing.
 

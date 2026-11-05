@@ -22,5 +22,6 @@ mod text;
 mod tray;
 mod view;
 mod webview;
+mod x11;
 
 pub use backend::{GtkBackend, run};

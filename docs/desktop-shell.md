@@ -49,7 +49,7 @@ Window::onCloseRequested(function (): void {
 
 `WindowState` has `maximized`, `minimized`, `fullScreen`, `focused`, `width` and `height`.
 
-On Linux, `center()` and `alwaysOnTop()` do nothing: Wayland gives applications no say on placement or stacking, and GTK 4 exposes neither.
+On Linux, `center()` and `alwaysOnTop()` work on X11, where they are requests to the window manager: `center()` moves a window that is shown to the middle of its monitor, and `alwaysOnTop()` also holds after the window is hidden and shown again. On Wayland both do nothing: it gives applications no say on placement or stacking.
 
 `progress()` takes a fraction from 0 to 1, or `null` to remove the indicator:
 
