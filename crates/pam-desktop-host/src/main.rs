@@ -170,7 +170,7 @@ fn run(target: &Path, development: bool) -> ExitCode {
         platform,
         development,
         watch: if development { vec![project.clone()] } else { Vec::new() },
-        directories: Directories { data: app_paths.data.clone(), cache: app_paths.cache.clone(), state: app_paths.state.clone() },
+        directories: Directories { data: app_paths.data.clone(), cache: app_paths.cache.clone(), state: app_paths.state.clone(), assets: project.clone() },
         app_version: manifest_text(&project, "version").unwrap_or_default(),
         build_number: manifest_text(&project, "build").unwrap_or_default(),
         launch_url: std::env::var("PAM_DESKTOP_LAUNCH_URL").ok().filter(|url| !url.is_empty()),

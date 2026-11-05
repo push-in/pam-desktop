@@ -81,6 +81,10 @@ impl<B: Backend> Runtime<B> {
 
     pub(crate) fn call_module(&mut self, request: u64, module: &str, method: &str, payload: &[u8]) {
         let reply = self.reply(request);
+        // The file pickers need the native dialog before the files module imports.
+        if module == "files" && matches!(method, "pick" | "pickMany") {
+            return self.pick_files(method == "pickMany", payload, reply);
+        }
         let Some(reply) = self.modules.call(module, method, payload, reply) else { return };
         match module {
             "appearance" => self.appearance_module(method, payload, reply),
@@ -96,6 +100,59 @@ impl<B: Backend> Runtime<B> {
             // Unknown modules fail fast so application callbacks never hang.
             other => reply.failure(format!("Unknown native module {other}")),
         }
+    }
+
+    /// `files.pick` / `files.pickMany`: the native open dialog, then a copy of
+    /// the selection into the sandbox (off the UI thread).
+    fn pick_files(&mut self, many: bool, payload: &[u8], reply: Reply) {
+        use crate::modules::files;
+        use crate::shell::{FileDialogConfig, FileDialogKind, FileFilter};
+        let request = match request_map(payload).and_then(|map| files::pick_request(&map)) {
+            Ok(request) => request,
+            Err(error) => return reply.failure(error),
+        };
+        let extensions: Vec<String> = request.extensions().into_iter().map(str::to_owned).collect();
+        let name = match request.kind {
+            files::PickKind::Image => "Images",
+            files::PickKind::Video => "Videos",
+            files::PickKind::Audio => "Audio",
+            files::PickKind::Media => "Media",
+            files::PickKind::Any => "Files",
+        };
+        let config = FileDialogConfig {
+            kind: if many { FileDialogKind::OpenMultiple } else { FileDialogKind::Open },
+            title: String::new(),
+            default_name: String::new(),
+            directory: None,
+            filters: if extensions.is_empty() { Vec::new() } else { vec![FileFilter { name: name.into(), extensions }] },
+        };
+        let root = files::sandbox_root(&self.directories.data);
+        self.backend.pick_files(
+            MAIN_WINDOW,
+            &config,
+            Box::new(move |paths| {
+                if paths.is_empty() {
+                    // Cancelled: an empty success (`null` / no items in PHP).
+                    return if many { reply.map(&files::items_map(&[])) } else { reply.done() };
+                }
+                let import = move || {
+                    if many {
+                        match files::import_selection(&root, &paths, &request) {
+                            Ok(items) => reply.map(&files::items_map(&items)),
+                            Err(error) => reply.failure(error),
+                        }
+                    } else {
+                        match files::import_picked(&root, &paths[0], request.maximum_bytes) {
+                            Ok(file) => reply.map(&file.to_map()),
+                            Err(error) => reply.failure(error),
+                        }
+                    }
+                };
+                if std::thread::Builder::new().name("pam-pick-import".into()).spawn(import).is_err() {
+                    // The reply moved into the closure; a failed spawn drops it, which PHP sees as a failure.
+                }
+            }),
+        );
     }
 
     pub(crate) fn call_typed(&mut self, request: u64, operation: u16, payload: &[u8]) {

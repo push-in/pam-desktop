@@ -497,24 +497,25 @@ impl Backend for GtkBackend {
         }
     }
 
-    fn load_image(&mut self, key: ImageKey, source: ImageSource) {
+    fn load_image(&mut self, key: ImageKey, source: ImageSource, max_dimension: Option<u32>) {
         let events = Rc::clone(&self.events);
         let textures = Rc::clone(&self.textures);
-        // Decoding runs on a worker thread; the texture is handed back to the UI thread.
-        let (sender, receiver) = std::sync::mpsc::channel::<Result<gdk::Texture, String>>();
-        std::thread::spawn(move || {
-            let decoded = match source {
-                ImageSource::Bytes(bytes) => gdk::Texture::from_bytes(&glib::Bytes::from_owned(bytes.to_vec())),
-                ImageSource::File(path) => gdk::Texture::from_filename(path),
-            };
-            let _ = sender.send(decoded.map_err(|error| error.to_string()));
+        // Decoding runs on a worker thread; only plain pixels cross back to
+        // the UI thread, where they become a texture without another copy.
+        let (sender, receiver) = std::sync::mpsc::channel::<Result<DecodedImage, String>>();
+        let spawned = std::thread::Builder::new().name("pam-image-decode".into()).spawn(move || {
+            let _ = sender.send(decode_image(source, max_dimension));
             glib::MainContext::default().wakeup();
         });
+        if spawned.is_err() {
+            return self.events.push(BackendEvent::ImageFailed { key, message: "image decoder could not start".into() });
+        }
         glib::idle_add_local_full(glib::Priority::DEFAULT, move || match receiver.try_recv() {
-            Ok(Ok(texture)) => {
-                let size = Size::new(texture.width() as f32, texture.height() as f32);
-                textures.borrow_mut().insert(key, texture);
-                events.push(BackendEvent::ImageLoaded { key, size });
+            Ok(Ok(decoded)) => {
+                let format = if decoded.alpha { gdk::MemoryFormat::R8g8b8a8 } else { gdk::MemoryFormat::R8g8b8 };
+                let texture = gdk::MemoryTexture::new(decoded.width, decoded.height, format, &decoded.pixels, decoded.stride);
+                textures.borrow_mut().insert(key, texture.upcast());
+                events.push(BackendEvent::ImageLoaded { key, size: Size::new(decoded.width as f32, decoded.height as f32) });
                 glib::ControlFlow::Break
             }
             Ok(Err(message)) => {
@@ -821,4 +822,53 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// Pixels of a decoded image, ready to wrap in a texture.
+struct DecodedImage {
+    width: i32,
+    height: i32,
+    stride: usize,
+    alpha: bool,
+    pixels: glib::Bytes,
+}
+
+/// Decodes on the calling (worker) thread. With `max_dimension` the decoder
+/// is told the target size up front, so large photos never exist at full
+/// size in memory.
+fn decode_image(source: ImageSource, max_dimension: Option<u32>) -> Result<DecodedImage, String> {
+    use gtk::gdk_pixbuf::prelude::*;
+    let loader = gtk::gdk_pixbuf::PixbufLoader::new();
+    if let Some(limit) = max_dimension.and_then(|limit| i32::try_from(limit).ok()).filter(|limit| *limit > 0) {
+        loader.connect_size_prepared(move |loader, width, height| {
+            let longest = width.max(height);
+            if longest > limit {
+                let ratio = f64::from(limit) / f64::from(longest);
+                loader.set_size(((f64::from(width) * ratio).round() as i32).max(1), ((f64::from(height) * ratio).round() as i32).max(1));
+            }
+        });
+    }
+    let written = match &source {
+        ImageSource::Bytes(bytes) => loader.write(bytes),
+        ImageSource::File(path) => match std::fs::read(path) {
+            Ok(bytes) => loader.write(&bytes),
+            Err(error) => {
+                let _ = loader.close();
+                return Err(format!("Image file could not be read: {error}"));
+            }
+        },
+    };
+    let closed = loader.close();
+    written.and(closed).map_err(|error| error.to_string())?;
+    let pixbuf = loader.pixbuf().ok_or_else(|| String::from("Image could not be decoded"))?;
+    if pixbuf.bits_per_sample() != 8 || pixbuf.width() <= 0 || pixbuf.height() <= 0 {
+        return Err("Image format is not supported".into());
+    }
+    Ok(DecodedImage {
+        width: pixbuf.width(),
+        height: pixbuf.height(),
+        stride: usize::try_from(pixbuf.rowstride()).unwrap_or(0),
+        alpha: pixbuf.has_alpha(),
+        pixels: pixbuf.read_pixel_bytes(),
+    })
 }

@@ -297,6 +297,8 @@ pub enum Owner {
     Control(NodeId),
     /// A gliding scroll offset.
     Scroll(NodeId),
+    /// Fade-in of an image that arrived from the network.
+    Image(NodeId),
 }
 
 impl Owner {
@@ -310,7 +312,8 @@ impl Owner {
             | Self::Transition(id, _)
             | Self::Motion(id, _)
             | Self::Control(id)
-            | Self::Scroll(id) => *id,
+            | Self::Scroll(id)
+            | Self::Image(id) => *id,
         }
     }
 }

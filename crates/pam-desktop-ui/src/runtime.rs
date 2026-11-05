@@ -52,6 +52,8 @@ pub enum Inbound {
     ContextMenuAction { node: NodeId, id: String },
     /// A link arrived while the application runs (a second launch).
     OpenUrl(String),
+    /// Progress or result of an image download.
+    Image(crate::images::ImageInbound),
 }
 
 /// Thread-safe queue into the UI thread.
@@ -156,6 +158,8 @@ pub struct Directories {
     pub data: std::path::PathBuf,
     pub cache: std::path::PathBuf,
     pub state: std::path::PathBuf,
+    /// The root of the application bundle, where `asset://` paths resolve.
+    pub assets: std::path::PathBuf,
 }
 
 struct MeasureContext<B: Backend> {
@@ -245,7 +249,9 @@ pub struct Runtime<B: Backend> {
     motion: Motion,
     pub(crate) controls: Controls,
     scrolling: Scrolling,
+    images: crate::images::Images,
     pub(crate) modules: Registry,
+    pub(crate) directories: Directories,
     pub(crate) shell: Shell,
     linking: crate::modules::system::Linking,
     pub(crate) settings: Settings,
@@ -316,6 +322,23 @@ impl<B: Backend> Runtime<B> {
         modules.register("cache", crate::modules::system::Cache::new(&config.directories.cache));
         modules.register("background", crate::modules::system::Background::default());
         modules.register("toast", crate::modules::system::Toast);
+        if let Some(client) = &config.http_client {
+            let directories = &config.directories;
+            let files_root = crate::modules::files::sandbox_root(&directories.data);
+            modules.register("files", crate::modules::files::Files::new(&directories.data, &directories.assets, Arc::clone(client)));
+            modules.register("http", crate::modules::http::Http::new(&files_root, Arc::clone(client), config.development));
+            modules.register("image", crate::modules::image::ImagePrefetch::new(&directories.cache, Arc::clone(client)));
+        }
+        let directories = config.directories.clone();
+        let http_client = config.http_client.clone();
+        let images = crate::images::Images::new(crate::images::ImageEnvironment {
+            cache_root: crate::modules::image::cache_root(&directories.cache),
+            files_root: crate::modules::files::sandbox_root(&directories.data),
+            assets: directories.assets.clone(),
+            client: http_client.clone(),
+            inbox: Arc::clone(&inbox),
+            allow_insecure: config.development,
+        });
         for (name, module) in config.modules {
             modules.register_boxed(&name, module);
         }
@@ -360,7 +383,9 @@ impl<B: Backend> Runtime<B> {
             motion: Motion::default(),
             controls: Controls::new(metrics.dark),
             scrolling: Scrolling::default(),
+            images,
             modules,
+            directories,
             shell: Shell::default(),
             linking,
             settings,
@@ -436,6 +461,9 @@ impl<B: Backend> Runtime<B> {
                 HostCommand::InputText { id, text, selection } => self.backend.set_input_text(id, &text, selection),
                 HostCommand::InputSelection { id, start, end } => self.backend.set_input_selection(id, start, end),
                 HostCommand::BeginWindowDrag => self.backend.begin_window_drag(MAIN_WINDOW),
+                HostCommand::LoadImage { key, source, max_dimension } => self.backend.load_image(key, source, max_dimension),
+                HostCommand::ReleaseImage(key) => self.backend.release_image(key),
+                HostCommand::SetImage { id, content } => self.backend.set_image(id, content.as_ref()),
             }
         }
         if let Some(worker) = &mut self.worker {
@@ -490,6 +518,7 @@ impl<B: Backend> Runtime<B> {
                 self.motion.on_change(&mut ctx, change);
                 self.controls.on_change(&mut ctx, change);
                 self.scrolling.on_change(&mut ctx, change);
+                self.images.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             self.tabs.after_commit(&mut ctx);
@@ -498,6 +527,7 @@ impl<B: Backend> Runtime<B> {
             self.motion.after_commit(&mut ctx);
             self.controls.after_commit(&mut ctx);
             self.scrolling.after_commit(&mut ctx);
+            self.images.after_commit(&mut ctx);
             self.coverage.invalidate();
             self.inputs.retry_autofocus();
         }
@@ -539,6 +569,10 @@ impl<B: Backend> Runtime<B> {
             Inbound::Reload => self.reload(),
             Inbound::ContextMenuAction { node, id } => self.context_menu_chosen(node, &id),
             Inbound::OpenUrl(url) => self.linking.deliver(&url),
+            Inbound::Image(message) => {
+                let mut ctx = ctx!(self);
+                self.images.on_inbound(&mut ctx, message);
+            }
         }
     }
 
@@ -748,7 +782,14 @@ impl<B: Backend> Runtime<B> {
                 let mut ctx = ctx!(self);
                 self.scrolling.on_scroll(&mut ctx, id, offset);
             }
-            BackendEvent::ImageLoaded { .. } | BackendEvent::ImageFailed { .. } => {}
+            BackendEvent::ImageLoaded { key, size } => {
+                let mut ctx = ctx!(self);
+                self.images.loaded(&mut ctx, key, size);
+            }
+            BackendEvent::ImageFailed { key, message } => {
+                let mut ctx = ctx!(self);
+                self.images.failed(&mut ctx, key, &message);
+            }
         }
     }
 
@@ -771,6 +812,7 @@ impl<B: Backend> Runtime<B> {
                 Owner::Press(id) => self.interaction.on_press_sample(&mut ctx, id, sample.value),
                 Owner::Control(id) => self.controls.on_sample(&mut ctx, id, sample.value, sample.finished),
                 Owner::Scroll(id) => self.scrolling.on_sample(&mut ctx, id, sample.value),
+                Owner::Image(id) => self.images.on_sample(&mut ctx, id, sample.value),
                 Owner::Transition(..) | Owner::Motion(..) => self.motion.on_sample(&mut ctx, sample.owner, sample.value, sample.finished),
             }
         }

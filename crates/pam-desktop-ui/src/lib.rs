@@ -11,6 +11,7 @@ pub mod color;
 pub mod context;
 pub mod controls;
 pub mod geometry;
+pub mod images;
 pub mod input_format;
 pub mod inputs;
 pub mod interaction;

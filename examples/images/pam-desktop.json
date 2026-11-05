@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.images",
+    "name": "PAM Desktop images",
+    "entry": "index.php",
+    "window": {
+        "width": 900,
+        "height": 640
+    }
+}

@@ -240,7 +240,7 @@ pub enum InputEvent {
 /// Identifies a decoded image owned by the backend.
 pub type ImageKey = u64;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ImageSource {
     /// Encoded bytes (PNG, JPEG, WebP, GIF, SVG… whatever the platform decodes).
     Bytes(std::sync::Arc<[u8]>),
@@ -390,8 +390,9 @@ pub trait Backend {
     // ---- images --------------------------------------------------------
 
     /// Decodes an image off the UI thread and reports `ImageLoaded` or
-    /// `ImageFailed` for `key`.
-    fn load_image(&mut self, key: ImageKey, source: ImageSource);
+    /// `ImageFailed` for `key`. With `max_dimension`, an image whose longest
+    /// side is larger is decoded (or scaled) down to it, keeping its ratio.
+    fn load_image(&mut self, key: ImageKey, source: ImageSource, max_dimension: Option<u32>);
     /// Drops a decoded image no view shows any more.
     fn release_image(&mut self, key: ImageKey);
     fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>);

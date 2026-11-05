@@ -91,6 +91,10 @@ pub enum HostCommand {
     InputSelection { id: NodeId, start: u32, end: u32 },
     /// The press being handled grabbed a window drag region.
     BeginWindowDrag,
+    /// Decodes an image; `max_dimension` bounds its longest side in pixels.
+    LoadImage { key: crate::backend::ImageKey, source: crate::backend::ImageSource, max_dimension: Option<u32> },
+    ReleaseImage(crate::backend::ImageKey),
+    SetImage { id: NodeId, content: Option<crate::backend::ImageContent> },
 }
 
 pub struct Ctx<'a> {

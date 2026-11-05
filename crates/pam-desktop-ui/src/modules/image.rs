@@ -126,6 +126,20 @@ fn fetch(
     headers: &[(String, String)],
     cancel: &AtomicBool,
 ) -> Result<(PathBuf, u64), String> {
+    fetch_reporting(client, cache_root, url, key, headers, cancel, &mut |_, _| {})
+}
+
+/// [`fetch`], reporting the bytes received so far and the declared total
+/// (zero when the server sent none) after every chunk.
+fn fetch_reporting(
+    client: &dyn HttpClient,
+    cache_root: &Path,
+    url: &str,
+    key: &str,
+    headers: &[(String, String)],
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<(PathBuf, u64), String> {
     let cancelled = || cancel.load(Ordering::Relaxed);
     let path = cache_path(cache_root, if key.is_empty() { url } else { key });
     if path.is_file() {
@@ -148,6 +162,8 @@ fn fetch(
     let mut outgoing = HttpRequest {
         connect_timeout: Duration::from_secs(15),
         read_timeout: Duration::from_secs(30),
+        // Image hosts commonly answer through a CDN redirect.
+        follow_redirects: true,
         ..HttpRequest::get(url)
     };
     if !headers
@@ -195,7 +211,7 @@ fn fetch(
         &mut output,
         MAX_IMAGE_BYTES,
         cancel,
-        |_| {},
+        |received| progress(received, declared.unwrap_or(0)),
     )
     .map_err(|error| match error {
         CopyError::Cancelled => String::from("Image request cancelled"),
@@ -218,7 +234,7 @@ fn fetch(
 ///
 /// When the file is already there it is returned at once, without a request.
 /// Otherwise `url` (`https://` or `http://`, no credentials) is fetched with
-/// a GET carrying `headers`; redirects are not followed, any status outside
+/// a GET carrying `headers`; redirects are followed, any status outside
 /// 2xx is an error, and a body over [`MAX_IMAGE_BYTES`] is refused. `key` is
 /// the image's explicit cache key, or empty to use the URL. Setting `cancel`
 /// stops the download; nothing partial is ever left under the final name.
@@ -231,6 +247,20 @@ pub fn fetch_to_cache(
     cancel: &AtomicBool,
 ) -> Result<PathBuf, String> {
     fetch(client, cache_root, url, key, headers, cancel).map(|(path, _)| path)
+}
+
+/// [`fetch_to_cache`] for the renderer: `progress` receives the bytes
+/// received and the declared total (zero when unknown) while downloading.
+pub fn fetch_to_cache_reporting(
+    client: &dyn HttpClient,
+    cache_root: &Path,
+    url: &str,
+    key: &str,
+    headers: &[(String, String)],
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(u64, u64),
+) -> Result<PathBuf, String> {
+    fetch_reporting(client, cache_root, url, key, headers, cancel, progress).map(|(path, _)| path)
 }
 
 /// The shared outcome of one `prefetch` call, answered when every image is done.

@@ -197,7 +197,7 @@ impl Backend for RecordingBackend {
         self.commands.push(Command::InputSelection(id, start, end));
     }
 
-    fn load_image(&mut self, key: ImageKey, _source: ImageSource) {
+    fn load_image(&mut self, key: ImageKey, _source: ImageSource, _max_dimension: Option<u32>) {
         self.commands.push(Command::LoadImage(key));
     }
 
