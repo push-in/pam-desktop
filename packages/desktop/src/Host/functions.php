@@ -5,8 +5,7 @@ declare(strict_types=1);
 use Pam\Desktop\Host\Channel;
 
 /*
- * Host entry points for the desktop worker process. Mobile hosts provide the
- * same functions natively from the embedded runtime; here they forward to the
+ * Host entry points for the desktop worker process: they forward to the
  * native host over the worker channel. Loaded only by the worker bootstrap,
  * so tests and tooling keep seeing a runtime without a host.
  */

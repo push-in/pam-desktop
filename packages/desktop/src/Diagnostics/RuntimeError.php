@@ -90,7 +90,7 @@ final readonly class RuntimeError
     }
 
     /**
-     * Strips device bundle prefixes (`/data/user/0/<pkg>/files/pam/releases/<hash>/`)
+     * Strips release bundle prefixes (`<...>/files/pam/releases/<hash>/`)
      * and the project root, so frames read like `app/Screens/Chat.php`.
      */
     public static function shortenPath(string $path): string
@@ -222,7 +222,7 @@ final readonly class RuntimeError
         return ['file' => $file, 'line' => $line, 'start' => $start, 'lines' => $lines];
     }
 
-    /** Clips long source lines without ext-mbstring (absent on Android). */
+    /** Clips long source lines without needing ext-mbstring. */
     private static function clip(string $line): string
     {
         if (strlen($line) <= self::MAX_SNIPPET_LINE) {

@@ -10,7 +10,7 @@ use Pam\Desktop\Internal\Wire;
 use Pam\Desktop\ModuleResultStatus;
 use Pam\Desktop\Modules\NativeModules;
 
-/** Screen-reader integration (TalkBack / VoiceOver) and the application text scale. */
+/** Screen-reader integration and the application text scale. */
 final class Accessibility
 {
     private function __construct()
@@ -66,8 +66,8 @@ final class Accessibility
     }
 
     /**
-     * Stores the app text multiplier (the in-app "text size" setting) for the
-     * next launch. Text then renders at `multiplier * min(system scale,
+     * Stores the app text multiplier (the in-app "text size" setting) and
+     * applies it at once. Text then renders at `multiplier * min(system scale,
      * maxSystemScale)`; 0 leaves the operating-system scale uncapped.
      *
      * @param null|Closure(?TextScale): void $callback null when it could not be stored

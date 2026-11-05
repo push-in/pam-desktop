@@ -10,8 +10,9 @@ use Pam\Desktop\PropKey;
 use Pam\Desktop\RefreshIndicatorSize;
 
 /**
- * RN `refreshControl` straight on a ScrollView or list: pull-to-refresh with
- * the platform indicator (Android SwipeRefreshLayout, iOS UIRefreshControl).
+ * RN `refreshControl` straight on a ScrollView or list. Desktops have no
+ * pull gesture: F5 or Ctrl/Cmd+R fires `onRefresh` on the visible refresh
+ * host, and the host draws its own spinner over the content.
  * The scrollable is hosted in a RefreshControl automatically; its outer box
  * (size, flex, margins, position) sizes the host. `refreshing` is controlled:
  * set it true while loading and false to end the spinner.
@@ -28,13 +29,13 @@ trait HasRefreshControl
         return $this->withEvent(EventKind::Refresh, $handler);
     }
 
-    /** Android spinner colors (cycled); the first one is the iOS tint. */
+    /** Spinner colors. The desktop spinner uses the first one, unless a tint is set. */
     public function refreshColors(int ...$colors): self
     {
         return $this->withProperty(PropKey::RefreshColors, implode(',', $colors));
     }
 
-    /** RN `tintColor`: the iOS spinner color (Android uses it when no colors). */
+    /** RN `tintColor`: the spinner color; wins over refreshColors(). */
     public function refreshTintColor(int $color): self
     {
         return $this->withProperty(PropKey::TintColor, $color);

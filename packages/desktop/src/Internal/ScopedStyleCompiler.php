@@ -2265,8 +2265,8 @@ final class ScopedStyleCompiler
     ): void {
         $trimmed = trim($value);
         $shadows = strtolower($trimmed) === 'none' ? [] : CssEffects::boxShadows($trimmed, $name);
-        // The first outer shadow keeps the legacy single-shadow keys (iOS and
-        // older hosts); the full list only travels when it adds information.
+        // The first outer shadow keeps the legacy single-shadow keys (hosts
+        // without the list); the full list only travels when it adds information.
         $outer = null;
         foreach ($shadows as $shadow) {
             if ($shadow[5] === 0) {

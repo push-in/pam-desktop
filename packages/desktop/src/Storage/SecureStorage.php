@@ -11,9 +11,11 @@ use Pam\Desktop\ModuleResultStatus;
 use Pam\Desktop\Modules\NativeModules;
 
 /**
- * Small secrets (PIN hashes, tokens, keys) kept by the platform secure store:
- * Android Keystore-sealed preferences, iOS Keychain (this device only, while
- * unlocked). Values are limited to 64 KiB; use Storage for anything else.
+ * Small secrets (PIN hashes, tokens, keys) kept in the keychain of the
+ * system: the Secret Service on Linux, the Keychain on macOS, the Credential
+ * Manager on Windows. Nothing is stored in the clear: without a reachable
+ * keychain every call fails. Values are limited to 64 KiB; use Storage for
+ * anything else.
  */
 final class SecureStorage
 {

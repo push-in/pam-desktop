@@ -15,7 +15,7 @@ use function json_encode;
 use function strlen;
 
 /**
- * What the installed renderer (Rust engine plus Android/iOS host) implements.
+ * What the installed renderer (Rust engine plus desktop host) implements.
  *
  * Hosts export it before PHP starts as compact JSON in
  * `PAM_RENDERER_CONTRACT`:
@@ -145,7 +145,7 @@ final class RendererContract
         self::$current = $contract;
     }
 
-    /** Canonical JSON, byte-identical to what the Android and iOS hosts export. */
+    /** Canonical JSON, byte-identical to what the host exports. */
     public function toJson(): string
     {
         return json_encode([

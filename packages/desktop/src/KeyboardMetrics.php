@@ -9,10 +9,11 @@ namespace Pam\Desktop;
  * settled soft keyboard over the app window. `height` is the visible keyboard
  * height in points measured from the window bottom (0 while hidden);
  * `durationMs` is the platform show/hide animation length when the host knows
- * it (iOS always, Android when the IME animates), otherwise 0.
+ * it, otherwise 0.
  *
- * Hosts publish one value per settled change (show, hide, resize such as a
- * suggestion strip or an emoji keyboard), never one per animation frame.
+ * Hosts publish one value per settled change (show, hide, resize), never one
+ * per animation frame. The desktop host has no soft keyboard and publishes
+ * none: the keyboard always reads as hidden.
  */
 final readonly class KeyboardMetrics
 {

@@ -135,7 +135,7 @@ final class PamPhpCompiler
      * prebuilt pack compiled from these very sources on the build host, with
      * the list of every component source. Boot from that listing: no walk of
      * the source tree and no read or fingerprint of each component (about
-     * 30 ms of file I/O before a phone's first frame). A component the pack
+     * 30 ms of file I/O before the first frame). A component the pack
      * does not hold (a stylesheet outside the bundle) compiles from source.
      * Development trees and hot reload bundles carry no such pack.
      *
@@ -629,7 +629,7 @@ final class PamPhpCompiler
 
     /**
      * Reuses a complete prebuilt file or restores it from its bundle pack.
-     * An interrupted device write can leave an empty/truncated derived file
+     * An interrupted write can leave an empty/truncated derived file
      * across launches; validate its size once, never on the render hot path.
      */
     public static function materializePrebuilt(string $file): void
@@ -723,10 +723,9 @@ final class PamPhpCompiler
 
     /**
      * Where a pack's component files are written: beside the pack when the
-     * bundle is writable (Android installs it per release, so it is pruned
-     * with the release), otherwise (an iOS app bundle is read-only) under the
-     * runtime state directory, where files of other packs are dropped the
-     * first time this one is used.
+     * bundle is writable (they are then removed with the bundle), otherwise
+     * (a read-only installed bundle) under the runtime state directory, where
+     * files of other packs are dropped the first time this one is used.
      */
     private static function prebuiltFilesDirectory(string $directory, string $id): string
     {
@@ -832,7 +831,7 @@ final class PamPhpCompiler
                 }
                 $relative = str_replace(DIRECTORY_SEPARATOR, '/', $relative);
                 // Every component source of the bundle, packed or not: the
-                // device boots from this listing (see bundledComponents()).
+                // app boots from this listing (see bundledComponents()).
                 $sources[] = $relative;
                 $compiledBase = substr($component->classFile, 0, -strlen('.class.php'));
                 $metadata = json_decode(
@@ -848,7 +847,7 @@ final class PamPhpCompiler
                 foreach ((array) ($metadata['dependencies'] ?? []) as $dependency => $fingerprint) {
                     $dependencyRelative = self::relativeTo($root, (string) $dependency);
                     if ($dependencyRelative === null) {
-                        // Stylesheets outside the bundle cannot be validated on device.
+                        // Stylesheets outside the bundle cannot be validated at run time.
                         continue 2;
                     }
                     $dependencies[str_replace(DIRECTORY_SEPARATOR, '/', $dependencyRelative)] = $fingerprint;
@@ -874,7 +873,7 @@ final class PamPhpCompiler
                     TemplateExpressionCatalog::bundleSource($component->template, $template),
                 ];
             }
-            // Every bundle file is created on device at the first launch after
+            // Every bundle file is created at the first launch after
             // an install: all components ship as one pack file (see PREBUILT_PACK).
             ksort($entries, SORT_STRING);
             $index = [];

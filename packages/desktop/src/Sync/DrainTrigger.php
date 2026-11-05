@@ -7,7 +7,7 @@ namespace Pam\Desktop\Sync;
 /** When OfflineMutationQueue::drainOn() calls the drain callback. */
 enum DrainTrigger: int
 {
-    /** The device goes from no network to a connection (watched only while mutations are pending). */
+    /** The system goes from no network to a connection (watched only while mutations are pending). */
     case Connectivity = 1;
     /** The app returns to the foreground. */
     case Foreground = 2;

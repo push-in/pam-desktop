@@ -8,7 +8,7 @@ use RuntimeException;
 
 /**
  * Neither the PHP extension nor the native host can perform a Pam\Desktop\Crypto
- * primitive (for example a PAM Desktop host older than 1.19.0 on a device).
+ * primitive (for example a PHP build without ext-sodium or ext-openssl).
  */
 final class CryptoUnavailableException extends RuntimeException
 {

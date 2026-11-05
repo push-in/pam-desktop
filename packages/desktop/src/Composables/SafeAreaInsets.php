@@ -7,7 +7,8 @@ namespace Pam\Desktop\Composables;
 use Pam\Desktop\WindowMetrics;
 
 /**
- * `useSafeAreaInsets()`: the system bars, notch and home indicator, in points.
+ * `useSafeAreaInsets()`: the safe-area insets of the window, in points.
+ * Always zero on desktop.
  *
  * @property-read float $top
  * @property-read float $right

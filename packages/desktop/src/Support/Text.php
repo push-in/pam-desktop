@@ -7,8 +7,7 @@ namespace Pam\Desktop\Support;
 use function count;
 
 /**
- * Text helpers that do not need ext-intl (the device PHP runtime ships
- * without it).
+ * Text helpers that do not need ext-intl.
  */
 final class Text
 {

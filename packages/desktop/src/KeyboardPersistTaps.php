@@ -7,6 +7,7 @@ namespace Pam\Desktop;
 /**
  * React Native `keyboardShouldPersistTaps` for ScrollView and lists: what a
  * tap inside the scroll view does while the soft keyboard is visible.
+ * Ignored on desktop, which has no soft keyboard.
  */
 enum KeyboardPersistTaps: int
 {

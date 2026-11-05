@@ -19,7 +19,7 @@ final readonly class EncryptedStatePersistence implements StorePersistence
     public function __construct(string $key)
     {
         if (!function_exists('sodium_crypto_secretbox')) {
-            throw new RuntimeException('Encrypted store persistence requires ext-sodium, which the Android/iOS PHP runtimes do not include.');
+            throw new RuntimeException('Encrypted store persistence requires ext-sodium.');
         }
         $decoded = base64_decode($key, true);
         if (!is_string($decoded) || strlen($decoded) !== SODIUM_CRYPTO_SECRETBOX_KEYBYTES) {

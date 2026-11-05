@@ -249,7 +249,7 @@ final class ComponentTimer implements Disposable
 
     /**
      * Wall-clock milliseconds: unlike the monotonic clock it keeps counting
-     * while the device sleeps, so a suspended timeout resumes with the time
+     * while the system sleeps, so a suspended timeout resumes with the time
      * really left.
      */
     private static function nowMs(): float

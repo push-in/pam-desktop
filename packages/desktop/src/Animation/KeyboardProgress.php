@@ -7,7 +7,7 @@ namespace Pam\Desktop\Animation;
 use InvalidArgumentException;
 use Stringable;
 
-/** Android IME progress: 0 hidden, 1 open; interpolation stays on the UI thread. */
+/** Soft-keyboard progress: 0 hidden, 1 open. Ignored on desktop, which has no soft keyboard. */
 final readonly class KeyboardProgress implements Stringable
 {
     /** @param list<string> $tracks */

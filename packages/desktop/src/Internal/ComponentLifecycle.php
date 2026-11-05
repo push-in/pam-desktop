@@ -588,9 +588,9 @@ final class ComponentLifecycle
 
     /**
      * `paused()`/`resumed()` follow the foreground: only Background pauses a
-     * component. Inactive means transient system UI (permission prompt, picker,
-     * share sheet, biometric dialog) is drawn over the still-visible app, so
-     * components stay resumed and observe it through `inactive()`/`activated()`.
+     * component. Inactive means the main window lost focus while the app stays
+     * visible, so components stay resumed and observe it through
+     * `inactive()`/`activated()`. The desktop host never reports Background.
      */
     /** Foreground state last delivered to components. */
     public static function currentAppState(): AppState

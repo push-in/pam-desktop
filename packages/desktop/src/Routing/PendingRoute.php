@@ -59,8 +59,9 @@ final class PendingRoute
     }
 
     /**
-     * Blocks screenshots and screen recording (Android FLAG_SECURE) while this
-     * route is the active entry of its navigator. Popping it clears the flag.
+     * Asks the platform to block screenshots and screen recording while this
+     * route is the active entry of its navigator; popping it clears the claim.
+     * No desktop backend enforces it yet (see Screen).
      */
     public function secure(bool $enabled = true): self
     {

@@ -59,9 +59,8 @@ final class Modal extends Element
     }
 
     /**
-     * Android: paints the modal window's navigation bar with this colour
-     * (no system scrim); its buttons turn dark on a light colour and light
-     * on a dark one. Unset, the bar follows the theme and translucency.
+     * Colour of the system navigation bar under a modal. Ignored on desktop,
+     * which has no such bar.
      */
     public function navigationBarColor(int $color): self
     {

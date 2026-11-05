@@ -109,7 +109,7 @@ final class Sources
         );
     }
 
-    /** @var DeviceInfo|null last device info the host reported (locale, time zone) */
+    /** @var DeviceInfo|null last system info the host reported (locale, time zone) */
     private static ?DeviceInfo $lastDevice = null;
 
     /** Asks the host for DeviceInfo while the device source runs; null when stopped. */
@@ -164,7 +164,7 @@ final class Sources
         (self::$askDevice)();
     }
 
-    /** @internal Tests: the device locale and time zone as if the host reported them. */
+    /** @internal Tests: the system locale and time zone as if the host reported them. */
     public static function reportDevice(DeviceInfo $info): void
     {
         self::$lastDevice = $info;

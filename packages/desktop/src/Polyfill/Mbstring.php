@@ -21,9 +21,8 @@ use function sprintf;
 use function strlen;
 
 /**
- * ext-mbstring in plain PHP for the mobile runtimes.
+ * ext-mbstring in plain PHP, for a PHP build without the extension.
  *
- * PAM's Android and iOS PHP builds do not compile ext-mbstring, so
  * src/Polyfill/mbstring_functions.php (autoloaded by Composer before any application
  * code) defines every function listed in FUNCTIONS through this class whenever
  * the extension is missing. Behaviour follows PHP 8.5's mbstring: invalid

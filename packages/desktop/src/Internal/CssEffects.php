@@ -24,7 +24,7 @@ use function strlen;
  *             "c":[[v,u],[v,u]] (center x/y)}
  *   unit: 0 auto, 1 fraction of the gradient line/box, 2 dp.
  * Box shadow wire: [[x, y, blur, spread, argb, inset], ...] in paint order.
- * Color matrix wire: 20 floats (Android ColorMatrix layout, offsets 0..255).
+ * Color matrix wire: 20 floats (4x5, row-major, offsets 0..255).
  */
 final class CssEffects
 {

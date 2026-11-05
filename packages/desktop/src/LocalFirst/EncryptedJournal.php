@@ -12,9 +12,8 @@ use function strlen;
 
 /**
  * AES-256-GCM sealed local-first journal: 'PNL1' . nonce(12) . tag(16) .
- * ciphertext, additional data 'PAM-NATIVE-LF1'. Uses ext-openssl when loaded
- * and the Android/iOS host otherwise (Pam\Desktop\Crypto), so an envelope
- * sealed on one opens on the other.
+ * ciphertext, additional data 'PAM-NATIVE-LF1'. Sealed through
+ * Pam\Desktop\Crypto, so an envelope sealed by one backend opens on another.
  */
 final class EncryptedJournal
 {

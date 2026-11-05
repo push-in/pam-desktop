@@ -35,7 +35,7 @@ final class I18n
     private static ?string $locale = null;
     /** The tag given to use() ("pt-BR"), before it was resolved to a catalog. */
     private static ?string $preferred = null;
-    /** IANA time zone override (useTimezone()); null follows the device. */
+    /** IANA time zone override (useTimezone()); null follows the system. */
     private static ?string $timezone = null;
     /** @var array<int, Closure(): void> */
     private static array $listeners = [];
@@ -79,7 +79,7 @@ final class I18n
 
     /**
      * Overrides the language (the app's preference over the system one).
-     * `null` removes the override; useLocale() then follows the device again.
+     * `null` removes the override; useLocale() then follows the system again.
      */
     public static function use(?string $locale): void
     {
@@ -100,7 +100,7 @@ final class I18n
 
     /**
      * Overrides the time zone useTimezone() reports (an IANA name such as
-     * "America/Sao_Paulo"); `null` follows the device again.
+     * "America/Sao_Paulo"); `null` follows the system again.
      */
     public static function useTimezone(?string $timezone): void
     {

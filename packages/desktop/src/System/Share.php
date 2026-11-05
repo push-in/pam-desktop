@@ -23,11 +23,12 @@ final class Share
     }
 
     /**
-     * Shares plain text through the platform share sheet.
+     * Shares plain text through the platform share sheet. Not available on
+     * desktop: the call fails with "Sharing is not available on this platform".
      *
-     * `$opened` fires once the sheet was presented. When the native side fails
-     * (no activity/presenter, no target), `$failure` receives its message;
-     * without `$failure` the failure is ignored as before (no exception).
+     * `$opened` fires once the sheet was presented. When the native side
+     * fails, `$failure` receives its message; without `$failure` the failure
+     * is ignored (no exception).
      *
      * @param null|Closure(): void $opened
      * @param null|Closure(string): void $failure
@@ -56,8 +57,8 @@ final class Share
     }
 
     /**
-     * Android-only package visibility check. iOS returns null (unsupported).
-     * Android 11+ callers must declare optional targets in their manifest queries.
+     * Whether an application package is installed. Unsupported on desktop:
+     * the callback receives null.
      * @param Closure(?bool): void $callback
      * @param null|Closure(string): void $failure
      */
@@ -77,7 +78,7 @@ final class Share
         );
     }
 
-    /** Android ACTION_SEND to one package, with temporary read access; iOS fails explicitly. */
+    /** Shares a file with one application package. Fails on desktop, like every share. */
     public static function fileToPackage(
         string $path,
         string $packageName,
@@ -94,18 +95,17 @@ final class Share
     private static function validatePackage(string $packageName): void
     {
         if (strlen($packageName) > 255 || preg_match('/^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$/D', $packageName) !== 1) {
-            throw new InvalidArgumentException('Invalid Android package name.');
+            throw new InvalidArgumentException('Invalid package name.');
         }
     }
 
     /**
-     * Shares private sandbox files through the platform share sheet.
+     * Shares private sandbox files through the platform share sheet. Not
+     * available on desktop: the call fails with "Sharing is not available on
+     * this platform".
      *
-     * Android grants temporary read access through the PAM FileProvider and uses
-     * ACTION_SEND for one file or ACTION_SEND_MULTIPLE for several files.
-     *
-     * `$text` (optional) travels beside the files — Android EXTRA_TEXT, iOS an
-     * extra activity item — so a picture can be shared with its caption/link.
+     * `$text` (optional) travels beside the files, so a picture can be shared
+     * with its caption/link.
      *
      * @param list<string> $paths Relative private file paths.
      * @param null|Closure(): void $opened

@@ -27,7 +27,7 @@ use function is_string;
  * signature, then
  *  - writes the typed navigation (`RouteName` enum + `Routes` helpers that
  *    return a TypedRoute), replacing routes.json + Navigation/Generated;
- *  - writes a JSON manifest the CLI uses to derive Android/iOS deep links;
+ *  - writes a JSON manifest the CLI uses to derive deep links;
  *  - checks every literal `navigate()`, `redirect()`, `Route::navigate()` and
  *    `<Link route=...>` in the app sources, so a wrong route name, parameter
  *    or literal type fails the build.

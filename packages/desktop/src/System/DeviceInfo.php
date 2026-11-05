@@ -29,20 +29,20 @@ final readonly class DeviceInfo
         public int $memoryClassMb = 0,
         public bool $lowRamDevice = false,
         public bool $powerSaveMode = false,
-        /** Installed app version (Android versionName, iOS CFBundleShortVersionString); '' when unknown. */
+        /** App version (`version` of pam-desktop.json); '' when unknown. */
         public string $appVersion = '',
-        /** Installed build number (Android versionCode, iOS CFBundleVersion); '' when unknown. */
+        /** Build number (`build` of pam-desktop.json); '' when unknown. */
         public string $buildNumber = '',
         /** System language as a BCP 47 tag ("pt-BR"); '' when unknown. See I18n::resolve(). */
         public string $locale = '',
-        /** Android Build.MANUFACTURER; empty when the host does not provide it. */
+        /** Hardware manufacturer; always empty on desktop. */
         public string $manufacturer = '',
-        /** Android Build.MODEL; empty when the host does not provide it. */
+        /** Hardware model; always empty on desktop. */
         public string $model = '',
     ) {
     }
 
-    /** True when the device should run reduced caches, prefetching and animations. */
+    /** True when the app should run reduced caches, prefetching and animations. Always false on desktop. */
     public function constrained(): bool
     {
         return $this->lowRamDevice

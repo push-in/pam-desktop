@@ -17,7 +17,7 @@ final readonly class FileReference
     /**
      * Returns an opaque renderer source for the file inside the application sandbox.
      *
-     * The native renderer resolves this URI without exposing an absolute device path.
+     * The native renderer resolves this URI without exposing an absolute path.
      */
     public function uri(): string
     {

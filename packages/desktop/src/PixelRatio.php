@@ -19,7 +19,7 @@ final class PixelRatio
     {
     }
 
-    /** Physical pixels per point (Android `displayMetrics.density`). */
+    /** Physical pixels per point (the display scale of the window). */
     public static function get(): float
     {
         $density = Runtime::windowMetrics()->density;
@@ -27,7 +27,7 @@ final class PixelRatio
         return is_finite($density) && $density > 0.0 ? $density : 1.0;
     }
 
-    /** Physical pixels per point multiplied by the accessibility font scale. */
+    /** The effective text scale: the system scale times the app's text multiplier. */
     public static function getFontScale(): float
     {
         $scale = Runtime::windowMetrics()->fontScale;

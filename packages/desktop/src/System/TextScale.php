@@ -8,7 +8,8 @@ namespace Pam\Desktop\System;
  * Application text scale reported by Accessibility::textScale(). Text renders
  * at `appliedMultiplier * min(systemScale, appliedMaxSystemScale)` (an applied
  * cap of 0 leaves the system scale uncapped). A value stored with
- * Accessibility::setTextScale() takes effect on the next launch.
+ * Accessibility::setTextScale() takes effect at once, so the applied values
+ * equal the stored ones.
  */
 final readonly class TextScale
 {
@@ -22,7 +23,7 @@ final readonly class TextScale
     ) {
     }
 
-    /** True when the stored value differs from the one this launch renders with. */
+    /** True when the stored value differs from the one being rendered. Always false on desktop. */
     public function pendingRestart(): bool
     {
         return abs($this->multiplier - $this->appliedMultiplier) > 1e-6

@@ -12,8 +12,8 @@ use Pam\Desktop\PropKey;
 use Pam\Desktop\Renderable;
 
 /**
- * A component mounted by Testing\mount(): its lifecycle runs like on a
- * device. `render()` runs another render pass, `focus()`/`blur()` act like
+ * A component mounted by Testing\mount(): its lifecycle runs as in a
+ * running app. `render()` runs another render pass, `focus()`/`blur()` act like
  * the navigator, `unmount()` releases what setup() created.
  *
  * @template T of Renderable

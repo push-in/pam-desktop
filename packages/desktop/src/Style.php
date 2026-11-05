@@ -261,7 +261,7 @@ final readonly class Style
      */
     public function properties(): array
     {
-        // Android/iOS hosts read the fields natively (same result).
+        // Native fast path of hosts that define it (same result); the desktop worker has none.
         static $native = null;
         $native ??= function_exists('pam_desktop_style_properties');
         if ($native) {

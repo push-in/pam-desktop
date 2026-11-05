@@ -45,8 +45,9 @@ final class Permissions
 
     /**
      * Requests the kind. With a `$rationale`, when the platform says one should
-     * be shown (Android after a denial), a native alert explains it first and
-     * the request runs only if confirmed; cancelling answers the current status.
+     * be shown, a native alert explains it first and the request runs only if
+     * confirmed; cancelling answers the current status. Desktop reports every
+     * kind as granted and never wants a rationale.
      *
      * @param Closure(PermissionDecision): void $callback
      * @param null|Closure(string): void $failure Receives the native error instead of an exception.
@@ -84,8 +85,8 @@ final class Permissions
     }
 
     /**
-     * Whether Android wants an explanation before asking again for the kind's
-     * permissions (`shouldShowRequestPermissionRationale`). iOS is always false.
+     * Whether the platform wants an explanation before asking again for the
+     * kind's permissions. Always false on desktop.
      *
      * @param Closure(bool): void $callback
      * @param null|Closure(string): void $failure

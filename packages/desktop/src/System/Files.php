@@ -494,8 +494,8 @@ final class Files
     }
 
     /**
-     * Copies a granted Android content URI or an iOS PhotoKit asset into the PAM file
-     * sandbox so it can be uploaded, edited and retained safely.
+     * Copies a content URI or a PhotoKit asset into the PAM file sandbox.
+     * Mobile only: the desktop host fails the call. Use Files::pick() there.
      *
      * @param Closure(FileReference): void $callback
      */

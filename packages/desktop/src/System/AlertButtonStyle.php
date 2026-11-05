@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Pam\Desktop\System;
 
-/** Native alert button roles (Android dialog slot / iOS UIAlertAction.Style). */
+/** Native alert button roles. */
 enum AlertButtonStyle: int
 {
     case Default = 1;

@@ -42,8 +42,8 @@ final class Alert
 
     /**
      * Native alert with 1-3 buttons (at most one Cancel). `$pressed` receives
-     * the pressed button's index in `$buttons`; on Android back/outside tap
-     * answers the Cancel button's index (or `DISMISSED` without one).
+     * the pressed button's index in `$buttons`; closing the dialog another
+     * way answers the Cancel button's index (or `DISMISSED` without one).
      *
      * @param list<AlertButton> $buttons
      * @param Closure(int): void $pressed

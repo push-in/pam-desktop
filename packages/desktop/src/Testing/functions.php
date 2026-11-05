@@ -98,8 +98,8 @@ if (!\function_exists('Pam\Desktop\Testing\environment')) {
      * scheme ('light'|'dark', as the system scheme), safe-area insets
      * (['top' => 24, 'bottom' => 34, ...]), the window (['width', 'height',
      * 'scale', 'fontScale']), the keyboard (its height; 0 or false hides it)
-     * and the device locale and time zone. Composables and mounted
-     * components update as on a device. Arguments left null keep their value.
+     * and the system locale and time zone. Composables and mounted
+     * components update as in a running app. Arguments left null keep their value.
      *
      * @param array{top?: float|int, right?: float|int, bottom?: float|int, left?: float|int}|null $insets
      * @param array{width?: float|int, height?: float|int, scale?: float|int, fontScale?: float|int}|null $window

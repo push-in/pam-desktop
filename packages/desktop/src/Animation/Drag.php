@@ -102,7 +102,7 @@ final readonly class Drag implements Stringable
         );
     }
 
-    /** Fraction of finger movement applied past the bounds (0 = hard stop, 0.5 = iOS-like). */
+    /** Fraction of pointer movement applied past the bounds (0 = hard stop, 0.5 = soft rubber band). */
     public function rubberBand(float $factor): self
     {
         return $this->with(rubber: max(0.0, min(1.0, $factor)));
@@ -161,7 +161,7 @@ final readonly class Drag implements Stringable
         return $this->with(settles: $settles);
     }
 
-    /** Light haptic tick when the threshold is crossed (swipe-to-reply). */
+    /** Light haptic tick when the threshold is crossed (swipe-to-reply). No effect on desktop. */
     public function haptic(bool $enabled = true): self
     {
         return $this->with(haptic: $enabled);

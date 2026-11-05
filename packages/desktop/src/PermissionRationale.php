@@ -8,8 +8,8 @@ use InvalidArgumentException;
 
 /**
  * Explanation shown in a native alert before `Permissions::requestKind()`
- * asks again, when the platform says a rationale should be shown (Android
- * only; iOS never asks for one).
+ * asks again, when the platform says a rationale should be shown. Never
+ * shown on desktop, where every kind is already granted.
  */
 final readonly class PermissionRationale
 {

@@ -55,8 +55,8 @@ final class ViewRef
     }
 
     /**
-     * Focuses the input and opens the soft keyboard (React Native
-     * `ref.focus()`); waits for a sheet or dialog that is still presenting.
+     * Focuses the input (React Native `ref.focus()`); waits for a sheet or
+     * dialog that is still presenting.
      *
      * @param (Closure(bool, string): void)|null $done success and error message
      */

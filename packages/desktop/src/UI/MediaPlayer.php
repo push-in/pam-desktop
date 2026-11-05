@@ -103,20 +103,17 @@ final class MediaPlayer extends Element
 
     /**
      * Visible autoplay, decided natively with no round-trip: the player
-     * prepares and plays while at least `$fraction` of it shows on screen and
-     * its scrolling list is at rest (not dragged, not flinging); it pauses
-     * when it falls below `$fraction - 0.2` (or another player of its group
+     * prepares and plays while at least `$fraction` of it shows on screen; it
+     * pauses when it falls below `$fraction - 0.2` (or another player of its group
      * takes over) and releases its decoder shortly after, keeping its
      * position for when it plays again. `autoPlay` stays the play intent:
      * false keeps the player paused whatever its visibility.
      *
-     * `$group`: players sharing a group inside the same list play one at a
-     * time (the one already playing while it stays visible, else the topmost
-     * eligible). An empty group lets each player decide alone.
+     * `$group`: players sharing a group play one at a time (the one already
+     * playing while it stays visible, else the topmost eligible). An empty
+     * group lets each player decide alone.
      *
-     * Android renderer; others declare the properties and ignore them, so
-     * keep a visibility gate of your own there. Requires a renderer declaring
-     * properties 1006 (fraction) and 1007 (group).
+     * Implemented by the desktop core, the same on every backend.
      */
     public function autoPlayWhenVisible(float $fraction = 0.5, string $group = ''): self
     {
@@ -153,9 +150,8 @@ final class MediaPlayer extends Element
     }
 
     /**
-     * Media buffered before playback starts (ExoPlayer `bufferForPlaybackMs`;
-     * on iOS playback starts once that much is loaded ahead of the playhead).
-     * 0 keeps the platform default.
+     * Media buffered before playback starts; 0 keeps the platform default.
+     * Ignored on desktop.
      */
     public function startBufferMs(int $milliseconds): self
     {

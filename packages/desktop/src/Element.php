@@ -266,8 +266,9 @@ abstract class Element implements Renderable
 
     /**
      * Preserves the visual identity of this element across a native route
-     * transition. Matching tags are measured and animated entirely by UIKit or
-     * Android's UI thread; PHP is never involved per frame.
+     * transition. Matching tags are measured and animated entirely by the
+     * host; PHP is never involved per frame. On desktop only images fly;
+     * other elements appear with their route.
      */
     final public function sharedTransition(
         string $tag,
@@ -356,9 +357,9 @@ abstract class Element implements Renderable
     }
 
     /**
-     * React Native `needsOffscreenAlphaCompositing` (Android): fade this
-     * view's subtree as one flattened layer instead of drawing each child
-     * with the opacity. Off by default, like React Native.
+     * React Native `needsOffscreenAlphaCompositing`: fade this view's
+     * subtree as one flattened layer instead of drawing each child with the
+     * opacity. Off by default, like React Native. Ignored on desktop.
      */
     final public function needsOffscreenAlphaCompositing(bool $enabled = true): static
     {
@@ -429,8 +430,8 @@ abstract class Element implements Renderable
     }
 
     /**
-     * The menu opened by a secondary click (right button, Control-click or
-     * the menu key) on the element. Each item runs its own handler.
+     * The menu opened by a secondary click on the element (right button;
+     * Control-click on macOS). Each item runs its own handler.
      *
      * ```php
      * Row::make(...)->contextMenu(
@@ -710,7 +711,7 @@ abstract class Element implements Renderable
         PropKey::RefreshProgressViewOffset->value => true,
         PropKey::RefreshIndicatorSize->value => true,
         PropKey::OnRefresh->value => true,
-        // RN RefreshControl `tintColor` (iOS spinner; Android without colors).
+        // RN RefreshControl `tintColor`: the spinner color, before RefreshColors.
         PropKey::TintColor->value => true,
     ];
 

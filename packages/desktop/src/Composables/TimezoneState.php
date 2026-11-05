@@ -10,13 +10,13 @@ use Pam\Desktop\I18n\I18n;
 use Pam\Desktop\System\DeviceInfo;
 
 /**
- * `useTimezone()`: the device time zone, with the I18n::useTimezone()
+ * `useTimezone()`: the system time zone, with the I18n::useTimezone()
  * override on top. Reactive like useLocale().
  *
- * @property-read string $value effective IANA name: the override, else the device, else PHP's default zone
+ * @property-read string $value effective IANA name: the override, else the system, else PHP's default zone
  * @property-read string $device system zone, '' until the host reported it
- * @property-read bool $known true once the host reported the device zone
- * @property-read bool $overridden true while I18n::useTimezone() overrides the device
+ * @property-read bool $known true once the host reported the system zone
+ * @property-read bool $overridden true while I18n::useTimezone() overrides the system
  */
 final class TimezoneState extends ReactiveObject
 {
@@ -50,7 +50,7 @@ final class TimezoneState extends ReactiveObject
         };
     }
 
-    /** Overrides the zone (I18n::useTimezone()); null follows the device again. */
+    /** Overrides the zone (I18n::useTimezone()); null follows the system again. */
     public function set(?string $timezone): void
     {
         I18n::useTimezone($timezone);

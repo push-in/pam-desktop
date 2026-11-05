@@ -205,7 +205,7 @@ abstract class Component implements Renderable
     {
     }
 
-    /** Transient system UI (permission prompt, picker, share sheet, biometric dialog) is covering the still-visible app. */
+    /** The main window lost focus while the app stays visible. */
     public function inactive(): void
     {
     }

@@ -9,7 +9,7 @@ use Pam\Desktop\System\Keyboard;
 
 /**
  * `useKeyboard()`: the settled soft keyboard (one update per show, hide or
- * resize, never per animation frame).
+ * resize, never per animation frame). Always hidden on desktop.
  *
  * @property-read bool $visible
  * @property-read float $height points from the window bottom, 0 while hidden

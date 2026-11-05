@@ -10,20 +10,19 @@ use function sprintf;
 use function strlen;
 
 /**
- * Ed25519 signature verification and AES-256-GCM on every PAM runtime.
+ * Ed25519 signature verification and AES-256-GCM.
  *
- * The Android and iOS PHP runtimes have neither ext-sodium nor ext-openssl.
- * Where the extensions are loaded (desktop `pam dev`, tests, servers) they do
- * the work; on a device the host does it through `pam_desktop_crypto()`:
- * Android uses the platform JCA (AES-GCM) and a Kotlin Ed25519 verifier,
- * iOS uses CryptoKit. Every backend gives the same bytes and the same
- * decisions as libsodium and OpenSSL, including libsodium's Ed25519 rules
- * (canonical S, no small-order R or public key, canonical public key,
- * cofactorless equation); tests/Fixtures/crypto-vectors.json pins them on
- * all three.
+ * ext-sodium and ext-openssl do the work when the worker's PHP has them
+ * loaded; a host function `pam_desktop_crypto()` is used otherwise. The
+ * desktop host does not define that function, so a PHP build without the
+ * extensions throws CryptoUnavailableException. Every backend gives the same
+ * bytes and the same decisions as libsodium and OpenSSL, including
+ * libsodium's Ed25519 rules (canonical S, no small-order R or public key,
+ * canonical public key, cofactorless equation);
+ * tests/Fixtures/crypto-vectors.json pins them.
  *
  * AES-256-GCM output is `ciphertext . tag` (16-byte tag), like
- * sodium_crypto_aead_aes256gcm_encrypt() and Java's AES/GCM/NoPadding.
+ * sodium_crypto_aead_aes256gcm_encrypt().
  * HMAC and HKDF need nothing here: ext-hash (hash_hmac(), hash_hkdf()) and
  * random_bytes() are always compiled.
  */
@@ -144,7 +143,7 @@ final class Crypto
     private static function native(int $operation, string $key, string $nonce, string $additionalData, string $input): string|bool
     {
         if (!function_exists('pam_desktop_crypto')) {
-            throw new CryptoUnavailableException('This PAM Desktop host does not provide pam_desktop_crypto(); update the Android/iOS host to PAM Desktop 1.19.0 or later.');
+            throw new CryptoUnavailableException('This PAM Desktop host does not provide pam_desktop_crypto().');
         }
         $result = pam_desktop_crypto($operation, $key, $nonce, $additionalData, $input);
         if ($result === null) {

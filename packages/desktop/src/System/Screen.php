@@ -10,8 +10,8 @@ use Pam\Desktop\ModuleResultStatus;
 use Pam\Desktop\Modules\NativeModules;
 
 /**
- * Screen privacy. Secure mode blocks screenshots, screen recording and
- * recent-apps previews (Android FLAG_SECURE).
+ * Screen privacy. Secure mode asks the platform to keep the window out of
+ * screenshots and screen recording.
  *
  * Prefer route-scoped protection, which clears itself when the route is popped:
  *
@@ -21,7 +21,7 @@ use Pam\Desktop\Modules\NativeModules;
  * Independent features (an app lock, a screen showing a secret) use named
  * claims: Screen::claim('app-lock') / Screen::release('app-lock'); secure
  * mode stays on while any claim is held.
- * iOS has no public equivalent; the callback then receives false.
+ * No desktop backend enforces it yet; the callback then receives false.
  */
 final class Screen
 {

@@ -48,8 +48,8 @@ final class UpdateVerifier
         $signature = base64_decode($signatureBase64, true);
         $publicKey = base64_decode($publicKeyBase64, true);
         try {
-            // libsodium when loaded, the Android/iOS host otherwise (the mobile
-            // PHP runtimes have no ext-sodium); identical decisions.
+            // Through Pam\Desktop\Crypto: libsodium when loaded; without a
+            // backend the update is refused.
             $verified = is_string($signature) && is_string($publicKey)
                 && Crypto::ed25519Verify($signature, $manifestJson, $publicKey);
         } catch (CryptoUnavailableException $error) {

@@ -8,16 +8,16 @@ use Pam\Desktop\I18n\I18n;
 use Pam\Desktop\System\DeviceInfo;
 
 /**
- * `useLocale()`: the device language, with the app's I18n::use() override on
+ * `useLocale()`: the system language, with the app's I18n::use() override on
  * top. Reactive: changes when the override changes or when the app returns
  * to the foreground with another system language.
  *
- * @property-read string $value effective BCP 47 tag ("pt-BR"): the override, else the device, else the I18n source locale
+ * @property-read string $value effective BCP 47 tag ("pt-BR"): the override, else the system, else the I18n source locale
  * @property-read string $language catalog language for that tag (I18n::resolve(), e.g. "pt")
  * @property-read ?string $region region subtag ("BR"), null when the tag has none
  * @property-read string $device system language tag, '' until the host reported it
- * @property-read bool $known true once the host reported the device locale
- * @property-read bool $overridden true while I18n::use() overrides the device
+ * @property-read bool $known true once the host reported the system locale
+ * @property-read bool $overridden true while I18n::use() overrides the system
  */
 final class LocaleState extends ReactiveObject
 {
@@ -54,7 +54,7 @@ final class LocaleState extends ReactiveObject
         };
     }
 
-    /** Overrides the language (I18n::use()); null follows the device again. */
+    /** Overrides the language (I18n::use()); null follows the system again. */
     public function set(?string $locale): void
     {
         I18n::use($locale);

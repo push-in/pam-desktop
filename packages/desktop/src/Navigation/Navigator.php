@@ -238,7 +238,8 @@ final class Navigator extends Component implements Restorable, NavigationStatePr
     }
 
     /**
-     * Runs before Android system Back changes the navigation stack.
+     * Runs before a system back request (Alt+Left, Cmd+[ on macOS or a back
+     * button of the mouse or keyboard) changes the navigation stack.
      *
      * Return true from the interceptor after dismissing transient UI such as
      * selection, editing, search, or an in-screen viewer. Returning false lets
@@ -444,7 +445,7 @@ final class Navigator extends Component implements Restorable, NavigationStatePr
         }
         // A restored or reset stack has no outgoing route and no transition to
         // settle into Idle, so the entry below the top is mounted here too:
-        // the iOS back gesture (and Android's predictive back) needs it.
+        // a host-driven back gesture needs it.
         if ($this->operation === NavigationOperation::Reset && $this->outgoing === null && count($this->stack) > 1) {
             $entries[] = $this->stack[count($this->stack) - 2];
         }

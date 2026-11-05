@@ -3,9 +3,9 @@
 declare(strict_types=1);
 
 /*
- * ext-mbstring for PAM's mobile runtimes. Android and iOS embed PHP without
- * ext-mbstring; Composer loads this file (autoload "files") before any
- * application or package code, so mb_* calls behave as on a desktop PHP.
+ * ext-mbstring for a PHP build without it. Composer loads this file
+ * (autoload "files") before any application or package code, so mb_* calls
+ * always work.
  * Each function is only defined when it does not exist yet, so a real
  * ext-mbstring (or an application polyfill loaded first) always wins.
  * Like the internal functions, a null string argument is read as "".

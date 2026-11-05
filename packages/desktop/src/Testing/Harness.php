@@ -25,7 +25,7 @@ use Throwable;
 /**
  * Runs mounted test roots through the real runtime: one root renders every
  * Mounted handle, so setup(), mount(), onMounted(), focus hooks, unmount and
- * the scope release happen exactly as on a device (without a host, frames
+ * the scope release happen exactly as in a running app (without a host, frames
  * are encoded and dropped).
  *
  * @internal Use Testing\mount(), Testing\routes() and Testing\reset().

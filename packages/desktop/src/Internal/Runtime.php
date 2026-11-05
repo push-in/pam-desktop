@@ -509,7 +509,7 @@ final class Runtime
 
     /**
      * Renders once if anything was dispatched or scheduled since the last
-     * render. With deferred rendering (the device hosts) this is the only
+     * render. With deferred rendering (the desktop worker) this is the only
      * place the host hands PHP its turn, so the task queue runs here too:
      * work scheduled by handlers (useResource loaders) before the render,
      * work scheduled while rendering (a resource first read in setup())

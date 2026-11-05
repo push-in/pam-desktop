@@ -174,9 +174,10 @@ final class TreeEncoder
     }
 
     /**
-     * Handle of the host's native encoder (Android/iOS register
-     * pam_desktop_encoder_*): the same frames and patches, byte for byte,
-     * written natively. PAM_DESKTOP_ENCODER=php keeps this PHP encoder.
+     * Handle of a host's native encoder (pam_desktop_encoder_*): the same
+     * frames and patches, byte for byte, written natively. The desktop worker
+     * defines none and always uses this PHP encoder, as PAM_DESKTOP_ENCODER=php
+     * does elsewhere.
      */
     private ?int $native = null;
 

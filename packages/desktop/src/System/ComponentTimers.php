@@ -17,7 +17,7 @@ use function count;
 /**
  * The timers of one component, returned by `$this->timers()`. Timeouts may
  * be longer than a day (armed in steps) and measure the remaining delay with
- * the wall clock, so device sleep counts. Everything
+ * the wall clock, so system sleep counts. Everything
  * created here stops on unmount; timeouts and intervals also follow their
  * TimerBackgroundPolicy (Suspend by default) while the app is in the
  * background, and are re-armed when the component resumes.

@@ -58,9 +58,7 @@ final class Appearance
     }
 
     /**
-     * The operating-system scheme, or null while the host cannot observe it
-     * (for example, an Android 12+ per-app override with a scheduled system
-     * dark theme).
+     * The operating-system scheme, or null when the host did not report it.
      */
     public static function system(): ?UserInterfaceAppearance
     {
@@ -74,7 +72,7 @@ final class Appearance
 
     /**
      * Selects and persists the application's appearance. The PHP tree restyles
-     * immediately; the native window, system bars and next cold start follow.
+     * immediately; the native window and the next launch follow.
      *
      * @param (Closure(bool): void)|null $completion receives whether the host persisted it
      */
