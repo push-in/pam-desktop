@@ -1,0 +1,359 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Http;
+
+use Closure;
+use Pam\Desktop\Internal\Runtime;
+use Pam\Desktop\Internal\Wire;
+use Pam\Desktop\ModuleResultStatus;
+use Pam\Desktop\NativeOperation;
+use RuntimeException;
+
+use function count;
+use function in_array;
+use function is_array;
+use function is_string;
+use function strlen;
+
+final class Http
+{
+    private const MAX_BODY_BYTES = 1_048_576;
+
+    private function __construct()
+    {
+    }
+
+    /**
+     * Axios-style client with a base URL, default headers, timeout, retry and
+     * chained onRequest/onResponse/onError interceptors. Its requests return
+     * a PendingResponse (Thenable of Response) instead of taking a callback.
+     *
+     * @param array<string, string> $headers
+     * @param int $retry Extra attempts for idempotent requests after a
+     *     transport failure, 408, 429 or 5xx (0-5).
+     */
+    public static function create(
+        string $baseUrl = '',
+        array $headers = [],
+        int $timeout = 30_000,
+        int $retry = 0,
+        int $retryDelay = 300,
+    ): HttpClient {
+        return new HttpClient(
+            $baseUrl,
+            ['Accept' => 'application/json', ...$headers],
+            $timeout,
+            $retry,
+            $retryDelay,
+        );
+    }
+
+    /** @param Closure(HttpResponse): void $callback */
+    public static function get(
+        string $url,
+        Closure $callback,
+        ?OutboundTraceContext $trace = null,
+    ): int
+    {
+        return self::request('GET', $url, $callback, trace: $trace);
+    }
+
+    /**
+     * @param Closure(HttpResponse): void $callback
+     * @param array<string, string> $headers
+     */
+    public static function post(
+        string $url,
+        Closure $callback,
+        array $headers = [],
+        ?string $body = null,
+        int $timeoutMs = 30_000,
+        ?OutboundTraceContext $trace = null,
+    ): int {
+        return self::request('POST', $url, $callback, $headers, $body, $timeoutMs, $trace);
+    }
+
+    /**
+     * @param Closure(HttpResponse): void $callback
+     * @param array<string, string> $headers
+     */
+    public static function put(
+        string $url,
+        Closure $callback,
+        array $headers = [],
+        ?string $body = null,
+        int $timeoutMs = 30_000,
+        ?OutboundTraceContext $trace = null,
+    ): int {
+        return self::request('PUT', $url, $callback, $headers, $body, $timeoutMs, $trace);
+    }
+
+    /**
+     * @param Closure(HttpResponse): void $callback
+     * @param array<string, string> $headers
+     */
+    public static function patch(
+        string $url,
+        Closure $callback,
+        array $headers = [],
+        ?string $body = null,
+        int $timeoutMs = 30_000,
+        ?OutboundTraceContext $trace = null,
+    ): int {
+        return self::request('PATCH', $url, $callback, $headers, $body, $timeoutMs, $trace);
+    }
+
+    /**
+     * @param Closure(HttpResponse): void $callback
+     * @param array<string, string> $headers
+     */
+    public static function delete(
+        string $url,
+        Closure $callback,
+        array $headers = [],
+        ?string $body = null,
+        int $timeoutMs = 30_000,
+        ?OutboundTraceContext $trace = null,
+    ): int {
+        return self::request('DELETE', $url, $callback, $headers, $body, $timeoutMs, $trace);
+    }
+
+    /**
+     * @param Closure(HttpResponse): void $callback
+     * @param array<string, string> $headers
+     */
+    public static function request(
+        string $method,
+        string $url,
+        Closure $callback,
+        array $headers = [],
+        ?string $body = null,
+        int $timeoutMs = 30_000,
+        ?OutboundTraceContext $trace = null,
+    ): int {
+        return self::send($method, $url, $callback, $headers, $body, $timeoutMs, $trace);
+    }
+
+    /**
+     * PUT a file from the private Files directory without reading its bytes into PHP.
+     * @param Closure(HttpResponse): void $callback
+     * @param array<string, string> $headers
+     */
+    public static function upload(
+        string $url,
+        string $path,
+        Closure $callback,
+        array $headers = [],
+        int $timeoutMs = 120_000,
+        ?OutboundTraceContext $trace = null,
+        ?Closure $progress = null,
+    ): int {
+        if ($path === '' || strlen($path) > 4096 || str_starts_with($path, '/')
+            || str_contains($path, '\\') || preg_match('/[\x00-\x1f\x7f]/', $path)
+            || array_intersect(explode('/', $path), ['', '.', '..']) !== []) {
+            throw new RuntimeException('Upload source must be a relative private file path.');
+        }
+        if ($progress !== null) {
+            return self::uploadWithProgress($url, $path, $callback, $progress, $headers, $timeoutMs, $trace)->id;
+        }
+        return self::send('PUT', $url, $callback, $headers, null, $timeoutMs, $trace, $path);
+    }
+
+    /**
+     * PUT a private file with streamed byte progress. Cancel through the returned handle.
+     *
+     * @param Closure(HttpResponse): void $callback
+     * @param Closure(TransferProgress): void $progress
+     * @param array<string, string> $headers
+     */
+    public static function uploadWithProgress(
+        string $url,
+        string $path,
+        Closure $callback,
+        Closure $progress,
+        array $headers = [],
+        int $timeoutMs = 120_000,
+        ?OutboundTraceContext $trace = null,
+    ): HttpTransfer {
+        self::assertTransferUrl($url);
+        if ($trace !== null && !$trace->allows($url)) {
+            throw new RuntimeException('Trace context origin does not match the HTTP request origin.');
+        }
+        $payload = [
+            'kind' => 2,
+            'url' => $url,
+            'method' => 'PUT',
+            'path' => \Pam\Desktop\System\Files::privatePath($path, 'Upload source'),
+            'headers' => json_encode((object) self::normalizeHeaders($headers, transport: true), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+            'timeoutMs' => max(1_000, min(600_000, $timeoutMs)),
+        ];
+        if ($trace !== null) {
+            $payload['traceparent'] = $trace->traceparent;
+            $payload['traceOrigin'] = $trace->origin;
+        }
+
+        return HttpTransfers::start($payload, $callback, $progress);
+    }
+
+    /** Starts a fluent multipart/form-data upload. */
+    public static function multipart(string $url): MultipartRequest
+    {
+        return new MultipartRequest($url);
+    }
+
+    /** Cancels a transfer started with progress; its callback is not invoked. */
+    public static function cancelTransfer(HttpTransfer|int $transfer): void
+    {
+        HttpTransfers::cancel($transfer instanceof HttpTransfer ? $transfer->id : $transfer);
+    }
+
+    /** @internal */
+    public static function assertTransferUrl(string $url): void
+    {
+        $parts = parse_url($url);
+        if (
+            strlen($url) > 8_192
+            || !is_array($parts)
+            || !in_array(strtolower((string) ($parts['scheme'] ?? '')), ['https', 'http'], true)
+            || ($parts['host'] ?? '') === ''
+            || isset($parts['user'])
+            || isset($parts['pass'])
+        ) {
+            throw new RuntimeException('Transfer URL must be an absolute HTTPS URL without credentials.');
+        }
+    }
+
+    /**
+     * @internal
+     * @param array<array-key, mixed> $headers
+     * @return array<string, string>
+     */
+    public static function normalizeHeaders(array $headers, bool $transport = false): array
+    {
+        if (count($headers) > 32) {
+            throw new RuntimeException('HTTP requests support at most 32 headers.');
+        }
+        $normalizedHeaders = [];
+        foreach ($headers as $name => $value) {
+            if (
+                !is_string($name)
+                || !is_string($value)
+                || preg_match('/^[A-Za-z0-9-]{1,64}$/', $name) !== 1
+                || str_contains($value, "\r")
+                || str_contains($value, "\n")
+                || strlen($value) > 8_192
+            ) {
+                throw new RuntimeException('HTTP headers must use safe names and bounded single-line values.');
+            }
+            if (in_array(strtolower($name), ['traceparent', 'tracestate'], true)) {
+                throw new RuntimeException('Trace headers require an origin-scoped OutboundTraceContext.');
+            }
+            if ($transport && in_array(strtolower($name), ['host', 'content-length', 'transfer-encoding', 'connection', 'trailer', 'upgrade'], true)) {
+                throw new RuntimeException('File upload headers cannot override HTTP transport fields.');
+            }
+            $normalizedHeaders[$name] = $value;
+        }
+
+        return $normalizedHeaders;
+    }
+
+    /** @param Closure(HttpResponse): void $callback
+     * @param array<string, string> $headers
+     */
+    private static function send(
+        string $method,
+        string $url,
+        Closure $callback,
+        array $headers,
+        ?string $body,
+        int $timeoutMs,
+        ?OutboundTraceContext $trace,
+        ?string $source = null,
+    ): int {
+        $method = strtoupper(trim($method));
+        if (!in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+            throw new RuntimeException("Unsupported HTTP method {$method}.");
+        }
+        if ($body !== null && strlen($body) > self::MAX_BODY_BYTES) {
+            throw new RuntimeException('HTTP request body cannot exceed one MiB.');
+        }
+        $normalizedHeaders = self::normalizeHeaders($headers, transport: $source !== null);
+
+        if ($trace !== null && !$trace->allows($url)) {
+            throw new RuntimeException('Trace context origin does not match the HTTP request origin.');
+        }
+
+        $payload = [
+            'url' => $url,
+            'method' => $method,
+            'headers' => json_encode((object) $normalizedHeaders, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+            'timeoutMs' => max(1_000, min(120_000, $timeoutMs)),
+        ];
+        if ($source !== null) {
+            $payload['path'] = $source;
+        }
+        if ($body !== null) {
+            $payload['body'] = $body;
+        }
+        if ($trace !== null) {
+            $payload['traceparent'] = $trace->traceparent;
+            $payload['traceOrigin'] = $trace->origin;
+        }
+
+        return Runtime::call(
+            module: 'http',
+            method: $source === null ? 'request' : 'upload',
+            payload: Wire::map($payload),
+            callback: self::responseCallback($callback),
+        );
+    }
+
+    /**
+     * @param Closure(HttpResponse): void $callback
+     * @param array<string, mixed> $data
+     * @param array<string, string> $headers
+     */
+    public static function json(
+        string $method,
+        string $url,
+        array $data,
+        Closure $callback,
+        array $headers = [],
+        int $timeoutMs = 30_000,
+        ?OutboundTraceContext $trace = null,
+    ): int {
+        return self::request(
+            method: $method,
+            url: $url,
+            callback: $callback,
+            headers: [
+                'Accept' => 'application/json',
+                'Content-Type' => 'application/json',
+                ...$headers,
+            ],
+            body: json_encode($data, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+            timeoutMs: $timeoutMs,
+            trace: $trace,
+        );
+    }
+
+    /** @param Closure(HttpResponse): void $callback */
+    private static function responseCallback(Closure $callback): Closure
+    {
+        return static function (ModuleResultStatus $status, string $payload) use ($callback): void {
+            if ($status === ModuleResultStatus::Failure) {
+                $callback(new HttpResponse(
+                    statusCode: 0,
+                    body: '',
+                    error: $payload,
+                ));
+
+                return;
+            }
+
+            $callback(HttpResponse::fromNative(Wire::decodeMap($payload)));
+        };
+    }
+}

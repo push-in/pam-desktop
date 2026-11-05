@@ -1,0 +1,63 @@
+<?php
+
+declare(strict_types=1);
+
+use Pam\Desktop\Internal\TreeEncoder;
+use Pam\Desktop\Theme;
+use Pam\Desktop\UI\Column;
+use Pam\Desktop\UI\Text;
+
+spl_autoload_register(static function (string $class): void {
+    $prefix = 'Pam\\Desktop\\';
+    if (str_starts_with($class, $prefix)) {
+        $path = __DIR__.'/../src/'.str_replace('\\', '/', substr($class, strlen($prefix))).'.php';
+        if (is_file($path)) {
+            require $path;
+        }
+    }
+});
+
+$children = [];
+for ($index = 0; $index < 1_000; $index++) {
+    $children[] = Text::make("Row {$index}")->key("row:{$index}");
+}
+$tree = Column::make(...$children)->key('benchmark');
+$encoder = new TreeEncoder();
+$started = hrtime(true);
+$encoder->encode($tree);
+$firstMs = (hrtime(true) - $started) / 1_000_000;
+
+$started = hrtime(true);
+for ($iteration = 0; $iteration < 500; $iteration++) {
+    $encoder->encode($tree);
+}
+$steadyMs = (hrtime(true) - $started) / 1_000_000 / 500;
+
+$theme = Theme::pamLab();
+$started = hrtime(true);
+for ($iteration = 0; $iteration < 500; $iteration++) {
+    $theme->applyTo($tree);
+}
+$themeMs = (hrtime(true) - $started) / 1_000_000 / 500;
+
+$firstBudget = (float) (getenv('PAM_PERF_FIRST_FRAME_MS') ?: 40);
+$steadyBudget = (float) (getenv('PAM_PERF_STEADY_FRAME_MS') ?: 1);
+$themeBudget = (float) (getenv('PAM_PERF_THEME_DEFAULTS_MS') ?: 4);
+fwrite(STDOUT, json_encode([
+    'nodes' => 1_001,
+    'firstFrameMs' => round($firstMs, 3),
+    'steadyFrameMs' => round($steadyMs, 3),
+    'themeDefaultsMs' => round($themeMs, 3),
+    'budgets' => [
+        'firstFrameMs' => $firstBudget,
+        'steadyFrameMs' => $steadyBudget,
+        // Theme application intentionally clones the complete immutable tree once.
+        // Keep its cross-runner budget separate from the retained steady-frame path.
+        'themeDefaultsMs' => $themeBudget,
+    ],
+], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)."\n");
+
+if ($firstMs > $firstBudget || $steadyMs > $steadyBudget || $themeMs > $themeBudget) {
+    fwrite(STDERR, "Pam Desktop performance budget exceeded.\n");
+    exit(1);
+}

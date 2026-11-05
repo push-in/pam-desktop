@@ -1,0 +1,324 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Routing;
+
+use BackedEnum;
+use Closure;
+use LogicException;
+use Pam\Desktop\Navigation\NavigationTransition;
+use Pam\Desktop\Navigation\NavigationActionHandler;
+use Pam\Desktop\Drawer\DrawerNavigator;
+use Pam\Desktop\Navigation\DrawerRouter;
+use Pam\Desktop\Navigation\Navigator;
+use Pam\Desktop\Navigation\ScreenOptions;
+use Pam\Desktop\Navigation\ScreenOptionsPatch;
+use Pam\Desktop\Navigation\TabNavigator;
+use Pam\Desktop\Navigation\TopTabNavigator;
+use Pam\Desktop\Navigation\TopTabRouter;
+use Pam\Desktop\Renderable;
+
+use function is_string;
+
+/**
+ * @deprecated Use Pam\Desktop\Route (Laravel-style routes.php): Route::stack/screen/modal/group/guard map to Route::screen()/modal()/group()/middleware(), deepLink() to the path or ->alias(), identifyBy() to ->unique(). See docs/architecture-v2.md#migrating-from-routesjson-and-routestack.
+ */
+final class Route
+{
+    private static ?RouteRegistrar $registrar = null;
+    private static ?TabRegistrar $tabRegistrar = null;
+    private static ?TopTabRegistrar $topTabRegistrar = null;
+    private static int $customNavigatorDepth = 0;
+    private static ?Closure $errorBoundary = null;
+
+    private function __construct()
+    {
+    }
+
+    public static function tabs(
+        string $name,
+        string|BackedEnum $initial,
+        Closure $routes,
+    ): TabNavigator
+    {
+        $nested = self::isNested();
+        $parentRegistrar = self::$tabRegistrar;
+        $registrar = new TabRegistrar($name, RouteName::value($initial));
+        self::$tabRegistrar = $registrar;
+        try {
+            $routes();
+        } finally {
+            self::$tabRegistrar = $parentRegistrar;
+        }
+        $navigator = $registrar->build();
+        if (!$nested) Navigation::attach($navigator);
+        return $navigator;
+    }
+
+    /** @param class-string<Renderable>|Renderable|Closure $screen */
+    public static function tab(
+        string|BackedEnum $name,
+        string|Renderable|Closure $screen,
+        string $label,
+        ?Renderable $icon = null,
+        ?string $badge = null,
+    ): void {
+        $registrar = self::$tabRegistrar
+            ?? throw new LogicException('Route::tab() must be declared inside Route::tabs().');
+        $content = match (true) {
+            $screen instanceof Closure, $screen instanceof Renderable => $screen,
+            default => static fn (): Renderable => ScreenFactory::make(
+                $screen,
+                new \Pam\Desktop\Navigation\RouteContext($name),
+            ),
+        };
+        $registrar->add(RouteName::value($name), $label, $content, $icon, $badge);
+    }
+
+    /** @param null|Closure(TopTabRouter): TopTabRouter $configure */
+    public static function topTabs(
+        string $name,
+        string|BackedEnum $initial,
+        Closure $routes,
+        ?Closure $configure = null,
+    ): TopTabNavigator {
+        $nested = self::isNested();
+        $parentRegistrar = self::$topTabRegistrar;
+        $registrar = new TopTabRegistrar($name, RouteName::value($initial));
+        self::$topTabRegistrar = $registrar;
+        try {
+            $routes();
+        } finally {
+            self::$topTabRegistrar = $parentRegistrar;
+        }
+        $navigator = $registrar->build($configure);
+        if (!$nested) Navigation::attach($navigator);
+        return $navigator;
+    }
+
+    /** @param class-string<Renderable>|Renderable|Closure $screen */
+    public static function topTab(
+        string|BackedEnum $name,
+        string|Renderable|Closure $screen,
+        string $label,
+        ?Renderable $icon = null,
+        ?string $badge = null,
+    ): void {
+        $registrar = self::$topTabRegistrar
+            ?? throw new LogicException('Route::topTab() must be declared inside Route::topTabs().');
+        $registrar->add(RouteName::value($name), $label, self::screenContent($name, $screen), $icon, $badge);
+    }
+
+    /** @param null|Closure(DrawerRouter): DrawerRouter $configure */
+    public static function drawer(
+        string $name,
+        string|BackedEnum $initial,
+        Closure $routes,
+        ?Closure $configure = null,
+    ): DrawerNavigator {
+        class_exists(DrawerRegistrar::class);
+        return \Pam\Desktop\Drawer\DrawerRoutes::make($name, $initial, $routes, $configure);
+    }
+
+    /** @param class-string<Renderable>|Renderable|Closure $screen */
+    public static function drawerScreen(
+        string|BackedEnum $name,
+        string|Renderable|Closure $screen,
+        string $label,
+        ?Renderable $icon = null,
+        ?string $badge = null,
+        ?string $group = null,
+    ): void {
+        class_exists(DrawerRegistrar::class);
+        \Pam\Desktop\Drawer\DrawerRoutes::screen($name, $screen, $label, $icon, $badge, $group);
+    }
+
+    public static function stack(
+        string $name,
+        string|BackedEnum $initial,
+        Closure $routes,
+        NavigationTransition $transition = NavigationTransition::PlatformDefault,
+        int $durationMs = 240,
+        bool $restoreState = true,
+        ScreenOptions|Closure|null $options = null,
+    ): Navigator {
+        $parentRegistrar = self::$registrar;
+        $nested = self::isNested();
+        $registrar = new RouteRegistrar($name, RouteName::value($initial));
+        self::$registrar = $registrar;
+        try {
+            $routes();
+        } finally {
+            self::$registrar = $parentRegistrar;
+        }
+        $registrar->transitions($transition, $durationMs);
+        $registrar->restoreState($restoreState);
+        $registrar->defaultOptions($options);
+        $navigator = $registrar->build();
+        if (!$nested) Navigation::attach($navigator);
+
+        return $navigator;
+    }
+
+    /**
+     * Default error boundary for every stack route without its own
+     * (PendingRoute::errorBoundary()): `$boundary($error, $route, $retry)`
+     * replaces only the failing route. null removes it, so a failing route
+     * propagates its error again (error overlay / release fallback).
+     *
+     * @param (Closure(\Throwable, \Pam\Desktop\Navigation\RouteContext, Closure(): void): Renderable)|null $boundary
+     */
+    public static function errorBoundary(?Closure $boundary): void
+    {
+        self::$errorBoundary = $boundary;
+    }
+
+    /** @internal */
+    public static function globalErrorBoundary(): ?Closure
+    {
+        return self::$errorBoundary;
+    }
+
+    /** @internal Runtime shutdown (and hot reload) starts without a global boundary. */
+    public static function resetRuntime(): void
+    {
+        self::$errorBoundary = null;
+    }
+
+    public static function preset(ScreenOptions|ScreenOptionsPatch|Closure $options): RoutePreset
+    {
+        return new RoutePreset($options);
+    }
+
+    /** @param RouteModule|class-string<RouteModule>|Closure $module */
+    public static function module(RouteModule|string|Closure $module): void
+    {
+        if (self::$registrar === null) {
+            throw new LogicException('Route::module() must be declared inside Route::stack().');
+        }
+        if ($module instanceof Closure) {
+            $module();
+            return;
+        }
+        if (is_string($module)) {
+            if (!is_a($module, RouteModule::class, true)) {
+                throw new LogicException("Route module {$module} must implement RouteModule.");
+            }
+            $module = new $module();
+        }
+        $module->register();
+    }
+
+    public static function group(ScreenOptionsPatch|RoutePreset|Closure $options, Closure $routes): void
+    {
+        $registrar = self::$registrar
+            ?? throw new LogicException('Route::group() must be declared inside Route::stack().');
+        $registrar->beginGroup($options instanceof RoutePreset ? $options->options : $options);
+        try {
+            $routes();
+        } finally {
+            $registrar->endGroup();
+        }
+    }
+
+    /**
+     * Apply a guard to every route declared in the group, including routes
+     * registered by nested groups and modules. Route-level guards are additive.
+     *
+     * @param Closure(\Pam\Desktop\Navigation\RouteContext): bool $guard
+     */
+    public static function guard(Closure $guard, Closure $routes): void
+    {
+        $registrar = self::$registrar
+            ?? throw new LogicException('Route::guard() must be declared inside Route::stack().');
+        $registrar->beginGuard($guard);
+        try {
+            $routes();
+        } finally {
+            $registrar->endGuard();
+        }
+    }
+
+    /**
+     * @param class-string<Renderable>|Renderable|Closure $screen
+     */
+    public static function screen(string|BackedEnum $name, string|Renderable|Closure $screen): PendingRoute
+    {
+        return self::add($name, $screen);
+    }
+
+    /** Register a child stack, tab, drawer or custom navigator as a screen. */
+    public static function navigator(string|BackedEnum $name, Renderable|Closure $navigator): PendingRoute
+    {
+        return self::add($name, $navigator);
+    }
+
+    /**
+     * @param class-string<Renderable>|Renderable|Closure $screen
+     */
+    public static function modal(string|BackedEnum $name, string|Renderable|Closure $screen): PendingRoute
+    {
+        return self::add($name, $screen)->fullScreen();
+    }
+
+    /**
+     * @param class-string<Renderable>|Renderable|Closure $screen
+     */
+    private static function add(string|BackedEnum $name, string|Renderable|Closure $screen): PendingRoute
+    {
+        $registrar = self::$registrar
+            ?? throw new LogicException('Route::screen() must be declared inside Route::stack().');
+
+        $name = RouteName::value($name);
+        $factory = match (true) {
+            $screen instanceof Closure => $screen,
+            $screen instanceof Renderable => static fn (): Renderable => $screen,
+            default => static fn (\Pam\Desktop\Navigation\RouteContext $route): Renderable => ScreenFactory::make($screen, $route),
+        };
+
+        return $registrar->add($name, $factory);
+    }
+
+    /** @param string|int|float|bool|null ...$params */
+    public static function to(string|BackedEnum $name, mixed ...$params): RouteTarget
+    {
+        return new RouteTarget($name, ...$params);
+    }
+
+    /** @param Closure(): (Renderable&NavigationActionHandler) $build */
+    public static function customNavigator(Closure $build): Renderable&NavigationActionHandler
+    {
+        $nested = self::isNested();
+        self::$customNavigatorDepth++;
+        try {
+            $navigator = $build();
+        } finally {
+            self::$customNavigatorDepth--;
+        }
+        if (!$nested) Navigation::attach($navigator);
+        return $navigator;
+    }
+
+    private static function isNested(): bool
+    {
+        return self::$registrar !== null
+            || self::$tabRegistrar !== null
+            || self::$topTabRegistrar !== null
+            || self::$customNavigatorDepth > 0;
+    }
+
+    /** @param class-string<Renderable>|Renderable|Closure $screen */
+    public static function screenContent(
+        string|BackedEnum $name,
+        string|Renderable|Closure $screen,
+    ): Renderable|Closure {
+        return match (true) {
+            $screen instanceof Closure, $screen instanceof Renderable => $screen,
+            default => static fn (): Renderable => ScreenFactory::make(
+                $screen,
+                new \Pam\Desktop\Navigation\RouteContext($name),
+            ),
+        };
+    }
+}

@@ -1,0 +1,1676 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Navigation;
+
+use BackedEnum;
+use Closure;
+use InvalidArgumentException;
+use Pam\Desktop\Component;
+use Pam\Desktop\Renderable;
+use Pam\Desktop\Restorable;
+use Pam\Desktop\Routing\RouteName;
+use ReflectionFunction;
+use Throwable;
+
+use function array_key_exists;
+use function array_slice;
+use function count;
+use function in_array;
+use function is_array;
+use function is_int;
+use function is_scalar;
+use function is_string;
+use function strlen;
+
+/**
+ * @deprecated Declare routes in routes.php with Pam\Desktop\Route and navigate with navigate()/back()/<Link>; screens that still take a Navigator get it injected by type. Navigator remains the stack engine behind Route (see docs/architecture-v2.md#routing).
+ */
+final class Navigator extends Component implements Restorable, NavigationStateProvider, NavigationBackHandler, NavigationObservable, NavigationActionHandler, NavigationLinkHandler
+{
+    /** @var array<string, Closure(): Renderable> */
+    private array $routes;
+
+    /** @var list<array{name: string, id: int, routeId: string|null, params: array<string, string|int|float|bool|null>}> */
+    private array $stack;
+    private string $persistenceKey;
+    private int $nextId = 2;
+    private int $revision = 0;
+    private NavigationOperation $operation = NavigationOperation::Idle;
+    private ?NavigationTransition $actionTransition = null;
+    private ?int $actionTransitionDurationMs = null;
+    private ?array $outgoing = null;
+    private readonly string $navigationKey;
+    /** @var array<int, array<int, Closure>> */
+    private array $listeners = [];
+    /** @var array<string, Renderable> */
+    private array $preloaded = [];
+    /** @var array<string, Renderable> */
+    private array $routeInstances = [];
+    /** @var array<string, RouteContext> Context survives until its route instance is released. */
+    private array $routeContexts = [];
+    /** @var array<string, array{element: \Pam\Desktop\Element, components: list<Component>, epoch: int}> */
+    private array $frozenScreens = [];
+    /** @var array<string, Closure> Route name => error boundary (PendingRoute::errorBoundary). */
+    private array $errorBoundaries = [];
+    /** @var array<string, Throwable> Entry key => error caught by a boundary, until retry. */
+    private array $routeErrors = [];
+    /** @var array<string, Renderable> Entry key => boundary content for that error. */
+    private array $boundaryScreens = [];
+    private int $nextListenerId = 1;
+    private ?string $focusedEntryKey = null;
+    /** @var array<string, true> focused screens whose navigationFocused() waits for their first mount */
+    private array $awaitingMount = [];
+    /** @var array<string, NavigationSubscription> */
+    private array $childSubscriptions = [];
+    /** @var array<string, array<string, mixed>> */
+    private array $pendingChildState = [];
+    /** @var (Closure(): bool)|null */
+    private ?Closure $systemBackInterceptor = null;
+    /** @var list<DeepLink> */
+    private array $deepLinks;
+    /** @var array<string, ScreenOptions|ScreenOptionsPatch|Closure> */
+    private array $screenOptions;
+    /** @var array<string, Closure> */
+    private array $routeIds;
+    /** @var array<string, Closure> */
+    private array $routeGuards;
+    /** @var array<string, ScreenOptions|ScreenOptionsPatch> */
+    private array $dynamicOptions = [];
+    private ScreenOptions|Closure|null $defaultOptions;
+    /** @var list<array{routes: list<string>, options: ScreenOptionsPatch|Closure}> */
+    private array $optionGroups;
+    /** @var list<string> */
+    private array $linkingPrefixes;
+    /** @var (Closure(string): bool)|null */
+    private ?Closure $linkFilter;
+    private NavigationTheme $theme;
+    /** @var array<string, true|Closure(RouteContext): bool> */
+    private array $keepAliveRoutes = [];
+    /**
+     * Keep-alive entries that left the stack, oldest first, keyed by route
+     * name and params: their screens stay mounted (hidden) until reused.
+     *
+     * @var array<string, array{name: string, id: int, routeId: string|null, params: array<string, string|int|float|bool|null>}>
+     */
+    private array $parked = [];
+    private const MAX_PARKED_PER_ROUTE = 3;
+
+    /**
+     * A screen mounted ahead of navigation (see prewarm()): rendered hidden
+     * under the current screen until a push/navigate with the same route and
+     * params turns it into the top of the stack without building it again.
+     *
+     * @var array{name: string, id: int, routeId: string|null, params: array<string, string|int|float|bool|null>}|null
+     */
+    private ?array $warm = null;
+    private int $warmGeneration = 0;
+    private const WARM_TTL_MS = 4_000;
+    private static int $prewarmDepth = 0;
+
+    /**
+     * @param array<array-key, mixed> $routes
+     * @param array<array-key, string|true|Closure> $keepAliveRoutes route names, or name => true|Closure(RouteContext): bool
+     * @param array<array-key, Closure> $errorBoundaries route name => Closure(Throwable, RouteContext, Closure): Renderable
+     */
+    public function __construct(
+        string|BackedEnum $initialRoute,
+        array $routes,
+        string $persistenceKey = 'main',
+        private NavigationTransition $transition = NavigationTransition::PlatformDefault,
+        private int $transitionDurationMs = 240,
+        private readonly bool $handleSystemBack = true,
+        array $deepLinks = [],
+        private readonly bool $restorePersistedState = true,
+        array $screenOptions = [],
+        array $linkingPrefixes = [],
+        ?Closure $linkFilter = null,
+        array $routeIds = [],
+        array $routeGuards = [],
+        private readonly ?string $guardFallback = null,
+        ScreenOptions|Closure|null $defaultOptions = null,
+        array $optionGroups = [],
+        array $keepAliveRoutes = [],
+        array $errorBoundaries = [],
+    )
+    {
+        $initialRoute = RouteName::value($initialRoute);
+        $validated = [];
+
+        foreach ($routes as $name => $route) {
+            if (!is_string($name) || $name === '' || !$route instanceof Closure) {
+                throw new InvalidArgumentException('Routes require non-empty names and Closure handlers.');
+            }
+
+            $validated[$name] = $route;
+        }
+
+        if (!isset($validated[$initialRoute])) {
+            throw new InvalidArgumentException("Initial route {$initialRoute} is not registered.");
+        }
+        if (preg_match('/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/', $persistenceKey) !== 1) {
+            throw new InvalidArgumentException('Navigator persistence keys must be safe identifiers.');
+        }
+
+        $this->routes = $validated;
+        foreach ($keepAliveRoutes as $route => $when) {
+            if (is_int($route)) {
+                [$route, $when] = [$when, true];
+            }
+            if (!is_string($route) || !isset($validated[$route]) || ($when !== true && !$when instanceof Closure)) {
+                throw new InvalidArgumentException('Keep-alive routes must be registered, with true or a RouteContext predicate.');
+            }
+            $this->keepAliveRoutes[$route] = $when;
+        }
+        foreach ($errorBoundaries as $route => $boundary) {
+            if (!is_string($route) || !isset($validated[$route]) || !$boundary instanceof Closure) {
+                throw new InvalidArgumentException('Error boundaries must target registered routes with a Closure.');
+            }
+            $this->errorBoundaries[$route] = $boundary;
+        }
+        $this->navigationKey = 'stack.'.$persistenceKey;
+        foreach ($deepLinks as $link) {
+            if (!$link instanceof DeepLink || !isset($validated[$link->route])) {
+                throw new InvalidArgumentException('Deep links must target registered routes.');
+            }
+        }
+        $this->deepLinks = array_values($deepLinks);
+        foreach ($screenOptions as $route => $options) {
+            if (!is_string($route) || !isset($validated[$route]) || (!$options instanceof ScreenOptions && !$options instanceof ScreenOptionsPatch && !$options instanceof Closure)) {
+                throw new InvalidArgumentException('Screen options must target a registered route and be options or a resolver.');
+            }
+        }
+        $this->screenOptions = $screenOptions;
+        foreach ($optionGroups as $group) {
+            if (!is_array($group) || !is_array($group['routes'] ?? null) || !isset($group['options'])) {
+                throw new InvalidArgumentException('Option groups require routes and an option layer.');
+            }
+            foreach ($group['routes'] as $route) {
+                if (!is_string($route) || !isset($validated[$route])) {
+                    throw new InvalidArgumentException('Option groups must target registered routes.');
+                }
+            }
+            if (!$group['options'] instanceof ScreenOptionsPatch && !$group['options'] instanceof Closure) {
+                throw new InvalidArgumentException('Option groups require sparse options or a resolver.');
+            }
+        }
+        $this->defaultOptions = $defaultOptions;
+        $this->optionGroups = array_values($optionGroups);
+        foreach ($routeIds as $route => $getId) {
+            if (!is_string($route) || !isset($validated[$route]) || !$getId instanceof Closure) {
+                throw new InvalidArgumentException('Route identity resolvers must target a registered route.');
+            }
+        }
+        $this->routeIds = $routeIds;
+        foreach ($routeGuards as $route => $guard) {
+            if (!is_string($route) || !isset($validated[$route]) || !$guard instanceof Closure) {
+                throw new InvalidArgumentException('Route guards must target a registered route.');
+            }
+        }
+        if ($guardFallback !== null && !isset($validated[$guardFallback])) {
+            throw new InvalidArgumentException('The route guard fallback must be registered.');
+        }
+        $this->routeGuards = $routeGuards;
+        foreach ($linkingPrefixes as $prefix) {
+            if (!is_string($prefix) || strlen($prefix) > 512 || preg_match('#^[A-Za-z][A-Za-z0-9+.-]*://#', $prefix) !== 1) {
+                throw new InvalidArgumentException('Linking prefixes require bounded absolute URI prefixes.');
+            }
+        }
+        $this->linkingPrefixes = array_values(array_unique($linkingPrefixes));
+        $this->linkFilter = $linkFilter;
+        $this->theme = NavigationTheme::light();
+        $bootRoute = $this->routeAvailable($initialRoute)
+            ? $initialRoute
+            : $guardFallback;
+        if ($bootRoute === null || !$this->routeAvailable($bootRoute)) {
+            throw new InvalidArgumentException('The initial route is guarded and no available fallback exists.');
+        }
+        $this->stack = [[
+            'name' => $bootRoute,
+            'id' => 1,
+            'routeId' => $this->resolveRouteId($bootRoute, []),
+            'params' => [],
+        ]];
+        $this->persistenceKey = $persistenceKey;
+        $this->transitionDurationMs = max(0, min(2_000, $transitionDurationMs));
+        if ($handleSystemBack) NavigationBackCoordinator::register($this);
+    }
+
+    /**
+     * Runs before Android system Back changes the navigation stack.
+     *
+     * Return true from the interceptor after dismissing transient UI such as
+     * selection, editing, search, or an in-screen viewer. Returning false lets
+     * the navigator pop the current route normally.
+     *
+     * @param (Closure(): bool)|null $interceptor
+     */
+    public function interceptSystemBack(?Closure $interceptor): self
+    {
+        $this->systemBackInterceptor = $interceptor;
+
+        return $this;
+    }
+
+    public function consumeSystemBack(): bool
+    {
+        return $this->systemBackInterceptor !== null
+            && ($this->systemBackInterceptor)() === true;
+    }
+
+    public function claimSystemBackRoot(): void
+    {
+        if ($this->handleSystemBack) NavigationBackCoordinator::register($this, true);
+    }
+
+    public function dispatchSystemBack(): bool
+    {
+        return $this->consumeSystemBack() || $this->goBack();
+    }
+
+    /** @param array<string, string|int|float|bool|null> $params */
+    public function push(
+        string|BackedEnum $route,
+        array $params = [],
+        ?NavigationTransition $transition = null,
+        ?int $durationMs = null,
+    ): void
+    {
+        $route = RouteName::value($route);
+        if (!isset($this->routes[$route])) {
+            throw new InvalidArgumentException("Route {$route} is not registered.");
+        }
+
+        $validatedParams = self::validatedParams($params);
+        if (!$this->routeAvailable($route, $validatedParams)) {
+            throw new InvalidArgumentException("Route {$route} is not currently available.");
+        }
+        $previous = $this->currentEntry();
+        $this->setActionTransition($transition, $durationMs);
+        $this->outgoing = null;
+        $this->stack[] = $this->takeWarm($route, $validatedParams) ?? $this->unpark($route, $validatedParams) ?? [
+            'name' => $route,
+            'id' => $this->nextId++,
+            'routeId' => $this->resolveRouteId($route, $validatedParams),
+            'params' => $validatedParams,
+        ];
+        $this->operation = NavigationOperation::Push;
+        $this->revision++;
+        $this->didNavigate($previous, NavigationAction::push($route, $params));
+    }
+
+    public function pop(): bool
+    {
+        if (count($this->stack) <= 1) {
+            return false;
+        }
+
+        $previous = $this->currentEntry();
+        if (!$this->mayRemove($previous, NavigationAction::pop())) return false;
+        $this->outgoing = array_pop($this->stack);
+        $this->park($this->outgoing);
+        $this->operation = NavigationOperation::Pop;
+        $this->revision++;
+        $this->didNavigate($previous, NavigationAction::pop());
+
+        return true;
+    }
+
+    public function currentRoute(): string
+    {
+        return $this->stack[count($this->stack) - 1]['name'];
+    }
+
+    public function current(): RouteContext
+    {
+        $entry = $this->stack[count($this->stack) - 1];
+
+        return $this->contextFor($entry);
+    }
+
+    public function key(): string
+    {
+        return $this->navigationKey;
+    }
+
+    public function currentOptions(): ScreenOptions
+    {
+        $entry = $this->currentEntry();
+        return $this->resolvedOptions($entry);
+    }
+
+    public function setOptions(ScreenOptions|ScreenOptionsPatch $options): void
+    {
+        $this->dynamicOptions[$this->entryKey($this->currentEntry())] = $options;
+        $this->emitNavigation(NavigationEventType::State, [
+            'state' => $this->getState(),
+            'options' => $this->currentOptions()->toArray(),
+        ]);
+    }
+
+    public function clearOptions(): void
+    {
+        unset($this->dynamicOptions[$this->entryKey($this->currentEntry())]);
+        $this->emitNavigation(NavigationEventType::State, [
+            'state' => $this->getState(),
+            'options' => $this->currentOptions()->toArray(),
+        ]);
+    }
+
+    public function theme(NavigationTheme $theme): void
+    {
+        $this->theme = $theme;
+        $this->revision++;
+    }
+
+    public function isFocused(): bool
+    {
+        return true;
+    }
+
+    /** @return array<string, mixed> */
+    public function getState(): array
+    {
+        return [
+            'version' => 4,
+            'type' => 1,
+            'key' => $this->navigationKey,
+            'index' => count($this->stack) - 1,
+            'routes' => array_map(function (array $entry): array {
+                $key = $this->entryKey($entry);
+                $route = [
+                    'key' => $key,
+                    'name' => $entry['name'],
+                    'params' => $entry['params'],
+                    'id' => $entry['routeId'],
+                    'options' => $this->resolvedOptions($entry)->toArray(),
+                ];
+                $instance = $this->routeInstances[$key] ?? null;
+                if ($instance instanceof NavigationStateProvider) {
+                    $route['state'] = $instance->getState();
+                }
+                return $route;
+            }, $this->stack),
+        ];
+    }
+
+    public function addListener(NavigationEventType $type, Closure $listener): NavigationSubscription
+    {
+        $id = $this->nextListenerId++;
+        $this->listeners[$type->value][$id] = $listener;
+
+        return new NavigationSubscription(function () use ($type, $id): void {
+            unset($this->listeners[$type->value][$id]);
+        });
+    }
+
+    public function dispatch(NavigationAction $action): bool
+    {
+        if ($action->target !== null && $action->target !== $this->navigationKey) {
+            if ($this->activeChildActionHandler()?->dispatch($action) === true) return true;
+            $this->emitNavigation(NavigationEventType::UnhandledAction, ['action' => $action->toArray()]);
+            return false;
+        }
+        $this->emitNavigation(NavigationEventType::Action, ['action' => $action->toArray()]);
+        $handled = match ($action->type) {
+            NavigationActionType::Navigate => $this->dispatchRoute($action, fn () => $this->navigate($action->route ?? '', $action->params, $action->merge)),
+            NavigationActionType::Push => $this->dispatchRoute($action, fn () => $this->push($action->route ?? '', $action->params)),
+            NavigationActionType::Replace => $this->dispatchRoute($action, fn () => $this->replace($action->route ?? '', $action->params)),
+            NavigationActionType::Reset => $this->dispatchRoute($action, fn () => $this->reset($action->route ?? '', $action->params)),
+            NavigationActionType::Pop, NavigationActionType::GoBack => $this->pop(),
+            NavigationActionType::PopTo => $this->popTo($action->route ?? ''),
+            NavigationActionType::PopToTop => $this->popToTop(),
+            NavigationActionType::SetParams => $this->setParams($action->params),
+            NavigationActionType::ReplaceParams => $this->replaceParams($action->params),
+            NavigationActionType::Preload => $this->preload($action->route ?? '', $action->params),
+        };
+        if ($handled) return true;
+        if ($this->activeChildActionHandler()?->dispatch($action) === true) return true;
+        $this->emitNavigation(NavigationEventType::UnhandledAction, ['action' => $action->toArray()]);
+        return false;
+    }
+
+    public function render(): Renderable
+    {
+        $entries = [];
+        $outgoingKey = $this->outgoing === null ? null : $this->entryKey($this->outgoing);
+
+        if ($this->operation === NavigationOperation::Push && count($this->stack) > 1) {
+            $entries[] = $this->stack[count($this->stack) - 2];
+        }
+        if ($this->operation === NavigationOperation::Idle && count($this->stack) > 1) {
+            $entries[] = $this->stack[count($this->stack) - 2];
+        }
+        // A restored or reset stack has no outgoing route and no transition to
+        // settle into Idle, so the entry below the top is mounted here too:
+        // the iOS back gesture (and Android's predictive back) needs it.
+        if ($this->operation === NavigationOperation::Reset && $this->outgoing === null && count($this->stack) > 1) {
+            $entries[] = $this->stack[count($this->stack) - 2];
+        }
+        if ($this->operation === NavigationOperation::Replace && $this->outgoing !== null) {
+            $entries[] = $this->outgoing;
+        }
+        $entries[] = $this->stack[count($this->stack) - 1];
+        if ($this->operation === NavigationOperation::Pop && $this->outgoing !== null) {
+            $entries[] = $this->outgoing;
+        }
+        if ($this->keepAliveRoutes !== []) {
+            $entries = [...$this->keptAliveBelow($entries, $outgoingKey), ...$entries];
+        }
+        $warm = $this->warm;
+        if ($warm !== null) {
+            // Below every visible screen, so the native host keeps it hidden.
+            $entries = [$warm, ...$entries];
+        }
+
+        $top = $this->stack[count($this->stack) - 1];
+        $screens = array_map(
+            fn (array $entry): Renderable => $warm !== null && $entry['id'] === $warm['id']
+                ? $this->warmScreenElement($entry)
+                : $this->screenElement($entry, $entry['id'] === $top['id']),
+            $entries,
+        );
+        $live = [];
+        foreach ($entries as $entry) {
+            $live[$this->entryKey($entry)] = true;
+        }
+        $this->frozenScreens = array_intersect_key($this->frozenScreens, $live);
+        if ($this->routeErrors !== []) {
+            foreach ($this->stack as $entry) {
+                $live[$this->entryKey($entry)] = true;
+            }
+            $this->routeErrors = array_intersect_key($this->routeErrors, $live);
+            $this->boundaryScreens = array_intersect_key($this->boundaryScreens, $live);
+        }
+
+        $activeOptions = $this->currentOptions();
+        \Pam\Desktop\System\Screen::claimForRoute($this->navigationKey, $activeOptions->secure);
+        // React Navigation: a pop animates with the options of the screen
+        // being removed, so a route pushed with Fade (and its shared
+        // elements) also leaves with Fade instead of the screen below's slide.
+        $motionOptions = $this->operation === NavigationOperation::Pop && $this->outgoing !== null
+            ? $this->resolvedOptions($this->outgoing)
+            : $activeOptions;
+        return NavigationHost::make(
+            $this->operation,
+            $this->actionTransition ?? (
+                $motionOptions->animation === NavigationTransition::PlatformDefault
+                    ? $this->transition
+                    : $motionOptions->animation
+            ),
+            $this->actionTransitionDurationMs
+                ?? $motionOptions->animationDurationMs
+                ?? $this->transitionDurationMs,
+            $this->revision,
+            ...$screens,
+        )->gestureNavigation(
+            // Only a stack with a route to go back to: on its root, a back
+            // gesture would uncover a prewarmed or kept-alive screen mounted
+            // below it and leave it on screen with nothing popped.
+            $activeOptions->gestureEnabled && count($this->stack) > 1,
+            direction: $activeOptions->gestureDirection,
+            fullScreen: $activeOptions->fullScreenGestureEnabled,
+        )
+        ->screenBehavior($activeOptions->orientation, $activeOptions->autoHideHomeIndicator)
+        ->screenOptions($activeOptions)
+        ->onTransitionEnd(function (): void {
+            $this->finalizeOutgoingRoute();
+            $this->emitNavigation(NavigationEventType::TransitionEnd, ['route' => $this->current()]);
+        })
+        ->onGestureStart(function (): void {
+            $this->emitNavigation(NavigationEventType::GestureStart, ['route' => $this->current()]);
+        })
+        ->onGestureEnd(function (): void {
+            $this->emitNavigation(NavigationEventType::GestureEnd, ['route' => $this->current()]);
+        })
+        ->onGestureCancel(function (): void {
+            $this->emitNavigation(NavigationEventType::GestureCancel, ['route' => $this->current()]);
+        })
+        ->onGesturePop(function (): void {
+            $this->pop();
+        });
+    }
+
+    public function canGoBack(): bool
+    {
+        $child = $this->activeChildBackHandler();
+        return $child?->canGoBack() === true || count($this->stack) > 1;
+    }
+
+    public function goBack(): bool
+    {
+        $child = $this->activeChildBackHandler();
+        if ($child?->canGoBack() === true) return $child->goBack();
+        if (count($this->stack) <= 1) return false;
+        // React Navigation: a Back that a beforeRemove listener prevented (a
+        // screen asking "leave?") is still consumed, so the system Back never
+        // falls through to closing or backgrounding the app.
+        $this->pop();
+
+        return true;
+    }
+
+    /** @param array<string, string|int|float|bool|null> $params */
+    public function replace(
+        string|BackedEnum $route,
+        array $params = [],
+        ?NavigationTransition $transition = null,
+        ?int $durationMs = null,
+    ): void
+    {
+        $route = RouteName::value($route);
+        if (!isset($this->routes[$route])) {
+            throw new InvalidArgumentException("Route {$route} is not registered.");
+        }
+        $validatedParams = self::validatedParams($params);
+        if (!$this->routeAvailable($route, $validatedParams)) {
+            throw new InvalidArgumentException("Route {$route} is not currently available.");
+        }
+        $previous = $this->currentEntry();
+        if (!$this->mayRemove($previous, new NavigationAction(NavigationActionType::Replace, $route, $params))) return;
+        $this->setActionTransition($transition, $durationMs);
+        $this->outgoing = array_pop($this->stack);
+        $this->park($this->outgoing);
+        $this->stack[] = [
+            'name' => $route,
+            'id' => $this->nextId++,
+            'routeId' => $this->resolveRouteId($route, $validatedParams),
+            'params' => $validatedParams,
+        ];
+        $this->operation = NavigationOperation::Replace;
+        $this->revision++;
+        $this->didNavigate($previous, new NavigationAction(NavigationActionType::Replace, $route, $params));
+    }
+
+    /** @param array<string, string|int|float|bool|null> $params */
+    public function reset(
+        string|BackedEnum $route,
+        array $params = [],
+        ?NavigationTransition $transition = null,
+        ?int $durationMs = null,
+    ): void
+    {
+        $route = RouteName::value($route);
+        if (!isset($this->routes[$route])) {
+            throw new InvalidArgumentException("Route {$route} is not registered.");
+        }
+        $validatedParams = self::validatedParams($params);
+        if (!$this->routeAvailable($route, $validatedParams)) {
+            throw new InvalidArgumentException("Route {$route} is not currently available.");
+        }
+        $previous = $this->currentEntry();
+        if (!$this->mayRemove($previous, new NavigationAction(NavigationActionType::Reset, $route, $params))) return;
+        $this->setActionTransition($transition, $durationMs);
+        $this->outgoing = null;
+        $this->parked = [];
+        $this->stack = [[
+            'name' => $route,
+            'id' => $this->nextId++,
+            'routeId' => $this->resolveRouteId($route, $validatedParams),
+            'params' => $validatedParams,
+        ]];
+        $this->operation = NavigationOperation::Reset;
+        $this->revision++;
+        $this->didNavigate($previous, new NavigationAction(NavigationActionType::Reset, $route, $params));
+    }
+
+    /** @param array<string, string|int|float|bool|null> $params */
+    public function navigate(
+        string|BackedEnum $route,
+        array $params = [],
+        bool $merge = false,
+        ?NavigationTransition $transition = null,
+        ?int $durationMs = null,
+    ): void
+    {
+        $route = RouteName::value($route);
+        if (!isset($this->routes[$route])) {
+            throw new InvalidArgumentException("Route {$route} is not registered.");
+        }
+        $validatedParams = self::validatedParams($params);
+        if (!$this->routeAvailable($route, $validatedParams)) return;
+        $routeId = $this->resolveRouteId($route, $validatedParams);
+        $previous = $this->currentEntry();
+        $target = null;
+        for ($index = count($this->stack) - 1; $index >= 0; $index--) {
+            if (
+                $this->stack[$index]['name'] === $route
+                && ($routeId === null || $this->stack[$index]['routeId'] === $routeId)
+            ) {
+                $target = $index;
+                break;
+            }
+        }
+        if ($target === null) {
+            $this->push($route, $params, $transition, $durationMs);
+            return;
+        }
+        if ($target === count($this->stack) - 1) {
+            if ($params !== []) {
+                $this->stack[$target]['params'] = $merge
+                    ? array_replace($this->stack[$target]['params'], $validatedParams)
+                    : $validatedParams;
+                $this->stack[$target]['routeId'] = $this->resolveRouteId(
+                    $route,
+                    $this->stack[$target]['params'],
+                );
+                unset($this->routeInstances[$this->entryKey($this->stack[$target])]);
+                $this->operation = NavigationOperation::Idle;
+                $this->revision++;
+                $this->emitNavigation(NavigationEventType::ParamsChanged, ['params' => $this->stack[$target]['params']]);
+                $this->emitNavigation(NavigationEventType::State, ['state' => $this->getState()]);
+            }
+            return;
+        }
+        if (!$this->mayRemove($previous, NavigationAction::navigate($route, $params, $merge))) return;
+        $this->setActionTransition($transition, $durationMs);
+        $this->outgoing = $this->stack[count($this->stack) - 1];
+        foreach (array_slice($this->stack, $target + 1) as $removed) {
+            $this->park($removed);
+        }
+        $this->stack = array_slice($this->stack, 0, $target + 1);
+        if ($params !== []) {
+            $this->stack[$target]['params'] = $merge
+                ? array_replace($this->stack[$target]['params'], $validatedParams)
+                : $validatedParams;
+            $this->stack[$target]['routeId'] = $this->resolveRouteId(
+                $route,
+                $this->stack[$target]['params'],
+            );
+            unset($this->routeInstances[$this->entryKey($this->stack[$target])]);
+        }
+        $this->operation = NavigationOperation::Pop;
+        $this->revision++;
+        $this->didNavigate($previous, NavigationAction::navigate($route, $params, $merge));
+    }
+
+    /** @param array<string, string|int|float|bool|null> $params */
+    public function setParams(array $params): bool
+    {
+        $index = count($this->stack) - 1;
+        $this->stack[$index]['params'] = array_replace(
+            $this->stack[$index]['params'],
+            self::validatedParams($params),
+        );
+        $this->stack[$index]['routeId'] = $this->resolveRouteId(
+            $this->stack[$index]['name'],
+            $this->stack[$index]['params'],
+        );
+        unset($this->routeInstances[$this->entryKey($this->stack[$index])]);
+        $this->revision++;
+        $this->emitNavigation(NavigationEventType::ParamsChanged, ['params' => $this->stack[$index]['params']]);
+        $this->emitNavigation(NavigationEventType::State, ['state' => $this->getState()]);
+        return true;
+    }
+
+    /** @param array<string, string|int|float|bool|null> $params */
+    public function replaceParams(array $params): bool
+    {
+        $index = count($this->stack) - 1;
+        $this->stack[$index]['params'] = self::validatedParams($params);
+        $this->stack[$index]['routeId'] = $this->resolveRouteId(
+            $this->stack[$index]['name'],
+            $this->stack[$index]['params'],
+        );
+        unset($this->routeInstances[$this->entryKey($this->stack[$index])]);
+        $this->revision++;
+        $this->emitNavigation(NavigationEventType::ParamsChanged, ['params' => $this->stack[$index]['params']]);
+        $this->emitNavigation(NavigationEventType::State, ['state' => $this->getState()]);
+        return true;
+    }
+
+    /** @param array<string, string|int|float|bool|null> $params */
+    public function preload(string|BackedEnum $route, array $params = []): bool
+    {
+        $route = RouteName::value($route);
+        if (!isset($this->routes[$route])) return false;
+        $validatedParams = self::validatedParams($params);
+        $entry = [
+            'name' => $route,
+            'id' => 0,
+            'routeId' => $this->resolveRouteId($route, $validatedParams),
+            'params' => $validatedParams,
+        ];
+        if (isset($this->parked[$this->parkKey($route, $validatedParams)])) {
+            // The kept-alive screen is reused as is: nothing to build ahead.
+            return true;
+        }
+        $key = $this->preloadKey($route, $entry['params']);
+        unset($this->preloaded[$key]);
+        $this->preloaded[$key] = $this->createRoute($entry);
+        while (count($this->preloaded) > 16) {
+            array_shift($this->preloaded);
+        }
+        return true;
+    }
+
+    /** Releases speculative route trees without touching mounted navigation state. */
+    public function trimMemory(): void
+    {
+        $this->preloaded = [];
+        $this->cancelPrewarm();
+    }
+
+    /**
+     * Mounts a route ahead of navigation, hidden under the current screen, so
+     * a following push()/navigate() with the same route and params starts
+     * its transition at once: the screen, its native views and its first
+     * layout already exist. Call it when a navigation is likely, e.g. on the
+     * press-in of a list row. The screen renders with isPrewarming() true and
+     * receives navigationFocused() only once it is pushed; one warm screen is
+     * kept at a time and it is released when unused for a few seconds or on
+     * any other navigation.
+     *
+     * `$releaseAfterMs` is that unused lifetime (4 s by default). `null` keeps
+     * the screen warm until another navigation, cancelPrewarm() or
+     * trimMemory(): a screen that keeps a route warm while it stays idle no
+     * longer renews it with a timer every few seconds (each renewal woke PHP
+     * and ran a render pass twice).
+     *
+     * @param array<string, string|int|float|bool|null> $params
+     */
+    public function prewarm(string|BackedEnum $route, array $params = [], ?int $releaseAfterMs = self::WARM_TTL_MS): bool
+    {
+        $route = RouteName::value($route);
+        if (!isset($this->routes[$route])) return false;
+        $validatedParams = self::validatedParams($params);
+        if (!$this->routeAvailable($route, $validatedParams)) return false;
+        $key = $this->parkKey($route, $validatedParams);
+        $current = $this->currentEntry();
+        if ($this->parkKey($current['name'], $current['params']) === $key) return false;
+        if (isset($this->parked[$key])) return true;
+        $generation = ++$this->warmGeneration;
+        if ($this->warm === null || $this->parkKey($this->warm['name'], $this->warm['params']) !== $key) {
+            $this->warm = [
+                'name' => $route,
+                'id' => $this->nextId++,
+                'routeId' => $this->resolveRouteId($route, $validatedParams),
+                'params' => $validatedParams,
+            ];
+            $this->pruneRouteInstances();
+        }
+        if ($releaseAfterMs !== null) {
+            \Pam\Desktop\System\Timers::after(max(0, $releaseAfterMs), function () use ($generation): void {
+                if ($generation === $this->warmGeneration) $this->cancelPrewarm();
+            });
+        }
+
+        return true;
+    }
+
+    /**
+     * Whether a push()/navigate() to this route and params would reuse the
+     * screen mounted by prewarm().
+     *
+     * @param array<string, string|int|float|bool|null> $params
+     */
+    public function isPrewarmed(string|BackedEnum $route, array $params = []): bool
+    {
+        return $this->warm !== null
+            && $this->parkKey($this->warm['name'], $this->warm['params'])
+                === $this->parkKey(RouteName::value($route), self::validatedParams($params));
+    }
+
+    /** Unmounts the screen mounted by prewarm(), if it was not used. */
+    public function cancelPrewarm(): void
+    {
+        if ($this->warm === null) return;
+        $this->warm = null;
+        $this->warmGeneration++;
+        $this->pruneRouteInstances();
+    }
+
+    /**
+     * True while a screen mounted by prewarm() renders: its mount() runs
+     * before the user navigated to it, so work that must wait for the screen
+     * to be shown (read receipts, analytics, focus-only side effects) waits
+     * for navigationFocused().
+     */
+    public static function isPrewarming(): bool
+    {
+        return self::$prewarmDepth > 0;
+    }
+
+    public function popTo(string|BackedEnum $route): bool
+    {
+        $route = RouteName::value($route);
+        if ($route === $this->currentRoute()) {
+            return true;
+        }
+        $before = count($this->stack);
+        $this->navigate($route);
+
+        return count($this->stack) < $before;
+    }
+
+    public function popToTop(): bool
+    {
+        if (count($this->stack) <= 1) return false;
+        $previous = $this->currentEntry();
+        $action = NavigationAction::popToTop();
+        if (!$this->mayRemove($previous, $action)) return false;
+        $this->outgoing = $previous;
+        foreach (array_slice($this->stack, 1) as $removed) {
+            $this->park($removed);
+        }
+        $this->stack = [$this->stack[0]];
+        $this->operation = NavigationOperation::Pop;
+        $this->revision++;
+        $this->didNavigate($previous, $action);
+
+        return true;
+    }
+
+    /**
+     * @internal Routes the URL the app was launched with, before its first
+     * frame: like React Navigation's initial state from a deep link, the
+     * route is simply there (no transition, so the screens under it are not
+     * rendered until they are shown again).
+     */
+    public function openInitial(string $uri): bool
+    {
+        if (!$this->open($uri)) {
+            return false;
+        }
+        $this->finalizeOutgoingRoute();
+
+        return true;
+    }
+
+    public function open(string $uri): bool
+    {
+        if ($uri === '' || strlen($uri) > 8_192) return false;
+        if ($this->linkFilter !== null && !($this->linkFilter)($uri)) return false;
+        if (
+            $this->linkingPrefixes !== []
+            && !array_any($this->linkingPrefixes, static function (string $prefix) use ($uri): bool {
+                if (!str_starts_with($uri, $prefix)) return false;
+                $boundary = $uri[strlen($prefix)] ?? '';
+                return $boundary === '' || str_ends_with($prefix, '/') || in_array($boundary, ['/', '?', '#'], true);
+            })
+        ) return false;
+        $parts = parse_url($uri);
+        if ($parts === false) return false;
+        $path = $parts['path'] ?? '/';
+        $scheme = strtolower((string) ($parts['scheme'] ?? ''));
+        $paths = [$path];
+        if ($scheme !== '' && !in_array($scheme, ['http', 'https'], true)) {
+            $host = trim((string) ($parts['host'] ?? ''), '/');
+            if ($host !== '') {
+                $paths[] = '/'.$host.($path === '/' ? '' : $path);
+            }
+        }
+        foreach (array_unique($paths) as $candidate) {
+            foreach ($this->deepLinks as $link) {
+                $params = $link->match($candidate);
+                if ($params === null) continue;
+                if (isset($parts['query'])) {
+                    parse_str($parts['query'], $query);
+                    foreach ($query as $key => $value) {
+                        if (is_string($key) && !array_key_exists($key, $params) && is_scalar($value)) {
+                            $params[$key] = (string) $value;
+                        }
+                    }
+                }
+                if (!$this->routeAvailable($link->route, $params)) return false;
+                $this->navigate($link->route, $params);
+                return true;
+            }
+        }
+
+        $child = $this->activeChildLinkHandler();
+        if ($child !== null && $child->open($uri)) {
+            $this->revision++;
+            $this->emitNavigation(NavigationEventType::State, ['state' => $this->getState()]);
+            return true;
+        }
+
+        return false;
+    }
+
+    public function currentPath(): ?string
+    {
+        $entry = $this->currentEntry();
+        foreach ($this->deepLinks as $link) {
+            if ($link->route === $entry['name']) {
+                return $link->build($entry['params']);
+            }
+        }
+        return $this->activeChildLinkHandler()?->currentPath();
+    }
+
+    /** @param array{name: string, params: array<string, mixed>} $entry */
+    private function pathFor(array $entry): ?string
+    {
+        foreach ($this->deepLinks as $link) {
+            if ($link->route === $entry['name']) {
+                return $link->build($entry['params']);
+            }
+        }
+
+        return null;
+    }
+
+    public function currentUrl(): ?string
+    {
+        $path = $this->currentPath();
+        if ($path === null) return null;
+        $prefix = $this->linkingPrefixes[0] ?? null;
+        return $prefix === null ? $path : rtrim($prefix, '/').$path;
+    }
+
+    public function transition(
+        NavigationTransition $transition,
+        ?int $durationMs = null,
+    ): void {
+        $this->transition = $transition;
+        if ($durationMs !== null) {
+            $this->transitionDurationMs = max(0, min(2_000, $durationMs));
+        }
+    }
+
+    /** @param array<string, string|int|float|bool|null> $params */
+    public function routeAvailable(string|BackedEnum $route, array $params = []): bool
+    {
+        $route = RouteName::value($route);
+        if (!isset($this->routes[$route])) return false;
+        $guard = $this->routeGuards[$route] ?? null;
+        return $guard === null || $guard(new RouteContext($route, self::validatedParams($params))) === true;
+    }
+
+    /**
+     * Re-evaluates auth/feature conditions and removes inaccessible history in
+     * one state revision. Call after the session or entitlement state changes.
+     */
+    public function refreshConditions(): bool
+    {
+        $previous = $this->currentEntry();
+        $available = array_values(array_filter(
+            $this->stack,
+            fn (array $entry): bool => $this->routeAvailable($entry['name'], $entry['params']),
+        ));
+        if ($available === []) {
+            $fallback = $this->guardFallback;
+            if ($fallback === null || !$this->routeAvailable($fallback)) return false;
+            $available[] = [
+                'name' => $fallback,
+                'id' => $this->nextId++,
+                'routeId' => $this->resolveRouteId($fallback, []),
+                'params' => [],
+            ];
+        }
+        if ($available === $this->stack) return false;
+        $this->stack = $available;
+        $this->outgoing = null;
+        $this->operation = NavigationOperation::Reset;
+        $this->revision++;
+        $this->didNavigate($previous, NavigationAction::reset($this->currentRoute(), $this->current()->all()));
+        return true;
+    }
+
+    public function stateKey(): string
+    {
+        return 'navigator.'.$this->persistenceKey;
+    }
+
+    public function restoreState(array $state): void
+    {
+        $this->stateWasRestored();
+        if (!$this->restorePersistedState) {
+            return;
+        }
+
+        if (($state['version'] ?? 1) >= 3) {
+            $checksum = $state['checksum'] ?? null;
+            if (!is_string($checksum) || !hash_equals($checksum, self::stateChecksum($state['stack'] ?? null))) {
+                return;
+            }
+        }
+
+        $stack = $state['stack'] ?? null;
+
+        if (!is_array($stack) || $stack === []) {
+            return;
+        }
+        $restored = [];
+
+        foreach ($stack as $saved) {
+            $route = is_string($saved) ? $saved : ($saved['name'] ?? null);
+            $params = is_array($saved) ? ($saved['params'] ?? []) : [];
+            if (!is_string($route) || !isset($this->routes[$route]) || !is_array($params)) {
+                return;
+            }
+            try {
+                $validatedParams = self::validatedParams($params);
+            } catch (InvalidArgumentException) {
+                return;
+            }
+            if (!$this->routeAvailable($route, $validatedParams)) continue;
+            $entry = [
+                'name' => $route,
+                'id' => $this->nextId++,
+                'routeId' => $this->resolveRouteId($route, $validatedParams),
+                'params' => $validatedParams,
+            ];
+            $restored[] = $entry;
+            if (is_array($saved) && is_array($saved['state'] ?? null)) {
+                $this->pendingChildState[$this->entryKey($entry)] = $saved['state'];
+            }
+        }
+        if ($restored === []) {
+            $fallback = $this->guardFallback;
+            if ($fallback === null || !$this->routeAvailable($fallback)) return;
+            $restored[] = [
+                'name' => $fallback,
+                'id' => $this->nextId++,
+                'routeId' => $this->resolveRouteId($fallback, []),
+                'params' => [],
+            ];
+        }
+        $this->stack = $restored;
+        $this->parked = [];
+        $this->warm = null;
+        $this->outgoing = null;
+        $this->focusedEntryKey = null;
+        $this->operation = NavigationOperation::Reset;
+        $this->revision++;
+        $this->pruneRouteInstances();
+    }
+
+    public function saveState(): array
+    {
+        $stack = array_map(
+            function (array $entry): array {
+                $saved = [
+                'name' => $entry['name'],
+                'id' => $entry['routeId'],
+                'params' => $entry['params'],
+                ];
+                $instance = $this->routeInstances[$this->entryKey($entry)] ?? null;
+                if ($instance instanceof Restorable) $saved['state'] = $instance->saveState();
+                return $saved;
+            },
+            $this->stack,
+        );
+        return [
+            'version' => 4,
+            'stack' => $stack,
+            'checksum' => self::stateChecksum($stack),
+        ];
+    }
+
+    /** @param array{name: string, id: int, params: array<string, string|int|float|bool|null>} $entry */
+    private function renderRoute(array $entry): Renderable
+    {
+        $key = $this->entryKey($entry);
+        $this->routeContexts[$key] = $this->contextFor($entry);
+        if (isset($this->routeInstances[$key])) {
+            $this->notifyRouteFocused($entry, $this->routeInstances[$key]);
+            return $this->routeInstances[$key];
+        }
+        $preloadKey = $this->preloadKey($entry['name'], $entry['params']);
+        if (isset($this->preloaded[$preloadKey])) {
+            $renderable = $this->preloaded[$preloadKey];
+            unset($this->preloaded[$preloadKey]);
+            $this->routeInstances[$key] = $renderable;
+            $this->observeChildNavigator($key, $renderable);
+            $this->notifyRouteFocused($entry, $renderable);
+            return $renderable;
+        }
+        $renderable = $this->createRoute($entry);
+        $pendingState = $this->pendingChildState[$key] ?? null;
+        if ($pendingState !== null && $renderable instanceof Restorable) {
+            $renderable->restoreState($pendingState);
+            unset($this->pendingChildState[$key]);
+        }
+        $this->routeInstances[$key] = $renderable;
+        $this->observeChildNavigator($key, $renderable);
+        $this->notifyRouteFocused($entry, $renderable);
+        return $renderable;
+    }
+
+    /** @param array{name: string, id: int, params: array<string, string|int|float|bool|null>} $entry */
+    private function createRoute(array $entry): Renderable
+    {
+        $route = $this->routes[$entry['name']];
+        $reflection = new ReflectionFunction($route);
+        return $reflection->getNumberOfParameters() === 0
+            ? $route()
+            : $route($this->contextFor($entry));
+    }
+
+    /** @param array{name: string, id: int, params: array<string, string|int|float|bool|null>} $entry */
+    /**
+     * Screens below the top of the stack (and outgoing screens during a
+     * transition) are frozen: their last element is reused even when their
+     * state changes, until they become the top again. Global invalidations
+     * (theme, metrics, untracked renders) still refresh them.
+     *
+     * @param array{name: string, id: int, routeId?: string|null, params: array<string, string|int|float|bool|null>} $entry
+     */
+    private function screenElement(array $entry, bool $active): \Pam\Desktop\Element
+    {
+        $key = $this->entryKey($entry);
+        if (isset($this->routeErrors[$key])) {
+            return $this->boundaryElement($entry, $key);
+        }
+        $frozen = $this->frozenScreens[$key] ?? null;
+        if (
+            !$active
+            && $frozen !== null
+            && $frozen['epoch'] === \Pam\Desktop\Internal\DependencyTracker::epoch()
+            && \Pam\Desktop\Internal\DependencyTracker::memoization()
+        ) {
+            \Pam\Desktop\Internal\ComponentLifecycle::adopt($frozen['components']);
+
+            return $frozen['element'];
+        }
+        try {
+            [$element, $components] = \Pam\Desktop\Internal\ComponentLifecycle::capture(
+                fn (): \Pam\Desktop\Element => $this->decorateRoute($entry)
+                    ->toElement()
+                    ->key('navigation.'.$entry['id']),
+            );
+        } catch (Throwable $error) {
+            return $this->failRoute($entry, $key, $error);
+        }
+        $this->frozenScreens[$key] = [
+            'element' => $element,
+            'components' => $components,
+            'epoch' => \Pam\Desktop\Internal\DependencyTracker::epoch(),
+        ];
+
+        return $element;
+    }
+
+    /** @param array{name: string, id: int, routeId?: string|null, params: array<string, string|int|float|bool|null>} $entry */
+    private function warmScreenElement(array $entry): \Pam\Desktop\Element
+    {
+        $key = $this->entryKey($entry);
+        if (isset($this->routeErrors[$key])) {
+            return $this->boundaryElement($entry, $key);
+        }
+        self::$prewarmDepth++;
+        try {
+            [$element] = \Pam\Desktop\Internal\ComponentLifecycle::capture(
+                fn (): \Pam\Desktop\Element => new NavigationScreen(
+                    $this->renderRoute($entry),
+                    $this->resolvedOptions($entry),
+                    $this->theme,
+                    true,
+                    fn (): bool => $this->pop(),
+                )->toElement()->key('navigation.'.$entry['id']),
+            );
+        } catch (Throwable $error) {
+            return $this->failRoute($entry, $key, $error);
+        } finally {
+            self::$prewarmDepth--;
+        }
+
+        return $element;
+    }
+
+    /**
+     * A route that threw while it was created, mounted or rendered: with an
+     * error boundary (the route's own, else Route::errorBoundary()) only that
+     * route shows the boundary; without one the error propagates as before.
+     *
+     * @param array{name: string, id: int, routeId?: string|null, params: array<string, string|int|float|bool|null>} $entry
+     */
+    private function failRoute(array $entry, string $key, Throwable $error): \Pam\Desktop\Element
+    {
+        if ($this->errorBoundaryFor($entry['name']) === null) {
+            throw $error;
+        }
+        $this->routeErrors[$key] = $error;
+        unset($this->frozenScreens[$key], $this->boundaryScreens[$key]);
+        try {
+            // Non-fatal: the app keeps working, App::onError() listeners and
+            // the development overlay (toast) still see the error.
+            \Pam\Desktop\Internal\Runtime::reportError($error, \Pam\Desktop\Diagnostics\RuntimeErrorPhase::Other);
+        } catch (Throwable) {
+            // Reporting must never break the boundary.
+        }
+
+        return $this->boundaryElement($entry, $key);
+    }
+
+    /** @param array{name: string, id: int, routeId?: string|null, params: array<string, string|int|float|bool|null>} $entry */
+    private function boundaryElement(array $entry, string $key): \Pam\Desktop\Element
+    {
+        $error = $this->routeErrors[$key];
+        $content = $this->boundaryScreens[$key] ?? null;
+        if ($content === null) {
+            $boundary = $this->errorBoundaryFor($entry['name']);
+            if ($boundary === null) {
+                unset($this->routeErrors[$key]);
+                throw $error;
+            }
+            $content = $boundary(
+                $error,
+                $this->contextFor($entry),
+                function () use ($key): void {
+                    $this->retryRoute($key);
+                },
+            );
+            if (!$content instanceof Renderable) {
+                throw new \LogicException("The error boundary of route {$entry['name']} must return a Renderable.");
+            }
+            $this->boundaryScreens[$key] = $content;
+        }
+
+        return (new NavigationScreen(
+            $content,
+            $this->resolvedOptions($entry),
+            $this->theme,
+            count($this->stack) > 1,
+            fn (): bool => $this->pop(),
+        ))->toElement()->key('navigation.'.$entry['id']);
+    }
+
+    private function errorBoundaryFor(string $route): ?Closure
+    {
+        return $this->errorBoundaries[$route] ?? \Pam\Desktop\Routing\Route::globalErrorBoundary();
+    }
+
+    /** Clears a route's caught error so the next render tries the route again. */
+    private function retryRoute(string $key): void
+    {
+        if (!isset($this->routeErrors[$key])) return;
+        unset($this->routeErrors[$key], $this->boundaryScreens[$key], $this->frozenScreens[$key]);
+        \Pam\Desktop\Internal\Runtime::requestRender();
+    }
+
+    /**
+     * @param array<string, string|int|float|bool|null> $params
+     * @return array{name: string, id: int, routeId: string|null, params: array<string, string|int|float|bool|null>}|null
+     */
+    private function takeWarm(string $route, array $params): ?array
+    {
+        $entry = $this->warm;
+        if ($entry === null) return null;
+        $this->warm = null;
+        $this->warmGeneration++;
+        if ($this->parkKey($entry['name'], $entry['params']) !== $this->parkKey($route, $params)) return null;
+
+        return $entry;
+    }
+
+    private function decorateRoute(array $entry): Renderable
+    {
+        $options = $this->resolvedOptions($entry);
+        return new NavigationScreen(
+            $this->renderRoute($entry),
+            $options,
+            $this->theme,
+            count($this->stack) > 1,
+            fn (): bool => $this->pop(),
+        );
+    }
+
+    /** @param array{name: string, id: int, params: array<string, string|int|float|bool|null>} $entry */
+    private function contextFor(array $entry): RouteContext
+    {
+        return new RouteContext($entry['name'], $entry['params'], $this->entryKey($entry));
+    }
+
+    /** @param array{name: string, id: int, params: array<string, string|int|float|bool|null>} $entry */
+    private function entryKey(array $entry): string
+    {
+        return $entry['name'].'-'.$entry['id'];
+    }
+
+    /** @param array{name: string, id: int, routeId: string|null, params: array<string, string|int|float|bool|null>} $entry */
+    private function resolvedOptions(array $entry): ScreenOptions
+    {
+        $resolved = new ScreenOptions();
+        if ($this->defaultOptions !== null) {
+            $resolved = $this->applyOptionLayer($this->defaultOptions, $entry, $resolved);
+        }
+        foreach ($this->optionGroups as $group) {
+            if (in_array($entry['name'], $group['routes'], true)) {
+                $resolved = $this->applyOptionLayer($group['options'], $entry, $resolved);
+            }
+        }
+        $route = $this->screenOptions[$entry['name']] ?? null;
+        if ($route !== null) $resolved = $this->applyOptionLayer($route, $entry, $resolved);
+        $dynamic = $this->dynamicOptions[$this->entryKey($entry)] ?? null;
+        if ($dynamic !== null) {
+            $resolved = $this->applyOptionLayer($dynamic, $entry, $resolved);
+        }
+        return $resolved;
+    }
+
+    /** @param array{name: string, id: int, routeId: string|null, params: array<string, string|int|float|bool|null>} $entry */
+    private function applyOptionLayer(
+        ScreenOptions|ScreenOptionsPatch|Closure $layer,
+        array $entry,
+        ScreenOptions $inherited,
+    ): ScreenOptions {
+        return ScreenOptionLayer::apply(
+            $layer,
+            $this->contextFor($entry),
+            $inherited,
+        );
+    }
+
+    /** @param array<string, string|int|float|bool|null> $params */
+    private function resolveRouteId(string $route, array $params): ?string
+    {
+        $resolver = $this->routeIds[$route] ?? null;
+        if ($resolver === null) return null;
+        $reflection = new ReflectionFunction($resolver);
+        $resolved = $reflection->getNumberOfParameters() === 0
+            ? $resolver()
+            : $resolver(new RouteContext($route, $params));
+        if (!is_string($resolved) && !is_int($resolved)) {
+            throw new InvalidArgumentException('Route identity resolvers must return a bounded string or integer.');
+        }
+        $identity = (string) $resolved;
+        if ($identity === '' || strlen($identity) > 256) {
+            throw new InvalidArgumentException('Route identities must contain between 1 and 256 bytes.');
+        }
+        return $identity;
+    }
+
+    /** @param array<string, string|int|float|bool|null> $params */
+    private function preloadKey(string $route, array $params): string
+    {
+        return $route.'.'.hash('xxh3', serialize($params));
+    }
+
+    /** @return array{name: string, id: int, params: array<string, string|int|float|bool|null>} */
+    private function currentEntry(): array
+    {
+        return $this->stack[count($this->stack) - 1];
+    }
+
+    private function mayRemove(array $entry, NavigationAction $action): bool
+    {
+        $instance = $this->routeInstances[$this->entryKey($entry)] ?? null;
+        if (
+            $instance instanceof NavigationLifecycleAware
+            && !$instance->navigationBeforeRemove($this->contextFor($entry), $action)
+        ) return false;
+        $event = $this->emitNavigation(
+            NavigationEventType::BeforeRemove,
+            ['action' => $action->toArray(), 'route' => $this->contextFor($entry)],
+            true,
+            $this->entryKey($entry),
+        );
+        return !$event->isDefaultPrevented();
+    }
+
+    private function didNavigate(array $previous, NavigationAction $action): void
+    {
+        if ($this->warm !== null) {
+            // Any other navigation releases the screen mounted ahead of time.
+            $this->warm = null;
+            $this->warmGeneration++;
+        }
+        $current = $this->currentEntry();
+        if ($this->entryKey($previous) !== $this->entryKey($current)) {
+            $previousInstance = $this->routeInstances[$this->entryKey($previous)] ?? null;
+            // A screen blurred before its first mount never saw its focus: no blur either.
+            $neverFocused = isset($this->awaitingMount[$this->entryKey($previous)]);
+            unset($this->awaitingMount[$this->entryKey($previous)]);
+            if ($previousInstance instanceof NavigationLifecycleAware && !$neverFocused) {
+                $previousInstance->navigationBlurred($this->contextFor($previous));
+            }
+            if ($previousInstance instanceof \Pam\Desktop\Component) {
+                $previousInstance->__pamNavigationFocus(false);
+            }
+            $this->focusedEntryKey = null;
+            $this->emitNavigation(NavigationEventType::Blur, ['route' => $this->contextFor($previous)], false, $this->entryKey($previous));
+            $this->emitNavigation(NavigationEventType::Focus, ['route' => $this->contextFor($current)], false, $this->entryKey($current));
+        }
+        $this->pruneRouteInstances();
+        $this->emitNavigation(NavigationEventType::TransitionStart, [
+            'action' => $action->toArray(),
+            'from' => $this->contextFor($previous),
+            'to' => $this->contextFor($current),
+        ]);
+        $this->emitNavigation(NavigationEventType::State, ['state' => $this->getState(), 'action' => $action->toArray()]);
+    }
+
+    /**
+     * Keep-alive screens rendered (hidden) under the normal entries: the
+     * parked ones, then the keep-alive entries deeper in the stack, so their
+     * native views, scroll offsets and state survive like React Navigation
+     * tab screens.
+     *
+     * @param list<array<string, mixed>> $entries
+     * @return list<array<string, mixed>>
+     */
+    private function keptAliveBelow(array $entries, ?string $outgoingKey): array
+    {
+        $included = [];
+        foreach ($entries as $entry) $included[$this->entryKey($entry)] = true;
+        $below = [];
+        foreach ($this->parked as $entry) {
+            $key = $this->entryKey($entry);
+            if ($key !== $outgoingKey && !isset($included[$key])) {
+                $below[] = $entry;
+                $included[$key] = true;
+            }
+        }
+        foreach ($this->stack as $entry) {
+            $key = $this->entryKey($entry);
+            if (!isset($included[$key]) && $this->keepsAlive($entry)) {
+                $below[] = $entry;
+                $included[$key] = true;
+            }
+        }
+
+        return $below;
+    }
+
+    /** @param array<string, string|int|float|bool|null> $params */
+    private function parkKey(string $route, array $params): string
+    {
+        return $route.'|'.json_encode($params, JSON_THROW_ON_ERROR | JSON_PRESERVE_ZERO_FRACTION);
+    }
+
+    /** A keep-alive entry leaving the stack keeps its mounted screen. */
+    private function park(array $entry): void
+    {
+        if (!isset($this->routeInstances[$this->entryKey($entry)]) || !$this->keepsAlive($entry)) {
+            return;
+        }
+        $parkKey = $this->parkKey($entry['name'], $entry['params']);
+        unset($this->parked[$parkKey]);
+        $this->parked[$parkKey] = $entry;
+        $same = array_keys(array_filter(
+            $this->parked,
+            static fn (array $candidate): bool => $candidate['name'] === $entry['name'],
+        ));
+        while (count($same) > self::MAX_PARKED_PER_ROUTE) {
+            unset($this->parked[array_shift($same)]);
+        }
+    }
+
+    /**
+     * @param array<string, string|int|float|bool|null> $params
+     * @return array{name: string, id: int, routeId: string|null, params: array<string, string|int|float|bool|null>}|null
+     */
+    private function unpark(string $route, array $params): ?array
+    {
+        if (!isset($this->keepAliveRoutes[$route])) return null;
+        $parkKey = $this->parkKey($route, $params);
+        $entry = $this->parked[$parkKey] ?? null;
+        if ($entry === null) return null;
+        unset($this->parked[$parkKey]);
+
+        return $entry;
+    }
+
+    /** @param array{name: string, id: int, params: array<string, string|int|float|bool|null>} $entry */
+    private function keepsAlive(array $entry): bool
+    {
+        $when = $this->keepAliveRoutes[$entry['name']] ?? null;
+
+        return $when === true || ($when instanceof Closure && $when($this->contextFor($entry)) === true);
+    }
+
+    private function pruneRouteInstances(): void
+    {
+        $retained = [];
+        foreach ($this->stack as $entry) $retained[$this->entryKey($entry)] = true;
+        if ($this->outgoing !== null) $retained[$this->entryKey($this->outgoing)] = true;
+        foreach ($this->parked as $entry) $retained[$this->entryKey($entry)] = true;
+        if ($this->warm !== null) $retained[$this->entryKey($this->warm)] = true;
+        foreach (array_keys($this->routeContexts + $this->routeInstances) as $key) {
+            if (!isset($retained[$key])) {
+                $instance = $this->routeInstances[$key] ?? null;
+                $context = $this->routeContexts[$key] ?? null;
+                unset(
+                    $this->routeInstances[$key],
+                    $this->routeContexts[$key],
+                    $this->childSubscriptions[$key],
+                    $this->pendingChildState[$key],
+                    $this->dynamicOptions[$key],
+                    $this->frozenScreens[$key],
+                    $this->awaitingMount[$key],
+                );
+                if ($instance instanceof NavigationLifecycleAware && $context !== null) {
+                    $instance->navigationRemoved($context);
+                }
+            }
+        }
+    }
+
+    private function emitNavigation(
+        NavigationEventType $type,
+        array $data = [],
+        bool $canPreventDefault = false,
+        ?string $target = null,
+    ): NavigationEvent {
+        $event = new NavigationEvent($type, $target ?? $this->entryKey($this->currentEntry()), $data, $canPreventDefault);
+        foreach ($this->listeners[$type->value] ?? [] as $listener) {
+            $listener($event);
+        }
+        return $event;
+    }
+
+    private function dispatchRoute(NavigationAction $action, Closure $operation): bool
+    {
+        if ($action->route === null || !isset($this->routes[$action->route])) {
+            return false;
+        }
+        if (!$this->routeAvailable($action->route, $action->params)) return false;
+        $operation();
+        return true;
+    }
+
+    private function activeChildBackHandler(): ?NavigationBackHandler
+    {
+        $instance = $this->routeInstances[$this->entryKey($this->currentEntry())] ?? null;
+        return $instance instanceof NavigationBackHandler ? $instance : null;
+    }
+
+    private function activeChildActionHandler(): ?NavigationActionHandler
+    {
+        $entry = $this->currentEntry();
+        $instance = $this->routeInstances[$this->entryKey($entry)] ?? $this->renderRoute($entry);
+        return $instance instanceof NavigationActionHandler ? $instance : null;
+    }
+
+    private function activeChildLinkHandler(): ?NavigationLinkHandler
+    {
+        $entry = $this->currentEntry();
+        $instance = $this->routeInstances[$this->entryKey($entry)] ?? $this->renderRoute($entry);
+        return $instance instanceof NavigationLinkHandler ? $instance : null;
+    }
+
+    private function notifyRouteFocused(array $entry, Renderable $instance): void
+    {
+        $key = $this->entryKey($entry);
+        if ($key !== $this->entryKey($this->currentEntry()) || $this->focusedEntryKey === $key) return;
+        $this->focusedEntryKey = $key;
+        \Pam\Desktop\Plugin\RuntimeHooks::routeFocused($entry['name'], $entry['params'], $this->pathFor($entry));
+        if (!$instance instanceof \Pam\Desktop\Component) {
+            if ($instance instanceof NavigationLifecycleAware) $instance->navigationFocused($this->contextFor($entry));
+
+            return;
+        }
+        if ($instance instanceof NavigationLifecycleAware) {
+            // Like React Navigation, focus follows the first mount: setup() and
+            // onMounted() have run before navigationFocused() sees the screen.
+            $this->awaitingMount[$key] = true;
+            $instance->__pamWhenMounted(function () use ($instance, $entry, $key): void {
+                if (!isset($this->awaitingMount[$key])) return;
+                unset($this->awaitingMount[$key]);
+                if ($this->focusedEntryKey === $key) $instance->navigationFocused($this->contextFor($entry));
+            });
+        }
+        $instance->__pamNavigationFocus(true);
+    }
+
+    private function finalizeOutgoingRoute(): void
+    {
+        $entry = $this->outgoing;
+        if ($entry === null) {
+            $this->operation = NavigationOperation::Idle;
+            $this->actionTransition = null;
+            $this->actionTransitionDurationMs = null;
+
+            return;
+        }
+        $this->outgoing = null;
+        $this->operation = NavigationOperation::Idle;
+        $this->actionTransition = null;
+        $this->actionTransitionDurationMs = null;
+        $this->pruneRouteInstances();
+    }
+
+    private function setActionTransition(
+        ?NavigationTransition $transition,
+        ?int $durationMs,
+    ): void {
+        $this->actionTransition = $transition;
+        $this->actionTransitionDurationMs = $durationMs === null
+            ? null
+            : max(0, min(2_000, $durationMs));
+    }
+
+    private function observeChildNavigator(string $key, Renderable $instance): void
+    {
+        if (!$instance instanceof NavigationObservable || isset($this->childSubscriptions[$key])) return;
+        $this->childSubscriptions[$key] = $instance->addListener(
+            NavigationEventType::State,
+            function (): void {
+                $this->emitNavigation(NavigationEventType::State, ['state' => $this->getState()]);
+            },
+        );
+    }
+
+    /** @param array<array-key, mixed> $params
+     *  @return array<string, string|int|float|bool|null>
+     */
+    private static function validatedParams(array $params): array
+    {
+        if (count($params) > 64) {
+            throw new InvalidArgumentException('Routes cannot contain more than 64 parameters.');
+        }
+        $validated = [];
+        foreach ($params as $key => $value) {
+            if (
+                !is_string($key)
+                || preg_match('/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/', $key) !== 1
+                || !is_scalar($value) && $value !== null
+                || is_string($value) && strlen($value) > 16_384
+            ) {
+                throw new InvalidArgumentException('Route parameters require safe string keys and bounded scalar values.');
+            }
+            $validated[$key] = $value;
+        }
+
+        return $validated;
+    }
+
+    private static function stateChecksum(mixed $stack): string
+    {
+        return hash('xxh3', serialize($stack));
+    }
+}

@@ -1,0 +1,135 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Signals;
+
+use Closure;
+use Pam\Desktop\Internal\DependencyTracker;
+use WeakMap;
+
+/**
+ * @template T
+ * @implements ReadableSignal<T>
+ * @property T $value reactive read/write alias of get()/set()
+ */
+final class Signal implements ReactiveSource, ReadableSignal
+{
+    /** @var WeakMap<ReactiveObserver, true> */
+    private WeakMap $observers;
+    /** @var array<int, Closure(T, T): void> */
+    private array $listeners = [];
+    private int $nextListener = 1;
+
+    /** @param T $value */
+    public function __construct(private mixed $value)
+    {
+        $this->observers = new WeakMap();
+    }
+
+    /** @return T */
+    public function get(): mixed
+    {
+        DependencyTracker::read($this, 'value');
+        ReactiveScope::track($this);
+        return $this->value;
+    }
+
+    /** @return T */
+    public function peek(): mixed
+    {
+        return $this->value;
+    }
+
+    public function __get(string $name): mixed
+    {
+        if ($name !== 'value') {
+            throw new \LogicException("Unknown signal property {$name}; use ->value.");
+        }
+
+        return $this->get();
+    }
+
+    public function __set(string $name, mixed $value): void
+    {
+        if ($name !== 'value') {
+            throw new \LogicException("Unknown signal property {$name}; use ->value.");
+        }
+        $this->set($value);
+    }
+
+    public function __isset(string $name): bool
+    {
+        return $name === 'value';
+    }
+
+    /** Number of subscribe() listeners, for leak diagnostics and tests. */
+    public function listenerCount(): int
+    {
+        return \count($this->listeners);
+    }
+
+    /** @param T $value */
+    public function set(mixed $value): void
+    {
+        if ($value === $this->value) {
+            return;
+        }
+        $previous = $this->value;
+        $this->value = $value;
+        DependencyTracker::invalidate($this, 'value');
+        $this->notifyObservers();
+        foreach ($this->listeners as $listener) {
+            $listener($value, $previous);
+        }
+        Signals::changed();
+    }
+
+    /** @param Closure(T): T $update */
+    public function update(Closure $update): void
+    {
+        $this->set($update($this->value));
+    }
+
+    /** @param Closure(T, T): void $listener */
+    public function subscribe(Closure $listener): int
+    {
+        $id = $this->nextListener++;
+        $this->listeners[$id] = $listener;
+        return $id;
+    }
+
+    public function unsubscribe(int $subscription): void
+    {
+        unset($this->listeners[$subscription]);
+    }
+
+    public function attach(ReactiveObserver $observer): void
+    {
+        $this->observers[$observer] = true;
+    }
+
+    public function detach(ReactiveObserver $observer): void
+    {
+        unset($this->observers[$observer]);
+    }
+
+    /**
+     * Notifies a snapshot of the observers. Each effect detaches and re-attaches
+     * itself while it re-runs, which moves it within the WeakMap; iterating the
+     * live map then skipped the next observer. An observer detached by an
+     * earlier one in the same pass (a disposed watcher) is not notified.
+     */
+    private function notifyObservers(): void
+    {
+        $observers = [];
+        foreach ($this->observers as $observer => $_) {
+            $observers[] = $observer;
+        }
+        foreach ($observers as $observer) {
+            if (isset($this->observers[$observer])) {
+                $observer->dependencyChanged();
+            }
+        }
+    }
+}

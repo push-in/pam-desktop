@@ -1,20 +1,28 @@
 {
     "name": "pushinbr/pam-desktop",
-    "description": "Elegant PHP-first desktop applications powered by Pam, Rust, and Servo.",
+    "description": "Build fast native Linux, macOS and Windows applications with PHP and PAM.",
     "type": "library",
     "license": "MIT",
     "homepage": "https://github.com/push-in/pam-desktop",
     "keywords": [
         "desktop",
+        "native",
         "pam",
         "php",
-        "rust",
-        "servo"
+        "gtk",
+        "appkit",
+        "windows"
     ],
     "require": {
         "php": "^8.5"
     },
     "autoload": {
+        "files": [
+            "packages/desktop/src/Polyfill/mbstring_functions.php",
+            "packages/desktop/src/Routing/functions.php",
+            "packages/desktop/src/functions.php",
+            "packages/desktop/src/Testing/functions.php"
+        ],
         "psr-4": {
             "Pam\\Desktop\\": "packages/desktop/src/"
         }

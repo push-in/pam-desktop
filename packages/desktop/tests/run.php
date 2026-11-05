@@ -2,641 +2,7610 @@
 
 declare(strict_types=1);
 
+use Pam\Desktop\App;
+use Pam\Desktop\AppState;
+use Pam\Desktop\AccessibilityRole;
+use Pam\Desktop\AccessibilityAction;
+use Pam\Desktop\AccessibilityCheckedState;
+use Pam\Desktop\AccessibilityImportance;
+use Pam\Desktop\AccessibilityLiveRegion;
+use Pam\Desktop\ActivityIndicatorSize;
+use Pam\Desktop\AnimationKind;
+use Pam\Desktop\AnimationKeyframe;
+use Pam\Desktop\BottomSheetKeyboardBehavior;
+use Pam\Desktop\Bridge\IdlCompiler;
+use Pam\Desktop\AsyncStatus;
+use Pam\Desktop\AsyncValue;
+use Pam\Desktop\AsyncResource;
+use Pam\Desktop\Component;
+use Pam\Desktop\CaptureType;
+use Pam\Desktop\DrawingMode;
+use Pam\Desktop\EventKind;
+use Pam\Desktop\FileReference;
+use Pam\Desktop\FileDownloadProgress;
+use Pam\Desktop\FontStyle;
+use Pam\Desktop\GestureComposition;
+use Pam\Desktop\GestureDirection;
+use Pam\Desktop\GestureEvent;
+use Pam\Desktop\GestureState;
+use Pam\Desktop\GestureType;
+use Pam\Desktop\MediaType;
+use Pam\Desktop\MediaAlbum;
+use Pam\Desktop\MediaAsset;
+use Pam\Desktop\MediaAssetPage;
+use Pam\Desktop\MediaPickerType;
+use Pam\Desktop\MediaCachePolicy;
+use Pam\Desktop\MediaPriority;
+use Pam\Desktop\NativeMenuItem;
+use Pam\Desktop\PermissionDecision;
+use Pam\Desktop\PermissionKind;
+use Pam\Desktop\PermissionStatus;
+use Pam\Desktop\PushEventType;
+use Pam\Desktop\PushProvider;
+use Pam\Desktop\ImageCachePolicy;
+use Pam\Desktop\ImageErrorEvent;
+use Pam\Desktop\ImageFit;
+use Pam\Desktop\ImageLoadEvent;
+use Pam\Desktop\ImageProgressEvent;
+use Pam\Desktop\ImageResizeMethod;
+use Pam\Desktop\InputAutoCapitalize;
+use Pam\Desktop\InputAutofillImportance;
+use Pam\Desktop\InputContentSizeEvent;
+use Pam\Desktop\InputFormat;
+use Pam\Desktop\InputKeyEvent;
+use Pam\Desktop\InputMode;
+use Pam\Desktop\InputSelectionEvent;
+use Pam\Desktop\InputSubmitBehavior;
+use Pam\Desktop\InputTextAlignVertical;
+use Pam\Desktop\KeyboardType;
+use Pam\Desktop\Jobs\BackgroundJobs;
+use Pam\Desktop\IncomingShare;
+use Pam\Desktop\Internal\Runtime;
+use Pam\Desktop\Internal\BinaryValue;
+use Pam\Desktop\Internal\PamPhpCompiler;
+use Pam\Desktop\Internal\PamPhpPreloader;
+use Pam\Desktop\Internal\PamPhpRegistry;
+use Pam\Desktop\Internal\CssColor;
+use Pam\Desktop\Internal\CompiledTemplateNode;
+use Pam\Desktop\Internal\ScopedStyleCompiler;
+use Pam\Desktop\Internal\ComponentLifecycle;
+use Pam\Desktop\Internal\TemplateCompiler;
+use Pam\Desktop\Internal\TemplateExpression;
+use Pam\Desktop\Internal\TemplateRenderer;
+use Pam\Desktop\Internal\TreeEncoder;
+use Pam\Desktop\Internal\Wire;
+use Pam\Desktop\Tooling\PamFormatter;
+use Pam\Desktop\KeyboardAvoidingBehavior;
+use Pam\Desktop\MemoryPressure;
+use Pam\Desktop\MotionPreset;
+use Pam\Desktop\HapticFeedback;
+use Pam\Desktop\Http\Http;
+use Pam\Desktop\Http\HttpResponse;
+use Pam\Desktop\Http\OutboundTraceContext;
+use Pam\Desktop\Database\SQLite;
+use Pam\Desktop\NativeOperation;
+use Pam\Desktop\Forms\FormStatus;
+use Pam\Desktop\Forms\NativeForm;
+use Pam\Desktop\Forms\Attributes\Email;
+use Pam\Desktop\Forms\Attributes\Matches;
+use Pam\Desktop\Forms\Attributes\MaxLength;
+use Pam\Desktop\Forms\Attributes\MinLength;
+use Pam\Desktop\Forms\Attributes\Required;
+use Pam\Desktop\Navigation\NavigationOperation;
+use Pam\Desktop\Navigation\NavigationAction;
+use Pam\Desktop\Navigation\NavigationActionType;
+use Pam\Desktop\Navigation\NavigationContainer;
+use Pam\Desktop\Navigation\NavigationDevTools;
+use Pam\Desktop\Navigation\NavigationEvent;
+use Pam\Desktop\Navigation\NavigationEventType;
+use Pam\Desktop\Navigation\NavigationGestureDirection;
+use Pam\Desktop\Navigation\NavigationTransition;
+use Pam\Desktop\Navigation\NavigationTraceKind;
+use Pam\Desktop\Navigation\Navigator;
+use Pam\Desktop\Navigation\Router;
+use Pam\Desktop\Navigation\RouteContext;
+use Pam\Desktop\Navigation\ScreenOptions;
+use Pam\Desktop\Navigation\ScreenOptionsPatch;
+use Pam\Desktop\Navigation\SharedTransitionResizeMode;
+use Pam\Desktop\Navigation\SharedTransitionEasing;
+use Pam\Desktop\Navigation\SharedTransitionStyle;
+use Pam\Desktop\Navigation\NavigationPresentation;
+use Pam\Desktop\Navigation\NavigationRef;
+use Pam\Desktop\Navigation\NavigationLifecycleAware;
+use Pam\Desktop\Navigation\InteractsWithNavigationLifecycle;
+use Pam\Desktop\Routing\Route;
+use Pam\Desktop\Routing\RouteCodeGenerator;
+use Pam\Desktop\Routing\Navigation as NamedNavigation;
+use Pam\Desktop\Navigation\TabNavigator;
+use Pam\Desktop\Navigation\TabPresentation;
+use Pam\Desktop\ModalAnimationType;
+use Pam\Desktop\ModalOrientation;
+use Pam\Desktop\ModalPresentation;
+use Pam\Desktop\Modules\NativeModuleResult;
+use Pam\Desktop\Modules\NativeModules;
+use Pam\Desktop\ModuleResultStatus;
+use Pam\Desktop\NodeKind;
+use Pam\Desktop\PointerEvents;
+use Pam\Desktop\PressEvent;
+use Pam\Desktop\ReturnKeyType;
+use Pam\Desktop\RefreshIndicatorSize;
+use Pam\Desktop\Renderable;
+use Pam\Desktop\SafeAreaMode;
+use Pam\Desktop\ScrollKeyboardDismissMode;
+use Pam\Desktop\ScrollOverScrollMode;
+use Pam\Desktop\ScrollIndicatorStyle;
+use Pam\Desktop\ScrollTargetAlignment;
+use Pam\Desktop\ServerDriven\ServerDrivenUi;
+use Pam\Desktop\PositionType;
+use Pam\Desktop\Plugin\PluginManager;
+use Pam\Desktop\Plugin\PluginException;
+use Pam\Desktop\PropKey;
+use Pam\Desktop\Protocol;
+use Pam\Desktop\Restorable;
+use Pam\Desktop\State;
+use Pam\Desktop\Store\Attributes\Computed as StoreComputed;
+use Pam\Desktop\Store\ActionPolicy;
+use Pam\Desktop\System\MediaCapture;
+use Pam\Desktop\Store\Store;
+use Pam\Desktop\Store\StoreChangeKind;
+use Pam\Desktop\Store\StoreMiddleware;
+use Pam\Desktop\Store\Stores;
+use Pam\Desktop\Sync\MutationStatus;
+use Pam\Desktop\Sync\OfflineMutationQueue;
+use Pam\Desktop\StatusBarAppearance;
+use Pam\Desktop\System\Haptics;
+use Pam\Desktop\System\IncomingShares;
+use Pam\Desktop\System\Caches;
+use Pam\Desktop\System\Clipboard;
+use Pam\Desktop\System\DeviceInfo;
+use Pam\Desktop\System\PushNotifications;
+use Pam\Desktop\System\Files;
+use Pam\Desktop\System\MediaLibrary;
+use Pam\Desktop\Storage\Storage;
+use Pam\Desktop\Modules\NativeModuleException;
+use Pam\Desktop\Style;
+use Pam\Desktop\TemplateRegistry;
+use Pam\Desktop\TextDecoration;
+use Pam\Desktop\TextBreakStrategy;
+use Pam\Desktop\TextDataDetectorType;
+use Pam\Desktop\TextEllipsizeMode;
+use Pam\Desktop\TextHyphenationFrequency;
+use Pam\Desktop\TextTransform;
+use Pam\Desktop\Theme;
+use Pam\Desktop\ThemeMode;
+use Pam\Desktop\DesignTokens;
+use Pam\Desktop\UserInterfaceAppearance;
+use Pam\Desktop\View;
+use Pam\Desktop\WindowMetrics;
+use Pam\Desktop\UI\Button;
+use Pam\Desktop\UI\Canvas;
+use Pam\Desktop\UI\BottomSheet;
+use Pam\Desktop\UI\GestureDetector;
+use Pam\Desktop\UI\ActivityIndicator;
+use Pam\Desktop\UI\Animated;
+use Pam\Desktop\UI\Column;
+use Pam\Desktop\UI\CustomView;
+use Pam\Desktop\UI\DrawingCanvas;
+use Pam\Desktop\UI\FlatList;
+use Pam\Desktop\UI\Input;
+use Pam\Desktop\UI\InteractionRegion;
+use Pam\Desktop\UI\Image;
+use Pam\Desktop\UI\ImageBackground;
+use Pam\Desktop\UI\KeyboardAvoidingView;
+use Pam\Desktop\UI\Modal;
+use Pam\Desktop\UI\MediaPlayer;
+use Pam\Desktop\UI\Pressable;
+use Pam\Desktop\UI\RefreshControl;
+use Pam\Desktop\UI\SafeAreaView;
+use Pam\Desktop\UI\Screen;
+use Pam\Desktop\UI\Scroll;
+use Pam\Desktop\UI\SectionList;
+use Pam\Desktop\UI\StatusBar;
+use Pam\Desktop\UI\Suspense;
+use Pam\Desktop\UI\Text;
+use Pam\Desktop\UI\Toggle;
+use Pam\Desktop\UI\VirtualGrid;
+use Pam\Desktop\UI\VirtualizedList;
+use Pam\Desktop\UI\WebView;
+use Pam\Desktop\Worklets\Worklet;
+use Pam\Desktop\Worklets\WorkletTarget;
+use Pam\Desktop\Tests\Fixtures\ExamplePluginProvider;
+
+$testPluginRoots = array_filter(explode(PATH_SEPARATOR, getenv('PAM_TEST_PLUGIN_ROOTS') ?: ''));
+foreach ($testPluginRoots as $testPluginRoot) {
+    $metadata = json_decode(file_get_contents($testPluginRoot.'/composer.json'), true, flags: JSON_THROW_ON_ERROR);
+    foreach ($metadata['autoload']['psr-4'] ?? [] as $prefix => $directory) {
+        spl_autoload_register(static function (string $class) use ($prefix, $directory, $testPluginRoot): void {
+            if (!str_starts_with($class, $prefix)) return;
+            $path = $testPluginRoot.'/'.$directory.str_replace('\\', '/', substr($class, strlen($prefix))).'.php';
+            if (is_file($path)) require $path;
+        }, prepend: true);
+    }
+}
+
 spl_autoload_register(static function (string $class): void {
     $prefix = 'Pam\\Desktop\\';
+
     if (!str_starts_with($class, $prefix)) {
         return;
     }
 
-    require __DIR__.'/../src/'.str_replace('\\', '/', substr($class, strlen($prefix))).'.php';
+    $path = __DIR__.'/../src/'.str_replace('\\', '/', substr($class, strlen($prefix))).'.php';
+
+    if (is_file($path)) {
+        require $path;
+    }
 });
 
-use Pam\Desktop\Application;
-use Pam\Desktop\App;
-use Pam\Desktop\ApplicationCategory;
-use Pam\Desktop\Attributes\Command as CommandAttribute;
-use Pam\Desktop\Attributes\Desktop as DesktopAttribute;
-use Pam\Desktop\Attributes\Menu as MenuAttribute;
-use Pam\Desktop\Attributes\MenuItem as MenuItemAttribute;
-use Pam\Desktop\Attributes\MenuSeparator;
-use Pam\Desktop\Attributes\Listen;
-use Pam\Desktop\Attributes\Window as WindowAttribute;
-use Pam\Desktop\BackgroundJob;
-use Pam\Desktop\Capabilities;
-use Pam\Desktop\Database;
-use Pam\Desktop\Desktop;
-use Pam\Desktop\DesktopWindow;
-use Pam\Desktop\Events;
-use Pam\Desktop\ClientEvent;
-use Pam\Desktop\CommandContext;
-use Pam\Desktop\CommandExecution;
-use Pam\Desktop\CommandResult;
-use Pam\Desktop\EffectKind;
-use Pam\Desktop\EventContext;
-use Pam\Desktop\FileSystemRoot;
-use Pam\Desktop\GlobalShortcut;
-use Pam\Desktop\JobContext;
-use Pam\Desktop\JobOverlapPolicy;
-use Pam\Desktop\Lifecycle;
-use Pam\Desktop\Manifest;
-use Pam\Desktop\Menu;
-use Pam\Desktop\MenuItem;
-use Pam\Desktop\Plugin;
-use Pam\Desktop\ProcessCommand;
-use Pam\Desktop\QuickAction;
-use Pam\Desktop\HttpOrigin;
-use Pam\Desktop\ResponseStatus;
-use Pam\Desktop\RustPlugin;
-use Pam\Desktop\PluginPermissions;
-use Pam\Desktop\PluginSandboxMode;
-use Pam\Desktop\Shell;
-use Pam\Desktop\ShellEffect;
-use Pam\Desktop\Tray;
-use Pam\Desktop\TrayCloseBehavior;
-use Pam\Desktop\TaskbarProgressState;
-use Pam\Desktop\UpdatePolicy;
-use Pam\Desktop\Updates;
-use Pam\Desktop\Window;
-use Pam\Desktop\WindowEffect;
-use Pam\Desktop\WindowTheme;
-use Pam\Desktop\WindowHandle;
-use Pam\Desktop\InstallerScope;
-use Pam\Desktop\ProcessIsolation;
-use Pam\Desktop\ReleaseChannel;
-use Pam\Desktop\RenderBackend;
-use Pam\Desktop\WindowProfile;
-use Pam\Desktop\Workstation;
+require __DIR__.'/../src/functions.php';
+require __DIR__.'/Fixtures/ExamplePluginProvider.php';
+require __DIR__.'/Fixtures/TemplateEnumScope.php';
 
-final readonly class GreetingService
+final class TestDiagnostics
 {
-    public function message(string $name): string
-    {
-        return "Hello, {$name}!";
-    }
+    /** @var list<string> */
+    public static array $messages = [];
+
+    /** @var array{requestId: int, module: string, method: string, payload: string}|null */
+    public static ?array $moduleCall = null;
+
+    /** @var array{requestId: int, operation: int, payload: string}|null */
+    public static ?array $typedCall = null;
 }
 
-final readonly class GreetingCompleted
-{
-    public function __construct(public string $name)
-    {
-    }
-}
-
-enum ExportFormat: int
-{
-    case Pdf = 1;
-    case Html = 2;
-}
-
-final readonly class DocumentData
+final class TypedRouteTestScreen extends Component
 {
     public function __construct(
-        public int $id,
-        public string $title,
+        private readonly int $productId,
+        private readonly bool $preview = false,
     ) {
     }
-}
 
-#[WindowAttribute(
-    name: 'settings',
-    title: 'Settings',
-    page: 'resources/settings.html',
-    width: 680,
-    height: 520,
-    minimumWidth: 480,
-    minimumHeight: 360,
-)]
-final readonly class SettingsWindow extends DesktopWindow
-{
-}
-
-#[MenuAttribute(
-    id: 'app',
-    label: 'Convention Desktop',
-    close: TrayCloseBehavior::Hide,
-)]
-final class ConventionMenu
-{
-    #[MenuItemAttribute('Show window', shortcut: 'CmdOrCtrl+Shift+KeyP')]
-    public function show(WindowHandle $window): void
+    public function render(): Renderable
     {
-        $window->show()->focus();
-    }
-
-    #[MenuSeparator]
-    public function separator(): void
-    {
-    }
-
-    #[MenuItemAttribute('Background mode', checkbox: true)]
-    public function background(): void
-    {
-    }
-
-    #[MenuItemAttribute('Quit')]
-    public function quit(): null
-    {
-        return null;
+        return Screen::make(Text::make(
+            "Product {$this->productId}".($this->preview ? ' preview' : ''),
+        ));
     }
 }
 
-#[DesktopAttribute(
-    id: 'com.pushin.convention',
-    name: 'Convention Desktop',
-    version: '2.0.0',
-    description: 'Convention-first desktop application.',
-    category: ApplicationCategory::Development,
-    theme: WindowTheme::Dark,
-)]
-final class ConventionApp extends App
+enum TypedRouteTestName: string
 {
-    public function __construct(private readonly GreetingService $greetings)
+    case Home = 'home';
+    case Product = 'product';
+}
+
+final class TemplateEnumScope
+{
+}
+
+if (!function_exists('pam_desktop_error')) {
+    function pam_desktop_error(string $message): void
     {
+        TestDiagnostics::$messages[] = $message;
     }
+}
 
-    protected function configure(Desktop $desktop): void
-    {
-        $desktop
-            ->permissions(static fn ($permissions) => $permissions
-                ->filesystem('data', 'storage', read: true, write: true)
-                ->dialogs()
-                ->clipboard()
-                ->notifications())
-            ->timeout(10_000);
-    }
-
-    protected function windows(): array
-    {
-        return [SettingsWindow::class];
-    }
-
-    protected function menus(): array
-    {
-        return [ConventionMenu::class];
-    }
-
-    #[CommandAttribute]
-    public function greet(
-        WindowHandle $window,
-        Events $events,
-        string $name = 'world',
-    ): array {
-        $window->title("Hello, {$name}");
-        $events->emit(new GreetingCompleted($name));
-
-        return ['message' => $this->greetings->message($name)];
-    }
-
-    #[CommandAttribute]
-    public function openSettings(SettingsWindow $settings): void
-    {
-        $settings->show()->focus();
-    }
-
-    #[CommandAttribute('documents.describe')]
-    public function describeDocument(DocumentData $document, ExportFormat $format): array
-    {
-        return [
-            'id' => $document->id,
-            'title' => $document->title,
-            'format' => $format->value,
+if (!function_exists('pam_desktop_call')) {
+    function pam_desktop_call(
+        int $requestId,
+        string $module,
+        string $method,
+        string $payload,
+    ): void {
+        TestDiagnostics::$moduleCall = [
+            'requestId' => $requestId,
+            'module' => $module,
+            'method' => $method,
+            'payload' => $payload,
         ];
     }
+}
 
-    #[Listen('editor.changed')]
-    public function editorChanged(string $documentId, WindowHandle $window): void
-    {
-        $window->title("Editing {$documentId}");
+if (!function_exists('pam_desktop_call_typed')) {
+    function pam_desktop_call_typed(
+        int $requestId,
+        int $operation,
+        string $payload,
+    ): void {
+        TestDiagnostics::$typedCall = [
+            'requestId' => $requestId,
+            'operation' => $operation,
+            'payload' => $payload,
+        ];
     }
 }
 
-function expect(bool $condition, string $message): void
-{
+$stateDirectory = sys_get_temp_dir().'/pam-desktop-state-tests-'.getmypid();
+putenv('PAM_DESKTOP_STATE_DIR='.$stateDirectory);
+if (is_file($stateDirectory.'/state.json')) {
+    unlink($stateDirectory.'/state.json');
+}
+
+$assert = static function (bool $condition, string $message): void {
     if (!$condition) {
         throw new RuntimeException($message);
     }
-}
+};
 
-expect(Application::API_VERSION === 1, 'The stable PHP API version should be 1.');
-expect(Application::PROTOCOL_VERSION === 6, 'The stable PHP protocol should remain version 6.');
+$assert(
+    CssColor::parse('transparent') === 0x00000000
+        && CssColor::parse('#123') === 0xFF112233
+        && CssColor::parse('#1234') === 0x44112233
+        && CssColor::parse('#11223344') === 0x44112233
+        && CssColor::parse('rgb(255 0 128 / 50%)') === 0x80FF0080
+        && CssColor::parse('hsl(120deg 100% 25%)') === 0xFF008000
+        && CssColor::parse('rebeccapurple') === 0xFF663399,
+    'CSS colors must support transparent, modern hex, functions and named colors.',
+);
 
-$workstation = Workstation::defaults()
-    ->instance(forwardArguments: true)
-    ->processes(ProcessIsolation::PerWorkspace, 4)
-    ->agent()
-    ->runtime(15_000)
-    ->rendering(RenderBackend::Gpu)
-    ->window('settings', WindowProfile::child('main'))
-    ->release(ReleaseChannel::Beta, InstallerScope::CurrentUser);
-$workstationConfig = $workstation->toArray();
-expect($workstationConfig['isolation'] === 3, 'Workstation isolation must use its integer protocol enum.');
-expect($workstationConfig['windows']['settings']['role'] === 2, 'Child windows must retain their integer role.');
-expect($workstationConfig['releaseChannel'] === 2, 'Release channels must use their integer protocol enum.');
-
-$conventionApplication = ConventionApp::application();
-$conventionApplication->workstation($workstation);
-$conventionBoot = $conventionApplication->dispatch([
-    'version' => 6,
-    'id' => 100,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => '@pam/boot',
-    'payload' => null,
-]);
-expect($conventionBoot['payload']['manifest']['identifier'] === 'com.pushin.convention', 'The #[Desktop] attribute should define the manifest.');
-expect($conventionBoot['payload']['parallelWorkerCount'] === 4, 'The workstation process pool should configure PHP execution lanes.');
-expect($conventionBoot['payload']['workstation']['renderBackend'] === 2, 'The workstation bootstrap should cross the PHP/Rust boundary.');
-expect($conventionBoot['payload']['windows'][0]['entry'] === 'resources/index.html', 'The convention-first app should use the conventional entry page.');
-expect($conventionBoot['payload']['windows'][1]['id'] === 'settings', 'Attributed windows should be discovered.');
-expect($conventionBoot['payload']['windows'][1]['width'] === 680, 'A window may lower its initial and minimum width together.');
-expect($conventionBoot['payload']['windows'][1]['minWidth'] === 480, 'The attributed minimum width should be applied before the initial width.');
-expect($conventionBoot['payload']['commands'][0]['name'] === 'greet', 'Attributed methods should become commands.');
-expect($conventionBoot['payload']['shell']['tray']['closeBehavior'] === 2, 'Attributed menus should configure the tray.');
-expect($conventionBoot['payload']['shell']['shortcuts'][0]['id'] === 'show', 'Menu shortcuts should become native shortcuts.');
-expect($conventionBoot['payload']['shell']['menus'][0]['items'][2]['kind'] === 2, 'Attributed menu checkboxes should retain their kind when unchecked.');
-
-$conventionGreeting = $conventionApplication->dispatch([
-    'version' => 6,
-    'id' => 101,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => 'greet',
-    'payload' => ['name' => 'David'],
-]);
-expect($conventionGreeting['payload']['message'] === 'Hello, David!', 'Typed command arguments and constructor DI should resolve.');
-expect($conventionGreeting['effects'][0]['payload']['title'] === 'Hello, David', 'Window handles should collect native effects.');
-expect($conventionGreeting['events'][0]['name'] === 'greeting.completed', 'Event object names should derive from their classes.');
-
-$defaultGreeting = $conventionApplication->dispatch([
-    'version' => 6,
-    'id' => 104,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => 'greet',
-    'payload' => [],
-]);
-expect($defaultGreeting['payload']['message'] === 'Hello, world!', 'PHP defaults should apply to omitted payload fields.');
-
-$openSettings = $conventionApplication->dispatch([
-    'version' => 6,
-    'id' => 102,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => 'open.settings',
-    'payload' => null,
-]);
-expect($openSettings['effects'][0]['windowId'] === 'settings', 'Typed window classes should target their declared windows.');
-expect($openSettings['effects'][1]['kind'] === EffectKind::FocusWindow->value, 'Typed window methods should collect ordered effects.');
-
-$typedEvent = $conventionApplication->dispatch([
-    'version' => 6,
-    'id' => 103,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => '@pam/event',
-    'payload' => [
-        'name' => 'editor.changed',
-        'payload' => ['documentId' => 'document-42'],
-    ],
-]);
-expect($typedEvent['effects'][0]['payload']['title'] === 'Editing document-42', 'Attributed listeners should bind typed event payloads.');
-
-$typedDocument = $conventionApplication->dispatch([
-    'version' => 6,
-    'id' => 105,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => 'documents.describe',
-    'payload' => [
-        'document' => ['id' => 42, 'title' => 'Roadmap'],
-        'format' => 1,
-    ],
-]);
-expect($typedDocument['payload']['id'] === 42, 'Nested command objects should hydrate typed DTOs.');
-expect($typedDocument['payload']['format'] === 1, 'Integer-backed enums should bind through from().');
-
-$elegantApplication = Application::make(
-    id: 'com.pushin.elegant',
-    name: 'Elegant Desktop',
-    version: '1.2.3',
-    window: Window::create('Elegant Desktop')
-        ->load('resources/app.html')
-        ->size(960, 640),
-)
-    ->description('A concise PHP-first desktop application.')
-    ->publisher('Pushin')
-    ->category(ApplicationCategory::Development)
-    ->icon('resources/app.svg')
-    ->excludeFromBundle('storage/cache');
-
-$elegantBoot = $elegantApplication->dispatch([
-    'version' => 6,
-    'id' => 1,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => '@pam/boot',
-    'payload' => null,
-]);
-expect($elegantBoot['payload']['manifest']['identifier'] === 'com.pushin.elegant', 'The concise factory should configure the application ID.');
-expect($elegantBoot['payload']['manifest']['name'] === 'Elegant Desktop', 'The concise factory should configure the application name.');
-expect($elegantBoot['payload']['manifest']['description'] === 'A concise PHP-first desktop application.', 'Application metadata should remain fluent.');
-expect($elegantBoot['payload']['windows'][0]['entry'] === 'resources/app.html', 'Window::load() should configure the entry document.');
-
-try {
-    Shell::none()
-        ->menu(Menu::create('orphan', 'Orphan', MenuItem::command('show', 'Show')))
-        ->toArray();
-    expect(false, 'A Linux native menu without a tray must be rejected.');
-} catch (RuntimeException) {
-}
-
-try {
-    Manifest::create('Invalid Application ID', 'Pam', '0.4.0');
-    expect(false, 'Unsafe application identifiers must be rejected.');
-} catch (InvalidArgumentException) {
-}
-
-try {
-    Manifest::create('com.pushin.pam', 'Pam', '0.4.0')->excludeFromBundle('vendor');
-    expect(false, 'Required bundle paths must not be excludable.');
-} catch (InvalidArgumentException) {
-}
-
-try {
-    Updates::from('http://updates.pushin.dev/latest.json', str_repeat('a', 64));
-    expect(false, 'Remote update endpoints must require HTTPS.');
-} catch (InvalidArgumentException) {
-}
-
-try {
-    Updates::from('https://updates.pushin.dev/latest.json', str_repeat('A', 64));
-    expect(false, 'Update public keys must use canonical lowercase hexadecimal.');
-} catch (InvalidArgumentException) {
-}
-
-$application = Application::create(
-    Window::create('Pam Desktop')
-        ->size(1024, 680)
-        ->minimumSize(640, 480)
-        ->theme(WindowTheme::Dark),
-    Manifest::create('com.pushin.pam', 'Pam Desktop', '0.4.0')
-        ->description('Typed PHP on a native desktop runtime.')
-        ->publisher('Pushin')
-        ->category(ApplicationCategory::Development)
-        ->excludeFromBundle('storage/cache')
-        ->updates(
-            Updates::from(
-                'https://updates.pushin.dev/pam/stable.json',
-                str_repeat('a', 64),
-            )->policy(UpdatePolicy::Notify),
-        )
-        ->lifecycle(
-            Lifecycle::none()
-                ->schemes('pam')
-                ->files('application/x-pam-project')
-                ->autostart(),
-        ),
-)
-    ->window(
-        'settings',
-        Window::create('Settings')
-            ->entry('resources/settings.html')
-            ->size(720, 520)
-            ->minimumSize(640, 480)
-            ->visible(false),
-    )
-    ->capabilities(
-        Capabilities::none()
-            ->filesystem(FileSystemRoot::readWrite('data', 'storage'))
-            ->dialogs()
-            ->clipboard()
-            ->notifications()
-            ->dragAndDrop()
-            ->database(Database::readWrite('app', 'storage/app.sqlite'))
-            ->systemInformation()
-            ->http(HttpOrigin::allow('api', 'https://api.example.com/v1'))
-            ->secrets()
-            ->process(ProcessCommand::executable('thumbnailer', 'bin/thumbnailer')->allowArguments())
-            ->desktopPortal(),
-    )
-    ->shell(
-        Shell::none()
-            ->menu(
-                Menu::create(
-                    'tray',
-                    'Pam Desktop',
-                    MenuItem::command('show', 'Show window', 'CmdOrCtrl+Shift+KeyP'),
-                    MenuItem::checkbox('background', 'Background mode', true),
-                    MenuItem::separator(),
-                    MenuItem::command('quit', 'Quit'),
-                ),
-            )
-            ->tray(
-                Tray::create('tray', 'Pam Desktop')
-                    ->closeBehavior(TrayCloseBehavior::Hide),
-            )
-            ->shortcut(GlobalShortcut::create('show', 'CmdOrCtrl+Shift+KeyP'))
-            ->quickAction(
-                QuickAction::create('compose', 'New message')
-                    ->description('Open the message composer'),
-            ),
-    )
-    ->job(
-        'heartbeat',
-        BackgroundJob::every(60_000)
-            ->runOnStart()
-            ->timeout(5_000)
-            ->overlap(JobOverlapPolicy::Skip)
-            ->persistent(maximumAttempts: 4, retryBackoffMilliseconds: 500),
-        static fn (JobContext $job): CommandResult => CommandResult::success([
-            'runId' => $job->runId,
-        ]),
-    )
-    ->rustPlugin(
-        RustPlugin::executable('system', 'plugins/bin/system')
-            ->arguments('--quiet')
-            ->timeout(5_000)
-            ->sandbox(
-                PluginSandboxMode::Strict,
-                new PluginPermissions(['workspace'], network: true),
-            ),
-    )
-    ->commandTimeout(12_000);
-
-$application->plugin(new class implements Plugin {
-    public function identifier(): string
-    {
-        return 'fixture';
+$compiledCss = ScopedStyleCompiler::compile(
+    <<<'CSS'
+    :root {
+        --font-ui: "asset://assets/fonts/SpaceGrotesk-Regular.ttf";
+        --ink: #101410;
     }
 
-    public function register(Application $application): void
-    {
-        $application->command(
-            'plugin.ping',
-            static fn (CommandContext $context): array => ['window' => $context->windowId],
+    @font-face {
+        font-family: "Space Grotesk";
+        src: url(var(--font-ui));
+        font-weight: 400;
+        font-style: normal;
+    }
+
+    Text, .body-copy {
+        color: var(--ink);
+        font-family: var(--font-ui);
+        text-decoration: underline;
+    }
+
+    .card {
+        width: 100%;
+        height: 50%;
+        max-width: 92%;
+        padding: 8px 16px 12px;
+        margin: 1px 2px 3px 4px;
+        border: 1.5px solid #101410;
+        border-bottom: 2px solid #101410;
+        border-left: 3px solid #101410;
+        border-left-color: #D6ECDD;
+        border-style: dashed;
+        border-radius: 28px 28px 0 0;
+        inset: 5px 6px 7px 8px;
+        flex-wrap: wrap;
+        translation-y: 28px;
+    }
+
+    .percent-position {
+        left: 4%;
+        top: 10%;
+        right: 5%;
+        bottom: 2%;
+    }
+    CSS,
+    'ScopedStyleCompilerTest.pam.php',
+);
+$assert(
+    $compiledCss['tags']['Text']['textColor'] === 0xFF101410
+        && $compiledCss['classes']['body-copy']['fontFamily']
+            === 'asset://assets/fonts/SpaceGrotesk-Regular.ttf'
+        && $compiledCss['classes']['body-copy']['textDecoration'] === 'underline',
+    'Scoped CSS must resolve variables in tag and class rules.',
+);
+$assert(
+    $compiledCss['fonts']['Space Grotesk'][0] === [
+        'source' => 'asset://assets/fonts/SpaceGrotesk-Regular.ttf',
+        'weight' => '400',
+        'style' => 'normal',
+    ],
+    'Scoped CSS must compile packaged @font-face aliases without a runtime registry.',
+);
+$assert(
+    $compiledCss['classes']['card'] === [
+        'widthPercent' => '100',
+        'heightPercent' => '50',
+        'maxWidthPercent' => '92',
+        'paddingTop' => '8',
+        'paddingRight' => '16',
+        'paddingBottom' => '12',
+        'paddingLeft' => '16',
+        'marginTop' => '1',
+        'marginRight' => '2',
+        'marginBottom' => '3',
+        'marginLeft' => '4',
+        'borderWidth' => '1.5',
+        'borderColor' => 0xFF101410,
+        'borderTopColor' => 0xFF101410,
+        'borderRightColor' => 0xFF101410,
+        'borderBottomColor' => 0xFF101410,
+        'borderLeftColor' => 0xFFD6ECDD,
+        'borderBottomWidth' => '2',
+        'borderLeftWidth' => '3',
+        'borderStyle' => 2,
+        'borderTopLeftRadius' => '28',
+        'borderTopRightRadius' => '28',
+        'borderBottomRightRadius' => '0',
+        'borderBottomLeftRadius' => '0',
+        'top' => '5',
+        'right' => '6',
+        'bottom' => '7',
+        'left' => '8',
+        'flexWrap' => 'wrap',
+        'translationY' => '28',
+    ],
+    'Scoped CSS must compile percentages and native box shorthands exactly.',
+);
+$assert(
+    $compiledCss['classes']['percent-position'] === [
+        'leftPercent' => '4',
+        'topPercent' => '10',
+        'rightPercent' => '5',
+        'bottomPercent' => '2',
+    ],
+    'Scoped CSS must compile percentage position offsets exactly.',
+);
+$forwardVariableCss = ScopedStyleCompiler::compile(
+    '.label { color: var(--label); } :root { --label: #334455; }',
+    'ForwardVariable.pam.php',
+);
+$assert(
+    $forwardVariableCss['classes']['label']['textColor'] === 0xFF334455,
+    'Scoped CSS variables must be independent from declaration order.',
+);
+$modernCss = ScopedStyleCompiler::compile(
+    <<<'CSS'
+    :root {
+        --fallback-ink: var(--missing-ink, rgb(12 34 56 / 75%));
+        --space: 0.5rem;
+    }
+
+    Text { color: red; }
+    .later { color: #1234; }
+    .earlier { color: hsl(120 100% 25%); }
+    .later {
+        color: var(--fallback-ink);
+        background: none;
+        aspect-ratio: 16 / 9;
+        padding-inline: var(--space) 1rem;
+        margin-block: 2px 3px;
+        inset-inline: 4px 5px;
+        border: none;
+        font-weight: bold;
+        font-family: "Space Grotesk", sans-serif;
+        opacity: 50%;
+        transform: translateX(3px) translateY(-2dp) scale(1.25) rotate(0.5turn);
+        object-fit: scale-down;
+        visibility: visible;
+        box-sizing: border-box;
+    }
+    CSS,
+    'ModernCss.pam.php',
+);
+$assert(
+    $modernCss['classes']['later'] === [
+        'textColor' => 0xBF0C2238,
+        'backgroundColor' => 0,
+        'backgroundGradient' => '',
+        'aspectRatio' => (string) (16 / 9),
+        'paddingLeft' => '8',
+        'paddingRight' => '16',
+        'marginTop' => '2',
+        'marginBottom' => '3',
+        'left' => '4',
+        'right' => '5',
+        'borderWidth' => '0',
+        'borderColor' => 0,
+        'fontWeight' => '700',
+        'fontFamily' => 'Space Grotesk',
+        'opacity' => '0.5',
+        'translationX' => '3',
+        'translationY' => '-2',
+        'scaleX' => '1.25',
+        'scaleY' => '1.25',
+        'rotation' => '180',
+        'resizeMode' => 'contain',
+        'visible' => true,
+    ],
+    'Modern scoped CSS values and native-safe shorthands must compile exactly.',
+);
+$assert(
+    $modernCss['classCascade']['earlier']['textColor']['order'] === 2
+        && $modernCss['classCascade']['later']['textColor']['order'] === 3,
+    'Scoped CSS must index property source order for a deterministic constant-time cascade.',
+);
+$cyclicVariableRejected = false;
+try {
+    ScopedStyleCompiler::compile(
+        ':root { --a: var(--b); --b: var(--a); } Text { color: var(--a); }',
+        'CyclicVariables.pam.php',
+    );
+} catch (RuntimeException $error) {
+    $cyclicVariableRejected = str_contains($error->getMessage(), 'Circular CSS variable');
+}
+$assert(
+    $cyclicVariableRejected,
+    'Scoped CSS must reject custom-property cycles during compilation.',
+);
+
+$cascadeTemplate = TemplateCompiler::compile(
+    '<Column><Text class="later earlier">Styled</Text></Column>',
+);
+$cascadeStyled = new CompiledTemplateNode(
+    kind: $cascadeTemplate->kind,
+    name: $cascadeTemplate->name,
+    attributes: [
+        ...$cascadeTemplate->attributes,
+        '__pamStyles' => json_encode($modernCss, JSON_THROW_ON_ERROR),
+    ],
+    source: $cascadeTemplate->source,
+    line: $cascadeTemplate->line,
+    column: $cascadeTemplate->column,
+    value: $cascadeTemplate->value,
+);
+$cascadeStyled->children = $cascadeTemplate->children;
+$cascadeElement = TemplateRenderer::render($cascadeStyled, null, []);
+$cascadeText = $cascadeElement->children()[0];
+$assert(
+    $cascadeText->properties()[PropKey::TextColor->value] === 0xBF0C2238,
+    'CSS class order in markup must not override stylesheet source order.',
+);
+
+$inheritCss = ScopedStyleCompiler::compile(
+    <<<'CSS'
+    @font-face {
+        font-family: "Theme";
+        src: url("asset://assets/fonts/Theme-Regular.ttf");
+        font-weight: 400;
+    }
+    @font-face {
+        font-family: "Theme";
+        src: url("asset://assets/fonts/Theme-Bold.ttf");
+        font-weight: 700;
+    }
+    .theme {
+        color: #123;
+        font-family: "Theme";
+        font-size: 1rem;
+        font-weight: normal;
+        text-align: center;
+    }
+    .strong { font-weight: bold; }
+    CSS,
+    'InheritedCss.pam.php',
+);
+$inheritTemplate = TemplateCompiler::compile(
+    '<Column class="theme"><Row><Text class="strong">Inherited</Text></Row></Column>',
+);
+$inheritStyled = new CompiledTemplateNode(
+    kind: $inheritTemplate->kind,
+    name: $inheritTemplate->name,
+    attributes: [
+        ...$inheritTemplate->attributes,
+        '__pamStyles' => json_encode($inheritCss, JSON_THROW_ON_ERROR),
+    ],
+    source: $inheritTemplate->source,
+    line: $inheritTemplate->line,
+    column: $inheritTemplate->column,
+    value: $inheritTemplate->value,
+);
+$inheritStyled->children = $inheritTemplate->children;
+$inheritText = TemplateRenderer::render($inheritStyled, null, [])
+    ->children()[0]
+    ->children()[0];
+$assert(
+    $inheritText->properties()[PropKey::TextColor->value] === 0xFF112233
+        && $inheritText->properties()[PropKey::FontSize->value] === 16
+        && $inheritText->properties()[PropKey::FontFamily->value]
+            === 'asset://assets/fonts/Theme-Bold.ttf'
+        && !isset($inheritText->properties()[PropKey::FontWeight->value])
+        && $inheritText->properties()[PropKey::TextAlign->value] === 2,
+    'Text CSS properties and logical font families must inherit through native layout containers.',
+);
+$textAlignmentCss = ScopedStyleCompiler::compile(
+    '.left { text-align: left; } .right { text-align: right; }',
+    'TextAlignmentCss.pam.php',
+);
+$textAlignmentTemplate = TemplateCompiler::compile(
+    '<Column><Text class="left">Left</Text><Text class="right">Right</Text></Column>',
+);
+$textAlignmentStyled = new CompiledTemplateNode(
+    kind: $textAlignmentTemplate->kind,
+    name: $textAlignmentTemplate->name,
+    attributes: [
+        ...$textAlignmentTemplate->attributes,
+        '__pamStyles' => json_encode($textAlignmentCss, JSON_THROW_ON_ERROR),
+    ],
+    source: $textAlignmentTemplate->source,
+    line: $textAlignmentTemplate->line,
+    column: $textAlignmentTemplate->column,
+    value: $textAlignmentTemplate->value,
+);
+$textAlignmentStyled->children = $textAlignmentTemplate->children;
+$textAlignmentChildren = TemplateRenderer::render($textAlignmentStyled, null, [])
+    ->children();
+$assert(
+    $textAlignmentChildren[0]->properties()[PropKey::TextAlign->value]
+        === \Pam\Desktop\TextAlignment::Start->value
+        && $textAlignmentChildren[1]->properties()[PropKey::TextAlign->value]
+        === \Pam\Desktop\TextAlignment::End->value,
+    'CSS text-align must accept the web left/right aliases.',
+);
+$cssImportRoot = sys_get_temp_dir().'/pam-desktop-css-import-'.getmypid();
+mkdir($cssImportRoot.'/src/styles', 0o755, true);
+mkdir($cssImportRoot.'/src/screens', 0o755, true);
+file_put_contents($cssImportRoot.'/composer.json', "{}\n");
+file_put_contents(
+    $cssImportRoot.'/src/styles/tokens.css',
+    ":root { --brand-ink: #163D2A; }\n",
+);
+file_put_contents(
+    $cssImportRoot.'/src/styles/brand.css',
+    <<<'CSS'
+@import "./tokens.css";
+
+@font-face {
+    font-family: "Brand";
+    src: url("asset://assets/fonts/Brand-Regular.ttf");
+    font-weight: 400;
+}
+
+Text {
+    color: var(--brand-ink);
+    font-family: "Brand";
+}
+CSS,
+);
+$cssImportComponent = $cssImportRoot.'/src/screens/Profile.pam.php';
+file_put_contents($cssImportComponent, "<?php\n");
+$importedCss = ScopedStyleCompiler::compile(
+    '@import "../styles/brand.css"; Text { font-size: 15px; }',
+    $cssImportComponent,
+);
+$assert(
+    $importedCss['tags']['Text']['textColor'] === 0xFF163D2A
+        && $importedCss['tags']['Text']['fontFamily']
+            === 'Brand'
+        && $importedCss['tags']['Text']['fontSize'] === '15'
+        && $importedCss['fonts']['Brand'][0]['source']
+            === 'asset://assets/fonts/Brand-Regular.ttf',
+    'Scoped CSS imports must inline nested project styles and preserve local cascade order.',
+);
+$formattedImportPam = PamFormatter::format(
+    <<<'PAM'
+<?php
+?>
+<template><Text>Brand</Text></template><style scoped>@import url('../styles/brand.css'); Text { font-size: 15px; }</style>
+PAM,
+    $cssImportComponent,
+);
+$assert(
+    str_contains($formattedImportPam, '    @import "../styles/brand.css";')
+        && PamFormatter::format($formattedImportPam, $cssImportComponent)
+            === $formattedImportPam,
+    'PAM formatter must normalize and preserve compile-time CSS imports.',
+);
+$outsideCss = sys_get_temp_dir().'/pam-desktop-css-outside-'.getmypid().'.css';
+file_put_contents($outsideCss, "Text { color: #FF0000; }\n");
+$outsideImportRejected = false;
+try {
+    ScopedStyleCompiler::compile(
+        '@import "../../../'.basename($outsideCss).'";',
+        $cssImportComponent,
+    );
+} catch (RuntimeException $error) {
+    $outsideImportRejected = str_contains($error->getMessage(), 'outside the project');
+}
+$assert(
+    $outsideImportRejected,
+    'Scoped CSS imports must not escape the Composer project root.',
+);
+file_put_contents(
+    $cssImportComponent,
+    <<<'PAM'
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Tests\CssImport;
+
+use Pam\Desktop\Component;
+
+final class Profile extends Component
+{
+}
+?>
+
+<template>
+    <Text>Profile</Text>
+</template>
+
+<style scoped>
+    @import "../styles/brand.css";
+</style>
+PAM,
+);
+$cssImportCache = $cssImportRoot.'/.cache';
+$firstImportedComponent = PamPhpCompiler::compileFile(
+    $cssImportComponent,
+    $cssImportCache,
+);
+$firstImportedStyles = json_decode(
+    (string) ($firstImportedComponent->template->attributes['__pamStyles'] ?? ''),
+    true,
+    32,
+    JSON_THROW_ON_ERROR,
+);
+file_put_contents(
+    $cssImportRoot.'/src/styles/tokens.css',
+    ":root { --brand-ink: #245E42; }\n",
+);
+$secondImportedComponent = PamPhpCompiler::compileFile(
+    $cssImportComponent,
+    $cssImportCache,
+);
+$secondImportedStyles = json_decode(
+    (string) ($secondImportedComponent->template->attributes['__pamStyles'] ?? ''),
+    true,
+    32,
+    JSON_THROW_ON_ERROR,
+);
+$assert(
+    $firstImportedStyles['tags']['Text']['textColor'] === 0xFF163D2A
+        && $secondImportedStyles['tags']['Text']['textColor'] === 0xFF245E42,
+    'Changing an imported CSS dependency must invalidate the compiled component cache.',
+);
+$freshImportedComponent = PamPhpCompiler::compileFile(
+    $cssImportComponent,
+    $cssImportCache,
+);
+$assert(
+    (new ReflectionClass(CompiledTemplateNode::class))->isUninitializedLazyObject($freshImportedComponent->template)
+        && $freshImportedComponent->className === $secondImportedComponent->className
+        && $freshImportedComponent->tag === $secondImportedComponent->tag
+        && $freshImportedComponent->template->toArray() === $secondImportedComponent->template->toArray(),
+    'An unchanged component must reuse its compiled identity and decode its template lazily.',
+);
+file_put_contents(
+    $cssImportRoot.'/src/app.css',
+    <<<'CSS'
+:root {
+    --app-ink: #112A1C;
+}
+
+Text {
+    color: var(--app-ink);
+    font-size: 13px;
+}
+
+.shared-card {
+    padding: 8px;
+}
+CSS,
+);
+file_put_contents(
+    $cssImportComponent,
+    <<<'PAM'
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Tests\CssImport;
+
+use Pam\Desktop\Component;
+
+final class Profile extends Component
+{
+}
+?>
+
+<template>
+    <Column class="shared-card">
+        <Text>Profile</Text>
+    </Column>
+</template>
+
+<style scoped>
+    .shared-card {
+        padding-left: 16px;
+    }
+
+    Text {
+        font-size: 15px;
+    }
+</style>
+PAM,
+);
+$globalStyleComponent = PamPhpCompiler::compileFile(
+    $cssImportComponent,
+    $cssImportCache,
+);
+$globalStyles = json_decode(
+    (string) ($globalStyleComponent->template->attributes['__pamStyles'] ?? ''),
+    true,
+    32,
+    JSON_THROW_ON_ERROR,
+);
+$assert(
+    $globalStyles['tags']['Text']['textColor'] === 0xFF112A1C
+        && $globalStyles['tags']['Text']['fontSize'] === '15'
+        && $globalStyles['classes']['shared-card'] === [
+            'paddingTop' => '8',
+            'paddingRight' => '8',
+            'paddingBottom' => '8',
+            'paddingLeft' => '16',
+        ],
+    'src/app.css must apply globally while local component CSS wins the cascade.',
+);
+unlink($outsideCss);
+unlink($cssImportComponent);
+foreach (glob($cssImportCache.'/*') ?: [] as $cacheFile) {
+    unlink($cacheFile);
+}
+rmdir($cssImportCache);
+unlink($cssImportRoot.'/src/app.css');
+unlink($cssImportRoot.'/src/styles/brand.css');
+unlink($cssImportRoot.'/src/styles/tokens.css');
+unlink($cssImportRoot.'/composer.json');
+rmdir($cssImportRoot.'/src/screens');
+rmdir($cssImportRoot.'/src/styles');
+rmdir($cssImportRoot.'/src');
+rmdir($cssImportRoot);
+$shadowStyles = ScopedStyleCompiler::compile(
+    '.card { box-shadow: 3px 4px 0 1px #FFD23F; }'
+        .'.first { box-shadow: rgba(1, 2, 3, 0.5) 0 2px; }'
+        .'.flat { box-shadow: none; }',
+    'ShadowStyle.pam.php',
+);
+$assert(
+    $shadowStyles['classes']['card'] === [
+        'shadowOffsetX' => '3',
+        'shadowOffsetY' => '4',
+        'shadowBlurRadius' => '0',
+        'shadowSpreadRadius' => '1',
+        'shadowColor' => 0xFFFFD23F,
+        'boxShadows' => '',
+    ]
+        && $shadowStyles['classes']['first']['shadowColor'] === 0x80010203
+        && $shadowStyles['classes']['flat']['shadowColor'] === 0,
+    'Scoped CSS box-shadow must compile to the typed native shadow contract.',
+);
+$axisGapStyles = ScopedStyleCompiler::compile(
+    '.wrapped { column-gap: 14px; row-gap: 8px; }',
+    'AxisGapStyle.pam.php',
+);
+$assert(
+    $axisGapStyles['classes']['wrapped'] === [
+        'gridColumnGap' => '14',
+        'gridRowGap' => '8',
+    ],
+    'Scoped CSS row-gap and column-gap must preserve independent flex axes.',
+);
+$unformattedPam = <<<'PAM'
+<?php
+
+declare(strict_types=1);
+?>
+<template><Column><!-- Keep this explanation. --><Text v-if="$ready" fontSize="15">Ready</Text><Text v-else>Wait</Text></Column></template><style scoped>.ready { color: #112233; font-size: 15px; }</style>
+PAM;
+$formattedPam = PamFormatter::format($unformattedPam, 'FormatterTest.pam.php');
+$canonicalPam = PamFormatter::format(
+    "<?php\n?>\n<template><Button on:press=\"save\" v-model=\"draft\">Save</Button></template>",
+    'CanonicalFormatterTest.pam',
+);
+$assert(
+    str_contains($canonicalPam, '@press="save"')
+        && str_contains($canonicalPam, 'p-model="draft"')
+        && PamFormatter::format($canonicalPam, 'CanonicalFormatterTest.pam') === $canonicalPam,
+    'PAM formatter must canonicalize event and model aliases idempotently.',
+);
+$assert(
+    str_contains($formattedPam, 'p-if="$ready"')
+        && str_contains($formattedPam, '<Text p-else>Wait</Text>')
+        && str_contains($formattedPam, '<!-- Keep this explanation. -->')
+        && str_contains(
+            $formattedPam,
+            "    .ready {\n        color: #112233;\n        font-size: 15px;\n    }",
+        )
+        && !str_contains($formattedPam, 'v-if')
+        && PamFormatter::format($formattedPam, 'FormatterTest.pam.php')
+            === $formattedPam,
+    'PAM formatter must migrate directives and produce idempotent output.',
+);
+$emptyStylePam = PamFormatter::format(
+    <<<'PAM'
+<?php
+
+declare(strict_types=1);
+?>
+<template><Text>Ready</Text></template><style scoped>
+
+</style>
+PAM,
+    'EmptyStyleFormatterTest.pam.php',
+);
+$assert(
+    !str_contains($emptyStylePam, '<style scoped>')
+        && str_contains($emptyStylePam, '<Text>Ready</Text>'),
+    'PAM formatter must remove empty scoped style blocks.',
+);
+
+// Two append-only tables: the closed core (1..543 / 1..80) and the
+// extension table from Protocol::EXTENSION_BASE, each sequential.
+$assertProtocolTables = static function (array $cases, int $coreLimit, string $label) use ($assert): void {
+    $expected = 1;
+    foreach ($cases as $case) {
+        if ($case->value >= Protocol::EXTENSION_BASE && $expected <= Protocol::EXTENSION_BASE) {
+            $expected = Protocol::EXTENSION_BASE;
+        }
+        $assert($case->value === $expected, "{$label} must remain sequential protocol integers.");
+        $expected++;
+    }
+    foreach ($cases as $case) {
+        $assert(
+            $case->value <= $coreLimit || $case->value >= Protocol::EXTENSION_BASE,
+            "{$label} beyond the closed core table belong to the extension table.",
         );
     }
-});
+};
+foreach (NodeKind::cases() as $index => $kind) {
+    $assert($kind->value === $index + 1, 'Node kinds must remain sequential protocol integers.');
+}
+$assertProtocolTables(PropKey::cases(), Protocol::CORE_PROPERTY_LIMIT, 'Property keys');
+$assertProtocolTables(EventKind::cases(), Protocol::CORE_EVENT_LIMIT, 'Event kinds');
 
-$application->command(
-    'greet',
-    static function (CommandContext $command): CommandResult {
-        $name = $command->string('name', 'world');
-
-        return CommandResult::success(['message' => "Hello, {$name}!"])
-            ->effect(WindowEffect::title("Hello, {$name}"))
-            ->event(new ClientEvent('greeting.completed', [
-                'name' => $name,
-                'sourceWindow' => $command->windowId,
-            ]));
-    },
+$gesture = GestureDetector::make(
+    GestureType::Pan,
+    Text::make('Drag me'),
+)
+    ->pointers(1, 2)
+    ->direction(GestureDirection::Horizontal)
+    ->composition(GestureComposition::Simultaneous)
+    ->minimumDistance(12.0)
+    ->minimumDuration(80)
+    ->nativeTransform(
+        translationLimitX: 96.0,
+        resetOnEnd: true,
+        focalZoom: true,
+        bounds: true,
+        contentAspect: 0.75,
+    )
+    ->onBegin(static function (): void {
+    })
+    ->onUpdate(static function (): void {
+    })
+    ->onEnd(static function (): void {
+    })
+    ->onCancel(static function (): void {
+    });
+$assert(
+    $gesture->kind() === NodeKind::Pressable
+        && $gesture->properties()[PropKey::GestureType->value]
+            === GestureType::Pan->value
+        && $gesture->properties()[PropKey::GestureMaxPointers->value] === 2
+        && $gesture->properties()[PropKey::GestureDirection->value]
+            === GestureDirection::Horizontal->value
+        && $gesture->properties()[PropKey::PressOpacity->value] === 1.0
+        && $gesture->properties()[PropKey::PressScale->value] === 1.0
+        && $gesture->properties()[PropKey::GestureNativeTranslationLimitX->value]
+            === 96.0
+        && $gesture->properties()[PropKey::GestureNativeResetOnEnd->value]
+            === true
+        && $gesture->properties()[PropKey::GestureNativeFocalZoom->value]
+            === true
+        && $gesture->properties()[PropKey::GestureNativeBounds->value] === true
+        && $gesture->properties()[PropKey::GestureNativeContentAspect->value] === 0.75
+        && count($gesture->events()) === 4,
+    'GestureDetector must compile to an additive native Pressable contract.',
 );
-$application->command(
-    'benchmark.noop',
-    static fn (CommandContext $command): null => null,
-    CommandExecution::Parallel,
+$gestureEvent = GestureEvent::fromPayload(Wire::map([
+    'type' => GestureType::Pinch->value,
+    'state' => GestureState::Changed->value,
+    'x' => 24.0,
+    'y' => 40.0,
+    'pageX' => 32.0,
+    'pageY' => 72.0,
+    'translationX' => 8.0,
+    'translationY' => 12.0,
+    'velocityX' => 120.0,
+    'velocityY' => 80.0,
+    'scale' => 1.25,
+    'rotation' => 0.2,
+    'pointerCount' => 2,
+    'timestamp' => 1234,
+]));
+$assert(
+    $gestureEvent->type === GestureType::Pinch
+        && $gestureEvent->state === GestureState::Changed
+        && $gestureEvent->scale === 1.25
+        && $gestureEvent->pointerCount === 2,
+    'GestureEvent must decode the bounded cross-platform semantic payload.',
 );
+$templateGestureScope = new class {
+    public ?GestureEvent $event = null;
+    public string $layerId = '';
 
-$application->on(
-    'settings.open',
-    static fn (EventContext $event): CommandResult => CommandResult::success([
-        'sourceWindow' => $event->windowId,
-    ])->effect(WindowEffect::visible(true, 'settings')),
+    public function changed(GestureEvent $event): void
+    {
+        $this->event = $event;
+    }
+
+    public function changedLayer(string $layerId, GestureEvent $event): void
+    {
+        $this->layerId = $layerId;
+        $this->event = $event;
+    }
+};
+$offscreenTemplate = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<View opacity="0.5" needsOffscreenAlphaCompositing="true"><Text>Faded</Text></View>',
+    ),
+    null,
+    [],
 );
-
-$boot = $application->dispatch([
-    'version' => 6,
-    'id' => 1,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => '@pam/boot',
-    'payload' => null,
+$offscreenElement = \Pam\Desktop\UI\View::make()->needsOffscreenAlphaCompositing();
+$assert(
+    PropKey::NeedsOffscreenAlphaCompositing->value === 527
+        && ($offscreenTemplate->properties()[PropKey::NeedsOffscreenAlphaCompositing->value] ?? null) === true
+        && $offscreenElement->properties()[PropKey::NeedsOffscreenAlphaCompositing->value] === true,
+    'needsOffscreenAlphaCompositing must compile to the additive RN-compatible property 527.',
+);
+$templateGesture = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<GestureDetector gestureType="pan" on:gestureUpdate="changed">'
+        .'<Text>Drag</Text></GestureDetector>',
+    ),
+    $templateGestureScope,
+    [],
+);
+$templatePinch = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<GestureDetector gestureType="pinch"><Text>Zoom</Text></GestureDetector>',
+    ),
+    null,
+    [],
+);
+$explicitGesturePayload = Wire::map([
+    'type' => GestureType::Pan->value,
+    'state' => GestureState::Ended->value,
+    'translationX' => 42.0,
 ]);
-expect($boot['status'] === ResponseStatus::Success->value, 'Boot should succeed.');
-expect($boot['payload']['windows'][0]['theme'] === 3, 'The dark theme must be serialized as integer 3.');
-expect($boot['payload']['windows'][0]['width'] === 1024, 'The configured width should be retained.');
-expect($boot['payload']['windows'][1]['id'] === 'settings', 'The child window should be registered.');
-expect($boot['payload']['commandTimeoutMs'] === 12_000, 'The timeout should be serialized.');
-expect($boot['payload']['manifest']['identifier'] === 'com.pushin.pam', 'The app ID should be serialized.');
-expect($boot['payload']['manifest']['category'] === 1, 'Development must be integer 1.');
-expect($boot['payload']['manifest']['icon'] === 'resources/icon.svg', 'The default icon should be portable.');
-expect($boot['payload']['manifest']['bundleExcludes'] === ['storage/cache'], 'Bundle exclusions should be retained.');
-expect($boot['payload']['manifest']['updates']['policy'] === 2, 'Notify update policy must be integer 2.');
-expect($boot['payload']['manifest']['updates']['channel'] === 'stable', 'The stable update channel is the default.');
-expect($boot['payload']['manifest']['lifecycle']['urlSchemes'] === ['pam'], 'URL schemes should be serialized.');
-expect($boot['payload']['manifest']['lifecycle']['mimeTypes'] === ['application/x-pam-project'], 'MIME associations should be serialized.');
-expect($boot['payload']['manifest']['lifecycle']['autostart'] === true, 'Autostart should be explicit.');
-expect($boot['payload']['capabilities']['filesystemRoots'][0]['name'] === 'data', 'The root should be named.');
-expect($boot['payload']['capabilities']['filesystemRoots'][0]['access'] === 3, 'ReadWrite must be integer 3.');
-expect($boot['payload']['capabilities']['dialogs'] === true, 'Dialogs should be enabled explicitly.');
-expect($boot['payload']['capabilities']['clipboardRead'] === true, 'Clipboard read should be enabled.');
-expect($boot['payload']['capabilities']['notifications'] === true, 'Notifications should be enabled.');
-expect($boot['payload']['capabilities']['dragAndDrop'] === true, 'Drag and drop should be enabled.');
-expect($boot['payload']['capabilities']['databases'][0]['name'] === 'app', 'The native database should be declared.');
-expect($boot['payload']['capabilities']['databases'][0]['access'] === 2, 'Read-write database access must be integer 2.');
-expect($boot['payload']['capabilities']['systemInformation'] === true, 'System information should be enabled explicitly.');
-expect($boot['payload']['capabilities']['httpOrigins'][0]['name'] === 'api', 'The native HTTP origin should be named.');
-expect($boot['payload']['capabilities']['httpOrigins'][0]['origin'] === 'https://api.example.com/v1', 'The native HTTP origin should be preserved.');
-expect($boot['payload']['capabilities']['secrets'] === true, 'Linux secret storage should be enabled explicitly.');
-expect($boot['payload']['capabilities']['processes'][0]['argumentPolicy'] === 2, 'Append process arguments must be integer 2.');
-expect($boot['payload']['capabilities']['desktopPortal'] === true, 'Desktop portal access should be explicit.');
-expect($boot['payload']['parallelWorkerCount'] === 2, 'The default parallel pool should contain two workers.');
-expect($boot['payload']['commands'][2]['execution'] === 2, 'Parallel execution must be integer 2.');
-expect($boot['payload']['shell']['menus'][0]['id'] === 'tray', 'The tray menu should be serialized.');
-expect($boot['payload']['shell']['menus'][0]['items'][1]['kind'] === 2, 'Checkbox must be integer 2.');
-expect($boot['payload']['shell']['tray']['closeBehavior'] === 2, 'Hide behavior must be integer 2.');
-expect($boot['payload']['shell']['shortcuts'][0]['id'] === 'show', 'The shortcut should be serialized.');
-expect($boot['payload']['shell']['quickActions'][0]['id'] === 'compose', 'Quick actions should be serialized.');
-expect($boot['payload']['backgroundJobs'][0]['overlap'] === 1, 'Skip overlap must be integer 1.');
-expect($boot['payload']['backgroundJobs'][0]['persistent'] === true, 'Persistent jobs should be explicit.');
-expect($boot['payload']['backgroundJobs'][0]['maximumAttempts'] === 4, 'Persistent job retry limits should cross the protocol.');
-expect($boot['payload']['rustPlugins'][0]['id'] === 'system', 'Rust plugins should be declared.');
-expect($boot['payload']['phpPlugins'] === ['fixture'], 'PHP plugins should be visible to the host.');
-
-$greeting = $application->dispatch([
-    'version' => 6,
-    'id' => 2,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => 'greet',
-    'payload' => ['name' => 'David'],
-]);
-expect($greeting['payload']['message'] === 'Hello, David!', 'The handler should receive typed payload data.');
-expect($greeting['effects'][0]['kind'] === EffectKind::SetWindowTitle->value, 'The title effect should be emitted.');
-expect($greeting['effects'][0]['windowId'] === 'main', 'Effects should target a window explicitly.');
-expect($greeting['events'][0]['name'] === 'greeting.completed', 'Client events should be emitted.');
-
-$event = $application->dispatch([
-    'version' => 6,
-    'id' => 3,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => '@pam/event',
-    'payload' => [
-        'name' => 'settings.open',
-        'payload' => null,
-    ],
-]);
-expect($event['status'] === ResponseStatus::Success->value, 'Registered events should succeed.');
-expect($event['effects'][0]['kind'] === EffectKind::SetWindowVisible->value, 'Events may produce effects.');
-expect($event['effects'][0]['windowId'] === 'settings', 'Event effects should target child windows.');
-
-$missing = $application->dispatch([
-    'version' => 6,
-    'id' => 4,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => 'missing',
-    'payload' => null,
-]);
-expect($missing['status'] === ResponseStatus::Failure->value, 'Unknown commands should fail.');
-expect($missing['error']['code'] === 3, 'UnknownCommand must remain integer 3.');
-
-$job = $application->dispatch([
-    'version' => 6,
-    'id' => 5,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => '@pam/job',
-    'payload' => [
-        'id' => 'heartbeat',
-        'runId' => 42,
-        'startedAtMs' => 1_700_000_000_000,
-    ],
-]);
-expect($job['payload']['runId'] === 42, 'Background jobs should receive a typed run context.');
-
-$plugin = $application->dispatch([
-    'version' => 6,
-    'id' => 6,
-    'kind' => 1,
-    'windowId' => 'main',
-    'command' => 'plugin.ping',
-    'payload' => null,
-]);
-expect($plugin['payload']['window'] === 'main', 'PHP plugins should register application commands.');
-
-$shellEffect = ShellEffect::menuChecked('background', false)->toArray();
-expect($shellEffect['kind'] === 6, 'Menu checked effects must use integer kind 6.');
-
-$attention = WindowEffect::attention(critical: true, windowId: 'settings')->toArray();
-expect($attention['kind'] === 11, 'Window attention must use integer kind 11.');
-expect($attention['windowId'] === 'settings', 'Window attention must preserve its target.');
-expect($attention['payload']['active'] === true, 'Window attention should be active by default.');
-expect($attention['payload']['critical'] === true, 'Critical attention should be explicit.');
-
-$badge = ShellEffect::badge(42)->toArray();
-expect($badge['kind'] === 12, 'Application badges must use integer kind 12.');
-expect($badge['payload'] === ['visible' => true, 'count' => 42], 'Badge payload should be bounded and explicit.');
-$progress = ShellEffect::taskbarProgress(0.75, TaskbarProgressState::Paused)->toArray();
-expect($progress['kind'] === 13, 'Taskbar progress must use integer kind 13.');
-expect($progress['payload']['state'] === 4, 'Paused taskbar state must use integer 4.');
-$quit = ShellEffect::quit()->toArray();
-expect($quit['kind'] === 14, 'Explicit application quit must use integer kind 14.');
+TemplateExpression::evaluate(
+    'changedLayer("layer-1", $event)',
+    $templateGestureScope,
+    ['event' => $explicitGesturePayload],
+);
+$assert(
+    $templateGestureScope->layerId === 'layer-1'
+        && $templateGestureScope->event instanceof GestureEvent
+        && $templateGestureScope->event->translationX === 42.0,
+    'Explicit expression event arguments must honor typed GestureEvent parameters.',
+);
+$invalidForRejected = false;
 try {
-    ShellEffect::taskbarProgress(1.01);
-    expect(false, 'Out-of-range taskbar progress must fail.');
-} catch (InvalidArgumentException) {
+    TemplateCompiler::compile(
+        '<Column><Text p-for="$item, $index in $items">Invalid</Text></Column>',
+        'invalid-indexed-loop.pam.php',
+    );
+} catch (RuntimeException $error) {
+    $invalidForRejected = str_contains($error->getMessage(), 'p-for must use');
+}
+$assert(
+    $invalidForRejected,
+    'Template compilation must reject invalid p-for syntax before runtime.',
+);
+$invalidLegacyForRejected = false;
+try {
+    TemplateCompiler::compile(
+        '<Column><Text v-for="$item, $index in $items">Invalid</Text></Column>',
+        'invalid-legacy-for.pam.php',
+    );
+} catch (RuntimeException $error) {
+    $invalidLegacyForRejected = str_contains($error->getMessage(), 'v-for must use');
+}
+$assert(
+    $invalidLegacyForRejected,
+    'Template compilation must also reject invalid legacy v-for syntax.',
+);
+$invalidGestureChildrenRejected = false;
+try {
+    TemplateCompiler::compile(
+        '<GestureDetector><Text>One</Text><Text>Two</Text></GestureDetector>',
+        'invalid-gesture-children.pam.php',
+    );
+} catch (RuntimeException $error) {
+    $invalidGestureChildrenRejected = str_contains(
+        $error->getMessage(),
+        'must resolve to exactly one child',
+    );
+}
+$assert(
+    $invalidGestureChildrenRejected,
+    'Template compilation must reject ambiguous GestureDetector children before runtime.',
+);
+TemplateCompiler::compile(
+    '<GestureDetector><Image p-if="$video" /><Text p-else>Image</Text></GestureDetector>',
+    'conditional-gesture-child.pam.php',
+);
+TemplateCompiler::compile(
+    '<GestureDetector><Image v-if="$video" /><Text v-else>Image</Text></GestureDetector>',
+    'legacy-conditional-gesture-child.pam.php',
+);
+$assert(
+    $templatePinch->properties()[PropKey::GestureMinPointers->value] === 2
+        && $templatePinch->properties()[PropKey::GestureMaxPointers->value] === 2,
+    'Template pinch gestures must retain the native two-pointer defaults.',
+);
+$templateGesture->events()[EventKind::GestureUpdate->value](Wire::map([
+    'type' => GestureType::Pan->value,
+    'state' => GestureState::Changed->value,
+    'translationX' => -96.0,
+    'pointerCount' => 1,
+]));
+$assert(
+    $templateGestureScope->event instanceof GestureEvent
+        && $templateGestureScope->event->translationX === -96.0,
+    'Template gesture handlers must hydrate their binary payload as GestureEvent.',
+);
+
+$repositoryRoot = dirname(__DIR__, 3);
+$rustProtocol = file_get_contents(
+    $repositoryRoot.'/crates/pam-desktop-wire/src/lib.rs',
+);
+if ($rustProtocol === false) {
+    throw new RuntimeException('Cross-language protocol sources must be readable.');
+}
+if (
+    preg_match(
+        '/pub enum PropKey \\{(?<body>.*?)\\n\\}/s',
+        $rustProtocol,
+        $rustBlock,
+    ) !== 1
+) {
+    throw new RuntimeException('Cross-language protocol enums must be discoverable.');
+}
+preg_match_all(
+    '/^\\s*([A-Za-z][A-Za-z0-9_]*)\\s*=\\s*(\\d+),/m',
+    $rustBlock['body'],
+    $rustValues,
+);
+$phpPropertyValues = array_map(
+    static fn (PropKey $key): int => $key->value,
+    PropKey::cases(),
+);
+$rustPropertyValues = array_map('intval', $rustValues[2]);
+$normalizeProtocolName = static function (string $name): string {
+    $normalized = preg_replace(
+        ['/([a-z0-9])([A-Z])/', '/([A-Z])([A-Z][a-z])/'],
+        ['$1_$2', '$1_$2'],
+        $name,
+    );
+    if ($normalized === null) {
+        throw new RuntimeException('Protocol enum name could not be normalized.');
+    }
+
+    return strtoupper($normalized);
+};
+$phpPropertyNames = array_map(
+    static fn (PropKey $key): string => $normalizeProtocolName($key->name),
+    PropKey::cases(),
+);
+$rustPropertyNames = array_map($normalizeProtocolName, $rustValues[1]);
+$assert(
+    $rustPropertyValues === $phpPropertyValues
+        && $rustPropertyNames === $phpPropertyNames,
+    'PHP and Rust property protocol enums must remain byte-for-byte aligned.',
+);
+foreach (\Pam\Desktop\Protocol::CAPABILITIES as $capability) {
+    $assert(
+        str_contains($rustProtocol, '"'.$capability.'"'),
+        "Runtime capability {$capability} must remain aligned across PHP and Rust.",
+    );
+}
+$assert(
+    str_contains($rustProtocol, 'pub const ABI_VERSION: u16 = 1;'),
+    'ABI version 1 must remain aligned across every runtime host.',
+);
+
+foreach ([
+    AnimationKind::cases(),
+    AsyncStatus::cases(),
+    MotionPreset::cases(),
+    HapticFeedback::cases(),
+    FormStatus::cases(),
+    TabPresentation::cases(),
+    AccessibilityRole::cases(),
+    AccessibilityCheckedState::cases(),
+    AccessibilityImportance::cases(),
+    AccessibilityLiveRegion::cases(),
+    FontStyle::cases(),
+    ImageCachePolicy::cases(),
+    ImageFit::cases(),
+    ImageResizeMethod::cases(),
+    InputAutoCapitalize::cases(),
+    InputAutofillImportance::cases(),
+    InputMode::cases(),
+    InputSubmitBehavior::cases(),
+    InputTextAlignVertical::cases(),
+    PointerEvents::cases(),
+    PositionType::cases(),
+    ReturnKeyType::cases(),
+    RefreshIndicatorSize::cases(),
+    SafeAreaMode::cases(),
+    TextBreakStrategy::cases(),
+    TextDataDetectorType::cases(),
+    TextDecoration::cases(),
+    TextEllipsizeMode::cases(),
+    TextHyphenationFrequency::cases(),
+    TextTransform::cases(),
+] as $cases) {
+    foreach ($cases as $index => $case) {
+        $assert(
+            $case->value === $index + 1,
+            $case::class.' values must remain sequential protocol integers.',
+        );
+    }
 }
 
-echo "pushinbr/pam-desktop protocol tests passed\n";
+$loadingState = AsyncValue::loading(['cached']);
+$assert(
+    $loadingState->status === AsyncStatus::Loading
+        && $loadingState->hasData()
+        && $loadingState->isBusy(),
+    'AsyncValue must preserve cached content while loading.',
+);
+$offlineState = AsyncValue::offline(['cached']);
+$assert(
+    $offlineState->status === AsyncStatus::Offline
+        && $offlineState->retryable
+        && $offlineState->hasData(),
+    'Offline state must retain cached content and recovery semantics.',
+);
+
+$registrationForm = new class extends NativeForm {
+    #[Required]
+    #[Email]
+    public string $email = '';
+
+    #[Required]
+    #[MinLength(12)]
+    #[MaxLength(64)]
+    public string $password = '';
+
+    #[Matches('password')]
+    public string $passwordConfirmation = '';
+};
+$registrationForm->fill([
+    'email' => 'invalid',
+    'password' => 'short',
+    'passwordConfirmation' => 'different',
+], touch: true);
+$assert(
+    !$registrationForm->beginSubmit()
+        && $registrationForm->status() === FormStatus::Failure
+        && $registrationForm->error('email') !== null
+        && $registrationForm->error('password') !== null
+        && $registrationForm->error('passwordConfirmation') !== null,
+    'NativeForm must validate attributed fields before submission.',
+);
+$registrationForm->fill([
+    'email' => 'developer@pam.dev',
+    'password' => 'a-secure-password',
+    'passwordConfirmation' => 'a-secure-password',
+]);
+$assert(
+    $registrationForm->beginSubmit()
+        && $registrationForm->status() === FormStatus::Submitting,
+    'NativeForm must enter submitting only after successful validation.',
+);
+$registrationForm->fail(['email' => ['This email is already registered.']]);
+$assert(
+    $registrationForm->status() === FormStatus::Failure
+        && $registrationForm->error('email') === 'This email is already registered.',
+    'NativeForm must map server errors to their fields.',
+);
+
+$motionElement = Text::make('Motion')->motion(MotionPreset::SlideUp, 260);
+$assert(
+    $motionElement->properties()[PropKey::AnimationKind->value]
+        === AnimationKind::SlideUp->value
+        && $motionElement->properties()[PropKey::AnimationDurationMs->value] === 260,
+    'Motion presets must compile to native animation properties.',
+);
+Haptics::trigger(HapticFeedback::Success);
+$assert(
+    TestDiagnostics::$typedCall !== null
+        && TestDiagnostics::$typedCall['operation'] === NativeOperation::Haptic->value
+        && Wire::decodeMap(TestDiagnostics::$typedCall['payload'])['feedback']
+            === HapticFeedback::Success->value,
+    'Semantic haptics must use the typed native operation channel.',
+);
+Clipboard::setText('Pam Desktop');
+$assert(
+    TestDiagnostics::$typedCall !== null
+        && TestDiagnostics::$typedCall['operation']
+            === NativeOperation::ClipboardSetText->value
+        && Wire::decodeMap(TestDiagnostics::$typedCall['payload'])['text']
+            === 'Pam Desktop',
+    'Clipboard writes must use the bounded typed native operation channel.',
+);
+Clipboard::setSensitiveText('private-pix-code', 45);
+$sensitiveClipboardPayload = Wire::decodeMap(TestDiagnostics::$typedCall['payload']);
+$assert(
+    TestDiagnostics::$typedCall['operation'] === NativeOperation::ClipboardSetText->value
+        && $sensitiveClipboardPayload['text'] === 'private-pix-code'
+        && $sensitiveClipboardPayload['sensitive'] === true
+        && $sensitiveClipboardPayload['clearAfterSeconds'] === 45,
+    'Sensitive clipboard writes must carry bounded privacy metadata.',
+);
+foreach ([14, 301] as $invalidClipboardExpiry) {
+    try {
+        Clipboard::setSensitiveText('private', $invalidClipboardExpiry);
+        $assert(false, 'Sensitive clipboard expiry must reject unsafe bounds.');
+    } catch (InvalidArgumentException) {
+        $assert(true, 'Sensitive clipboard expiry rejects unsafe bounds.');
+    }
+}
+$assert(
+    array_map(
+        static fn (NativeOperation $operation): int => $operation->value,
+        NativeOperation::cases(),
+    ) === range(1, 19),
+    'Native operations must remain sequential and append-only.',
+);
+
+$tree = Screen::make(
+    Column::make(
+        Text::make('Pam Desktop')->key('title'),
+        Button::make('Tap')->onPress(static function (): void {
+        }),
+        Input::make('value')->placeholder('Type here'),
+    )->style(new Style(padding: 16.0, gap: 8.0)),
+);
+$inputSelection = null;
+$inputContentSize = null;
+$inputKey = null;
+$inputEndValue = null;
+$inputElement = Input::make('hello')
+    ->multiline()
+    ->editable(false)
+    ->autoCorrect(false)
+    ->autoCapitalize(InputAutoCapitalize::Words)
+    ->caretHidden()
+    ->contextMenuHidden()
+    ->cursorColor(0xFF2563EB)
+    ->disableFullscreenUi()
+    ->autofillImportance(InputAutofillImportance::Yes)
+    ->inputMode(InputMode::Email)
+    ->minLines(3)
+    ->selectTextOnFocus()
+    ->selection(1, 4)
+    ->showSoftInputOnFocus(false)
+    ->submitBehavior(InputSubmitBehavior::Submit)
+    ->textAlignVertical(InputTextAlignVertical::Top)
+    ->returnKeyLabel('Publish')
+    ->scrollEnabled(false)
+    ->underlineColor(0x00000000)
+    ->onEndEditing(
+        static function (string $value) use (&$inputEndValue): void {
+            $inputEndValue = $value;
+        },
+    )
+    ->onSelectionChange(
+        static function (InputSelectionEvent $event) use (&$inputSelection): void {
+            $inputSelection = $event;
+        },
+    )
+    ->onContentSizeChange(
+        static function (InputContentSizeEvent $event) use (
+            &$inputContentSize,
+        ): void {
+            $inputContentSize = $event;
+        },
+    )
+    ->onKeyPress(
+        static function (InputKeyEvent $event) use (&$inputKey): void {
+            $inputKey = $event;
+        },
+    );
+$inputElement->events()[EventKind::InputEndEditing->value]('finished');
+$inputElement->events()[EventKind::InputSelectionChange->value](Wire::map([
+    'start' => 1,
+    'end' => 4,
+]));
+$inputElement->events()[EventKind::InputContentSizeChange->value](Wire::map([
+    'width' => 240.0,
+    'height' => 96.0,
+]));
+$inputElement->events()[EventKind::InputKeyPress->value](Wire::map([
+    'key' => 'Enter',
+]));
+$assert(
+    $inputElement->properties()[PropKey::InputEditable->value] === false
+        && $inputElement->properties()[PropKey::InputAutoCorrect->value]
+            === false
+        && $inputElement->properties()[PropKey::InputAutoCapitalize->value]
+            === InputAutoCapitalize::Words->value
+        && $inputElement->properties()[PropKey::InputAutofillImportance->value]
+            === InputAutofillImportance::Yes->value
+        && $inputElement->properties()[PropKey::InputMode->value]
+            === InputMode::Email->value
+        && $inputElement->properties()[PropKey::InputMinLines->value] === 3
+        && $inputElement->properties()[PropKey::InputSelectionStart->value]
+            === 1
+        && $inputElement->properties()[PropKey::InputSelectionEnd->value] === 4
+        && $inputElement->properties()[PropKey::InputSubmitBehavior->value]
+            === InputSubmitBehavior::Submit->value
+        && $inputElement->properties()[PropKey::InputTextAlignVertical->value]
+            === InputTextAlignVertical::Top->value
+        && $inputElement->properties()[PropKey::InputReturnKeyLabel->value]
+            === 'Publish'
+        && $inputElement->properties()[PropKey::InputScrollEnabled->value]
+            === false
+        && $inputEndValue === 'finished'
+        && $inputSelection instanceof InputSelectionEvent
+        && $inputSelection->end === 4
+        && $inputContentSize instanceof InputContentSizeEvent
+        && $inputContentSize->height === 96.0
+        && $inputKey instanceof InputKeyEvent
+        && $inputKey->key === 'Enter',
+    'Input helpers must preserve native editing, selection, keyboard, size and key behavior.',
+);
+$maskedInput = \Pam\Desktop\UI\Input::make('11987654321')->mask('(##) #####-####');
+$currencyInput = \Pam\Desktop\UI\Input::make('123456')->currency(2, 'R$ ', ' BRL', 'pt-BR');
+$assert(
+    $maskedInput->properties()[PropKey::InputFormat->value] === InputFormat::Pattern->value
+        && $maskedInput->properties()[PropKey::InputFormatPattern->value] === '(##) #####-####'
+        && $maskedInput->properties()[PropKey::InputFormatPlaceholder->value] === '#'
+        && $currencyInput->properties()[PropKey::InputFormat->value] === InputFormat::Currency->value
+        && $currencyInput->properties()[PropKey::InputFormatDecimalDigits->value] === 2
+        && $currencyInput->properties()[PropKey::InputFormatPrefix->value] === 'R$ '
+        && $currencyInput->properties()[PropKey::InputFormatSuffix->value] === ' BRL'
+        && $currencyInput->properties()[PropKey::InputFormatLocale->value] === 'pt-BR',
+    'Input formatting helpers must expose typed pattern and locale-aware currency contracts.',
+);
+$templateFormattedInputs = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Column>'
+        .'<Input inputFormat="mask" inputFormatPattern="(##) #####-####" />'
+        .'<Input inputFormat="currency" inputFormatDecimalDigits="2" inputFormatPrefix="R$ " inputFormatLocale="pt-BR" />'
+        .'</Column>',
+    ),
+    new class {
+    },
+    [],
+);
+$assert(
+    array_map(
+        static fn (\Pam\Desktop\Element $input): int => $input
+            ->properties()[PropKey::InputFormat->value],
+        $templateFormattedInputs->children(),
+    ) === [InputFormat::Pattern->value, InputFormat::Currency->value],
+    'Template inputFormat aliases must compile to the sequential native enum.',
+);
+$secureAliasElement = TemplateRenderer::render(
+    TemplateCompiler::compile('<Input secureTextEntry="true" />'),
+    new class {
+    },
+    [],
+);
+$assert(
+    $secureAliasElement->properties()[PropKey::Secure->value] === true,
+    'Input secureTextEntry must remain a compatible alias for secure.',
+);
+$disabledAliasElement = TemplateRenderer::render(
+    TemplateCompiler::compile('<Pressable disabled="true" />'),
+    new class {
+    },
+    [],
+);
+$assert(
+    $disabledAliasElement->properties()[PropKey::Enabled->value] === false,
+    'Template disabled must invert to the native enabled property.',
+);
+$memoryDiskImage = TemplateRenderer::render(
+    TemplateCompiler::compile('<Image source="https://example.test/image.webp" cachePolicy="memory-disk" />'),
+    new class {
+    },
+    [],
+);
+$assert(
+    $memoryDiskImage->properties()[PropKey::ImageCachePolicy->value]
+        === ImageCachePolicy::ForceCache->value,
+    'Image memory-disk must map the familiar Expo policy to the native memory/disk cache.',
+);
+$uncachedImage = TemplateRenderer::render(
+    TemplateCompiler::compile('<Image source="https://example.test/image.webp" cachePolicy="none" />'),
+    new class {
+    },
+    [],
+);
+$assert(
+    $uncachedImage->properties()[PropKey::ImageCachePolicy->value]
+        === ImageCachePolicy::None->value,
+    'Image none must map to the native read/write cache bypass policy.',
+);
+$keyboardAliasElement = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Column>'
+        .'<Input keyboardType="default" />'
+        .'<Input keyboardType="email-address" />'
+        .'<Input keyboardType="number-pad" />'
+        .'<Input keyboardType="phone-pad" />'
+        .'<Input keyboardType="decimal-pad" />'
+        .'</Column>',
+    ),
+    new class {
+    },
+    [],
+);
+$assert(
+    array_map(
+        static fn (\Pam\Desktop\Element $input): int => $input
+            ->properties()[PropKey::KeyboardType->value],
+        $keyboardAliasElement->children(),
+    ) === [
+        KeyboardType::Text->value,
+        KeyboardType::Email->value,
+        KeyboardType::Number->value,
+        KeyboardType::Phone->value,
+        KeyboardType::Decimal->value,
+    ],
+    'Input keyboardType must accept familiar React Native aliases.',
+);
+$dynamicColorElement = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Text :textColor="$active ? \'#1B7A4E\' : \'#777770\'">Status</Text>',
+    ),
+    null,
+    ['active' => true],
+);
+$assert(
+    $dynamicColorElement->properties()[PropKey::TextColor->value] === 0xFF1B7A4E,
+    'Dynamically bound hexadecimal colors must cross the native bridge as integers.',
+);
+$transparentColorElement = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<View backgroundColor="transparent">'
+        .'<View backgroundColor="rgba(255 255 255 / 25%)" />'
+        .'<View backgroundColor="#1234" />'
+        .'<View backgroundColor="#80112233" />'
+        .'</View>',
+    ),
+    null,
+    [],
+);
+$assert(
+    $transparentColorElement->properties()[PropKey::BackgroundColor->value] === 0x00000000
+        && $transparentColorElement->children()[0]
+            ->properties()[PropKey::BackgroundColor->value] === 0x40FFFFFF
+        && $transparentColorElement->children()[1]
+            ->properties()[PropKey::BackgroundColor->value] === 0x44112233
+        && $transparentColorElement->children()[2]
+            ->properties()[PropKey::BackgroundColor->value] === 0x80112233,
+    'Direct colors must add CSS forms while preserving legacy eight-digit ARGB.',
+);
+$quotedComparisonTemplate = TemplateCompiler::compile(
+    '<Column><Text v-if="$count > 0">More</Text>'
+    .'<Text v-if="$count < 1">Less</Text></Column>',
+);
+$assert(
+    $quotedComparisonTemplate->children[0]->children[0]->attributes['v-if']
+        === '$count > 0'
+        && $quotedComparisonTemplate->children[0]->children[1]->attributes['v-if']
+            === '$count < 1',
+    'Template tags must keep angle-bracket operators inside quoted attributes.',
+);
+$pamDirectiveBranches = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Column>'
+        .'<Text p-if="$kind === 1">One</Text>'
+        .'<Text p-else-if="$kind === 2">Two</Text>'
+        .'<Text p-else>Other</Text>'
+        .'</Column>',
+    ),
+    null,
+    ['kind' => 2],
+);
+$assert(
+    count($pamDirectiveBranches->children()) === 1
+        && $pamDirectiveBranches->children()[0]
+            ->properties()[PropKey::Text->value] === 'Two',
+    'Native p-if, p-else-if and p-else directives must render one matching branch.',
+);
+$scrollViewElement = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<ScrollView horizontal="true" scrollIndicatorStyle="dark">'
+        .'<Pressable width="66"><Text>New</Text></Pressable>'
+        .'<Pressable width="76"><Text>Saved</Text></Pressable>'
+        .'</ScrollView>',
+    ),
+    null,
+    [],
+);
+$scrollContent = $scrollViewElement->children()[0] ?? null;
+$assert(
+    $scrollViewElement->kind() === NodeKind::Scroll
+        && $scrollViewElement->properties()[PropKey::ScrollIndicatorStyle->value] === ScrollIndicatorStyle::Dark->value
+        && $scrollContent instanceof \Pam\Desktop\Element
+        && $scrollContent->kind() === NodeKind::Row
+        && count($scrollContent->children()) === 2
+        && (float) $scrollContent->children()[0]
+            ->properties()[PropKey::Width->value] === 66.0
+        && (float) $scrollContent->children()[1]
+            ->properties()[PropKey::Width->value] === 76.0,
+    'Declarative horizontal ScrollView must preserve direct child widths in a Row container.',
+);
+$pressInEvent = null;
+$pressOutEvent = null;
+$pressMoveEvent = null;
+$pressableElement = Pressable::make(Text::make('Open'))
+    ->ripple(0x66010203, true, 24.0, true, 0.5)
+    ->pressedOpacity(0.7)
+    ->pressedScale(0.92)
+    ->hitSlopEdges(4.0, 6.0, 8.0, 10.0)
+    ->pressRetentionEdges(12.0, 14.0, 16.0, 18.0)
+    ->delayLongPress(420)
+    ->delayPressIn(25)
+    ->delayPressOut(40)
+    ->androidDisableSound()
+    ->onPressIn(static function (PressEvent $event) use (&$pressInEvent): void {
+        $pressInEvent = $event;
+    })
+    ->onPressOut(static function (PressEvent $event) use (&$pressOutEvent): void {
+        $pressOutEvent = $event;
+    })
+    ->onPressMove(static function (PressEvent $event) use (&$pressMoveEvent): void {
+        $pressMoveEvent = $event;
+    });
+$pressPayload = Wire::map([
+    'x' => 11.5,
+    'y' => 12.5,
+    'pageX' => 21.5,
+    'pageY' => 22.5,
+    'timestamp' => 1234,
+    'pointerId' => 7,
+]);
+$pressableElement->events()[EventKind::PressIn->value]($pressPayload);
+$pressableElement->events()[EventKind::PressOut->value]($pressPayload);
+$pressableElement->events()[EventKind::PressMove->value]($pressPayload);
+$assert(
+    $pressableElement->properties()[PropKey::HitSlopLeft->value] === 4.0
+        && $pressableElement->properties()[PropKey::HitSlopBottom->value] === 10.0
+        && $pressableElement->properties()[PropKey::PressRetentionRight->value] === 16.0
+        && $pressableElement->properties()[PropKey::PressDelayLongMs->value] === 420
+        && $pressableElement->properties()[PropKey::PressDelayInMs->value] === 25
+        && $pressableElement->properties()[PropKey::PressDelayOutMs->value] === 40
+        && $pressableElement->properties()[PropKey::PressAndroidDisableSound->value] === true
+        && $pressableElement->properties()[PropKey::PressScale->value] === 0.92
+        && $pressableElement->properties()[PropKey::RippleBorderless->value] === true
+        && $pressableElement->properties()[PropKey::RippleRadius->value] === 24.0
+        && $pressableElement->properties()[PropKey::RippleForeground->value] === true
+        && $pressableElement->properties()[PropKey::RippleAlpha->value] === 0.5
+        && $pressInEvent instanceof PressEvent
+        && $pressInEvent->x === 11.5
+        && $pressOutEvent instanceof PressEvent
+        && $pressMoveEvent instanceof PressEvent
+        && $pressMoveEvent->pointerId === 7,
+    'Pressable helpers must preserve complete native gesture geometry and lifecycle events.',
+);
+$accessibilityElement = Text::make('Upload')
+    ->accessibilityRole(AccessibilityRole::ProgressBar)
+    ->accessible()
+    ->accessibilityLiveRegion(AccessibilityLiveRegion::Polite)
+    ->accessibilityImportance(AccessibilityImportance::Yes)
+    ->accessibilityExpanded(false)
+    ->accessibilityBusy(true)
+    ->accessibilityChecked(AccessibilityCheckedState::Mixed)
+    ->accessibilityValue(0.0, 100.0, 40.0, '40 percent');
+$assert(
+    $accessibilityElement->properties()[PropKey::Accessible->value] === true
+        && $accessibilityElement
+            ->properties()[PropKey::AccessibilityLiveRegion->value]
+            === AccessibilityLiveRegion::Polite->value
+        && $accessibilityElement
+            ->properties()[PropKey::AccessibilityImportance->value]
+            === AccessibilityImportance::Yes->value
+        && $accessibilityElement
+            ->properties()[PropKey::AccessibilityExpanded->value] === false
+        && $accessibilityElement
+            ->properties()[PropKey::AccessibilityBusy->value] === true
+        && $accessibilityElement
+            ->properties()[PropKey::AccessibilityCheckedState->value]
+            === AccessibilityCheckedState::Mixed->value
+        && $accessibilityElement
+            ->properties()[PropKey::AccessibilityValueNow->value] === 40.0
+        && $accessibilityElement
+            ->properties()[PropKey::AccessibilityValueText->value]
+            === '40 percent',
+    'Accessibility state and range helpers must use fixed protocol properties.',
+);
+$assert(
+    Text::make('Chip')->accessibilitySelected()->properties()[PropKey::AccessibilitySelected->value] === true
+        && Text::make('Chip')->accessibilitySelected(false)->properties()[PropKey::AccessibilitySelected->value] === false
+        && PropKey::AccessibilitySelected->value === 537,
+    'accessibilitySelected must use protocol property 537 without the visual selected state.',
+);
+
+$accessibilityActionElement = Text::make('Message')
+    ->accessibilityActions(
+        new AccessibilityAction('archive', 'Archive message'),
+        new AccessibilityAction('reply', 'Reply to message'),
+    )
+    ->onAccessibilityAction(static fn (string $name): string => $name);
+$accessibilityActionDefinitions = json_decode(
+    $accessibilityActionElement->properties()[PropKey::AccessibilityActions->value],
+    true,
+    flags: JSON_THROW_ON_ERROR,
+);
+$assert(
+    $accessibilityActionElement->properties()[PropKey::Accessible->value] === true
+        && $accessibilityActionElement
+            ->properties()[PropKey::OnAccessibilityAction->value] === true
+        && $accessibilityActionElement->events()[EventKind::AccessibilityAction->value]('reply')
+            === 'reply'
+        && $accessibilityActionDefinitions === [
+            ['name' => 'archive', 'label' => 'Archive message'],
+            ['name' => 'reply', 'label' => 'Reply to message'],
+        ],
+    'Accessibility actions must stay bounded, typed and connected to event 65.',
+);
+foreach ([
+    static fn () => new AccessibilityAction('Not Safe', 'Label'),
+    static fn () => new AccessibilityAction('safe', ''),
+    static fn () => Text::make('Duplicate')->accessibilityActions(
+        new AccessibilityAction('open', 'Open'),
+        new AccessibilityAction('open', 'Open again'),
+    ),
+] as $invalidAccessibilityAction) {
+    try {
+        $invalidAccessibilityAction();
+        throw new RuntimeException('Invalid accessibility action should fail closed.');
+    } catch (InvalidArgumentException) {
+    }
+}
+
+$safeAreaElement = SafeAreaView::make(Text::make('Inset content'))
+    ->edges(top: true, right: false, bottom: true, left: false)
+    ->mode(SafeAreaMode::Margin);
+$assert(
+    $safeAreaElement->properties()[PropKey::SafeAreaTop->value] === true
+        && $safeAreaElement->properties()[PropKey::SafeAreaRight->value] === false
+        && $safeAreaElement
+            ->properties()[PropKey::SafeAreaBottomEdge->value] === true
+        && $safeAreaElement->properties()[PropKey::SafeAreaLeft->value] === false
+        && $safeAreaElement->properties()[PropKey::SafeAreaMode->value]
+            === SafeAreaMode::Margin->value,
+    'Safe area helpers must preserve per-edge and mode protocol properties.',
+);
+
+$keyboardAvoidingElement = KeyboardAvoidingView::make(
+    Text::make('Keyboard content'),
+    KeyboardAvoidingBehavior::Padding,
+)->verticalOffset(24.0)->avoidingEnabled(false);
+$assert(
+    $keyboardAvoidingElement->properties()[PropKey::KeyboardBehavior->value]
+        === KeyboardAvoidingBehavior::Padding->value
+        && $keyboardAvoidingElement
+            ->properties()[PropKey::KeyboardVerticalOffset->value] === 24.0
+        && $keyboardAvoidingElement
+            ->properties()[PropKey::KeyboardAvoidingEnabled->value] === false,
+    'Keyboard avoidance helpers must preserve behavior, offset and enabled state.',
+);
+
+foreach (
+    [
+        'height' => KeyboardAvoidingBehavior::Resize,
+        'position' => KeyboardAvoidingBehavior::Pan,
+        'padding' => KeyboardAvoidingBehavior::Padding,
+    ] as $reactNativeBehavior => $expectedBehavior
+) {
+    $templateKeyboard = TemplateRenderer::render(
+        TemplateCompiler::compile(
+            '<Modal visible="true" statusBarTranslucent="true">'
+            .'<KeyboardAvoidingView flexGrow="1" behavior="'.$reactNativeBehavior.'">'
+            .'<Text>Composer</Text></KeyboardAvoidingView></Modal>',
+        ),
+        new class {
+        },
+        [],
+    );
+    $templateKeyboardView = $templateKeyboard->children()[0];
+    $assert(
+        $templateKeyboardView instanceof KeyboardAvoidingView
+            && $templateKeyboardView->properties()[PropKey::KeyboardBehavior->value]
+                === $expectedBehavior->value,
+        "KeyboardAvoidingView behavior=\"{$reactNativeBehavior}\" must map like React Native inside a Modal.",
+    );
+}
+
+$interactiveKeyboardElement = KeyboardAvoidingView::make(
+    Text::make('Interactive sheet'),
+    KeyboardAvoidingBehavior::Interactive,
+);
+$assert(
+    $interactiveKeyboardElement->properties()[PropKey::KeyboardBehavior->value]
+        === KeyboardAvoidingBehavior::Interactive->value,
+    'Interactive keyboard avoidance must preserve its sequential protocol value.',
+);
+
+$refreshColors = [0xff112233, 0xff445566];
+$refreshElement = RefreshControl::make(Text::make('Refresh content'), true)
+    ->colors(...$refreshColors)
+    ->progressBackgroundColor(0xfff8fafc)
+    ->progressViewOffset(16.0)
+    ->enabled(false)
+    ->size(RefreshIndicatorSize::Large);
+$assert(
+    $refreshElement->properties()[PropKey::Refreshing->value] === true
+        && $refreshElement->properties()[PropKey::RefreshColors->value]
+            === implode(',', $refreshColors)
+        && $refreshElement
+            ->properties()[PropKey::RefreshProgressBackgroundColor->value]
+            === 0xfff8fafc
+        && $refreshElement
+            ->properties()[PropKey::RefreshProgressViewOffset->value] === 16.0
+        && $refreshElement->properties()[PropKey::Enabled->value] === false
+        && $refreshElement->properties()[PropKey::RefreshIndicatorSize->value]
+            === RefreshIndicatorSize::Large->value,
+    'Refresh control helpers must preserve Android indicator and gesture properties.',
+);
+
+$textElement = Text::make('Selectable https://pam.dev')
+    ->numberOfLines(2)
+    ->selectable()
+    ->selectionColor(0x66112233)
+    ->ellipsize(TextEllipsizeMode::Middle)
+    ->allowFontScaling()
+    ->maxFontSizeMultiplier(1.5)
+    ->adjustsFontSizeToFit(minimumScale: 0.5)
+    ->breakStrategy(TextBreakStrategy::Balanced)
+    ->hyphenation(TextHyphenationFrequency::Full)
+    ->dataDetector(TextDataDetectorType::Link);
+$assert(
+    $textElement->properties()[PropKey::NumberOfLines->value] === 2
+        && $textElement->properties()[PropKey::TextSelectable->value] === true
+        && $textElement->properties()[PropKey::SelectionColor->value] === 0x66112233
+        && $textElement->properties()[PropKey::TextEllipsizeMode->value]
+            === TextEllipsizeMode::Middle->value
+        && $textElement->properties()[PropKey::TextAllowFontScaling->value] === true
+        && $textElement
+            ->properties()[PropKey::TextMaxFontSizeMultiplier->value] === 1.5
+        && $textElement
+            ->properties()[PropKey::TextAdjustsFontSizeToFit->value] === true
+        && $textElement->properties()[PropKey::TextMinimumFontScale->value] === 0.5
+        && $textElement->properties()[PropKey::TextBreakStrategy->value]
+            === TextBreakStrategy::Balanced->value
+        && $textElement->properties()[PropKey::TextHyphenationFrequency->value]
+            === TextHyphenationFrequency::Full->value
+        && $textElement->properties()[PropKey::TextDataDetectorType->value]
+            === TextDataDetectorType::Link->value,
+    'Text helpers must preserve selection, fitting, breaking and detector properties.',
+);
+$assert(
+    Text::make('Bounded')
+        ->maxFontSizeMultiplier(0.5)
+        ->properties()[PropKey::TextMaxFontSizeMultiplier->value] === 1.0
+        && Text::make('Unbounded')
+            ->maxFontSizeMultiplier(0.0)
+            ->properties()[PropKey::TextMaxFontSizeMultiplier->value] === 0.0,
+    'Text font scaling must encode zero as unbounded and clamp positive caps to at least one.',
+);
+
+$statusBarElement = StatusBar::make(
+    0x80112233,
+    StatusBarAppearance::Light,
+    true,
+)->animated()->translucent()->navigationBarHidden();
+$assert(
+    $statusBarElement->properties()[PropKey::StatusBarColor->value] === 0x80112233
+        && $statusBarElement->properties()[PropKey::StatusBarStyle->value]
+            === StatusBarAppearance::Light->value
+        && $statusBarElement->properties()[PropKey::StatusBarHidden->value] === true
+        && $statusBarElement->properties()[PropKey::StatusBarAnimated->value] === true
+        && $statusBarElement->properties()[PropKey::StatusBarTranslucent->value] === true
+        && $statusBarElement->properties()[PropKey::NavigationBarHidden->value] === true,
+    'Status bar helpers must preserve color, style, visibility and edge-to-edge properties.',
+);
+$statusBarAliases = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<StatusBar barStyle="light-content" backgroundColor="#F7F6F2" '
+            .'animated="true" translucent="true" navigationBarHidden="true" />',
+    ),
+    null,
+    [],
+);
+$assert(
+    $statusBarAliases->properties()[PropKey::StatusBarColor->value] === 0xFFF7F6F2
+        && $statusBarAliases->properties()[PropKey::StatusBarStyle->value]
+            === StatusBarAppearance::Light->value
+        && $statusBarAliases->properties()[PropKey::StatusBarAnimated->value] === true
+        && $statusBarAliases->properties()[PropKey::StatusBarTranslucent->value] === true
+        && $statusBarAliases->properties()[PropKey::NavigationBarHidden->value] === true,
+    'StatusBar must accept the familiar backgroundColor and barStyle aliases.',
+);
+$statusBarDefaults = TemplateRenderer::render(
+    TemplateCompiler::compile('<StatusBar barStyle="dark-content" />'),
+    null,
+    [],
+);
+$assert(
+    !array_key_exists(
+        PropKey::NavigationBarHidden->value,
+        $statusBarDefaults->properties(),
+    ),
+    'StatusBar must not override global navigation visibility when the property is absent.',
+);
+$modalShown = false;
+$modalDismissed = false;
+$modalRequestedClose = false;
+$modalOrientation = null;
+$modalElement = Modal::make(
+    Text::make('Modal content'),
+    true,
+    ModalPresentation::Sheet,
+)
+    ->animationType(ModalAnimationType::Slide)
+    ->backdropColor(0xFF102030)
+    ->transparent()
+    ->hardwareAccelerated()
+    ->navigationBarTranslucent()
+    ->navigationBarColor(0xFF000000)
+    ->statusBarTranslucent()
+    ->allowSwipeDismissal()
+    ->onRequestClose(static function () use (&$modalRequestedClose): void {
+        $modalRequestedClose = true;
+    })
+    ->onShow(static function () use (&$modalShown): void {
+        $modalShown = true;
+    })
+    ->onDismiss(static function () use (&$modalDismissed): void {
+        $modalDismissed = true;
+    })
+    ->onOrientationChange(
+        static function (ModalOrientation $orientation) use (
+            &$modalOrientation,
+        ): void {
+            $modalOrientation = $orientation;
+        },
+    );
+$modalElement->events()[EventKind::ModalRequestClose->value]('');
+$modalElement->events()[EventKind::ModalShow->value]('');
+$modalElement->events()[EventKind::ModalDismiss->value]('');
+$modalElement->events()[EventKind::ModalOrientationChange->value](
+    (string) ModalOrientation::Landscape->value,
+);
+$assert(
+    $modalElement->properties()[PropKey::ModalPresentation->value]
+        === ModalPresentation::Sheet->value
+        && $modalElement->properties()[PropKey::ModalAnimationType->value]
+            === ModalAnimationType::Slide->value
+        && $modalElement->properties()[PropKey::ModalBackdropColor->value]
+            === 0xFF102030
+        && $modalElement->properties()[PropKey::ModalTransparent->value] === true
+        && $modalElement
+            ->properties()[PropKey::ModalHardwareAccelerated->value] === true
+        && $modalElement
+            ->properties()[PropKey::ModalNavigationBarTranslucent->value] === true
+        && $modalElement
+            ->properties()[PropKey::ModalNavigationBarColor->value] === 0xFF000000
+        && $modalElement
+            ->properties()[PropKey::ModalStatusBarTranslucent->value] === true
+        && $modalElement
+            ->properties()[PropKey::ModalAllowSwipeDismissal->value] === true
+        && $modalRequestedClose
+        && $modalShown
+        && $modalDismissed
+        && $modalOrientation === ModalOrientation::Landscape,
+    'Modal helpers must preserve window configuration and typed lifecycle events.',
+);
+
+$scrollElement = Scroll::make(Text::make('Scrollable'))
+    ->horizontal()
+    ->contentOffset(24.0, 8.0)
+    ->fillViewport(false)
+    ->overScrollMode(ScrollOverScrollMode::Never)
+    ->nestedScrollEnabled()
+    ->fadingEdgeLength(12.0)
+    ->persistentScrollbar()
+    ->pagingEnabled()
+    ->snapToInterval(80.0)
+    ->decelerationRate(0.9)
+    ->keyboardDismissMode(ScrollKeyboardDismissMode::OnDrag)
+    ->scrollRequest(7, 'first-unread', 143.5, ScrollTargetAlignment::Center)
+    ->scrollEnabled(false)
+    ->showsIndicator()
+    ->indicatorStyle(ScrollIndicatorStyle::Dark)
+    ->onScroll(static function (): void {
+    });
+$assert(
+    $scrollElement->properties()[PropKey::ScrollHorizontal->value] === true
+        && $scrollElement->properties()[PropKey::ScrollIndicatorStyle->value] === ScrollIndicatorStyle::Dark->value
+        && $scrollElement->properties()[PropKey::ScrollContentOffsetX->value] === 24.0
+        && $scrollElement->properties()[PropKey::ScrollContentOffsetY->value] === 8.0
+        && $scrollElement->properties()[PropKey::ScrollFillViewport->value] === false
+        && $scrollElement->properties()[PropKey::ScrollOverScrollMode->value]
+            === ScrollOverScrollMode::Never->value
+        && $scrollElement->properties()[PropKey::ScrollNestedEnabled->value] === true
+        && $scrollElement->properties()[PropKey::ScrollFadingEdgeLength->value] === 12.0
+        && $scrollElement
+            ->properties()[PropKey::ScrollPersistentScrollbar->value] === true
+        && $scrollElement->properties()[PropKey::ScrollPagingEnabled->value] === true
+        && $scrollElement->properties()[PropKey::ScrollSnapInterval->value] === 80.0
+        && $scrollElement->properties()[PropKey::ScrollDecelerationRate->value] === 0.9
+        && $scrollElement->properties()[PropKey::ScrollKeyboardDismissMode->value]
+            === ScrollKeyboardDismissMode::OnDrag->value
+        && $scrollElement->properties()[PropKey::ScrollTargetTestId->value]
+            === 'first-unread'
+        && $scrollElement->properties()[PropKey::ScrollTargetOffset->value] === 143.5
+        && $scrollElement->properties()[PropKey::ScrollTargetAlignment->value]
+            === ScrollTargetAlignment::Center->value
+        && $scrollElement->properties()[PropKey::ScrollRequest->value] === 7
+        && isset($scrollElement->events()[EventKind::Scroll->value]),
+    'Scroll helpers must preserve Android-owned orientation, momentum and viewport behavior.',
+);
+
+$indicatorElement = ActivityIndicator::make(false)
+    ->hidesWhenStopped(false)
+    ->size(ActivityIndicatorSize::Large)
+    ->color(0xFF2563EB);
+$assert(
+    $indicatorElement->properties()[PropKey::ActivityAnimating->value] === false
+        && $indicatorElement
+            ->properties()[PropKey::ActivityHidesWhenStopped->value] === false
+        && $indicatorElement->properties()[PropKey::ActivitySize->value] === 36.0
+        && $indicatorElement->properties()[PropKey::ProgressColor->value] === 0xFF2563EB,
+    'Activity indicator helpers must preserve animation, stopped visibility, size and tint.',
+);
+
+$toggleElement = Toggle::make(true)
+    ->trackColors(0xFF64748B, 0xFF2563EB)
+    ->thumbColor(0xFFFFFFFF);
+$assert(
+    $toggleElement->properties()[PropKey::Checked->value] === true
+        && $toggleElement
+            ->properties()[PropKey::SwitchTrackColorFalse->value] === 0xFF64748B
+        && $toggleElement
+            ->properties()[PropKey::SwitchTrackColorTrue->value] === 0xFF2563EB
+        && $toggleElement->properties()[PropKey::SwitchThumbColor->value] === 0xFFFFFFFF,
+    'Switch helpers must preserve checked, track and thumb colors.',
+);
+
+$imageStarted = false;
+$imageProgress = null;
+$imageLoaded = null;
+$imageError = null;
+$imageEnded = false;
+$imageElement = Image::make('https://example.test/photo.jpg')
+    ->fit(ImageFit::Repeat)
+    ->defaultSource('asset://placeholder.png')
+    ->loadingIndicatorSource('asset://loading.png')
+    ->fadeDuration(180)
+    ->resizeMethod(ImageResizeMethod::Resize)
+    ->resizeMultiplier(2.0)
+    ->progressiveRendering()
+    ->cache(ImageCachePolicy::ForceCache)
+    ->overlayColor(0xFF0F172A)
+    ->sourceSet(
+        'https://example.test/photo.png 1x, '.
+        'https://example.test/photo@2x.png 2x',
+    )
+    ->headers(['X-Image-Variant' => 'retina'])
+    ->onLoadStart(static function () use (&$imageStarted): void {
+        $imageStarted = true;
+    })
+    ->onProgress(
+        static function (ImageProgressEvent $event) use (&$imageProgress): void {
+            $imageProgress = $event;
+        },
+    )
+    ->onLoad(
+        static function (ImageLoadEvent $event) use (&$imageLoaded): void {
+            $imageLoaded = $event;
+        },
+    )
+    ->onError(
+        static function (ImageErrorEvent $event) use (&$imageError): void {
+            $imageError = $event;
+        },
+    )
+    ->onLoadEnd(static function () use (&$imageEnded): void {
+        $imageEnded = true;
+    });
+$imageElement->events()[EventKind::ImageLoadStart->value]('');
+$imageElement->events()[EventKind::ImageProgress->value](Wire::map([
+    'loaded' => 65_536,
+    'total' => 131_072,
+]));
+$imageElement->events()[EventKind::ImageLoad->value](Wire::map([
+    'uri' => 'https://example.test/photo@2x.png',
+    'width' => 800.0,
+    'height' => 600.0,
+]));
+$imageElement->events()[EventKind::ImageError->value](Wire::map([
+    'error' => 'offline',
+]));
+$imageElement->events()[EventKind::ImageLoadEnd->value]('');
+$imageBackground = ImageBackground::make(
+    'asset://hero.jpg',
+    Text::make('Overlay'),
+)->tint(0xFFFFFFFF);
+$assert(
+    $imageElement->properties()[PropKey::ImageFit->value]
+        === ImageFit::Repeat->value
+        && $imageElement->properties()[PropKey::ImageDefaultSource->value]
+            === 'asset://placeholder.png'
+        && $imageElement
+            ->properties()[PropKey::ImageLoadingIndicatorSource->value]
+            === 'asset://loading.png'
+        && $imageElement->properties()[PropKey::ImageFadeDurationMs->value]
+            === 180
+        && $imageElement->properties()[PropKey::ImageResizeMethod->value]
+            === ImageResizeMethod::Resize->value
+        && $imageElement->properties()[PropKey::ImageResizeMultiplier->value]
+            === 2.0
+        && $imageElement
+            ->properties()[PropKey::ImageProgressiveRenderingEnabled->value]
+            === true
+        && $imageElement->properties()[PropKey::ImageCachePolicy->value]
+            === ImageCachePolicy::ForceCache->value
+        && $imageElement->properties()[PropKey::ImageOverlayColor->value]
+            === 0xFF0F172A
+        && $imageElement->properties()[PropKey::ImageRequestHeaders->value]
+            === 'X-Image-Variant:retina'
+        && $imageStarted
+        && $imageProgress instanceof ImageProgressEvent
+        && $imageProgress->loaded === 65_536
+        && $imageLoaded instanceof ImageLoadEvent
+        && $imageLoaded->width === 800.0
+        && $imageError instanceof ImageErrorEvent
+        && $imageError->message === 'offline'
+        && $imageEnded
+        && $imageBackground->children()[0]->kind() === NodeKind::Text
+        && $imageBackground->properties()[PropKey::TintColor->value]
+            === 0xFFFFFFFF,
+    'Image helpers must preserve native loading, cache, resize, lifecycle and background behavior.',
+);
+
+$templateMediaScope = new class extends Component {
+    public float $currentTime = -1.0;
+    public float $duration = -1.0;
+
+    public function mediaProgress(float $currentTime, float $duration): void
+    {
+        $this->currentTime = $currentTime;
+        $this->duration = $duration;
+    }
+
+    public function render(): \Pam\Desktop\Element
+    {
+        return Text::make('media progress fixture');
+    }
+};
+$templateMedia = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<MediaPlayer source="https://example.test/video.mp4" '
+        .'on:mediaProgress="mediaProgress" />',
+    ),
+    $templateMediaScope,
+    [],
+);
+($templateMedia->events()[EventKind::MediaProgress->value])(Wire::map([
+    'currentTime' => 2.5,
+    'duration' => 10.0,
+]));
+$assert(
+    $templateMediaScope->currentTime === 2.5
+        && $templateMediaScope->duration === 10.0,
+    'Declarative MediaPlayer progress must decode the wire map into two typed arguments.',
+);
+
+$drawingChanged = '';
+$drawingCanvas = DrawingCanvas::make(
+    'pam-file:///editor/source.jpg',
+    '{"version":1,"strokes":[]}',
+)
+    ->brush(0xFF2563EB, 8.0, DrawingMode::Eraser)
+    ->clearRequest(2)
+    ->undoRequest(3)
+    ->onChange(static function (string $value) use (&$drawingChanged): void {
+        $drawingChanged = $value;
+    });
+($drawingCanvas->events()[EventKind::Change->value])('{"version":1,"strokes":[1]}');
+$assert(
+    $drawingCanvas->kind() === NodeKind::DrawingCanvas
+        && $drawingCanvas->properties()[PropKey::Source->value]
+            === 'pam-file:///editor/source.jpg'
+        && $drawingCanvas->properties()[PropKey::DrawingColor->value] === 0xFF2563EB
+        && $drawingCanvas->properties()[PropKey::DrawingWidth->value] === 8.0
+        && $drawingCanvas->properties()[PropKey::DrawingMode->value]
+            === DrawingMode::Eraser->value
+        && $drawingCanvas->properties()[PropKey::DrawingClearRequest->value] === 2
+        && $drawingCanvas->properties()[PropKey::DrawingUndoRequest->value] === 3
+        && $drawingChanged === '{"version":1,"strokes":[1]}',
+    'DrawingCanvas must keep stroke rendering and completed-stroke events native.',
+);
+
+$nativeControlTemplate = TemplateRenderer::render(
+    TemplateCompiler::compile(<<<'PAM'
+<Screen>
+    <ScrollView
+        horizontal="true"
+        contentOffset="24"
+        anchorToEnd="true"
+        maintainVisibleContentPosition="true"
+        autoScrollToEndThreshold="32"
+        scrollTargetTestId="first-unread"
+        scrollTargetOffset="143.5"
+        scrollTargetAlignment="center"
+        scrollRequest="9"
+        pagingEnabled="true"
+        snapToInterval="80"
+        decelerationRate="fast"
+        overScrollMode="never"
+        keyboardDismissMode="on-drag"
+    >
+        <Text>Scrollable</Text>
+    </ScrollView>
+    <ActivityIndicator
+        animating="false"
+        hidesWhenStopped="false"
+        size="large"
+        progressColor="#2563eb"
+    />
+    <Switch
+        checked="true"
+        trackColorFalse="#64748b"
+        trackColorTrue="#2563eb"
+        thumbColor="#ffffff"
+    />
+    <DrawingCanvas
+        source="pam-file:///editor/source.jpg"
+        value="{&quot;version&quot;:1,&quot;strokes&quot;:[]}"
+        brushColor="#2563eb"
+        brushWidth="7"
+        drawingMode="eraser"
+        clearRequest="4"
+        undoRequest="5"
+    />
+</Screen>
+PAM),
+    null,
+    [],
+);
+$indicatorColorTemplate = TemplateRenderer::render(
+    TemplateCompiler::compile(<<<'PAM'
+<Screen>
+    <ActivityIndicator color="#ff2d55" />
+    <ActivityIndicator color="#ff2d55" progressColor="#2563eb" />
+    <ActivityIndicator />
+</Screen>
+PAM),
+    null,
+    [],
+);
+[$colorIndicator, $bothIndicator, $plainIndicator] = $indicatorColorTemplate->children();
+$assert(
+    $colorIndicator->properties()[PropKey::ProgressColor->value] === 0xFFFF2D55
+        && $bothIndicator->properties()[PropKey::ProgressColor->value] === 0xFF2563EB
+        && !isset($plainIndicator->properties()[PropKey::ProgressColor->value]),
+    'ActivityIndicator color must tint the spinner like React Native; progressColor wins when both are authored.',
+);
+$templateScroll = $nativeControlTemplate->children()[0];
+$templateIndicator = $nativeControlTemplate->children()[1];
+$templateSwitch = $nativeControlTemplate->children()[2];
+$templateDrawing = $nativeControlTemplate->children()[3];
+$assert(
+    $templateScroll->properties()[PropKey::ScrollHorizontal->value] === true
+        && $templateScroll
+            ->properties()[PropKey::ScrollContentOffsetX->value] === 24.0
+        && $templateScroll->properties()[PropKey::ScrollAnchorToEnd->value] === true
+        && $templateScroll
+            ->properties()[PropKey::ScrollMaintainVisibleContentPosition->value] === true
+        && $templateScroll
+            ->properties()[PropKey::ScrollAutoScrollToEndThreshold->value] === 32.0
+        && $templateScroll
+            ->properties()[PropKey::ScrollTargetTestId->value] === 'first-unread'
+        && $templateScroll
+            ->properties()[PropKey::ScrollTargetOffset->value] === 143.5
+        && $templateScroll
+            ->properties()[PropKey::ScrollTargetAlignment->value]
+            === ScrollTargetAlignment::Center->value
+        && $templateScroll->properties()[PropKey::ScrollRequest->value] === 9
+        && $templateScroll->properties()[PropKey::ScrollPagingEnabled->value] === true
+        && $templateScroll->properties()[PropKey::ScrollSnapInterval->value] === 80
+        && $templateScroll
+            ->properties()[PropKey::ScrollDecelerationRate->value] === 0.9
+        && $templateIndicator->properties()[PropKey::ActivityAnimating->value] === false
+        && $templateIndicator
+            ->properties()[PropKey::ActivityHidesWhenStopped->value] === false
+        && $templateIndicator->properties()[PropKey::ActivitySize->value] === 36.0
+        && $templateSwitch
+            ->properties()[PropKey::SwitchTrackColorFalse->value] === 0xFF64748B
+        && $templateSwitch
+            ->properties()[PropKey::SwitchTrackColorTrue->value] === 0xFF2563EB
+        && $templateSwitch->properties()[PropKey::SwitchThumbColor->value] === 0xFFFFFFFF
+        && $templateDrawing->kind() === NodeKind::DrawingCanvas
+        && $templateDrawing->properties()[PropKey::DrawingColor->value] === 0xFF2563EB
+        && (float) $templateDrawing->properties()[PropKey::DrawingWidth->value] === 7.0
+        && $templateDrawing->properties()[PropKey::DrawingMode->value]
+            === DrawingMode::Eraser->value
+        && $templateDrawing->properties()[PropKey::DrawingClearRequest->value] === 4
+        && $templateDrawing->properties()[PropKey::DrawingUndoRequest->value] === 5,
+    'Native control tags must map to typed scroll, indicator, switch and drawing protocols.',
+);
+$normalDecelerationScroll = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<ScrollView decelerationRate="normal"><Text>Normal</Text></ScrollView>',
+    ),
+    null,
+    [],
+);
+$boundedDecelerationScroll = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<ScrollView decelerationRate="1.5"><Text>Bounded</Text></ScrollView>',
+    ),
+    null,
+    [],
+);
+$assert(
+    $normalDecelerationScroll
+        ->properties()[PropKey::ScrollDecelerationRate->value] === 0.985
+        && $boundedDecelerationScroll
+            ->properties()[PropKey::ScrollDecelerationRate->value] === 1.0,
+    'Declarative ScrollView deceleration rates must normalize named aliases and bound numeric values.',
+);
+
+$listElement = FlatList::make(['One', 'Two', 'Three'])
+    ->rowHeight(56.0)
+    ->prefetch(8)
+    ->columns(2)
+    ->inverted()
+    ->initialScrollIndex(1)
+    ->removeClippedSubviews(false)
+    ->scrollEnabled(false)
+    ->showsIndicator(false)
+    ->onScroll(static function (): void {
+    })
+    ->onEndReached(static function (): void {
+    }, 0.25);
+$assert(
+    $listElement->properties()[PropKey::ListRowHeight->value] === 56.0
+        && $listElement->properties()[PropKey::ListPrefetch->value] === 8
+        && $listElement->properties()[PropKey::ListNumColumns->value] === 2
+        && $listElement->properties()[PropKey::ListInverted->value] === true
+        && $listElement->properties()[PropKey::ListInitialScrollIndex->value] === 1
+        && $listElement
+            ->properties()[PropKey::ListRemoveClippedSubviews->value] === false
+        && $listElement->properties()[PropKey::ScrollEnabled->value] === false
+        && $listElement->properties()[PropKey::ShowsScrollIndicator->value] === false
+        && $listElement->properties()[PropKey::EndReachedThreshold->value] === 0.25
+        && isset($listElement->events()[EventKind::Scroll->value])
+        && isset($listElement->events()[EventKind::EndReached->value]),
+    'List helpers must preserve recycling, prefetch, layout and scroll event properties.',
+);
+$assert(
+    VirtualizedList::make([])->onEndReached(static function (): void {
+    }, 2.0)->properties()[PropKey::EndReachedThreshold->value] === 2.0
+        && VirtualizedList::make([])->onEndReached(static function (): void {
+        }, 99.0)->properties()[PropKey::EndReachedThreshold->value] === 10.0,
+    'onEndReachedThreshold is in visible lengths like React Native: it may ask pages screens ahead (bounded at 10).',
+);
+
+$richListElement = VirtualizedList::make(
+    Column::make(
+        Image::make('https://example.com/one.png'),
+        Text::make('One'),
+    )->key('one'),
+    Pressable::make(Text::make('Two'))->key('two'),
+)
+    ->estimatedRowHeight(180.0)
+    ->columns(2)
+    ->prefetch(6)
+    ->scrollRequest(4, 'target-cell', 320.0, ScrollTargetAlignment::End);
+$assert(
+    $richListElement->kind() === NodeKind::VirtualList
+        && count($richListElement->children()) === 2
+        && $richListElement->children()[0]->children()[0]->kind() === NodeKind::Image
+        && $richListElement->properties()[PropKey::ListRowHeight->value] === 180.0
+        && $richListElement->properties()[PropKey::ListNumColumns->value] === 2
+        && $richListElement->properties()[PropKey::ListPrefetch->value] === 6
+        && $richListElement->properties()[PropKey::ScrollTargetTestId->value] === 'target-cell'
+        && $richListElement->properties()[PropKey::ScrollTargetOffset->value] === 320.0
+        && $richListElement->properties()[PropKey::ScrollTargetAlignment->value]
+            === ScrollTargetAlignment::End->value
+        && $richListElement->properties()[PropKey::ScrollRequest->value] === 4,
+    'VirtualizedList must retain arbitrary keyed component trees as recyclable cells.',
+);
+$adaptiveListTemplate = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<VirtualizedList estimatedRowHeight="180"><Column height="240" /></VirtualizedList>',
+    ),
+    null,
+    [],
+);
+$assert(
+    $adaptiveListTemplate->properties()[PropKey::ListRowHeight->value] == 180.0
+        && $adaptiveListTemplate->children()[0]->properties()[PropKey::Height->value] == 240.0,
+    'VirtualizedList estimatedRowHeight must preserve an explicit rich-cell extent.',
+);
+$virtualScrollTemplate = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<VirtualizedList scrollTargetOffset="0" scrollRequest="9"><Text>Top</Text></VirtualizedList>',
+    ),
+    null,
+    [],
+);
+$assert(
+    $virtualScrollTemplate->properties()[PropKey::ScrollTargetOffset->value] == 0.0
+        && $virtualScrollTemplate->properties()[PropKey::ScrollRequest->value] === 9,
+    'VirtualizedList must retain tokenized imperative scroll requests.',
+);
+$legacyVirtualizedList = VirtualizedList::make(['One', 'Two']);
+$assert(
+    $legacyVirtualizedList->kind() === NodeKind::List
+        && $legacyVirtualizedList->children() === [],
+    'VirtualizedList must remain source-compatible with legacy string-array call sites.',
+);
+
+$virtualGridElement = VirtualGrid::make(
+    3,
+    Text::make('A')->key('a'),
+    Image::make('https://example.com/b.png')->key('b'),
+);
+$assert(
+    $virtualGridElement->kind() === NodeKind::VirtualList
+        && count($virtualGridElement->children()) === 2
+        && $virtualGridElement->properties()[PropKey::ListNumColumns->value] === 3,
+    'VirtualGrid must expose rich virtual cells with an explicit native column count.',
+);
+
+$sectionListElement = SectionList::make([
+    'Frameworks' => ['Laravel', 'PAM'],
+])
+    ->rowHeight(52.0)
+    ->prefetch(6)
+    ->horizontal()
+    ->columns(2)
+    ->inverted()
+    ->initialScrollIndex(1)
+    ->removeClippedSubviews(false);
+$assert(
+    $sectionListElement->properties()[PropKey::ListRowHeight->value] === 52.0
+        && $sectionListElement->properties()[PropKey::ListPrefetch->value] === 6
+        && $sectionListElement->properties()[PropKey::ListHorizontal->value] === true
+        && $sectionListElement->properties()[PropKey::ListNumColumns->value] === 2
+        && $sectionListElement->properties()[PropKey::ListInverted->value] === true
+        && $sectionListElement
+            ->properties()[PropKey::ListInitialScrollIndex->value] === 1
+        && $sectionListElement
+            ->properties()[PropKey::ListRemoveClippedSubviews->value] === false,
+    'Section list helpers must preserve native recycler configuration.',
+);
+
+$first = (new TreeEncoder())->encode($tree);
+$second = (new TreeEncoder())->encode($tree);
+$firstFrame = $first['frame'];
+$secondFrame = $second['frame'];
+
+if ($firstFrame === null || $secondFrame === null) {
+    throw new RuntimeException('Fresh encoders must produce complete tree frames.');
+}
+
+$assert($firstFrame === $secondFrame, 'Tree encoding must be deterministic.');
+$assert(str_starts_with($firstFrame, 'PNT1'), 'Tree frame magic is missing.');
+$assert(count($first['callbacks']) === 1, 'Event callback was not registered.');
+
+$invalidTreeTextRejected = false;
+try {
+    (new TreeEncoder())->encode(Text::make("\xc3\x28"));
+} catch (InvalidArgumentException) {
+    $invalidTreeTextRejected = true;
+}
+$assert($invalidTreeTextRejected, 'Tree encoding must reject malformed UTF-8 text.');
+
+$invalidWireTextRejected = false;
+try {
+    Wire::map(['text' => "\xc3\x28"]);
+} catch (InvalidArgumentException) {
+    $invalidWireTextRejected = true;
+}
+$assert($invalidWireTextRejected, 'Wire maps must reject malformed UTF-8 text.');
+
+$invalidPackedListTextRejected = false;
+try {
+    Wire::stringList(["\xc3\x28"]);
+} catch (InvalidArgumentException) {
+    $invalidPackedListTextRejected = true;
+}
+$assert($invalidPackedListTextRejected, 'Packed string lists must reject malformed UTF-8 text.');
+
+$invalidPackedSectionTextRejected = false;
+try {
+    Wire::stringSections(['section' => ["\xc3\x28"]]);
+} catch (InvalidArgumentException) {
+    $invalidPackedSectionTextRejected = true;
+}
+$assert($invalidPackedSectionTextRejected, 'Packed sections must reject malformed UTF-8 text.');
+
+$listBoundaryText = str_repeat('x', Wire::MAX_VALUE_BYTES - 8);
+$assert(
+    strlen(Wire::stringList([$listBoundaryText])) === Wire::MAX_VALUE_BYTES,
+    'Packed string lists must accept the exact one-megabyte boundary.',
+);
+$oversizedStringListRejected = false;
+try {
+    Wire::stringList([$listBoundaryText.'x']);
+} catch (InvalidArgumentException) {
+    $oversizedStringListRejected = true;
+}
+$assert($oversizedStringListRejected, 'Packed string lists must reject one megabyte plus one byte.');
+
+$sectionBoundaryText = str_repeat('x', Wire::MAX_VALUE_BYTES - 17);
+$assert(
+    strlen(Wire::stringSections(['a' => [$sectionBoundaryText]])) === Wire::MAX_VALUE_BYTES,
+    'Packed sections must accept the exact one-megabyte boundary.',
+);
+$oversizedSectionListRejected = false;
+try {
+    Wire::stringSections(['a' => [$sectionBoundaryText.'x']]);
+} catch (InvalidArgumentException) {
+    $oversizedSectionListRejected = true;
+}
+$assert($oversizedSectionListRejected, 'Packed sections must reject one megabyte plus one byte.');
+
+$maximumPackedItems = array_fill(0, Wire::MAX_LIST_ITEMS, '');
+$assert(
+    strlen(Wire::stringList($maximumPackedItems)) === 4 + (Wire::MAX_LIST_ITEMS * 4),
+    'Packed string lists must accept exactly 100,000 items.',
+);
+$tooManyPackedItemsRejected = false;
+try {
+    Wire::stringList([...$maximumPackedItems, '']);
+} catch (InvalidArgumentException) {
+    $tooManyPackedItemsRejected = true;
+}
+$assert($tooManyPackedItemsRejected, 'Packed string lists must reject item 100,001.');
+unset($maximumPackedItems);
+
+$maximumSections = [];
+for ($index = 0; $index < Wire::MAX_SECTIONS; $index++) {
+    $maximumSections["s{$index}"] = [];
+}
+$assert(Wire::stringSections($maximumSections) !== '', 'Packed sections must accept 10,000 sections.');
+$tooManySectionsRejected = false;
+try {
+    Wire::stringSections([...$maximumSections, 'overflow' => []]);
+} catch (InvalidArgumentException) {
+    $tooManySectionsRejected = true;
+}
+$assert($tooManySectionsRejected, 'Packed sections must reject section 10,001.');
+unset($maximumSections);
+
+$maximumSectionItems = array_fill(0, Wire::MAX_SECTION_ENTRIES - 1, '');
+$assert(
+    Wire::stringSections(['section' => $maximumSectionItems]) !== '',
+    'Packed sections must accept exactly 100,000 total entries.',
+);
+$tooManySectionEntriesRejected = false;
+try {
+    Wire::stringSections(['section' => [...$maximumSectionItems, '']]);
+} catch (InvalidArgumentException) {
+    $tooManySectionEntriesRejected = true;
+}
+$assert($tooManySectionEntriesRejected, 'Packed sections must reject total entry 100,001.');
+unset($maximumSectionItems);
+
+$invalidWireDecodeRejected = false;
+try {
+    Wire::decodeMap(
+        pack('v', 1).pack('v', 4).'text'."\x01".pack('V', 2)."\xc3\x28",
+    );
+} catch (InvalidArgumentException) {
+    $invalidWireDecodeRejected = true;
+}
+$assert($invalidWireDecodeRejected, 'Wire map decoding must reject malformed UTF-8 text.');
+
+$invalidWireKeyRejected = false;
+try {
+    Wire::map(['1invalid' => 'value']);
+} catch (InvalidArgumentException) {
+    $invalidWireKeyRejected = true;
+}
+$assert($invalidWireKeyRejected, 'Wire map encoding must reject non-portable keys.');
+
+$invalidWireBooleanRejected = false;
+try {
+    Wire::decodeMap(pack('v', 1).pack('v', 4).'flag'."\x04\x02");
+} catch (InvalidArgumentException) {
+    $invalidWireBooleanRejected = true;
+}
+$assert($invalidWireBooleanRejected, 'Wire map decoding must reject invalid booleans.');
+
+$duplicateWireKeyRejected = false;
+try {
+    Wire::decodeMap(
+        pack('v', 2)
+        .pack('v', 3).'key'."\x04\x00"
+        .pack('v', 3).'key'."\x04\x01",
+    );
+} catch (InvalidArgumentException) {
+    $duplicateWireKeyRejected = true;
+}
+$assert($duplicateWireKeyRejected, 'Wire map decoding must reject duplicate keys.');
+
+$invalidTreeFloatRejected = false;
+try {
+    (new TreeEncoder())->encode(\Pam\Desktop\UI\Spacer::make(NAN));
+} catch (InvalidArgumentException) {
+    $invalidTreeFloatRejected = true;
+}
+$assert($invalidTreeFloatRejected, 'Tree encoding must reject non-finite floats.');
+
+$invalidWireFloatRejected = false;
+try {
+    Wire::map(['value' => INF]);
+} catch (InvalidArgumentException) {
+    $invalidWireFloatRejected = true;
+}
+$assert($invalidWireFloatRejected, 'Wire map encoding must reject non-finite decimals.');
+
+$invalidWireFloatDecodeRejected = false;
+try {
+    Wire::decodeMap(
+        pack('v', 1).pack('v', 5).'value'."\x03".pack('e', NAN),
+    );
+} catch (InvalidArgumentException) {
+    $invalidWireFloatDecodeRejected = true;
+}
+$assert($invalidWireFloatDecodeRejected, 'Wire map decoding must reject non-finite decimals.');
+
+$canonicalWire = Wire::map([
+    'zeta' => 42,
+    'ratio' => 1.5,
+    'enabled' => true,
+    'alpha' => 'Pam',
+]);
+$assert(
+    $canonicalWire === Wire::map([
+        'alpha' => 'Pam',
+        'enabled' => true,
+        'ratio' => 1.5,
+        'zeta' => 42,
+    ])
+        && bin2hex($canonicalWire)
+            === '04000500616c706861010300000050616d0700656e61626c656404010500726174696f03000000000000f83f04007a657461022a00000000000000',
+    'Wire maps must use the shared canonical key order and golden bytes.',
+);
+
+$wireBoundaryText = str_repeat('x', Wire::MAX_VALUE_BYTES - 10);
+$assert(
+    strlen(Wire::map(['a' => $wireBoundaryText])) === Wire::MAX_VALUE_BYTES,
+    'Wire maps must accept the exact one-megabyte boundary.',
+);
+
+$oversizedWireEncodeRejected = false;
+try {
+    Wire::map(['a' => $wireBoundaryText.'x']);
+} catch (InvalidArgumentException) {
+    $oversizedWireEncodeRejected = true;
+}
+$assert($oversizedWireEncodeRejected, 'Wire map encoding must reject one megabyte plus one byte.');
+
+$oversizedWireDecodeRejected = false;
+try {
+    Wire::decodeMap(
+        pack('v', 1).pack('v', 1).'a'."\x01".pack('V', strlen($wireBoundaryText) + 1)
+        .$wireBoundaryText.'x',
+    );
+} catch (InvalidArgumentException) {
+    $oversizedWireDecodeRejected = true;
+}
+$assert($oversizedWireDecodeRejected, 'Wire map decoding must reject one megabyte plus one byte.');
+
+$nativeContainer = CustomView::make(
+    'community.container',
+    ['axis' => 1],
+    Text::make('Native child'),
+);
+$assert(
+    count($nativeContainer->children()) === 1,
+    'Custom native view containers must retain declarative children.',
+);
+
+$capturedParentVariants = null;
+TemplateRegistry::reset();
+TemplateRegistry::component(
+    'VariantParent',
+    static fn (array $props, array $children): \Pam\Desktop\Renderable =>
+        Column::make(...$children),
+);
+TemplateRegistry::component(
+    'VariantChild',
+    static function (array $props) use (&$capturedParentVariants): \Pam\Desktop\Renderable {
+        $capturedParentVariants = $props['__parentVariants'] ?? null;
+
+        return Text::make('Child');
+    },
+);
+$variantTemplate = TemplateCompiler::compile(
+    '<VariantParent variant="outline" size="lg"><VariantChild /></VariantParent>',
+);
+TemplateRenderer::render($variantTemplate, null, []);
+$assert(
+    $capturedParentVariants === ['variant' => 'outline', 'size' => 'lg'],
+    'Custom template components must inherit parent variant context.',
+);
+$gallery = [
+    ['url' => 'file:///mountain.jpg', 'alt' => 'Mountain'],
+    ['url' => 'file:///ocean.jpg', 'alt' => 'Ocean'],
+];
+$variantTemplate = TemplateCompiler::compile(
+    '<VariantParent images="$gallery"><VariantChild /></VariantParent>',
+);
+TemplateRenderer::render($variantTemplate, null, ['gallery' => $gallery]);
+$assert(
+    $capturedParentVariants === ['images' => $gallery],
+    'Bound declarative arrays must remain available to compound child components.',
+);
+$capturedClassName = null;
+TemplateRegistry::component(
+    'SemanticClasses',
+    static function (
+        array $props,
+    ) use (&$capturedClassName): \Pam\Desktop\Renderable {
+        $capturedClassName = $props['className'] ?? null;
+
+        return Column::make();
+    },
+);
+TemplateRegistry::styleResolver(
+    static fn (string $class): ?array => $class === 'grid-cols-2'
+        ? []
+        : null,
+);
+$semanticClassTemplate = TemplateCompiler::compile(
+    '<SemanticClasses class="grid-cols-2 gap-3" />',
+);
+$semanticClassElement = TemplateRenderer::render(
+    $semanticClassTemplate,
+    null,
+    [],
+);
+$assert(
+    $capturedClassName === 'grid-cols-2 gap-3'
+        && ($semanticClassElement->properties()[PropKey::Gap->value] ?? null)
+            === 12.0,
+    'Registered template components must receive className before visual utilities are applied.',
+);
+$capturedStyleBoundaryProps = null;
+TemplateRegistry::component(
+    'StyleBoundary',
+    static function (
+        array $props,
+    ) use (&$capturedStyleBoundaryProps): \Pam\Desktop\Renderable {
+        $capturedStyleBoundaryProps = $props;
+
+        return Text::make('Inherited');
+    },
+);
+TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Column textColor="#123456"><StyleBoundary /></Column>',
+    ),
+    null,
+    [],
+);
+$assert(
+    !array_key_exists('textColor', $capturedStyleBoundaryProps ?? [])
+        && ($capturedStyleBoundaryProps['__pamInheritedStyles']['textColor'] ?? null)
+            === 0xFF123456,
+    'Inherited CSS must cross a component boundary as internal style context, not constructor props.',
+);
+$coreRoleElement = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Text accessibilityRole="header">Accessible heading</Text>',
+    ),
+    null,
+    [],
+);
+$accessibilityActionScope = new class {
+    /** @var list<array{name: string, label: string}> */
+    public array $actions = [
+        ['name' => 'archive', 'label' => 'Archive message'],
+    ];
+
+    public string $selectedAction = '';
+
+    public function selectAction(string $name): void
+    {
+        $this->selectedAction = $name;
+    }
+};
+$templateAccessibilityActionElement = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Text :accessibilityActions="$actions" on:accessibilityAction="selectAction">Message</Text>',
+    ),
+    $accessibilityActionScope,
+    [],
+);
+$templateAccessibilityActionElement
+    ->events()[EventKind::AccessibilityAction->value]('archive');
+$assert(
+    json_decode(
+        $templateAccessibilityActionElement
+            ->properties()[PropKey::AccessibilityActions->value],
+        true,
+        flags: JSON_THROW_ON_ERROR,
+    ) === [['name' => 'archive', 'label' => 'Archive message']]
+        && $accessibilityActionScope->selectedAction === 'archive',
+    'Templates must preserve typed custom accessibility actions and their event payload.',
+);
+$flexAliasElement = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Row alignItems="flex-start" alignSelf="flex-end" justifyContent="flex-end" />',
+    ),
+    null,
+    [],
+);
+$assert(
+    $flexAliasElement->properties()[PropKey::AlignItems->value] === 1
+        && $flexAliasElement->properties()[PropKey::AlignSelf->value] === 3
+        && $flexAliasElement->properties()[PropKey::JustifyContent->value] === 3,
+    'Template flex-start and flex-end aliases must match native start and end layout values.',
+);
+$baselineElement = TemplateRenderer::render(
+    TemplateCompiler::compile('<Row alignItems="baseline" />'),
+    null,
+    [],
+);
+$assert(
+    $baselineElement->properties()[PropKey::AlignItems->value] === \Pam\Desktop\Align::Baseline->value,
+    'Template baseline alignment must reach the native layout engine.',
+);
+$gridElement = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Grid gutterX="16" gutterY="8"><Column span="12" spanSm="6" spanMd="4"><Image source="cover.webp" aspectRatio="1" /><Pressable><Text>Open</Text></Pressable></Column><Column class="col-6 col-lg-3 offset-lg-1 order-md-2" /></Grid>',
+    ),
+    null,
+    [],
+);
+$assert(
+    $gridElement->properties()[PropKey::GridColumns->value] === 12
+        && $gridElement->properties()[PropKey::GridColumnGap->value] === 16.0
+        && $gridElement->properties()[PropKey::GridRowGap->value] === 8.0
+        && $gridElement->children()[0]->properties()[PropKey::GridSpan->value] === 12
+        && $gridElement->children()[0]->properties()[PropKey::GridSpanSm->value] === 6
+        && $gridElement->children()[0]->properties()[PropKey::GridSpanMd->value] === 4
+        && $gridElement->children()[1]->properties()[PropKey::GridSpan->value] === 6
+        && $gridElement->children()[1]->properties()[PropKey::GridSpanLg->value] === 3
+        && $gridElement->children()[1]->properties()[PropKey::GridOffsetLg->value] === 1
+        && $gridElement->children()[1]->properties()[PropKey::GridOrderMd->value] === 2
+        && $gridElement->children()[0]->children()[0]->kind() === NodeKind::Image
+        && $gridElement->children()[0]->children()[1]->kind() === NodeKind::Pressable,
+    'Responsive grids must compile rich cells identically from explicit properties and utility classes.',
+);
+$autoFitTemplate = TemplateRenderer::render(
+    TemplateCompiler::compile('<Grid columns="4" gridMinColumnWidth="120"><Column span="1"><Text>Adaptive</Text></Column></Grid>'),
+    null,
+    [],
+);
+$assert(
+    $autoFitTemplate->properties()[PropKey::GridMinColumnWidth->value] === 120.0
+        && (new \Pam\Desktop\Style(gridMinColumnWidth: 120.0))->properties()[PropKey::GridMinColumnWidth->value] === 120.0,
+    'Auto-fit minimum width must compile through templates and typed Style.',
+);
+$virtualGridTemplate = TemplateRenderer::render(
+    TemplateCompiler::compile('<Grid gridTemplate="0,2,8,4;640,3,12,8;768,4,16,12;1024,4,20,16;1280,5,24,20;1536,6,28,24"><Column span2xl="2" offset2xl="1" order2xl="3" /></Grid>'),
+    null,
+    [],
+);
+$gridWire = '0,2,8,4;640,3,12,8;768,4,16,12;1024,4,20,16;1280,5,24,20;1536,6,28,24';
+$typedGridPlan = \Pam\Desktop\GridTemplate::fromWire($gridWire);
+$typedGridStyle = new \Pam\Desktop\Style(gridTemplate: $typedGridPlan, gridSpan2xl: 2, gridOffset2xl: 1, gridOrder2xl: 3);
+$assert($typedGridPlan->toWire() === $gridWire
+    && $typedGridStyle->properties()[PropKey::GridTemplate->value] === $gridWire
+    && $virtualGridTemplate->properties()[PropKey::GridTemplate->value] === $gridWire
+    && $virtualGridTemplate->children()[0]->properties()[PropKey::GridSpan2xl->value] === 2
+    && $virtualGridTemplate->children()[0]->properties()[PropKey::GridOffset2xl->value] === 1
+    && $virtualGridTemplate->children()[0]->properties()[PropKey::GridOrder2xl->value] === 3,
+    'Typed and template responsive plans must preserve all six levels and sixth-tier child properties.');
+foreach (['', '1,2,0,0', '0,0,0,0', '0,65,0,0', '0,2,-1,0', '0,2,INF,0', '0,2,0,0;0,3,0,0', '0,2,0,0;',
+    '0,2,0,0;640,3,0,0;640.000001,4,0,0', '0,2,0,0;1e-100,3,0,0'] as $invalidGridWire) {
+    try {
+        \Pam\Desktop\GridTemplate::fromWire($invalidGridWire);
+        throw new RuntimeException('Invalid grid plan was accepted.');
+    } catch (InvalidArgumentException) {
+        $assert(true, 'Invalid grid plans fail before native dispatch.');
+    }
+}
+$virtualGridTemplate = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<VirtualGrid columns="2" rowHeight="220" prefetch="7"><Column key="photo-1"><Image source="one.webp" /><Text>One</Text></Column><Pressable key="photo-2"><Image source="two.webp" /></Pressable></VirtualGrid>',
+    ),
+    null,
+    [],
+);
+$assert(
+    $virtualGridTemplate->kind() === NodeKind::VirtualList
+        && count($virtualGridTemplate->children()) === 2
+        && $virtualGridTemplate->children()[0]->children()[0]->kind() === NodeKind::Image
+        && $virtualGridTemplate->properties()[PropKey::ListNumColumns->value] === 2
+        && $virtualGridTemplate->properties()[PropKey::ListRowHeight->value] === 220
+        && $virtualGridTemplate->properties()[PropKey::ListPrefetch->value] === 7,
+    'VirtualGrid markup must retain arbitrary keyed component trees and native list tuning.',
+);
+$assert(
+    $coreRoleElement->properties()[PropKey::AccessibilityRole->value]
+        === AccessibilityRole::Header->value,
+    'Core tag accessibility roles must compile to sequential protocol integers.',
+);
+$pressScope = new class {
+    public ?PressEvent $move = null;
+
+    public function moved(PressEvent $event): void
+    {
+        $this->move = $event;
+    }
+};
+$corePressableElement = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Pressable hitSlopLeft="4" hitSlopBottom="10" '
+        .'pressRetentionOffset="12" delayLongPress="420" '
+        .'androidDisableSound="true" rippleAlpha="0.5" '
+        .'on:pressMove="moved"><Text>Open</Text></Pressable>',
+    ),
+    $pressScope,
+    [],
+);
+$corePressableElement->events()[EventKind::PressMove->value](Wire::map([
+    'x' => 2.0,
+    'y' => 3.0,
+    'pageX' => 12.0,
+    'pageY' => 13.0,
+    'timestamp' => 99,
+    'pointerId' => 1,
+]));
+$assert(
+    $corePressableElement->properties()[PropKey::HitSlopLeft->value] === 4.0
+        && $corePressableElement
+            ->properties()[PropKey::HitSlopBottom->value] === 10.0
+        && $corePressableElement
+            ->properties()[PropKey::PressRetentionLeft->value] === 12.0
+        && $corePressableElement
+            ->properties()[PropKey::PressRetentionBottom->value] === 12.0
+        && $corePressableElement
+            ->properties()[PropKey::PressDelayLongMs->value] === 420
+        && $corePressableElement
+            ->properties()[PropKey::PressAndroidDisableSound->value] === true
+        && $corePressableElement
+            ->properties()[PropKey::RippleAlpha->value] === 0.5
+        && $pressScope->move instanceof PressEvent
+        && $pressScope->move->pageX === 12.0,
+    'Core Pressable tags must retain gesture properties and typed move events.',
+);
+$itemActionScope = new class {
+    public string $selected = '';
+
+    public function select(string $id): void
+    {
+        $this->selected = $id;
+    }
+};
+$itemActionElement = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Column><Pressable v-for="$item in $items" '
+        .'on:longPress="select($item[\'id\'])"><Text>{{ $item[\'id\'] }}</Text>'
+        .'</Pressable></Column>',
+    ),
+    $itemActionScope,
+    ['items' => [['id' => 'first'], ['id' => 'second']]],
+);
+$assert(
+    $itemActionScope->selected === '',
+    'Native event expressions must not execute during template rendering.',
+);
+$itemActionElement
+    ->children()[1]
+    ->events()[EventKind::LongPress->value]('');
+$assert(
+    $itemActionScope->selected === 'second',
+    'Native event expressions must capture v-for item data until dispatch.',
+);
+$directiveScope = new class {
+    /** @var list<string> */
+    public array $calls = [];
+
+    public function outside(): void { $this->calls[] = 'outside'; }
+    public function intersect(): void { $this->calls[] = 'intersect'; }
+    public function mutate(): void { $this->calls[] = 'mutate'; }
+    public function resize(): void { $this->calls[] = 'resize'; }
+    public function scroll(): void { $this->calls[] = 'scroll'; }
+    public function touchStart(): void { $this->calls[] = 'touchStart'; }
+    public function touchMove(): void { $this->calls[] = 'touchMove'; }
+    public function touchEnd(): void { $this->calls[] = 'touchEnd'; }
+};
+$directiveElement = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<View p-click-outside="outside" p-intersect="intersect" '
+        .'p-mutate="mutate" p-resize="resize" p-scroll="scroll" '
+        .'p-touch-start="touchStart" p-touch-move="touchMove" '
+        .'p-touch-end="touchEnd"><Text>Directives</Text></View>',
+    ),
+    $directiveScope,
+    [],
+);
+foreach ([
+    EventKind::ClickOutside,
+    EventKind::Intersect,
+    EventKind::Mutate,
+    EventKind::Resize,
+    EventKind::Scroll,
+    EventKind::TouchStart,
+    EventKind::TouchMove,
+    EventKind::TouchEnd,
+] as $directiveEvent) {
+    $directiveElement->events()[$directiveEvent->value]('');
+}
+$assert(
+    $directiveScope->calls === [
+        'outside',
+        'intersect',
+        'mutate',
+        'resize',
+        'scroll',
+        'touchStart',
+        'touchMove',
+        'touchEnd',
+    ],
+    'Native p-* directives must compile to distinct append-only event handlers.',
+);
+$rippleDirective = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<View p-ripple><Text>Ripple</Text></View>',
+    ),
+    null,
+    [],
+);
+$assert(
+    $rippleDirective->properties()[PropKey::RippleColor->value] === 0
+        && $rippleDirective->properties()[PropKey::RippleAlpha->value] === 0.12
+        && $rippleDirective->properties()[PropKey::RippleBorderless->value] === false
+        && $rippleDirective->properties()[PropKey::RippleForeground->value] === false,
+    'p-ripple must compile to a theme-aware native MD3 state layer.',
+);
+$modalScope = new class {
+    public ?ModalOrientation $orientation = null;
+
+    public function oriented(ModalOrientation $orientation): void
+    {
+        $this->orientation = $orientation;
+    }
+};
+$coreModalElement = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Modal visible="true" presentation="fullScreen" '
+        .'animationType="fade" transparent="true" '
+        .'hardwareAccelerated="true" statusBarTranslucent="true" '
+        .'on:orientationChange="oriented"><Text>Dialog</Text></Modal>',
+    ),
+    $modalScope,
+    [],
+);
+$coreModalElement->events()[EventKind::ModalOrientationChange->value](
+    (string) ModalOrientation::Landscape->value,
+);
+$assert(
+    $coreModalElement->properties()[PropKey::ModalPresentation->value]
+        === ModalPresentation::FullScreen->value
+        && $coreModalElement->properties()[PropKey::ModalAnimationType->value]
+            === ModalAnimationType::Fade->value
+        && $coreModalElement->properties()[PropKey::ModalTransparent->value]
+            === true
+        && $coreModalElement
+            ->properties()[PropKey::ModalHardwareAccelerated->value] === true
+        && $coreModalElement
+            ->properties()[PropKey::ModalStatusBarTranslucent->value] === true
+        && $modalScope->orientation === ModalOrientation::Landscape,
+    'Core Modal tags must preserve window properties and typed orientation events.',
+);
+$eventScope = new class {
+    public string $submission = '';
+
+    public function submit(string $payload): void
+    {
+        $this->submission = $payload;
+    }
+};
+TemplateRegistry::component(
+    'AdaptedEvent',
+    static fn (array $_props, array $children): \Pam\Desktop\Renderable =>
+        Column::make(...$children),
+);
+TemplateRegistry::eventAdapter(
+    'AdaptedEvent',
+    static fn (
+        EventKind $_kind,
+        Closure $handler,
+        array $props,
+    ): Closure => static function (string $payload) use (
+        $handler,
+        $props,
+    ): void {
+        $prefix = is_string($props['prefix'] ?? null)
+            ? $props['prefix']
+            : '';
+        $handler($prefix.$payload);
+    },
+);
+$adaptedEventTemplate = TemplateCompiler::compile(
+    '<AdaptedEvent prefix="ui:" on:submit="submit" />',
+);
+$adaptedEventElement = TemplateRenderer::render(
+    $adaptedEventTemplate,
+    $eventScope,
+    [],
+);
+$adaptedEventElement->events()[EventKind::Submit->value]('payload');
+$assert(
+    $eventScope->submission === 'ui:payload',
+    'Registered components must be able to adapt declarative event contracts.',
+);
+$capturedEventContexts = null;
+TemplateRegistry::component(
+    'EventParent',
+    static fn (array $_props, array $children): \Pam\Desktop\Renderable =>
+        Column::make(...$children),
+);
+TemplateRegistry::component(
+    'EventChild',
+    static function (
+        array $props,
+    ) use (&$capturedEventContexts): \Pam\Desktop\Renderable {
+        $capturedEventContexts = $props['__pamEventContexts'] ?? null;
+
+        return Text::make('Child');
+    },
+);
+$eventContextTemplate = TemplateCompiler::compile(
+    '<EventParent value="framework" on:change="submit"><EventChild /></EventParent>',
+);
+TemplateRenderer::render($eventContextTemplate, $eventScope, []);
+if (!is_array($capturedEventContexts)) {
+    throw new RuntimeException('Declarative event contexts are missing.');
+}
+$eventContext = $capturedEventContexts['EventParent'] ?? null;
+if (!is_array($eventContext)) {
+    throw new RuntimeException('Declarative event context is missing.');
+}
+$eventContextEvents = $eventContext['events'] ?? null;
+$eventContextProps = $eventContext['props'] ?? null;
+$eventContextHandler = is_array($eventContextEvents)
+    ? ($eventContextEvents[EventKind::Change->value] ?? null)
+    : null;
+if (!$eventContextHandler instanceof Closure) {
+    throw new RuntimeException('Declarative event context handler is missing.');
+}
+if (!is_array($eventContextProps)) {
+    throw new RuntimeException('Declarative event context props are missing.');
+}
+$eventContextHandler('laravel');
+$assert(
+    ($eventContextProps['value'] ?? null) === 'framework'
+        && $eventScope->submission === 'laravel',
+    'Registered child components must receive bounded ancestor event context.',
+);
+TemplateRegistry::reset();
+TemplateRegistry::styleResolver(
+    static fn (string $class): ?array => $class === 'w-1/2'
+        ? [PropKey::WidthPercent->value => 50.0]
+        : null,
+);
+$assert(
+    TemplateRegistry::classProperties('w-1/2')
+        === [PropKey::WidthPercent->value => 50.0],
+    'Plugin utility resolvers must compile classes lazily.',
+);
+$assert(
+    TemplateRegistry::classProperties('unknown-utility') === null,
+    'Plugin utility resolvers must delegate unsupported classes.',
+);
+TemplateRegistry::reset();
+
+$nestedStateChild = new class extends Component {
+    /** @return array{label: string} */
+    protected function initialState(): array
+    {
+        return ['label' => 'Nested A'];
+    }
+
+    public function changeLabel(string $label): void
+    {
+        $this->state->label = $label;
+    }
+
+    public function render(): \Pam\Desktop\Renderable
+    {
+        return Text::make((string) $this->state->label);
+    }
+};
+$nestedStateParent = new class($nestedStateChild) extends Component {
+    public function __construct(private readonly Component $child)
+    {
+    }
+
+    /** @return array{revision: int} */
+    protected function initialState(): array
+    {
+        return ['revision' => 0];
+    }
+
+    public function render(): \Pam\Desktop\Renderable
+    {
+        // Give the parent its own dependency so it is eligible for retained
+        // subtree reuse, matching a real stateful route component.
+        $this->state->revision;
+
+        return Column::make($this->child);
+    }
+};
+$nestedInitial = $nestedStateParent->toElement();
+$nestedStateChild->changeLabel('Nested B');
+$nestedUpdated = $nestedStateParent->toElement();
+$assert(
+    ($nestedInitial->children()[0]->properties()[PropKey::Text->value] ?? null) === 'Nested A'
+        && ($nestedUpdated->children()[0]->properties()[PropKey::Text->value] ?? null) === 'Nested B',
+    'Nested component state changes must invalidate every retained ancestor.',
+);
+
+$incremental = new TreeEncoder();
+$initial = $incremental->encode(Text::make('A')->key('value'));
+$unchanged = $incremental->encode(Text::make('A')->key('value'));
+$patch = $incremental->encode(Text::make('B')->key('value'));
+$initialFrame = $initial['frame'];
+$patchFrame = $patch['frame'];
+
+if ($initialFrame === null || $patchFrame === null) {
+    throw new RuntimeException('Initial and changed trees must produce frames.');
+}
+
+$assert(str_starts_with($initialFrame, 'PNT1'), 'Initial tree frame is missing.');
+$assert($unchanged['frame'] === null, 'An unchanged tree must not cross the native bridge.');
+$assert(str_starts_with($patchFrame, 'PNP1'), 'Property update must use a patch frame.');
+$assert(strlen($patchFrame) < strlen($initialFrame), 'Property patch must be smaller than the full tree.');
+
+$structuralTree = Column::make(
+    Text::make('B')->key('value'),
+    Text::make('New')->key('new'),
+)->key('content');
+$structural = $incremental->encode($structuralTree);
+$assert(
+    $structural['frame'] !== null && str_starts_with($structural['frame'], 'PNP1'),
+    'Structural changes after boot must use a patch frame.',
+);
+$incremental->forceFullFrame();
+$recovery = $incremental->encode($structuralTree);
+$assert(
+    $recovery['full']
+        && $recovery['frame'] !== null
+        && str_starts_with($recovery['frame'], 'PNT1'),
+    'A rejected patch must be recoverable with a complete frame.',
+);
+
+$wire = Wire::map([
+    'name' => 'Pam',
+    'count' => 42,
+    'ratio' => 1.5,
+    'enabled' => true,
+]);
+$assert(Wire::decodeMap($wire) == [
+    'count' => 42,
+    'enabled' => true,
+    'name' => 'Pam',
+    'ratio' => 1.5,
+], 'Wire map round-trip failed.');
+
+$counter = new class extends Component {
+    public int $count = 0;
+
+    public function render(): \Pam\Desktop\Element
+    {
+        return Screen::make(
+            Button::make("Count: {$this->count}")
+                ->key('counter')
+                ->onPress(function (): void {
+                    $this->count++;
+                }),
+        );
+    }
+};
+
+App::run($counter);
+$frame = Runtime::lastFrame();
+$assert($frame !== null, 'App did not render its initial frame.');
+$moduleResult = null;
+$requestId = NativeModules::call(
+    'community.echo',
+    'echo',
+    ['message' => 'fast'],
+    static function (NativeModuleResult $result) use (&$moduleResult): void {
+        $moduleResult = $result;
+    },
+);
+$assert(
+    TestDiagnostics::$moduleCall !== null
+        && TestDiagnostics::$moduleCall['requestId'] === $requestId
+        && TestDiagnostics::$moduleCall['module'] === 'community.echo'
+        && Wire::decodeMap(TestDiagnostics::$moduleCall['payload']) == ['message' => 'fast'],
+    'Public native module facade did not emit a typed bridge call.',
+);
+Runtime::dispatchModuleResult(
+    $requestId,
+    \Pam\Desktop\ModuleResultStatus::Success->value,
+    Wire::map(['message' => 'fast']),
+);
+$assert(
+    $moduleResult instanceof NativeModuleResult
+        && $moduleResult->succeeded()
+        && $moduleResult->values() === ['message' => 'fast'],
+    'Public native module facade did not decode its result.',
+);
+
+$linkOpenFailure = null;
+$linkOpenRequest = \Pam\Desktop\System\Linking::open(
+    'invalid://destination',
+    static function (): void {
+        throw new RuntimeException('Failed link open must not invoke success.');
+    },
+    static function (string $message) use (&$linkOpenFailure): void {
+        $linkOpenFailure = $message;
+    },
+);
+Runtime::dispatchModuleResult(
+    $linkOpenRequest,
+    ModuleResultStatus::Failure->value,
+    'No application can open this URL.',
+);
+$assert(
+    $linkOpenFailure === 'No application can open this URL.',
+    'Link open failures must reach the optional failure callback.',
+);
+
+$pickedFiles = [];
+$pickManyRequest = Files::pickMany(
+    MediaPickerType::Media,
+    static function (array $files) use (&$pickedFiles): void {
+        $pickedFiles = $files;
+    },
+    6,
+);
+$pickManyCall = TestDiagnostics::$moduleCall;
+$pickManyPayload = $pickManyCall === null
+    ? []
+    : Wire::decodeMap($pickManyCall['payload']);
+$assert(
+    $pickManyCall !== null
+        && $pickManyCall['requestId'] === $pickManyRequest
+        && $pickManyCall['module'] === 'files'
+        && $pickManyCall['method'] === 'pickMany'
+        && $pickManyPayload === ['limit' => 6, 'maximumBytes' => 67_108_864, 'type' => MediaPickerType::Media->value],
+    'Files pickMany must emit a bounded typed native module call.',
+);
+$pickManyFailure = '';
+$failingPick = Files::pickMany(
+    MediaPickerType::Video,
+    static function (array $files): void {
+    },
+    3,
+    static function (string $message) use (&$pickManyFailure): void {
+        $pickManyFailure = $message;
+    },
+    314_572_800,
+);
+$failingPayload = Wire::decodeMap(TestDiagnostics::$moduleCall['payload'] ?? '');
+Runtime::dispatchModuleResult($failingPick, ModuleResultStatus::Failure->value, 'Selected file is too large');
+$assert(
+    ($failingPayload['maximumBytes'] ?? null) === 314_572_800
+        && $pickManyFailure === 'Selected file is too large',
+    'Files pickMany must forward the per-file limit and report import failures.',
+);
+$pickManyLimitRejected = false;
+try {
+    Files::pickMany(MediaPickerType::Media, static function (array $files): void {
+    }, maximumBytes: 0);
+} catch (InvalidArgumentException) {
+    $pickManyLimitRejected = true;
+}
+$assert($pickManyLimitRejected, 'Files pickMany must reject an invalid per-file limit.');
+Runtime::dispatchModuleResult(
+    $pickManyRequest,
+    ModuleResultStatus::Success->value,
+    Wire::map([
+        'items' => json_encode([
+            [
+                'path' => 'imports/photo-one.jpg',
+                'name' => 'photo-one.jpg',
+                'mimeType' => 'image/jpeg',
+                'size' => 1_024,
+            ],
+            [
+                'path' => 'imports/photo-two.webp',
+                'name' => 'photo-two.webp',
+                'mimeType' => 'image/webp',
+                'size' => 2_048,
+            ],
+        ], JSON_THROW_ON_ERROR),
+    ]),
+);
+$assert(
+    count($pickedFiles) === 2
+        && $pickedFiles[0] instanceof FileReference
+        && $pickedFiles[0]->path === 'imports/photo-one.jpg'
+        && $pickedFiles[0]->uri() === 'pam-file:///imports/photo-one.jpg'
+        && $pickedFiles[1]->mimeType === 'image/webp'
+        && $pickedFiles[1]->size === 2_048,
+    'Files pickMany must decode every native file reference in selection order.',
+);
+
+$cancelledPick = new FileReference('unexpected', 'unexpected', 'text/plain', 1);
+$cancelledPickRequest = Files::pick(
+    MediaPickerType::Image,
+    static function (?FileReference $file) use (&$cancelledPick): void {
+        $cancelledPick = $file;
+    },
+);
+Runtime::dispatchModuleResult(
+    $cancelledPickRequest,
+    ModuleResultStatus::Success->value,
+    '',
+);
+$assert(
+    $cancelledPick === null,
+    'Files pick must resolve user cancellation with null instead of throwing.',
+);
+
+$largePickFailure = null;
+$largePickRequest = Files::pick(
+    MediaPickerType::Any,
+    static function (?FileReference $file): void {
+        throw new RuntimeException('Failed document pick must not invoke success.');
+    },
+    mimeType: 'application/zip',
+    failure: static function (string $message) use (&$largePickFailure): void {
+        $largePickFailure = $message;
+    },
+    maximumBytes: 2_147_483_648,
+);
+$largePickCall = TestDiagnostics::$moduleCall;
+$largePickPayload = $largePickCall === null ? [] : Wire::decodeMap($largePickCall['payload']);
+$assert(
+    $largePickCall !== null
+        && $largePickCall['method'] === 'pick'
+        && ($largePickPayload['type'] ?? null) === MediaPickerType::Any->value
+        && ($largePickPayload['mimeType'] ?? null) === 'application/zip'
+        && ($largePickPayload['maximumBytes'] ?? null) === 2_147_483_648,
+    'Files pick must forward a typed MIME filter and explicit streaming import limit.',
+);
+Runtime::dispatchModuleResult(
+    $largePickRequest,
+    ModuleResultStatus::Failure->value,
+    'Selected file exceeds 2048 MiB',
+);
+$assert(
+    $largePickFailure === 'Selected file exceeds 2048 MiB',
+    'Files pick must deliver native import errors to the optional failure callback.',
+);
+foreach (['application/zip\n', 'not-a-mime'] as $invalidMime) {
+    $rejected = false;
+    try {
+        Files::pick(MediaPickerType::Any, static function (): void {}, mimeType: $invalidMime);
+    } catch (InvalidArgumentException) {
+        $rejected = true;
+    }
+    $assert($rejected, 'Files pick must reject malformed MIME filters before calling native code.');
+}
+foreach ([0, 8_589_934_593] as $invalidLimit) {
+    $rejected = false;
+    try {
+        Files::pick(MediaPickerType::Any, static function (): void {}, maximumBytes: $invalidLimit);
+    } catch (InvalidArgumentException) {
+        $rejected = true;
+    }
+    $assert($rejected, 'Files pick must reject unsafe import limits before calling native code.');
+}
+
+$cancelledMany = [new FileReference('unexpected', 'unexpected', 'text/plain', 1)];
+$cancelledManyRequest = Files::pickMany(
+    MediaPickerType::Media,
+    static function (array $files) use (&$cancelledMany): void {
+        $cancelledMany = $files;
+    },
+);
+Runtime::dispatchModuleResult(
+    $cancelledManyRequest,
+    ModuleResultStatus::Success->value,
+    Wire::map(['items' => '[]']),
+);
+$assert(
+    $cancelledMany === [],
+    'Files pickMany must resolve user cancellation with an empty list.',
+);
+
+$fileDigest = null;
+$hashRequest = Files::sha256('documents/identity.pdf', static function (string $digest) use (&$fileDigest): void {
+    $fileDigest = $digest;
+});
+$hashCall = TestDiagnostics::$moduleCall;
+$assert($hashCall !== null && $hashCall['module'] === 'files' && $hashCall['method'] === 'sha256'
+    && Wire::decodeMap($hashCall['payload']) === ['path' => 'documents/identity.pdf'],
+    'Files SHA-256 must bridge only a private path, never file bytes.');
+Runtime::dispatchModuleResult($hashRequest, ModuleResultStatus::Success->value, Wire::map(['sha256' => hash('sha256', 'abc')]));
+$assert($fileDigest === hash('sha256', 'abc'), 'Files SHA-256 must deliver the native digest.');
+
+$hashFailure = null;
+$hashRequest = Files::sha256('missing.pdf', static function (string $_): void {}, static function (string $message) use (&$hashFailure): void {
+    $hashFailure = $message;
+});
+Runtime::dispatchModuleResult($hashRequest, ModuleResultStatus::Failure->value, 'File does not exist');
+$assert($hashFailure === 'File does not exist', 'Files SHA-256 must expose native failure through the optional failure callback.');
+
+$statSeen = ['file' => null, 'missing' => 0, 'failure' => null, 'found' => 'unset', 'exists' => null];
+$statRequest = Files::stat('notes/a.txt', static function (\Pam\Desktop\FileReference $file) use (&$statSeen): void { $statSeen['file'] = $file; });
+Runtime::dispatchModuleResult($statRequest, ModuleResultStatus::Success->value, Wire::map(['path' => 'notes/a.txt', 'name' => 'a.txt', 'mimeType' => 'text/plain', 'size' => 3]));
+$statRequest = Files::stat('notes/gone.txt', static function (\Pam\Desktop\FileReference $_): void {});
+Runtime::dispatchModuleResult($statRequest, ModuleResultStatus::Failure->value, 'File does not exist');
+$statRequest = Files::stat('notes/gone.txt', static function (\Pam\Desktop\FileReference $_): void {}, static function () use (&$statSeen): void { $statSeen['missing']++; });
+Runtime::dispatchModuleResult($statRequest, ModuleResultStatus::Failure->value, 'File does not exist');
+$statRequest = Files::stat('notes/a.txt', static function (\Pam\Desktop\FileReference $_): void {}, null, static function (string $message) use (&$statSeen): void { $statSeen['failure'] = $message; });
+Runtime::dispatchModuleResult($statRequest, ModuleResultStatus::Failure->value, 'Disk unavailable');
+$statRequest = Files::find('notes/gone.txt', static function (?\Pam\Desktop\FileReference $file) use (&$statSeen): void { $statSeen['found'] = $file; });
+Runtime::dispatchModuleResult($statRequest, ModuleResultStatus::Failure->value, 'File does not exist');
+$existsRequest = Files::exists('notes/a.txt', static function (bool $exists) use (&$statSeen): void { $statSeen['exists'] = $exists; });
+$existsCall = TestDiagnostics::$moduleCall;
+Runtime::dispatchModuleResult($existsRequest, ModuleResultStatus::Success->value, Wire::map(['exists' => true, 'directory' => false]));
+$assert(
+    $statSeen['file']?->size === 3 && $statSeen['missing'] === 1 && $statSeen['failure'] === 'Disk unavailable'
+        && $statSeen['found'] === null && $statSeen['exists'] === true
+        && $existsCall !== null && $existsCall['module'] === 'files' && $existsCall['method'] === 'exists',
+    'Files::stat must not throw for a missing file, find() must yield null and exists() must report a bool.',
+);
+
+foreach (['', ' ', '/absolute', '../outside', 'a//b', 'a/../b', 'a\\b', "bad\nname", str_repeat('a', 4097)] as $unsafeHashPath) {
+    $rejected = false;
+    try { Files::sha256($unsafeHashPath, static function (string $_): void {}); }
+    catch (InvalidArgumentException) { $rejected = true; }
+    $assert($rejected, 'Files SHA-256 must reject unsafe private paths before crossing the bridge.');
+}
+$diagnosticsBeforeHashTests = TestDiagnostics::$messages;
+foreach (['', str_repeat('A', 64), str_repeat('g', 64), str_repeat('a', 63), str_repeat('a', 64)."\n", 42] as $invalidDigest) {
+    $fileDigest = null;
+    $beforeMessages = count(TestDiagnostics::$messages);
+    $hashRequest = Files::sha256('document.pdf', static function (string $digest) use (&$fileDigest): void { $fileDigest = $digest; });
+    Runtime::dispatchModuleResult($hashRequest, ModuleResultStatus::Success->value, Wire::map(['sha256' => $invalidDigest]));
+    $assert($fileDigest === null && count(TestDiagnostics::$messages) > $beforeMessages,
+        'Files SHA-256 must reject malformed native digest results.');
+}
+TestDiagnostics::$messages = $diagnosticsBeforeHashTests;
+
+$copiedAsset = null;
+$copyAssetRequest = Files::copyAsset(
+    'assets/templates/story.webp',
+    'drafts/story.webp',
+    static function (FileReference $file) use (&$copiedAsset): void {
+        $copiedAsset = $file;
+    },
+);
+$copyAssetCall = TestDiagnostics::$moduleCall;
+$assert(
+    $copyAssetCall !== null
+        && $copyAssetCall['requestId'] === $copyAssetRequest
+        && $copyAssetCall['module'] === 'files'
+        && $copyAssetCall['method'] === 'copyAsset'
+        && Wire::decodeMap($copyAssetCall['payload']) == [
+            'assetPath' => 'assets/templates/story.webp',
+            'path' => 'drafts/story.webp',
+        ],
+    'Files copyAsset must emit safe project and sandbox paths.',
+);
+Runtime::dispatchModuleResult(
+    $copyAssetRequest,
+    ModuleResultStatus::Success->value,
+    Wire::map([
+        'path' => 'drafts/story.webp',
+        'name' => 'story.webp',
+        'mimeType' => 'image/webp',
+        'size' => 75_446,
+    ]),
+);
+$assert(
+    $copiedAsset instanceof FileReference
+        && $copiedAsset->path === 'drafts/story.webp'
+        && $copiedAsset->mimeType === 'image/webp',
+    'Files copyAsset must return the materialized typed file reference.',
+);
+$unsafeAssetRejected = false;
+try {
+    Files::copyAsset('../secret', 'drafts/secret', static function (FileReference $_): void {});
+} catch (InvalidArgumentException) {
+    $unsafeAssetRejected = true;
+}
+$assert($unsafeAssetRejected, 'Files copyAsset must reject traversal before crossing the bridge.');
+
+$downloadedFile = null;
+$downloadRequest = Files::download(
+    'https://cdn.example.test/media/story.webp',
+    'drafts/remote-story.webp',
+    static function (FileReference $file) use (&$downloadedFile): void {
+        $downloadedFile = $file;
+    },
+    8_388_608,
+);
+$downloadCall = TestDiagnostics::$moduleCall;
+$assert(
+    $downloadCall !== null
+        && $downloadCall['requestId'] === $downloadRequest
+        && $downloadCall['module'] === 'files'
+        && $downloadCall['method'] === 'download'
+        && Wire::decodeMap($downloadCall['payload']) == [
+            'url' => 'https://cdn.example.test/media/story.webp',
+            'path' => 'drafts/remote-story.webp',
+            'maximumBytes' => 8_388_608,
+            'headers' => '{}',
+        ],
+    'Files download must emit a bounded HTTPS sandbox download; no headers travel as an empty JSON object (Android JSONObject, iOS [String: String]).',
+);
+Runtime::dispatchModuleResult(
+    $downloadRequest,
+    ModuleResultStatus::Success->value,
+    Wire::map([
+        'path' => 'drafts/remote-story.webp',
+        'name' => 'remote-story.webp',
+        'mimeType' => 'image/webp',
+        'size' => 82_944,
+    ]),
+);
+$assert(
+    $downloadedFile instanceof FileReference
+        && $downloadedFile->path === 'drafts/remote-story.webp'
+        && $downloadedFile->size === 82_944,
+    'Files download must decode the materialized typed file reference.',
+);
+$unsafeDownloadRejected = false;
+try {
+    Files::download(
+        'http://example.test/media.webp',
+        'drafts/media.webp',
+        static function (FileReference $_): void {},
+    );
+} catch (InvalidArgumentException) {
+    $unsafeDownloadRejected = true;
+}
+$assert($unsafeDownloadRejected, 'Files download must reject non-HTTPS URLs before crossing the bridge.');
+
+$downloadProgress = null;
+$downloadWithProgressFile = null;
+$downloadWithProgressError = null;
+$downloadSubscription = Files::downloadWithProgress(
+    'https://api.example.test/private/report.pdf',
+    'documents/report.pdf',
+    static function (FileReference $file) use (&$downloadWithProgressFile): void {
+        $downloadWithProgressFile = $file;
+    },
+    static function (FileDownloadProgress $progress) use (&$downloadProgress): void {
+        $downloadProgress = $progress;
+    },
+    ['Authorization' => 'Bearer secret-token'],
+    16_777_216,
+    static function (string $message) use (&$downloadWithProgressError): void {
+        $downloadWithProgressError = $message;
+    },
+);
+$downloadStartRequest = TestDiagnostics::$moduleCall['requestId'] ?? 0;
+$downloadStartPayload = Wire::decodeMap(TestDiagnostics::$moduleCall['payload'] ?? '');
+$assert(
+    $downloadSubscription > 0
+        && (TestDiagnostics::$moduleCall['method'] ?? '') === 'downloadStart'
+        && $downloadStartPayload['headers'] === '{"Authorization":"Bearer secret-token"}',
+    'Progress downloads must forward validated authentication headers.',
+);
+Runtime::dispatchModuleResult(
+    $downloadStartRequest,
+    ModuleResultStatus::Success->value,
+    Wire::map(['subscription' => 77]),
+);
+$downloadNextRequest = TestDiagnostics::$moduleCall['requestId'] ?? 0;
+$assert(
+    (TestDiagnostics::$moduleCall['method'] ?? '') === 'downloadNext'
+        && Wire::decodeMap(TestDiagnostics::$moduleCall['payload'] ?? '') == ['subscription' => 77],
+    'Progress downloads must consume the native observation channel.',
+);
+Runtime::dispatchModuleResult(
+    $downloadNextRequest,
+    ModuleResultStatus::Success->value,
+    Wire::map([
+        'state' => 1,
+        'bytesWritten' => 512,
+        'totalBytes' => 1024,
+    ]),
+);
+$assert(
+    $downloadProgress instanceof FileDownloadProgress
+        && $downloadProgress->fraction() === 0.5,
+    'Progress downloads must expose typed byte progress.',
+);
+$downloadCompleteRequest = TestDiagnostics::$moduleCall['requestId'] ?? 0;
+Runtime::dispatchModuleResult(
+    $downloadCompleteRequest,
+    ModuleResultStatus::Success->value,
+    Wire::map([
+        'state' => 2,
+        'path' => 'documents/report.pdf',
+        'name' => 'report.pdf',
+        'mimeType' => 'application/pdf',
+        'size' => 1024,
+    ]),
+);
+$assert(
+    $downloadWithProgressFile instanceof FileReference
+        && $downloadWithProgressFile->path === 'documents/report.pdf'
+        && $downloadWithProgressError === null,
+    'Progress downloads must resolve their typed sandbox file.',
+);
+$openFile = false;
+$openRequest = Files::open(
+    'documents/report.pdf',
+    'application/pdf',
+    static function () use (&$openFile): void { $openFile = true; },
+    static function (string $_): void {},
+);
+$assert(
+    (TestDiagnostics::$moduleCall['method'] ?? '') === 'open'
+        && Wire::decodeMap(TestDiagnostics::$moduleCall['payload'] ?? '') == [
+            'path' => 'documents/report.pdf',
+            'mimeType' => 'application/pdf',
+        ],
+    'Files open must request a sandboxed platform viewer.',
+);
+Runtime::dispatchModuleResult($openRequest, ModuleResultStatus::Success->value, '');
+$assert($openFile, 'Files open must report a successful viewer launch.');
+
+$importedFile = null;
+$importUriRequest = Files::importUri(
+    'content://media/external/images/media/42',
+    static function (FileReference $file) use (&$importedFile): void {
+        $importedFile = $file;
+    },
+);
+$importUriCall = TestDiagnostics::$moduleCall;
+$assert(
+    $importUriCall !== null
+        && $importUriCall['requestId'] === $importUriRequest
+        && $importUriCall['module'] === 'files'
+        && $importUriCall['method'] === 'importUri'
+        && Wire::decodeMap($importUriCall['payload']) == [
+            'uri' => 'content://media/external/images/media/42',
+        ],
+    'Files importUri must emit a typed content URI import.',
+);
+Runtime::dispatchModuleResult(
+    $importUriRequest,
+    ModuleResultStatus::Success->value,
+    Wire::map([
+        'path' => 'imports/photo-42.jpg',
+        'name' => 'photo-42.jpg',
+        'mimeType' => 'image/jpeg',
+        'size' => 4_096,
+    ]),
+);
+$assert(
+    $importedFile instanceof FileReference
+        && $importedFile->path === 'imports/photo-42.jpg'
+        && $importedFile->mimeType === 'image/jpeg'
+        && $importedFile->size === 4_096,
+    'Files importUri must decode the sandboxed file reference.',
+);
+$photoImport = Files::importUri('phasset://asset/QUJD', static function (FileReference $file): void {});
+$photoImportCall = TestDiagnostics::$moduleCall;
+$assert(
+    $photoImportCall !== null
+        && $photoImportCall['requestId'] === $photoImport
+        && $photoImportCall['module'] === 'files'
+        && $photoImportCall['method'] === 'importUri'
+        && Wire::decodeMap($photoImportCall['payload']) === ['uri' => 'phasset://asset/QUJD'],
+    'Files importUri must also forward iOS PhotoKit asset URIs.',
+);
+Runtime::dispatchModuleResult($photoImport, ModuleResultStatus::Success->value, Wire::map([
+    'path' => 'imports/photo.jpg',
+    'name' => 'photo.jpg',
+    'mimeType' => 'image/jpeg',
+    'size' => 1_024,
+]));
+
+$missingStoredValue = 'not-dispatched';
+$storageRequest = Storage::get(
+    'chat.draft.missing',
+    static function (?string $value) use (&$missingStoredValue): void {
+        $missingStoredValue = $value;
+    },
+);
+Runtime::dispatchModuleResult(
+    $storageRequest,
+    ModuleResultStatus::Success->value,
+    '',
+);
+$assert(
+    $missingStoredValue === null,
+    'Storage get must treat an empty successful payload as a cache miss.',
+);
+
+// Every Storage key reaches the native store in its accepted form
+// ([A-Za-z0-9_.-]{1,128}): Android and iOS reject anything else.
+$storageKeyCases = [
+    'chat.draft.missing' => 'chat.draft.missing',
+    'composer:emoji-recents:v1' => 'composer-emoji-recents-v1',
+    'account/42 ação' => Storage::safeKey('account/42 ação'),
+    '' => Storage::safeKey(''),
+    str_repeat('feed:', 60) => Storage::safeKey(str_repeat('feed:', 60)),
+];
+foreach ($storageKeyCases as $rawStorageKey => $expectedStorageKey) {
+    $rawStorageKey = (string) $rawStorageKey;
+    $assert(
+        preg_match(Storage::KEY_PATTERN, $expectedStorageKey) === 1
+            && Storage::safeKey($expectedStorageKey) === $expectedStorageKey,
+        'Storage safeKey must produce a native key and leave it unchanged when applied again.',
+    );
+    TestDiagnostics::$typedCall = null;
+    $storageGetFailure = null;
+    $keyedGet = Storage::get($rawStorageKey, static function (?string $value): void {}, static function (NativeModuleException $error) use (&$storageGetFailure): void {
+        $storageGetFailure = $error;
+    });
+    $keyedGetCall = TestDiagnostics::$typedCall;
+    $assert(
+        $keyedGetCall !== null
+            && $keyedGetCall['operation'] === NativeOperation::StorageGet->value
+            && Wire::decodeMap($keyedGetCall['payload']) === ['key' => $expectedStorageKey],
+        'Storage get must send the safeKey() form of any key to the native store.',
+    );
+    Runtime::dispatchModuleResult($keyedGet, ModuleResultStatus::Success->value, '');
+    TestDiagnostics::$typedCall = null;
+    $keyedSet = Storage::set($rawStorageKey, 'value', null, static function (): void {});
+    $keyedSetCall = TestDiagnostics::$typedCall;
+    $assert(
+        $keyedSetCall !== null
+            && $keyedSetCall['operation'] === NativeOperation::StorageSet->value
+            && Wire::decodeMap($keyedSetCall['payload']) === ['key' => $expectedStorageKey, 'value' => 'value'],
+        'Storage set must send the safeKey() form of any key to the native store.',
+    );
+    Runtime::dispatchModuleResult($keyedSet, ModuleResultStatus::Success->value, '');
+    $assert($storageGetFailure === null, 'A normalized Storage key must not fail.');
+}
+$assert(
+    Storage::safeKey('a:b') === Storage::safeKey('a-b'),
+    'safeKey keeps its documented lossy mapping (callers that need distinct owners hash them).',
+);
+
+$batchRequestId = SQLite::executeMany(
+    'nitro.db',
+    'INSERT INTO messages (id, body) VALUES (?, ?)',
+    [
+        ['m1', 'fast'],
+        ['m2', 'faster'],
+    ],
+);
+$batchCall = TestDiagnostics::$moduleCall;
+$batchPayload = $batchCall === null ? [] : Wire::decodeMap($batchCall['payload']);
+$assert(
+    $batchCall !== null
+        && $batchCall['requestId'] === $batchRequestId
+        && $batchCall['module'] === 'sqlite'
+        && $batchCall['method'] === 'executeMany'
+        && json_decode((string) ($batchPayload['arguments'] ?? ''), true) === [
+            ['m1', 'fast'],
+            ['m2', 'faster'],
+        ],
+    'SQLite executeMany did not emit one typed bridge call for the complete batch.',
+);
+Runtime::dispatchModuleResult(
+    $batchRequestId,
+    \Pam\Desktop\ModuleResultStatus::Success->value,
+    '',
+);
+
+$transactionRequestId = SQLite::transaction(
+    'nitro.db',
+    [
+        [
+            'sql' => 'DELETE FROM messages WHERE chat_id = ?',
+            'arguments' => ['chat-1'],
+        ],
+        [
+            'sql' => 'INSERT INTO messages (id, chat_id, body) VALUES (?, ?, ?)',
+            'argumentSets' => [
+                ['m3', 'chat-1', 'atomic'],
+                ['m4', 'chat-1', 'batched'],
+            ],
+        ],
+    ],
+);
+$transactionCall = TestDiagnostics::$moduleCall;
+$transactionPayload = $transactionCall === null
+    ? []
+    : Wire::decodeMap($transactionCall['payload']);
+$assert(
+    $transactionCall !== null
+        && $transactionCall['requestId'] === $transactionRequestId
+        && $transactionCall['module'] === 'sqlite'
+        && $transactionCall['method'] === 'transaction'
+        && json_decode((string) ($transactionPayload['arguments'] ?? ''), true) === [
+            [
+                'sql' => 'DELETE FROM messages WHERE chat_id = ?',
+                'arguments' => ['chat-1'],
+            ],
+            [
+                'sql' => 'INSERT INTO messages (id, chat_id, body) VALUES (?, ?, ?)',
+                'arguments' => [],
+                'argumentSets' => [
+                    ['m3', 'chat-1', 'atomic'],
+                    ['m4', 'chat-1', 'batched'],
+                ],
+            ],
+        ],
+    'SQLite transaction did not emit one typed bridge call for heterogeneous statements.',
+);
+Runtime::dispatchModuleResult(
+    $transactionRequestId,
+    \Pam\Desktop\ModuleResultStatus::Success->value,
+    '',
+);
+
+
+$cacheUsage = null;
+$cacheRequestId = Caches::usage(
+    static function (\Pam\Desktop\CacheUsage $usage) use (&$cacheUsage): void {
+        $cacheUsage = $usage;
+    },
+);
+$cacheCall = TestDiagnostics::$moduleCall;
+$assert(
+    $cacheCall !== null
+        && $cacheCall['requestId'] === $cacheRequestId
+        && $cacheCall['module'] === 'cache'
+        && $cacheCall['method'] === 'usage',
+    'Caches facade did not request native cache usage.',
+);
+Runtime::dispatchModuleResult(
+    $cacheRequestId,
+    \Pam\Desktop\ModuleResultStatus::Success->value,
+    Wire::map([
+        'fileCount' => 12,
+        'freedBytes' => 0,
+        'imageBytes' => 1024,
+        'mediaBytes' => 4096,
+        'temporaryBytes' => 128,
+        'totalBytes' => 5248,
+    ]),
+);
+$assert(
+    $cacheUsage instanceof \Pam\Desktop\CacheUsage
+        && $cacheUsage->fileCount === 12
+        && $cacheUsage->totalBytes === 5248,
+    'Caches facade did not decode typed native cache usage.',
+);
+
+$cacheCleared = null;
+$cacheClearRequestId = Caches::clear(
+    static function (\Pam\Desktop\CacheUsage $usage) use (&$cacheCleared): void {
+        $cacheCleared = $usage;
+    },
+);
+$cacheClearCall = TestDiagnostics::$moduleCall;
+$assert(
+    $cacheClearCall !== null
+        && $cacheClearCall['module'] === 'cache'
+        && $cacheClearCall['method'] === 'clear'
+        && Wire::decodeMap($cacheClearCall['payload']) == ['preserveOffline' => true],
+    'Caches clear must preserve pinned offline media by default.',
+);
+Runtime::dispatchModuleResult(
+    $cacheClearRequestId,
+    \Pam\Desktop\ModuleResultStatus::Success->value,
+    Wire::map([
+        'fileCount' => 2,
+        'freedBytes' => 4096,
+        'imageBytes' => 0,
+        'mediaBytes' => 1024,
+        'temporaryBytes' => 0,
+        'totalBytes' => 1024,
+    ]),
+);
+$assert(
+    $cacheCleared instanceof \Pam\Desktop\CacheUsage
+        && $cacheCleared->freedBytes === 4096
+        && $cacheCleared->totalBytes === 1024,
+    'Caches clear did not decode the reclaimed byte count.',
+);
+
+$httpResponse = null;
+$httpRequestId = Http::json(
+    method: 'post',
+    url: 'https://api.example.test/login',
+    data: ['email' => 'person@example.test', 'password' => 'secret'],
+    callback: static function (HttpResponse $response) use (&$httpResponse): void {
+        $httpResponse = $response;
+    },
+    headers: ['Authorization' => 'Bearer access-token'],
+    timeoutMs: 45_000,
+);
+$httpCall = TestDiagnostics::$moduleCall;
+$httpPayload = Wire::decodeMap($httpCall['payload'] ?? '');
+$httpHeaders = json_decode((string) ($httpPayload['headers'] ?? ''), true, flags: JSON_THROW_ON_ERROR);
+$httpBody = json_decode((string) ($httpPayload['body'] ?? ''), true, flags: JSON_THROW_ON_ERROR);
+$assert(
+    $httpCall !== null
+        && $httpCall['requestId'] === $httpRequestId
+        && $httpCall['module'] === 'http'
+        && $httpCall['method'] === 'request'
+        && $httpPayload['url'] === 'https://api.example.test/login'
+        && $httpPayload['method'] === 'POST'
+        && $httpPayload['timeoutMs'] === 45_000
+        && $httpHeaders === [
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/json',
+            'Authorization' => 'Bearer access-token',
+        ]
+        && $httpBody === ['email' => 'person@example.test', 'password' => 'secret'],
+    'Generic HTTP JSON request did not preserve method, URL, headers, body and timeout.',
+);
+Runtime::dispatchModuleResult(
+    $httpRequestId,
+    \Pam\Desktop\ModuleResultStatus::Success->value,
+    Wire::map(['statusCode' => 201, 'body' => '{"token":"access-token"}']),
+);
+$assert(
+    $httpResponse instanceof HttpResponse
+        && $httpResponse->statusCode === 201
+        && $httpResponse->successful()
+        && $httpResponse->body === '{"token":"access-token"}',
+    'Generic HTTP request did not decode its response.',
+);
+
+$uploadResponse = null;
+$uploadId = Http::upload('https://storage.example.test/signed', 'documents/test.png',
+    static function (HttpResponse $response) use (&$uploadResponse): void { $uploadResponse = $response; },
+    ['Content-Type' => 'image/png'],
+);
+$uploadCall = TestDiagnostics::$moduleCall;
+$uploadPayload = Wire::decodeMap($uploadCall['payload'] ?? '');
+$assert($uploadCall['method'] === 'upload' && $uploadPayload['method'] === 'PUT'
+    && $uploadPayload['path'] === 'documents/test.png' && !array_key_exists('body', $uploadPayload)
+    && $uploadPayload['timeoutMs'] === 120_000,
+    'HTTP upload must send a private path instead of file bytes through PHP.');
+Runtime::dispatchModuleResult($uploadId, \Pam\Desktop\ModuleResultStatus::Success->value,
+    Wire::map(['statusCode' => 204, 'body' => '']));
+$assert($uploadResponse instanceof HttpResponse && $uploadResponse->successful(), 'Upload response was not delivered.');
+foreach (['', '/absolute', '../outside', 'a/../b', 'a//b', "a\\b", "a\0b"] as $path) {
+    $rejected = false;
+    try { Http::upload('https://storage.example.test/signed', $path, static function (HttpResponse $response): void {}); }
+    catch (RuntimeException) { $rejected = true; }
+    $assert($rejected, 'Invalid upload path reached the native module.');
+}
+foreach (['Host', 'Content-Length', 'Transfer-Encoding', 'Connection', 'Trailer', 'Upgrade'] as $header) {
+    $rejected = false;
+    try { Http::upload('https://storage.example.test/signed', 'document.png',
+        static function (HttpResponse $response): void {}, [$header => 'invalid']); }
+    catch (RuntimeException) { $rejected = true; }
+    $assert($rejected, 'Upload allowed a transport-managed header.');
+}
+
+$traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+$trace = new OutboundTraceContext($traceparent, 'https://api.example.test/');
+Http::get('https://api.example.test/orders', static function (HttpResponse $response): void {}, $trace);
+$tracedPayload = Wire::decodeMap(TestDiagnostics::$moduleCall['payload'] ?? '');
+$assert(
+    ($tracedPayload['traceparent'] ?? null) === $traceparent
+        && ($tracedPayload['traceOrigin'] ?? null) === 'https://api.example.test',
+    'HTTP trace propagation must use a dedicated origin-scoped payload.',
+);
+
+foreach (
+    [
+        static fn () => new OutboundTraceContext('forged', 'https://api.example.test'),
+        static fn () => new OutboundTraceContext($traceparent, 'http://api.example.test'),
+        static fn () => new OutboundTraceContext($traceparent, 'https://user@api.example.test'),
+        static fn () => new OutboundTraceContext($traceparent, 'https://api.example.test/path'),
+    ] as $invalidTraceContext
+) {
+    try {
+        $invalidTraceContext();
+        throw new RuntimeException('Invalid outbound trace context was accepted.');
+    } catch (InvalidArgumentException $error) {
+        $assert(
+            $error->getMessage() !== 'Invalid outbound trace context was accepted.',
+            'Outbound trace validation did not fail closed.',
+        );
+    }
+}
+
+foreach (
+    [
+        static fn () => Http::get(
+            'https://attacker.example.test/orders',
+            static function (HttpResponse $response): void {},
+            $trace,
+        ),
+        static fn () => Http::request(
+            'GET',
+            'https://api.example.test/orders',
+            static function (HttpResponse $response): void {},
+            ['TraceParent' => $traceparent],
+        ),
+    ] as $unsafeTraceRequest
+) {
+    try {
+        $unsafeTraceRequest();
+        throw new RuntimeException('Unsafe HTTP trace propagation was accepted.');
+    } catch (RuntimeException $error) {
+        $assert(
+            $error->getMessage() !== 'Unsafe HTTP trace propagation was accepted.',
+            'HTTP trace context escaped its declared origin or generic-header boundary.',
+        );
+    }
+}
+
+$transportFailure = null;
+$transportFailureId = Http::get(
+    'https://offline.example.test',
+    static function (HttpResponse $response) use (&$transportFailure): void {
+        $transportFailure = $response;
+    },
+);
+Runtime::dispatchModuleResult(
+    $transportFailureId,
+    \Pam\Desktop\ModuleResultStatus::Failure->value,
+    'Unable to resolve host.',
+);
+$assert(
+    $transportFailure instanceof HttpResponse
+        && $transportFailure->statusCode === 0
+        && $transportFailure->body === ''
+        && $transportFailure->error === 'Unable to resolve host.'
+        && $transportFailure->transportFailed()
+        && !$transportFailure->successful(),
+    'HTTP transport failures must reach the callback without crashing the runtime.',
+);
+
+foreach (['post' => 'POST', 'put' => 'PUT', 'patch' => 'PATCH', 'delete' => 'DELETE'] as $helper => $method) {
+    Http::{$helper}(
+        'https://api.example.test/resource',
+        static function (HttpResponse $response): void {},
+        ['Authorization' => 'Bearer access-token'],
+        '{"enabled":true}',
+    );
+    $helperCall = TestDiagnostics::$moduleCall;
+    $helperPayload = Wire::decodeMap($helperCall['payload'] ?? '');
+    $assert(
+        $helperCall !== null
+            && $helperCall['method'] === 'request'
+            && $helperPayload['method'] === $method
+            && $helperPayload['body'] === '{"enabled":true}',
+        "HTTP {$method} helper did not emit a generic native request.",
+    );
+}
+
+$encoded = (new TreeEncoder())->encode($counter->render());
+$eventKey = array_key_first($encoded['callbacks']);
+
+if ($eventKey === null) {
+    throw new RuntimeException('Counter callback is missing.');
+}
+
+[$nodeId, $eventKind] = array_map('intval', explode(':', $eventKey));
+Runtime::dispatchEvent($nodeId, $eventKind, '');
+$assert($counter->count === 1, 'Event did not update component state.');
+$assert(Runtime::lastFrame() !== $frame, 'State update did not produce a new frame.');
+Runtime::shutdown();
+
+$lifecycleState = null;
+$windowMetrics = null;
+$memoryPressure = null;
+App::onAppState(static function (AppState $state) use (&$lifecycleState): void {
+    $lifecycleState = $state;
+});
+App::onDimensions(static function (WindowMetrics $metrics) use (&$windowMetrics): void {
+    $windowMetrics = $metrics;
+});
+App::onMemoryPressure(static function (MemoryPressure $pressure) use (&$memoryPressure): void {
+    $memoryPressure = $pressure;
+});
+App::run(Text::make('Lifecycle'));
+Runtime::dispatchEvent(0, EventKind::AppState->value, (string) AppState::Background->value);
+Runtime::dispatchEvent(0, EventKind::Dimensions->value, Wire::map([
+    'width' => 412.0,
+    'height' => 915.0,
+    'density' => 3.0,
+    'appearance' => UserInterfaceAppearance::Dark->value,
+    'fontScale' => 1.15,
+    'safeAreaTop' => 24.0,
+    'safeAreaBottom' => 16.0,
+    'refreshRate' => 120.0,
+    'reducedMotion' => true,
+    'deviceType' => 'tablet',
+    'pointer' => 'fine',
+    'inputMode' => 'mouse',
+    'dynamicRange' => 'high',
+    'memoryClass' => 512.0,
+    'performanceTier' => 3.0,
+]));
+Runtime::dispatchEvent(
+    0,
+    EventKind::MemoryPressure->value,
+    (string) MemoryPressure::Critical->value,
+);
+$assert($lifecycleState === AppState::Background, 'App-state lifecycle event was not decoded.');
+$assert(
+    $windowMetrics instanceof WindowMetrics
+        && $windowMetrics->width === 412.0
+        && $windowMetrics->height === 915.0
+        && $windowMetrics->density === 3.0
+        && $windowMetrics->appearance === UserInterfaceAppearance::Dark
+        && $windowMetrics->fontScale === 1.15
+        && $windowMetrics->safeAreaTop === 24.0
+        && $windowMetrics->safeAreaBottom === 16.0
+        && $windowMetrics->refreshRate === 120.0
+        && $windowMetrics->reducedMotion
+        && $windowMetrics->deviceType === 'tablet'
+        && $windowMetrics->pointer === 'fine'
+        && $windowMetrics->inputMode === 'mouse'
+        && $windowMetrics->dynamicRange === 'high'
+        && $windowMetrics->memoryClass === 512.0
+        && $windowMetrics->performanceTier === 3.0,
+    'Window metrics lifecycle event was not decoded.',
+);
+$assert(
+    $memoryPressure === MemoryPressure::Critical,
+    'Memory-pressure lifecycle event was not decoded.',
+);
+$repeatedMetrics = $windowMetrics;
+Runtime::dispatchEvent(0, EventKind::Dimensions->value, Wire::map([
+    'width' => 412.0,
+    'height' => 915.0,
+    'density' => 3.0,
+    'appearance' => UserInterfaceAppearance::Dark->value,
+    'fontScale' => 1.15,
+    'safeAreaTop' => 24.0,
+    'safeAreaBottom' => 16.0,
+    'refreshRate' => 120.0,
+    'reducedMotion' => true,
+    'deviceType' => 'tablet',
+    'pointer' => 'fine',
+    'inputMode' => 'mouse',
+    'dynamicRange' => 'high',
+    'memoryClass' => 512.0,
+    'performanceTier' => 3.0,
+]));
+$assert(
+    $windowMetrics === $repeatedMetrics && Runtime::windowMetrics() === $repeatedMetrics,
+    'An unchanged dimensions event must keep the WindowMetrics instance (no full re-render).',
+);
+Runtime::shutdown();
+
+$deviceInfo = new DeviceInfo(
+    width: 412.0,
+    height: 915.0,
+    density: 3.0,
+    appearance: UserInterfaceAppearance::Dark,
+    appState: AppState::Active,
+    safeAreaTop: 32.0,
+    safeAreaRight: 0.0,
+    safeAreaBottom: 24.0,
+    safeAreaLeft: 0.0,
+    timeZone: 'America/Sao_Paulo',
+);
+$assert(
+    $deviceInfo->safeAreaTop === 32.0
+        && $deviceInfo->safeAreaBottom === 24.0
+        && $deviceInfo->timeZone === 'America/Sao_Paulo',
+    'Device info must expose platform safe-area insets and the IANA time-zone identifier.',
+);
+$legacyDeviceInfo = new DeviceInfo(
+    width: 360.0,
+    height: 800.0,
+    density: 2.0,
+    appearance: UserInterfaceAppearance::Light,
+    appState: AppState::Active,
+);
+$assert(
+    $legacyDeviceInfo->manufacturer === '' && $legacyDeviceInfo->model === '',
+    'Older hosts must keep empty device identity fields.',
+);
+$decodedDeviceInfo = null;
+App::run(Text::make('Device identity'));
+$deviceInfoRequest = DeviceInfo::get(static function (DeviceInfo $info) use (&$decodedDeviceInfo): void {
+    $decodedDeviceInfo = $info;
+});
+Runtime::dispatchModuleResult($deviceInfoRequest, ModuleResultStatus::Success->value, Wire::map([
+    'manufacturer' => ' Motorola ',
+    'model' => ' moto g54 5G ',
+]));
+$assert(
+    $decodedDeviceInfo?->manufacturer === 'Motorola' && $decodedDeviceInfo?->model === 'moto g54 5G',
+    'Device info must decode and trim native manufacturer and model.',
+);
+Runtime::shutdown();
+$assert(
+    $legacyDeviceInfo->safeAreaTop === 0.0
+        && $legacyDeviceInfo->safeAreaRight === 0.0
+        && $legacyDeviceInfo->safeAreaBottom === 0.0
+        && $legacyDeviceInfo->safeAreaLeft === 0.0
+        && $legacyDeviceInfo->timeZone === 'UTC',
+    'Device info safe-area additions must preserve constructor compatibility.',
+);
+
+State::set('test.value', ['count' => 7]);
+State::resetCache();
+$assert(State::get('test.value') === ['count' => 7], 'Atomic state persistence failed.');
+
+$restorable = new class extends Component implements Restorable {
+    public int $count = 0;
+
+    public function stateKey(): string
+    {
+        return 'tests.counter';
+    }
+
+    public function restoreState(array $state): void
+    {
+        $this->count = is_int($state['count'] ?? null) ? $state['count'] : 0;
+    }
+
+    public function saveState(): array
+    {
+        return ['count' => $this->count];
+    }
+
+    public function render(): \Pam\Desktop\Element
+    {
+        return Button::make((string) $this->count)
+            ->key('restorable')
+            ->onPress(function (): void {
+                $this->count++;
+            });
+    }
+};
+App::run($restorable);
+$restorableFrame = (new TreeEncoder())->encode($restorable->render());
+$restorableEvent = array_key_first($restorableFrame['callbacks']);
+if ($restorableEvent === null) {
+    throw new RuntimeException('Restorable component callback is missing.');
+}
+[$restorableNode, $restorableKind] = array_map('intval', explode(':', $restorableEvent));
+Runtime::dispatchEvent($restorableNode, $restorableKind, '');
+$assert($restorable->count === 1, 'Restorable component did not update.');
+Runtime::shutdown();
+State::resetCache();
+
+$restored = new class extends Component implements Restorable {
+    public int $count = 0;
+
+    public function stateKey(): string
+    {
+        return 'tests.counter';
+    }
+
+    public function restoreState(array $state): void
+    {
+        $this->count = is_int($state['count'] ?? null) ? $state['count'] : 0;
+    }
+
+    public function saveState(): array
+    {
+        return ['count' => $this->count];
+    }
+
+    public function render(): \Pam\Desktop\Element
+    {
+        return Text::make((string) $this->count);
+    }
+};
+App::run($restored);
+$assert($restored->count === 1, 'Component state was not restored after runtime restart.');
+Runtime::shutdown();
+
+$templateDirectory = sys_get_temp_dir().'/pam-desktop-template-tests';
+
+if (!is_dir($templateDirectory) && !mkdir($templateDirectory, 0o755, true) && !is_dir($templateDirectory)) {
+    throw new RuntimeException('Cannot create the template test directory.');
+}
+
+file_put_contents(
+    $templateDirectory.'/counter.pam',
+    <<<'PAM'
+<Screen>
+    <Column class="p-4 gap-2 bg-white">
+        <Text key="greeting">Hello, {{ $name }}</Text>
+        <Input model="name" placeholder="Name" sync="debounced" />
+        <Button key="increment" on:press="increment">Count: {{ $count }}</Button>
+        <If condition="$details">
+            <Text key="details">Template details</Text>
+        </If>
+    </Column>
+</Screen>
+PAM,
+);
+file_put_contents(
+    $templateDirectory.'/panel.pam',
+    <<<'PAM'
+<Column class="card gap-2">
+    <Text key="panel-title">{{ $props.title }}</Text>
+    <Slot>
+        <Text>Fallback</Text>
+    </Slot>
+</Column>
+PAM,
+);
+file_put_contents(
+    $templateDirectory.'/slots.pam',
+    <<<'PAM'
+<Screen>
+    <Panel title="Metrics">
+        <Text key="slot-content">Fast native content</Text>
+    </Panel>
+</Screen>
+PAM,
+);
+file_put_contents(
+    $templateDirectory.'/override.pam',
+    <<<'PAM'
+<Button>
+    <Text>Plugin child</Text>
+</Button>
+PAM,
+);
+App::views($templateDirectory, $templateDirectory.'/cache');
+App::theme(Theme::pamLab());
+App::component('Panel', 'panel');
+$assert(
+    TemplateRegistry::classProperties('card') !== null,
+    'Theme class tokens were not registered.',
+);
+$assert(
+    DesignTokens::TouchTarget === 48.0
+        && DesignTokens::MotionFastMs >= 150
+        && DesignTokens::MotionStandardMs <= 300,
+    'Design tokens must preserve accessible touch targets and responsive motion.',
+);
+foreach (ThemeMode::cases() as $themeMode) {
+    App::theme(Theme::adaptive($themeMode));
+    $indicatorTheme = Theme::adaptive($themeMode);
+    $accent = $indicatorTheme->classes['accent'][PropKey::BackgroundColor->value];
+    $assert(
+        $indicatorTheme->applyTo(\Pam\Desktop\UI\ActivityIndicator::make())->properties()[PropKey::ProgressColor->value] === $accent
+            && $indicatorTheme->applyTo(\Pam\Desktop\UI\ActivityIndicator::make()->color(0xFFFF00FF))->properties()[PropKey::ProgressColor->value] === 0xFFFF00FF,
+        "ActivityIndicator {$themeMode->name} must inherit accent and preserve explicit colors.",
+    );
+    $buttonTokens = TemplateRegistry::classProperties('button-primary');
+    $surfaceTokens = TemplateRegistry::classProperties('surface');
+    $surfaceMutedTokens = TemplateRegistry::classProperties('surface-muted');
+    $metricTokens = TemplateRegistry::classProperties('metric');
+    $focusTokens = TemplateRegistry::classProperties('focus-ring');
+    $assert(
+        ($buttonTokens[PropKey::MinHeight->value] ?? null) === DesignTokens::TouchTarget
+            && isset($buttonTokens[PropKey::BackgroundColor->value])
+            && isset($buttonTokens[PropKey::TextColor->value]),
+        "Adaptive theme {$themeMode->name} must expose semantic accessible button tokens.",
+    );
+    $assert(
+        Theme::contrastRatio(
+            $metricTokens[PropKey::TextColor->value],
+            $surfaceTokens[PropKey::BackgroundColor->value],
+        ) >= 4.5
+            && Theme::contrastRatio(
+                $focusTokens[PropKey::BorderColor->value],
+                $surfaceTokens[PropKey::BackgroundColor->value],
+            ) >= 3.0
+            && Theme::contrastRatio(
+                $focusTokens[PropKey::BorderColor->value],
+                $surfaceMutedTokens[PropKey::BackgroundColor->value],
+            ) >= 3.0,
+        "Adaptive theme {$themeMode->name} must preserve text and focus contrast.",
+    );
+}
+$assert(
+    Theme::contrastRatio(0xFF0F172A, 0xFFF8FAFC) >= 4.5
+        && Theme::contrastRatio(0xFF4ADE80, 0xFF052E16) >= 4.5,
+    'Theme contrast validation must enforce WCAG AA semantic pairs.',
+);
+$darkDefaults = Theme::pamLab()->applyTo(
+    Screen::make(
+        Text::make('Visible'),
+        Button::make('Action'),
+    ),
+);
+$defaultText = $darkDefaults->children()[0] ?? null;
+$defaultButton = $darkDefaults->children()[1] ?? null;
+$assert(
+    isset($darkDefaults->properties()[PropKey::BackgroundColor->value])
+        && $defaultText instanceof \Pam\Desktop\Element
+        && isset($defaultText->properties()[PropKey::TextColor->value])
+        && $defaultButton instanceof \Pam\Desktop\Element
+        && isset($defaultButton->properties()[PropKey::BackgroundColor->value])
+        && isset($defaultButton->properties()[PropKey::TextColor->value]),
+    'Applied themes must give imperative trees visible semantic defaults.',
+);
+$authoredText = Theme::pamLab()->applyTo(
+    Text::make('Brand')->style(new Style(textColor: 0xFFFF00FF)),
+);
+$assert(
+    $authoredText->properties()[PropKey::TextColor->value] === 0xFFFF00FF,
+    'Theme defaults must never replace authored imperative properties.',
+);
+
+$template = new class extends Component {
+    private string $name = 'PHP';
+    private int $count = 0;
+    private bool $details = true;
+
+    public function render(): View
+    {
+        return View::make('counter');
+    }
+
+    public function increment(): void
+    {
+        $this->count++;
+    }
+
+    public function count(): int
+    {
+        return $this->count;
+    }
+
+    /** @return array{name: string, details: bool} */
+    public function templateState(): array
+    {
+        return ['name' => $this->name, 'details' => $this->details];
+    }
+};
+
+App::run($template);
+$templateRoot = $template->toElement();
+$templateFrame = Runtime::lastFrame();
+$templateEncoded = (new TreeEncoder())->encode($templateRoot);
+$assert($templateFrame !== null, 'Tag template did not produce a native frame.');
+$assert(count($templateEncoded['callbacks']) === 2, 'Template model and press callbacks are missing.');
+$pressCallback = array_key_first(array_filter(
+    $templateEncoded['callbacks'],
+    static fn (string $key): bool => str_ends_with($key, ':1'),
+    ARRAY_FILTER_USE_KEY,
+));
+
+if ($pressCallback === null) {
+    throw new RuntimeException('Template press callback is missing.');
+}
+
+[$templateNode, $templateEvent] = array_map('intval', explode(':', $pressCallback));
+Runtime::dispatchEvent($templateNode, $templateEvent, '');
+$assert($template->count() === 1, 'Template event did not invoke its component method.');
+$assert(
+    $template->toElement() !== $templateRoot,
+    'Template events must invalidate dependency-skipped component trees after direct state mutation.',
+);
+Runtime::shutdown();
+
+$slotView = View::make('slots')->toElement();
+$assert(
+    $slotView->children() !== [],
+    'Component props and slots did not render native children.',
+);
+
+TemplateRegistry::component(
+    'Button',
+    static fn (array $_props, array $children, ?object $_scope): Pressable => Pressable::make(...$children),
+);
+$overriddenButton = View::make('override')->toElement();
+$assert(
+    $overriddenButton->kind() === NodeKind::Pressable
+        && count($overriddenButton->children()) === 1,
+    'Plugin tags must be able to override core tags and receive element children.',
+);
+
+$failing = new class extends Component {
+    public function render(): \Pam\Desktop\Element
+    {
+        return Button::make('Fail')->onPress(static function (): void {
+            throw new RuntimeException('Expected recoverable PHP error.');
+        });
+    }
+};
+App::run($failing);
+$failingFrame = (new TreeEncoder())->encode($failing->render());
+$failingEvent = array_key_first($failingFrame['callbacks']);
+if ($failingEvent === null) {
+    throw new RuntimeException('Failing callback is missing.');
+}
+[$failingNode, $failingKind] = array_map('intval', explode(':', $failingEvent));
+Runtime::dispatchEvent($failingNode, $failingKind, '');
+$assert(
+    isset(TestDiagnostics::$messages[0])
+        && str_starts_with(TestDiagnostics::$messages[0], "PAMERR1\n")
+        && str_contains(TestDiagnostics::$messages[0], 'Expected recoverable PHP error.'),
+    'Recoverable PHP errors must emit structured diagnostics.',
+);
+$assert(Runtime::lastFrame() !== null, 'A PHP callback error stopped the runtime.');
+Runtime::shutdown();
+
+$pluginProject = sys_get_temp_dir().'/pam-desktop-plugin-tests-'.getmypid();
+$pluginPackage = $pluginProject.'/vendor/community/fixture';
+
+if (
+    !is_dir($pluginPackage)
+    && !mkdir($pluginPackage, 0o755, true)
+    && !is_dir($pluginPackage)
+) {
+    throw new RuntimeException('Cannot create the plugin fixture package.');
+}
+if (
+    !is_dir($pluginProject.'/vendor/composer')
+    && !mkdir($pluginProject.'/vendor/composer', 0o755, true)
+    && !is_dir($pluginProject.'/vendor/composer')
+) {
+    throw new RuntimeException('Cannot create the Composer fixture directory.');
+}
+
+file_put_contents(
+    $pluginProject.'/vendor/composer/installed.json',
+    <<<'JSON'
+{
+    "packages": [
+        {
+            "name": "community/fixture",
+            "version": "1.0.0",
+            "install-path": "../community/fixture",
+            "extra": {
+                "pam-desktop": {
+                    "plugin": "pam-desktop.plugin.json"
+                }
+            }
+        }
+    ]
+}
+JSON,
+);
+file_put_contents(
+    $pluginPackage.'/pam-desktop.plugin.json',
+    <<<'JSON'
+{
+    "version": 1,
+    "protocol": 1,
+    "pamDesktop": {
+        "minimum": "1.0.0",
+        "maximumExclusive": "2.0.0"
+    },
+    "php": {
+        "provider": "Pam\\Desktop\\Tests\\Fixtures\\ExamplePluginProvider"
+    }
+}
+JSON,
+);
+
+PluginManager::reset();
+PluginManager::boot($pluginProject);
+$assert(
+    ExamplePluginProvider::$registered === 1
+        && ExamplePluginProvider::$booted === 1
+        && TemplateRegistry::factory('FixtureTag') !== null,
+    'Composer plugin provider was not registered and booted exactly once.',
+);
+PluginManager::boot($pluginProject);
+$assert(
+    ExamplePluginProvider::$registered === 1 && ExamplePluginProvider::$booted === 1,
+    'Plugin providers must be idempotent within a runtime.',
+);
+PluginManager::reset();
+file_put_contents(
+    $pluginProject.'/vendor/composer/installed.json',
+    <<<'JSON'
+{
+    "packages": [
+        {
+            "name": "community/fixture",
+            "version": "1.0.0",
+            "install-path": "../community/fixture",
+            "extra": {
+                "pam-desktop": {
+                    "plugin": "../outside.json"
+                }
+            }
+        }
+    ]
+}
+JSON,
+);
+$unsafeDescriptorRejected = false;
+
+try {
+    PluginManager::discover($pluginProject);
+} catch (PluginException) {
+    $unsafeDescriptorRejected = true;
+}
+
+$assert($unsafeDescriptorRejected, 'Plugin descriptor traversal must be rejected.');
+
+$pamPhpDirectory = sys_get_temp_dir().'/pam-desktop-sfc-tests-'.getmypid();
+$pamPhpCache = $pamPhpDirectory.'/.cache';
+
+if (
+    !is_dir($pamPhpDirectory)
+    && !mkdir($pamPhpDirectory, 0o755, true)
+    && !is_dir($pamPhpDirectory)
+) {
+    throw new RuntimeException('Cannot create the .pam.php fixture directory.');
+}
+
+file_put_contents(
+    $pamPhpDirectory.'/CounterCard.pam.php',
+    <<<'PAM'
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Tests\Sfc;
+
+use Pam\Desktop\Attributes\State;
+use Pam\Desktop\Component;
+
+final class CounterCard extends Component
+{
+    /** @var list<string> */
+    public static array $lifecycle = [];
+
+    /** @var list<string> */
+    public static array $changedDrafts = [];
+
+    #[State]
+    public int $count = 0;
+
+    #[State]
+    public bool $enabled = false;
+    public string $draft = '';
+
+    /** @var list<string> */
+    public array $items = ['One', 'Two'];
+
+    public int $repeatCount = 3;
+
+    public function __construct(
+        public string $title,
+        public ?string $subtitle = null,
+        public bool $elevated = false,
+    ) {
+    }
+
+    public function boot(): void
+    {
+        self::$lifecycle[] = 'boot';
+    }
+
+    public function mount(): void
+    {
+        self::$lifecycle[] = 'mount';
+    }
+
+    public function attached(): void
+    {
+        self::$lifecycle[] = 'attached';
+    }
+
+    public function resumed(): void
+    {
+        self::$lifecycle[] = 'resumed';
+    }
+
+    public function updated(string $property): void
+    {
+        self::$lifecycle[] = 'updated:'.$property;
+    }
+
+    public function paused(): void
+    {
+        self::$lifecycle[] = 'paused';
+    }
+
+    public function inactive(): void
+    {
+        self::$lifecycle[] = 'inactive';
+    }
+
+    public function activated(): void
+    {
+        self::$lifecycle[] = 'activated';
+    }
+
+    public function unmount(): void
+    {
+        self::$lifecycle[] = 'unmount';
+    }
+
+    public function increment(): void
+    {
+        $this->count++;
+        $this->emit('changed', $this->count);
+    }
+
+    public function draftChanged(string $value): void
+    {
+        self::$changedDrafts[] = $this->draft.'|'.$value;
+    }
+
+    /** @return array<array-key, string|bool> */
+    public function cardClasses(): array
+    {
+        return [
+            'p-4',
+            'gap-2',
+            'elevation-2' => $this->elevated,
+        ];
+    }
+}
+?>
+
+<template>
+    <Column :class="cardClasses()">
+        <Text
+            :class="$elevated ? 'profile-title' : ''"
+            fontSize="16"
+        >{{ $title }}</Text>
+        <Text p-if="$subtitle">{{ $subtitle }}</Text>
+        <Text p-for="$item in $items">{{ $item }}</Text>
+        <Text p-for="$number in $repeatCount">Repeat {{ $number }}</Text>
+        <Text p-for="$_ in 0">Never rendered</Text>
+        <Button @press="increment">
+            {{ $count === 0 ? 'Ready' : $count }}
+        </Button>
+        <Switch bind:checked="$enabled" />
+        <Input bind:value="$draft" on:change="draftChanged" />
+        <Slot name="action">
+            <Text>Fallback action</Text>
+        </Slot>
+        <Slot />
+    </Column>
+</template>
+
+<style scoped>
+    @font-face {
+        font-family: "Brand";
+        src: url("asset://assets/fonts/Brand-Bold.ttf");
+        font-weight: 700;
+    }
+
+    Text {
+        color: #222222;
+        font-size: 13px;
+    }
+
+    .profile-title {
+        color: #1B7A4E;
+        font-family: "Brand";
+        font-size: 15px;
+        font-weight: 700;
+        line-height: 18px;
+    }
+</style>
+PAM,
+);
+file_put_contents(
+    $pamPhpDirectory.'/Dashboard.pam.php',
+    <<<'PAM'
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Tests\Sfc;
+
+use Pam\Desktop\Component;
+
+final class Dashboard extends Component
+{
+    public string $title = 'PAM Desktop';
+    public int $changes = 0;
+
+    public function changed(int $count): void
+    {
+        $this->changes = $count;
+        $this->title = 'Changed';
+    }
+
+}
+?>
+
+<template>
+    <CounterCard
+        :title="$title"
+        subtitle="Compiled .pam.php"
+        :elevated="true"
+        @changed="changed"
+    >
+        <template #action>
+            <Text>Named action</Text>
+        </template>
+
+        <Text>Default slot</Text>
+    </CounterCard>
+</template>
+PAM,
+);
+file_put_contents(
+    $pamPhpDirectory.'/ConditionalRoot.pam.php',
+    <<<'PAM'
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Tests\Sfc;
+
+use Pam\Desktop\Component;
+
+final class ConditionalRoot extends Component
+{
+    public bool $visible = false;
+}
+?>
+
+<template>
+    <View p-if="$visible">
+        <Text>Visible</Text>
+    </View>
+</template>
+PAM,
+);
+file_put_contents(
+    $pamPhpDirectory.'/InheritedText.pam.php',
+    <<<'PAM'
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Tests\Sfc;
+
+use Pam\Desktop\Component;
+
+final class InheritedText extends Component
+{
+}
+?>
+
+<template>
+    <Text>Inherited component text</Text>
+</template>
+PAM,
+);
+file_put_contents(
+    $pamPhpDirectory.'/InheritedStyleHost.pam.php',
+    <<<'PAM'
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Tests\Sfc;
+
+use Pam\Desktop\Component;
+
+final class InheritedStyleHost extends Component
+{
+}
+?>
+
+<template>
+    <Column textColor="#123456" fontSize="17">
+        <InheritedText />
+    </Column>
+</template>
+PAM,
+);
+
+$invalidPamPhpDirectory = $pamPhpDirectory.'-invalid';
+if (
+    !is_dir($invalidPamPhpDirectory)
+    && !mkdir($invalidPamPhpDirectory, 0o755, true)
+    && !is_dir($invalidPamPhpDirectory)
+) {
+    throw new RuntimeException('Cannot create the invalid component fixture directory.');
+}
+file_put_contents(
+    $invalidPamPhpDirectory.'/Invalid.pam.php',
+    <<<'PAM'
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Tests\Sfc;
+
+use Pam\Desktop\Component;
+
+final class Invalid extends Component
+{
+}
+?>
+
+<template>
+    <Text invalid="unterminated></Text>
+</template>
+PAM,
+);
+TestDiagnostics::$messages = [];
+$prebootError = null;
+try {
+    App::components($invalidPamPhpDirectory, $invalidPamPhpDirectory.'/.cache');
+} catch (RuntimeException $error) {
+    $prebootError = $error;
+}
+$assert(
+    $prebootError instanceof RuntimeException
+        && isset(TestDiagnostics::$messages[0])
+        && str_starts_with(TestDiagnostics::$messages[0], "PAMERR1\n")
+        && str_contains(TestDiagnostics::$messages[0], 'Invalid attributes'),
+    'Component compilation errors before runtime boot must emit structured diagnostics.',
+);
+unlink($invalidPamPhpDirectory.'/Invalid.pam.php');
+rmdir($invalidPamPhpDirectory.'/.cache');
+rmdir($invalidPamPhpDirectory);
+TestDiagnostics::$messages = [];
+
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        '$left && $right',
+        null,
+        ['left' => false, 'right' => true],
+    ) === false,
+    'Template logical AND must consume its right operand when the left operand is false.',
+);
+$assert(
+    TemplateExpression::evaluate(
+        'TypedRouteTestName::Home->value',
+        new TemplateEnumScope(),
+        [],
+    ) === 'home',
+    'Template expressions must resolve scoped PHP enum cases and their backed values.',
+);
+$assert(
+    TemplateExpression::evaluate(
+        'ImportedState::Ready->value',
+        new \Pam\Desktop\Tests\Fixtures\Screen\TemplateEnumScope(),
+        [],
+    ) === 1,
+    'Template expressions must resolve imported and aliased PHP enum cases from the component file.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        '$left || $right',
+        null,
+        ['left' => true, 'right' => false],
+    ) === true,
+    'Template logical OR must consume its right operand when the left operand is true.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        'count($selected)',
+        null,
+        ['selected' => ['message-1', 'message-2']],
+    ) === 2,
+    'Template expressions must expose the safe count() collection helper.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        'in_array($messageId, $selected, true)',
+        null,
+        [
+            'messageId' => 'message-2',
+            'selected' => ['message-1', 'message-2'],
+        ],
+    ) === true,
+    'Template expressions must expose strict in_array() membership checks.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        'mb_strlen(trim($query)) < 2',
+        null,
+        ['query' => ' á '],
+    ) === true,
+    'Template expressions must compose safe whitespace and multibyte string helpers.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        'mb_strtoupper(mb_substr($author, 0, 1))',
+        null,
+        ['author' => 'élida'],
+    ) === 'É',
+    'Template expressions must expose safe multibyte substring and casing helpers.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        'strtoupper(substr(trim($label), 0, 3))',
+        null,
+        ['label' => ' pam native '],
+    ) === 'PAM',
+    'Template expressions must expose safe byte-string helpers without eval.',
+);
+$unsafeTemplateFunctionRejected = false;
+try {
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        'file_get_contents($path)',
+        null,
+        ['path' => '/etc/passwd'],
+    );
+} catch (RuntimeException $error) {
+    $unsafeTemplateFunctionRejected = str_contains(
+        $error->getMessage(),
+        'does not exist',
+    );
+}
+$assert(
+    $unsafeTemplateFunctionRejected,
+    'Template expressions must reject functions outside the explicit pure helper allowlist.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        '72 + $bottomSpacing * 2',
+        null,
+        ['bottomSpacing' => 12],
+    ) === 96,
+    'Template arithmetic must preserve multiplication precedence over addition.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        '($mediaIndex + 1) % 3',
+        null,
+        ['mediaIndex' => 2],
+    ) === 0,
+    'Template arithmetic must support grouping and integer modulo.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        "'@'.\$username.' · '.(\$count + 1)",
+        null,
+        ['username' => 'pam', 'count' => 2],
+    ) === '@pam · 3',
+    'Template expressions must support PHP string concatenation with arithmetic precedence.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        '$props.title',
+        null,
+        ['props' => ['title' => 'Profile']],
+    ) === 'Profile',
+    'Template dot-property paths must remain distinct from string concatenation.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        '$profile["bio"] ?? $fallback ?? "Sem bio"',
+        null,
+        ['profile' => [], 'fallback' => null],
+    ) === 'Sem bio',
+    'Template null coalescing must be right associative and tolerate a missing array key.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        '$profile["details"]["website"] ?? "Sem site"',
+        null,
+        ['profile' => []],
+    ) === 'Sem site',
+    'Template null coalescing must safely traverse a missing nested path.',
+);
+$assert(
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        '$profile["bio"] ?? "Sem bio"',
+        null,
+        ['profile' => ['bio' => 'PAM']],
+    ) === 'PAM',
+    'Template null coalescing must preserve a present non-null value.',
+);
+$missingWithoutCoalescingRejected = false;
+try {
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        '$profile["bio"]',
+        null,
+        ['profile' => []],
+    );
+} catch (RuntimeException $error) {
+    $missingWithoutCoalescingRejected = str_contains(
+        $error->getMessage(),
+        'Cannot resolve template value',
+    );
+}
+$assert(
+    $missingWithoutCoalescingRejected,
+    'Missing template values must remain strict outside null coalescing.',
+);
+$concatenationRejected = false;
+try {
+    \Pam\Desktop\Internal\TemplateExpression::evaluate(
+        "'items: '.\$items",
+        null,
+        ['items' => ['one']],
+    );
+} catch (RuntimeException $error) {
+    $concatenationRejected = str_contains(
+        $error->getMessage(),
+        'requires scalar, null, or Stringable operands',
+    );
+}
+$assert(
+    $concatenationRejected,
+    'Template concatenation must reject arrays instead of coercing them with a warning.',
+);
+
+TemplateRegistry::reset();
+$preloadResult = PamPhpPreloader::optimize($pamPhpDirectory, $pamPhpCache);
+$preloadManifest = json_decode(
+    (string) file_get_contents($preloadResult['manifest']),
+    true,
+    flags: JSON_THROW_ON_ERROR,
+);
+$preloadComponents = $preloadManifest['components'] ?? [];
+$assert(
+    $preloadResult['components'] === count($preloadComponents)
+        && $preloadResult['components'] >= 5
+        && is_file($preloadResult['preload'])
+        && array_reduce(
+            $preloadComponents,
+            static fn (bool $valid, mixed $entry): bool => $valid
+                && is_array($entry)
+                && isset($entry['sha256'])
+                && is_string($entry['sha256'])
+                && strlen($entry['sha256']) === 64,
+            true,
+        ),
+    'PHP Runtime Turbo must emit a complete deterministic preload manifest.',
+);
+$freezeResult = PamPhpPreloader::optimize(
+    $pamPhpDirectory,
+    $pamPhpCache.'-freeze',
+    ['Dashboard'],
+);
+$freezeManifest = json_decode(
+    (string) file_get_contents($freezeResult['freeze']),
+    true,
+    flags: JSON_THROW_ON_ERROR,
+);
+$freezePreload = json_decode(
+    (string) file_get_contents($freezeResult['manifest']),
+    true,
+    flags: JSON_THROW_ON_ERROR,
+);
+$freezeTags = array_column($freezePreload['components'] ?? [], 'tag');
+$assert(
+    $freezeResult['discovered'] === $preloadResult['components']
+        && $freezeResult['components'] === 2
+        && $freezeResult['eliminated'] === $freezeResult['discovered'] - 2
+        && $freezeTags === ['CounterCard', 'Dashboard']
+        && $freezeManifest['abiVersion'] === \Pam\Desktop\Protocol::ABI_VERSION
+        && $freezeManifest['protocolVersion'] === \Pam\Desktop\Protocol::VERSION
+        && $freezeManifest['entrypoints'] === ['Dashboard']
+        && $freezeManifest['buildId'] === $freezeResult['buildId']
+        && str_contains((string) file_get_contents($freezeResult['preload']), 'hash_equals'),
+    'PAM Freeze must tree-shake unreachable components and pin a deterministic ABI build manifest.',
+);
+require $preloadResult['preload'];
+$assert(
+    PamPhpRegistry::preloadMetadata([
+        'Pam\\Desktop\\Tests\\Sfc\\CounterCard',
+    ]) === 1,
+    'PHP Runtime Turbo must warm generated constructor and prop metadata.',
+);
+App::components($pamPhpDirectory, $pamPhpCache);
+$dashboardClass = 'Pam\\Desktop\\Tests\\Sfc\\Dashboard';
+$counterClass = 'Pam\\Desktop\\Tests\\Sfc\\CounterCard';
+$conditionalRoot = App::make('Pam\\Desktop\\Tests\\Sfc\\ConditionalRoot')->toElement();
+$inheritedStyleHost = App::make(
+    'Pam\\Desktop\\Tests\\Sfc\\InheritedStyleHost',
+)->toElement();
+$inheritedText = $inheritedStyleHost->children()[0] ?? null;
+$assert(
+    $inheritedText instanceof \Pam\Desktop\Element
+        && $inheritedText->properties()[PropKey::TextColor->value] === 0xFF123456
+        && (float) $inheritedText->properties()[PropKey::FontSize->value] === 17.0,
+    'Inherited CSS must remain active inside a compiled child component.',
+);
+$assert(
+    $conditionalRoot->properties()[PropKey::Visible->value] === false
+        && $conditionalRoot->children() === [],
+    'A false conditional root must render an inert zero-layout placeholder.',
+);
+$dashboard = App::make($dashboardClass);
+App::run($dashboard);
+$sfcElement = $dashboard->toElement();
+$sfcEncoded = (new TreeEncoder())->encode($sfcElement);
+$pressKey = null;
+$toggleKey = null;
+$inputKey = null;
+
+foreach (array_keys($sfcEncoded['callbacks']) as $callbackKey) {
+    [, $kind] = array_map('intval', explode(':', $callbackKey));
+    if ($kind === EventKind::Press->value) {
+        $pressKey = $callbackKey;
+    } elseif ($kind === EventKind::Toggle->value) {
+        $toggleKey = $callbackKey;
+    } elseif ($kind === EventKind::Change->value) {
+        $inputKey = $callbackKey;
+    }
+}
+
+$assert($pressKey !== null, '.pam.php @press event was not compiled.');
+$assert($toggleKey !== null, '.pam.php bind:checked event was not compiled.');
+$assert($inputKey !== null, '.pam.php bind:value event was not compiled.');
+$assert(
+    count($sfcElement->children()) === 12,
+    '.pam.php p-if, iterable/integer p-for and slots did not compose correctly.',
+);
+$assert(
+    $sfcElement->children()[0]->properties()[PropKey::FontFamily->value]
+        === 'asset://assets/fonts/Brand-Bold.ttf'
+        && (float) $sfcElement->children()[0]
+            ->properties()[PropKey::FontSize->value] === 16.0
+        && (float) $sfcElement->children()[0]
+            ->properties()[PropKey::LineHeight->value] === 18.0
+        && $sfcElement->children()[0]->properties()[PropKey::TextColor->value]
+            === 0xFF1B7A4E,
+    '.pam.php scoped CSS must cascade tag, dynamic class and inline properties.',
+);
+$assert(
+    array_map(
+        static fn (\Pam\Desktop\Element $element): mixed =>
+            $element->properties()[PropKey::Text->value] ?? null,
+        array_slice($sfcElement->children(), 4, 3),
+    ) === ['Repeat 1', 'Repeat 2', 'Repeat 3'],
+    '.pam.php integer p-for must expose a one-based loop value.',
+);
+$assert(
+    $counterClass::$lifecycle === ['boot', 'mount', 'attached', 'resumed'],
+    '.pam.php component lifecycle did not mount on the committed render.',
+);
+// Transient system UI (permission prompt, picker, share sheet) reports Inactive:
+// the component stays resumed and only observes inactive()/activated().
+Runtime::dispatchEvent(0, EventKind::AppState->value, (string) AppState::Inactive->value);
+Runtime::dispatchEvent(0, EventKind::AppState->value, (string) AppState::Inactive->value);
+Runtime::dispatchEvent(0, EventKind::AppState->value, (string) AppState::Active->value);
+$assert(
+    array_slice($counterClass::$lifecycle, -3) === ['resumed', 'inactive', 'activated'],
+    'Inactive app state must not pause a component; it must bracket the interruption with inactive()/activated().',
+);
+// Leaving the foreground pauses once, whether or not Inactive was reported first.
+Runtime::dispatchEvent(0, EventKind::AppState->value, (string) AppState::Inactive->value);
+Runtime::dispatchEvent(0, EventKind::AppState->value, (string) AppState::Background->value);
+Runtime::dispatchEvent(0, EventKind::AppState->value, (string) AppState::Active->value);
+$assert(
+    array_slice($counterClass::$lifecycle, -3) === ['inactive', 'paused', 'resumed'],
+    'Background app state must pause the component exactly once and Active must resume it.',
+);
+Runtime::dispatchEvent(0, EventKind::AppState->value, (string) AppState::Background->value);
+Runtime::dispatchEvent(0, EventKind::AppState->value, (string) AppState::Inactive->value);
+$assert(
+    array_slice($counterClass::$lifecycle, -2) === ['paused', 'resumed'],
+    'Returning from Background through Inactive (iOS foreground transition) must resume the component.',
+);
+Runtime::dispatchEvent(0, EventKind::AppState->value, (string) AppState::Active->value);
+$assert(
+    end($counterClass::$lifecycle) === 'resumed',
+    'Active after a Background→Inactive resume must not report a spurious activated() hook.',
+);
+
+if ($pressKey === null) {
+    throw new RuntimeException('.pam.php press callback is missing.');
+}
+[$pressNode, $pressKind] = array_map('intval', explode(':', $pressKey));
+Runtime::dispatchEvent($pressNode, $pressKind, '');
+$afterPress = $dashboard->toElement();
+$assert(
+    $afterPress->children()[0]->properties()[PropKey::Text->value] === 'Changed',
+    'Component emit() did not reach the parent @event handler.',
+);
+$assert(
+    in_array('updated:title', $counterClass::$lifecycle, true),
+    'Constructor prop changes must update a stable nested component.',
+);
+
+$rerendered = $dashboard->toElement();
+$rerenderedEncoded = (new TreeEncoder())->encode($rerendered);
+$newToggleKey = null;
+foreach (array_keys($rerenderedEncoded['callbacks']) as $callbackKey) {
+    [, $kind] = array_map('intval', explode(':', $callbackKey));
+    if ($kind === EventKind::Toggle->value) {
+        $newToggleKey = $callbackKey;
+        break;
+    }
+}
+if ($newToggleKey === null) {
+    throw new RuntimeException('Rerendered .pam.php toggle callback is missing.');
+}
+[$toggleNode, $toggleKind] = array_map('intval', explode(':', $newToggleKey));
+Runtime::dispatchEvent($toggleNode, $toggleKind, '1');
+$assert(
+    $dashboard->toElement()->children()[8]
+        ->properties()[PropKey::Checked->value] === true,
+    'bind:checked must update component state and rerender the native toggle.',
+);
+$assert(
+    in_array('updated:enabled', $counterClass::$lifecycle, true),
+    'bind:checked must invoke the component updated lifecycle hook.',
+);
+
+if ($inputKey === null) {
+    throw new RuntimeException('.pam.php input callback is missing.');
+}
+[$inputNode, $inputKind] = array_map('intval', explode(':', $inputKey));
+Runtime::dispatchEvent($inputNode, $inputKind, 'Offline draft');
+$afterInput = $dashboard->toElement();
+$assert(
+    $afterInput->children()[9]->properties()[PropKey::Value->value] === 'Offline draft',
+    'bind:value must update component state and rerender the native input.',
+);
+$assert(
+    in_array('updated:draft', $counterClass::$lifecycle, true),
+    'bind:value must invoke the component updated lifecycle hook.',
+);
+$assert(
+    $counterClass::$changedDrafts === ['Offline draft|Offline draft'],
+    'bind:value must update state before composing the explicit change handler.',
+);
+
+Runtime::shutdown();
+$assert(
+    array_slice($counterClass::$lifecycle, -2) === ['paused', 'unmount'],
+    '.pam.php component lifecycle did not clean up on runtime shutdown.',
+);
+
+$globalCallRejected = false;
+try {
+    TemplateRenderer::render(
+        TemplateCompiler::compile('<Text>{{ system(\'id\') }}</Text>'),
+        new class {
+        },
+        [],
+    );
+} catch (RuntimeException) {
+    $globalCallRejected = true;
+}
+$assert(
+    $globalCallRejected,
+    '.pam.php expressions must never call global PHP functions.',
+);
+
+$navigator = new Navigator(
+    initialRoute: TypedRouteTestName::Home,
+    routes: [
+        'home' => static fn () => Screen::make(Text::make('Home')),
+        'product' => static fn () => Screen::make(Text::make('Product')),
+    ],
+    transition: NavigationTransition::Fade,
+    transitionDurationMs: 300,
+);
+$assert($navigator->render()->toElement()->kind() === NodeKind::NavigationHost, 'Navigator must render a native host.');
+$navigator->push(TypedRouteTestName::Product);
+$pushed = $navigator->render()->toElement();
+$assert(count($pushed->children()) === 2, 'Push must retain both screens for the native transition.');
+$assert(
+    $pushed->properties()[PropKey::NavigationOperation->value] === NavigationOperation::Push->value,
+    'Push operation was not sent to the native host.',
+);
+$assert($navigator->pop(), 'Navigator must pop a secondary route.');
+$popped = $navigator->render()->toElement();
+$assert(count($popped->children()) === 2, 'Pop must retain its outgoing screen until native animation completes.');
+$assert($navigator->currentRoute() === 'home', 'Pop must reveal the previous route.');
+$transitionEnd = $popped->events()[EventKind::AnimationComplete->value] ?? null;
+$assert($transitionEnd instanceof Closure, 'Navigator must expose native transition completion.');
+$transitionEnd('');
+$settledPop = $navigator->render()->toElement();
+$assert(
+    count($settledPop->children()) === 1,
+    'Settled pop must release its outgoing route.',
+);
+$assert(
+    $settledPop->properties()[PropKey::NavigationOperation->value] === NavigationOperation::Idle->value,
+    'Settled pop must restore the native host operation to idle.',
+);
+$navigator->preload(TypedRouteTestName::Product);
+$navigator->navigate(TypedRouteTestName::Product, ['id' => 7]);
+$assert($navigator->currentRoute() === 'product', 'Navigator::navigate must accept string-backed route enums.');
+$navigator->replace(TypedRouteTestName::Home);
+$assert($navigator->currentRoute() === 'home', 'Navigator::replace must accept string-backed route enums.');
+$navigator->reset(TypedRouteTestName::Product);
+$assert($navigator->currentRoute() === 'product', 'Navigator::reset must accept string-backed route enums.');
+$assert(
+    NavigationAction::push(TypedRouteTestName::Home)->route === 'home'
+        && NavigationAction::navigate(TypedRouteTestName::Product)->route === 'product'
+        && NavigationAction::replace(TypedRouteTestName::Home)->route === 'home'
+        && NavigationAction::reset(TypedRouteTestName::Product)->route === 'product'
+        && NavigationAction::preload(TypedRouteTestName::Home)->route === 'home',
+    'Imperative navigation actions must normalize string-backed route enums.',
+);
+$navigator->navigate(TypedRouteTestName::Home);
+$navigator->push(TypedRouteTestName::Product);
+$assert($navigator->popTo(TypedRouteTestName::Home), 'Navigator::popTo must accept string-backed route enums.');
+$navigator->navigate(
+    TypedRouteTestName::Product,
+    transition: NavigationTransition::None,
+    durationMs: 0,
+);
+$instantNavigation = $navigator->render()->toElement();
+$assert(
+    $instantNavigation->properties()[PropKey::NavigationTransition->value] === NavigationTransition::None->value
+        && $instantNavigation->properties()[PropKey::NavigationDurationMs->value] === 0,
+    'Navigator actions must override route transitions without mutating route configuration.',
+);
+$instantTransitionEnd = $instantNavigation->events()[EventKind::AnimationComplete->value] ?? null;
+$assert($instantTransitionEnd instanceof Closure, 'Instant navigation must still settle its native operation.');
+$instantTransitionEnd('');
+$assert(
+    $navigator->render()->toElement()->properties()[PropKey::NavigationTransition->value]
+        === NavigationTransition::Fade->value,
+    'Action transition overrides must clear after the navigation settles.',
+);
+$systemBackConsumed = false;
+$navigator->interceptSystemBack(static function () use (&$systemBackConsumed): bool {
+    $systemBackConsumed = true;
+
+    return true;
+});
+$assert(
+    $navigator->consumeSystemBack() && $systemBackConsumed,
+    'Navigator system Back interceptor must consume transient UI before changing routes.',
+);
+$navigator->interceptSystemBack(static fn (): bool => false);
+$assert(
+    !$navigator->consumeSystemBack(),
+    'Navigator system Back interceptor must allow route navigation when it returns false.',
+);
+$navigator->interceptSystemBack(null);
+$assert(
+    !$navigator->consumeSystemBack(),
+    'Navigator system Back interceptor must be removable.',
+);
+$fluentNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->transitions(NavigationTransition::Scale, 180)
+    ->build();
+$assert($fluentNavigator->currentRoute() === 'home', 'Fluent Router must build its initial stack.');
+$generatedRoutes = RouteCodeGenerator::generate([
+    'namespace' => 'App\\Navigation\\Generated',
+    'enum' => 'AppRoute',
+    'helper' => 'Routes',
+    'routes' => [
+        ['name' => 'home'],
+        [
+            'name' => 'product.details',
+            'case' => 'ProductDetails',
+            'method' => 'productDetails',
+            'params' => [
+                ['name' => 'productId', 'type' => 'int'],
+                ['name' => 'preview', 'type' => 'bool', 'required' => false, 'default' => false],
+            ],
+        ],
+    ],
+]);
+$assert(
+    str_contains($generatedRoutes['AppRoute.php'], "case ProductDetails = 'product.details';")
+        && str_contains($generatedRoutes['Routes.php'], 'public static function productDetails(int $productId, bool $preview = false): RouteTarget')
+        && str_contains($generatedRoutes['Routes.php'], 'Route::to(AppRoute::ProductDetails, productId: $productId, preview: $preview)'),
+    'Route code generation must emit enum destinations and statically typed helper signatures.',
+);
+
+$editorPreset = Route::preset(ScreenOptionsPatch::from([
+    'headerShown' => true,
+    'gestureDirection' => NavigationGestureDirection::Vertical,
+    'animation' => NavigationTransition::FadeFromBottom,
+]));
+$testRouteModule = new class implements \Pam\Desktop\Routing\RouteModule {
+    public function register(): void
+    {
+        Route::screen('module-route', static fn () => Screen::make(Text::make('Module')))
+            ->deepLink('/module');
+    }
+};
+$namedRouteNavigator = Route::stack(
+    name: 'named-routes-test',
+    initial: TypedRouteTestName::Home,
+    routes: static function () use ($editorPreset, $testRouteModule): void {
+        Route::module($testRouteModule);
+        Route::screen(TypedRouteTestName::Home, static fn () => Screen::make(Text::make('Home')))
+            ->deepLink('/home')
+            ->deepLink('/start');
+        Route::group(
+            $editorPreset,
+            static function (): void {
+                Route::screen(TypedRouteTestName::Product, TypedRouteTestScreen::class)
+                    ->transition(NavigationTransition::Fade, 175)
+                    ->gesture(fullScreen: true)
+                    ->options(ScreenOptionsPatch::one('title', 'Product'));
+            },
+        );
+        Route::modal('filters', static fn () => Screen::make(Text::make('Filters')))
+            ->transition(NavigationTransition::SlideFromBottom, 260)
+            ->sheet(detents: [0.4, 1.0], grabber: true, cornerRadius: 24.0);
+        Route::screen('preset-copy', static fn () => Screen::make(Text::make('Preset')))
+            ->preset($editorPreset);
+    },
+);
+$assert(
+    $namedRouteNavigator->open('pam://app/module')
+        && $namedRouteNavigator->currentRoute() === 'module-route',
+    'Route modules must register destinations in the active stack without bootstrap coupling.',
+);
+$assert(
+    $namedRouteNavigator->open('pam://app/home')
+        && $namedRouteNavigator->open('pam://app/start')
+        && $namedRouteNavigator->currentRoute() === 'home',
+    'Laravel-style named routes must preserve every chained deep-link alias.',
+);
+Route::to(TypedRouteTestName::Product, productId: 42, preview: true)->push();
+$namedProduct = $namedRouteNavigator->render()->toElement()->children()[1];
+$namedProductOptions = $namedRouteNavigator->currentOptions();
+$assert(
+    $namedRouteNavigator->currentRoute() === 'product'
+        && $namedProduct->children()[0]->properties()[PropKey::Text->value] === 'Product 42 preview'
+        && $namedProductOptions->headerShown
+        && $namedProductOptions->title === 'Product'
+        && $namedProductOptions->animation === NavigationTransition::Fade
+        && $namedProductOptions->animationDurationMs === 175
+        && $namedProductOptions->gestureDirection === NavigationGestureDirection::Horizontal
+        && $namedProductOptions->fullScreenGestureEnabled,
+    'Laravel-style named routes must compose group, transition, gesture and route option layers.',
+);
+$namedRouteNavigator->push('filters');
+$assert(
+    $namedRouteNavigator->currentOptions()->presentation === NavigationPresentation::FormSheet
+        && $namedRouteNavigator->currentOptions()->animation === NavigationTransition::SlideFromBottom
+        && $namedRouteNavigator->currentOptions()->animationDurationMs === 260
+        && $namedRouteNavigator->currentOptions()->sheetAllowedDetents === [0.4, 1.0]
+        && $namedRouteNavigator->currentOptions()->sheetGrabberVisible
+        && $namedRouteNavigator->currentOptions()->sheetCornerRadius === 24.0,
+    'Named modal routes must compose native presentation, animation and sheet options.',
+);
+$namedRouteNavigator->push('preset-copy');
+$assert(
+    $namedRouteNavigator->currentOptions()->headerShown
+        && $namedRouteNavigator->currentOptions()->gestureDirection === NavigationGestureDirection::Vertical
+        && $namedRouteNavigator->currentOptions()->animation === NavigationTransition::FadeFromBottom,
+    'Reusable route presets must compose identically in groups and individual destinations.',
+);
+$namedRouteNavigator->pop();
+$namedRouteNavigator->pop();
+$poppedProductHost = $namedRouteNavigator->render()->toElement();
+$namedRouteNavigator->pop();
+$poppedToHomeHost = $namedRouteNavigator->render()->toElement();
+$assert(
+    $poppedToHomeHost->properties()[PropKey::NavigationTransition->value] === NavigationTransition::Fade->value
+        && $poppedToHomeHost->properties()[PropKey::NavigationDurationMs->value] === 175
+        && $poppedProductHost->properties()[PropKey::NavigationTransition->value] === NavigationTransition::SlideFromBottom->value,
+    'A pop must animate with the transition of the route being removed (React Navigation), not the one below.',
+);
+$sessionOpen = false;
+$chatAllowed = false;
+$threadAllowed = false;
+$guardCalls = [];
+$guardedRoutes = Route::stack('guarded-routes-test', 'home', static function () use (
+    &$sessionOpen,
+    &$chatAllowed,
+    &$threadAllowed,
+    &$guardCalls,
+): void {
+    Route::screen('home', static fn () => Screen::make(Text::make('Home')));
+    Route::guard(
+        static function (RouteContext $route) use (&$sessionOpen, &$guardCalls): bool {
+            $guardCalls[] = 'session:'.$route->name;
+            return $sessionOpen;
+        },
+        static function () use (&$chatAllowed, &$threadAllowed, &$guardCalls): void {
+            Route::screen('inbox', static fn () => Screen::make(Text::make('Inbox')));
+            Route::guard(
+                static function (RouteContext $route) use (&$chatAllowed, &$guardCalls): bool {
+                    $guardCalls[] = 'chat:'.$route->name;
+                    return $chatAllowed;
+                },
+                static function () use (&$threadAllowed, &$guardCalls): void {
+                    Route::screen('thread', static fn () => Screen::make(Text::make('Thread')))
+                        ->guard(static function (RouteContext $route) use (&$threadAllowed, &$guardCalls): bool {
+                            $guardCalls[] = 'thread:'.$route->name;
+                            return $threadAllowed;
+                        })
+                        ->deepLink('/thread/{id}');
+                },
+            );
+        },
+    );
+    Route::screen('about', static fn () => Screen::make(Text::make('About')));
+});
+$assert(
+    !$guardedRoutes->dispatch(NavigationAction::push('thread'))
+        && $guardCalls === ['session:thread']
+        && $guardedRoutes->currentRoute() === 'home',
+    'Grouped guards must short-circuit before nested and route guards.',
+);
+$sessionOpen = true;
+$guardCalls = [];
+$assert(
+    !$guardedRoutes->open('pam://app/thread/42')
+        && $guardCalls === ['session:thread', 'chat:thread'],
+    'Grouped guards must protect deep links in declaration order.',
+);
+$chatAllowed = true;
+$guardCalls = [];
+$assert(
+    !$guardedRoutes->dispatch(NavigationAction::push('thread'))
+        && $guardCalls === ['session:thread', 'chat:thread', 'thread:thread'],
+    'A route guard must add to its enclosing group guards.',
+);
+$threadAllowed = true;
+$guardCalls = [];
+$guardedRoutes->push('thread');
+$assert(
+    $guardCalls === ['session:thread', 'chat:thread', 'thread:thread']
+        && $guardedRoutes->currentRoute() === 'thread',
+    'A destination must open after all enclosing and route guards pass.',
+);
+$sessionOpen = false;
+$guardCalls = [];
+$assert(
+    $guardedRoutes->dispatch(NavigationAction::push('about'))
+        && $guardCalls === []
+        && $guardedRoutes->currentRoute() === 'about',
+    'Grouped guards must not leak onto later ungrouped routes.',
+);
+$namedTabs = Route::tabs('named-tabs-test', 'home', static function (): void {
+    Route::tab('home', Screen::make(Text::make('Home')), label: 'Home');
+    Route::tab('settings', Screen::make(Text::make('Settings')), label: 'Settings', badge: '2');
+});
+$assert(
+    NamedNavigation::navigate('settings')
+        && $namedTabs->selectedTab() === 'settings',
+    'Laravel-style named tabs must select destinations through the shared navigation scope.',
+);
+$namedTopTabs = Route::topTabs(
+    'named-top-tabs-test',
+    'recent',
+    static function (): void {
+        Route::topTab('recent', Screen::make(Text::make('Recent')), label: 'Recent');
+        Route::topTab('following', Screen::make(Text::make('Following')), label: 'Following');
+    },
+    static fn (\Pam\Desktop\Navigation\TopTabRouter $tabs): \Pam\Desktop\Navigation\TopTabRouter =>
+        $tabs->behavior(swipeEnabled: true, scrollEnabled: true, lazy: false),
+);
+$assert(
+    NamedNavigation::navigate('following')
+        && $namedTopTabs->selectedTab() === 'following',
+    'Laravel-style top tabs must expose typed registration and the complete router configurator.',
+);
+$declarativeNested = Route::stack(
+    name: 'declarative-root',
+    initial: 'main',
+    routes: static function (): void {
+        Route::navigator(
+            'main',
+            Route::tabs('declarative-tabs', 'feed', static function (): void {
+                Route::tab(
+                    'feed',
+                    Route::stack(
+                        name: 'declarative-feed-stack',
+                        initial: 'feed-index',
+                        routes: static function (): void {
+                            Route::screen('feed-index', static fn () => Screen::make(Text::make('Feed')));
+                            Route::screen('feed-details', static fn () => Screen::make(Text::make('Details')))
+                                ->deepLink('/feed/post/{postId}');
+                        },
+                    ),
+                    label: 'Feed',
+                );
+                Route::tab(
+                    'account',
+                    Route::stack(
+                        name: 'declarative-account-stack',
+                        initial: 'account-index',
+                        routes: static function (): void {
+                            Route::screen('account-index', static fn () => Screen::make(Text::make('Account')));
+                            Route::screen('account-settings', static fn () => Screen::make(Text::make('Settings')))
+                                ->deepLink('/account/settings');
+                        },
+                    ),
+                    label: 'Account',
+                );
+            }),
+        );
+        Route::modal('global-modal', static fn () => Screen::make(Text::make('Modal')));
+    },
+);
+$declarativeNested->render();
+NamedNavigation::push('feed-details');
+$assert(
+    $declarativeNested->canGoBack()
+        && $declarativeNested->goBack()
+        && !$declarativeNested->canGoBack(),
+    'Declarative navigators must nest stacks inside tabs and bubble actions and Back through the focused child.',
+);
+$assert(
+    $declarativeNested->open('pam://app/account/settings')
+        && $declarativeNested->currentPath() === '/account/settings'
+        && $declarativeNested->goBack()
+        && $declarativeNested->open('pam://app/feed/post/42')
+        && $declarativeNested->currentPath() === '/feed/post/42',
+    'Nested linking must select an inactive navigator and preserve canonical child paths and Back history.',
+);
+$nestedSavedState = $declarativeNested->saveState();
+$declarativeNested->goBack();
+NamedNavigation::navigate('account');
+$declarativeNested->restoreState($nestedSavedState);
+$declarativeNested->render();
+$assert(
+    $declarativeNested->currentPath() === '/feed/post/42',
+    'Declarative nested navigators must restore the selected tab and child stack atomically.',
+);
+$headerNavigator = Router::stack('home')
+    ->route(
+        'home',
+        static fn () => Screen::make(Text::make('Header content')),
+        new ScreenOptions(title: 'Native header', headerShown: true),
+    )
+    ->build();
+$headerElement = $headerNavigator->render()->toElement();
+$assert(
+    $headerElement->children()[0]->kind() === NodeKind::Screen
+        && $headerElement->properties()[PropKey::NavigationTitle->value] === 'Native header'
+        && $headerElement->properties()[PropKey::NavigationHeaderShown->value] === true
+        && $headerNavigator->currentOptions()->title === 'Native header',
+    'Screen options must configure controller-owned native chrome with typed options.',
+);
+$sheetNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route(
+        'filters',
+        static fn () => Column::make(Text::make('Filters')),
+        new ScreenOptions(
+            title: 'Filters',
+            headerShown: true,
+            presentation: NavigationPresentation::FormSheet,
+            sheetAllowedDetents: [0.5, 1.0],
+            sheetInitialDetentIndex: 1,
+            sheetGrabberVisible: true,
+        ),
+    )
+    ->build();
+$sheetNavigator->push('filters');
+$sheetElement = $sheetNavigator->render()->toElement();
+$assert(
+    $sheetElement->children()[1]->kind() === NodeKind::Column
+        && $sheetElement->properties()[PropKey::NavigationPresentation->value]
+            === NavigationPresentation::FormSheet->value
+        && $sheetElement->properties()[PropKey::NavigationSheetDetents->value] === '0.5,1',
+    'Form-sheet routes must be owned by native controllers with typed detents.',
+);
+
+$advancedNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route(
+        'profile',
+        static fn (RouteContext $route) => Screen::make(
+            Text::make('Profile '.$route->integer('id')),
+        ),
+    )
+    ->route(
+        'article',
+        static fn (RouteContext $route) => Screen::make(
+            Text::make($route->string('slug') ?? ''),
+        ),
+    )
+    ->deepLink('/articles/{slug}', 'article')
+    ->build();
+$advancedNavigator->push('profile', ['id' => 42, 'preview' => true]);
+$assert(
+    $advancedNavigator->current()->integer('id') === 42
+        && $advancedNavigator->current()->boolean('preview') === true
+        && $advancedNavigator->render()->toElement()->children()[1]
+            ->children()[0]->properties()[PropKey::Text->value] === 'Profile 42',
+    'Route contexts must expose bounded typed parameters to screen factories.',
+);
+$identifiedNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route(
+        'profile',
+        static fn (RouteContext $route) => Screen::make(Text::make('Profile '.$route->integer('id'))),
+        static fn (RouteContext $route) => new ScreenOptions(title: 'Profile '.$route->integer('id')),
+        static fn (RouteContext $route): int => $route->integer('id') ?? 0,
+    )
+    ->build();
+$identifiedNavigator->push('profile', ['id' => 1]);
+$firstProfileKey = $identifiedNavigator->current()->key;
+$identifiedNavigator->push('profile', ['id' => 2]);
+$secondProfileKey = $identifiedNavigator->current()->key;
+$identifiedNavigator->navigate('profile', ['id' => 1]);
+$assert(
+    $identifiedNavigator->current()->integer('id') === 1
+        && $identifiedNavigator->current()->key === $firstProfileKey
+        && $firstProfileKey !== $secondProfileKey
+        && $identifiedNavigator->currentOptions()->title === 'Profile 1'
+        && ($identifiedNavigator->getState()['routes'][1]['id'] ?? null) === '1',
+    'getId route identity must distinguish same-name entities, reuse the matching entry, and resolve options from route context.',
+);
+$identifiedState = $identifiedNavigator->saveState();
+$assert(
+    $identifiedState['version'] === 4
+        && ($identifiedState['stack'][1]['id'] ?? null) === '1',
+    'Versioned navigation state must persist semantic route identities.',
+);
+$keepAliveBuilds = ['inbox' => 0, 'feed' => 0, 'detail' => 0];
+$keepAliveNavigator = Router::stack('inbox')
+    ->route('inbox', static function () use (&$keepAliveBuilds) {
+        $keepAliveBuilds['inbox']++;
+        return Screen::make(Text::make('Inbox'));
+    })
+    ->route('feed', static function () use (&$keepAliveBuilds) {
+        $keepAliveBuilds['feed']++;
+        return Screen::make(Text::make('Feed'));
+    })
+    ->route('detail', static function () use (&$keepAliveBuilds) {
+        $keepAliveBuilds['detail']++;
+        return Screen::make(Text::make('Detail'));
+    })
+    ->keepAlive('feed')
+    ->build();
+$keepAliveKeys = static fn (Navigator $navigator): array => array_map(
+    static fn ($screen): string => (string) $screen->elementKey(),
+    $navigator->render()->toElement()->children(),
+);
+$keepAliveNavigator->navigate('feed');
+$keepAliveKeys($keepAliveNavigator);
+$feedKey = $keepAliveNavigator->current()->key;
+$keepAliveNavigator->navigate('inbox');
+$poppingKeys = $keepAliveKeys($keepAliveNavigator);
+$keepAliveNavigator->push('detail');
+$parkedKeys = $keepAliveKeys($keepAliveNavigator);
+$keepAliveNavigator->navigate('feed');
+$reusedKeys = $keepAliveKeys($keepAliveNavigator);
+$assert(
+    $keepAliveNavigator->current()->key === $feedKey
+        && $keepAliveBuilds['feed'] === 1
+        && $poppingKeys === ['navigation.1', 'navigation.2']
+        && $parkedKeys === ['navigation.2', 'navigation.1', 'navigation.3']
+        && $reusedKeys === ['navigation.3', 'navigation.2'],
+    'A keep-alive route leaving the stack stays mounted and is reused, like a tab screen: '
+        .json_encode([$poppingKeys, $parkedKeys, $reusedKeys, $keepAliveBuilds]),
+);
+$keepAliveNavigator->push('detail');
+$keepAliveNavigator->push('detail');
+$deepKeys = $keepAliveKeys($keepAliveNavigator);
+$assert(
+    $deepKeys === ['navigation.2', 'navigation.4', 'navigation.5'],
+    'A keep-alive entry deeper in the stack stays mounted under the visible screens: '.json_encode($deepKeys),
+);
+$keepAliveNavigator->navigate('inbox');
+$keepAliveKeys($keepAliveNavigator);
+$keepAliveNavigator->navigate('feed');
+$keepAliveKeys($keepAliveNavigator);
+$assert(
+    $keepAliveNavigator->current()->key === $feedKey && $keepAliveBuilds['feed'] === 1,
+    'A keep-alive screen popped from the middle of the stack is parked and reused too.',
+);
+$keepAliveNavigator->navigate('inbox');
+$keepAliveNavigator->push('feed', ['tab' => 'other']);
+$keepAliveKeys($keepAliveNavigator);
+$assert(
+    $keepAliveBuilds['feed'] === 2 && $keepAliveNavigator->current()->key !== $feedKey,
+    'A keep-alive screen is reused only for the same params.',
+);
+$keepAliveNavigator->reset('inbox');
+$keepAliveNavigator->navigate('feed');
+$keepAliveKeys($keepAliveNavigator);
+$assert(
+    $keepAliveBuilds['feed'] === 3,
+    'A reset releases every kept-alive screen.',
+);
+$predicateBuilds = 0;
+$predicateNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route('profile', static function () use (&$predicateBuilds) {
+        $predicateBuilds++;
+        return Screen::make(Text::make('Profile'));
+    })
+    ->keepAlive('profile', static fn (RouteContext $route): bool => $route->all() === [])
+    ->build();
+foreach ([[], ['userId' => '7'], ['userId' => '7'], []] as $profileParams) {
+    $predicateNavigator->push('profile', $profileParams);
+    $predicateNavigator->render()->toElement();
+    $predicateNavigator->pop();
+    $predicateNavigator->render()->toElement();
+}
+$assert(
+    $predicateBuilds === 3,
+    'A keep-alive predicate keeps only the matching entries (the own-profile tab, not visited profiles).',
+);
+$layeredOptionsNavigator = Router::stack('home')
+    ->screenOptions(new ScreenOptions(headerShown: true, headerTintColor: 0xFF102030))
+    ->group(
+        ['profile'],
+        ScreenOptionsPatch::from(['headerTransparent' => true]),
+    )
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route(
+        'profile',
+        static fn () => Screen::make(Text::make('Profile')),
+        ScreenOptionsPatch::from(['title' => 'Layered profile']),
+    )
+    ->build();
+$layeredOptionsNavigator->push('profile');
+$layered = $layeredOptionsNavigator->currentOptions();
+$assert(
+    $layered->headerShown
+        && $layered->headerTransparent
+        && $layered->headerTintColor === 0xFF102030
+        && $layered->title === 'Layered profile',
+    'Screen options must resolve navigator defaults, groups and sparse route overrides in order.',
+);
+$layeredOptionsNavigator->setOptions(ScreenOptionsPatch::from([
+    'headerShown' => false,
+    'headerTintColor' => null,
+]));
+$assert(
+    !$layeredOptionsNavigator->currentOptions()->headerShown
+        && $layeredOptionsNavigator->currentOptions()->headerTintColor === null,
+    'Runtime option patches must preserve explicit false and null values.',
+);
+$layeredOptionsNavigator->clearOptions();
+$assert(
+    $layeredOptionsNavigator->currentOptions()->headerShown
+        && $layeredOptionsNavigator->currentOptions()->headerTintColor === 0xFF102030,
+    'Clearing runtime options must reveal the inherited option chain again.',
+);
+$advancedNavigator->push('article', ['slug' => 'temporary']);
+$assert(
+    $advancedNavigator->popTo('profile')
+        && $advancedNavigator->currentRoute() === 'profile',
+    'popTo must remove intermediate routes and retain the target entry.',
+);
+$savedNavigation = $advancedNavigator->saveState();
+$restoredNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route('profile', static fn (RouteContext $route) => Screen::make(
+        Text::make((string) $route->integer('id')),
+    ))
+    ->build();
+$restoredNavigator->restoreState($savedNavigation);
+$assert(
+    $restoredNavigator->current()->integer('id') === 42,
+    'Navigator persistence must preserve route parameters.',
+);
+$assert(
+    count($restoredNavigator->render()->children()) === 2,
+    'A restored stack must mount the route below the top so the back gesture can reveal it.',
+);
+$tamperedNavigation = $savedNavigation;
+$tamperedNavigation['stack'][1]['params']['id'] = 999;
+$checksumProtectedNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route('profile', static fn () => Screen::make(Text::make('Profile')))
+    ->build();
+$checksumProtectedNavigator->restoreState($tamperedNavigation);
+$assert(
+    $checksumProtectedNavigator->currentRoute() === 'home',
+    'Navigation persistence must reject a modified state checksum atomically.',
+);
+$ephemeralNavigator = Router::stack('home')
+    ->restoreState(false)
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route('profile', static fn () => Screen::make(Text::make('Profile')))
+    ->build();
+$ephemeralNavigator->restoreState($savedNavigation);
+$assert(
+    $ephemeralNavigator->currentRoute() === 'home',
+    'Navigator state restoration must be explicitly disableable for deterministic cold starts.',
+);
+$assert(
+    $advancedNavigator->open('pam://docs/articles/native%20grid?source=notification')
+        && $advancedNavigator->currentRoute() === 'article'
+        && $advancedNavigator->current()->string('slug') === 'native grid'
+        && $advancedNavigator->current()->string('source') === 'notification',
+    'Deep links must resolve encoded path and scalar query parameters.',
+);
+$hostNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route('profile', static fn () => Screen::make(Text::make('Profile')))
+    ->deepLink('/profile/{username}', 'profile')
+    ->build();
+$assert(
+    $hostNavigator->open('pushin://profile/david?source=share')
+        && $hostNavigator->currentRoute() === 'profile'
+        && $hostNavigator->current()->string('username') === 'david'
+        && $hostNavigator->current()->string('source') === 'share',
+    'Custom-scheme deep links must also match host-plus-path route patterns.',
+);
+$optionalLinkNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route('catalog', static fn () => Screen::make(Text::make('Catalog')))
+    ->route('document', static fn () => Screen::make(Text::make('Document')))
+    ->deepLink('/catalog/{category?}', 'catalog')
+    ->deepLink('/documents/{path*}', 'document')
+    ->linking(
+        ['pam://app', 'https://native.example'],
+        static fn (string $uri): bool => !str_contains($uri, '/blocked'),
+    )
+    ->build();
+$assert(
+    $optionalLinkNavigator->open('pam://app/catalog')
+        && $optionalLinkNavigator->currentPath() === '/catalog'
+        && $optionalLinkNavigator->open('pam://app/documents/guides/native/start')
+        && $optionalLinkNavigator->current()->string('path') === 'guides/native/start'
+        && $optionalLinkNavigator->currentPath() === '/documents/guides/native/start'
+        && $optionalLinkNavigator->currentUrl() === 'pam://app/documents/guides/native/start'
+        && !$optionalLinkNavigator->open('pam://application/documents/private')
+        && !$optionalLinkNavigator->open('other://documents/private')
+        && !$optionalLinkNavigator->open('pam://app/blocked'),
+    'Deep links must support optional/wildcard parameters and enforce URI prefix boundaries.',
+);
+$pathPriorityNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route('profile', static fn () => Screen::make(Text::make('Profile')))
+    ->deepLink('/profile/{id}', 'profile')
+    ->build();
+$assert(
+    $pathPriorityNavigator->open('pam://app/profile/42?id=99')
+        && $pathPriorityNavigator->current()->string('id') === '42',
+    'A query string must not override an identity captured from the path.',
+);
+$authenticated = false;
+$authNavigator = Router::stack('login')
+    ->route('login', static fn () => Screen::make(Text::make('Login')))
+    ->route('account', static fn () => Screen::make(Text::make('Account')))
+    ->guard('account', static function () use (&$authenticated): bool {
+        return $authenticated;
+    })
+    ->guardFallback('login')
+    ->deepLink('/account', 'account')
+    ->build();
+$assert(
+    !$authNavigator->dispatch(NavigationAction::navigate('account'))
+        && !$authNavigator->open('pam://app/account')
+        && $authNavigator->currentRoute() === 'login',
+    'Guards must reject actions and deep links before protected route content is instantiated.',
+);
+$authenticated = true;
+$assert(
+    $authNavigator->dispatch(NavigationAction::navigate('account'))
+        && $authNavigator->currentRoute() === 'account',
+    'Conditional routes must become reachable immediately after their guard state changes.',
+);
+$authenticatedState = $authNavigator->saveState();
+$authenticated = false;
+$assert(
+    $authNavigator->refreshConditions()
+        && $authNavigator->currentRoute() === 'login'
+        && !$authNavigator->canGoBack(),
+    'Logout must atomically remove protected history and retain the registered public fallback.',
+);
+$authNavigator->restoreState($authenticatedState);
+$assert(
+    $authNavigator->currentRoute() === 'login' && !$authNavigator->canGoBack(),
+    'Cold restoration must never reopen a route whose auth guard is no longer satisfied.',
+);
+$assert(
+    $advancedNavigator->popToTop()
+        && $advancedNavigator->currentRoute() === 'home',
+    'popToTop must restore the first stack entry.',
+);
+$navigationEvents = [];
+$eventSubscription = $advancedNavigator->addListener(
+    NavigationEventType::State,
+    static function (NavigationEvent $event) use (&$navigationEvents): void {
+        $navigationEvents[] = $event->data['state'];
+    },
+);
+$assert(
+    $advancedNavigator->dispatch(NavigationAction::push('profile', ['id' => 7]))
+        && $advancedNavigator->current()->key !== null
+        && $advancedNavigator->getState()['type'] === 1
+        && $navigationEvents !== [],
+    'Navigation actions must update observable, keyed stack state.',
+);
+$advancedNavigator->setParams(['preview' => true]);
+$assert(
+    $advancedNavigator->current()->integer('id') === 7
+        && $advancedNavigator->current()->boolean('preview') === true,
+    'setParams must merge validated parameters into the focused route.',
+);
+$advancedNavigator->replaceParams(['id' => 8]);
+$assert(
+    $advancedNavigator->current()->integer('id') === 8
+        && !$advancedNavigator->current()->has('preview'),
+    'replaceParams must replace the focused route parameter set.',
+);
+$blocked = $advancedNavigator->addListener(
+    NavigationEventType::BeforeRemove,
+    static function (NavigationEvent $event): void {
+        $event->preventDefault();
+    },
+);
+$assert(!$advancedNavigator->pop(), 'beforeRemove must cancel every stack removal path.');
+$routeBeforeBlockedBack = $advancedNavigator->currentRoute();
+$assert(
+    $advancedNavigator->goBack() && $advancedNavigator->currentRoute() === $routeBeforeBlockedBack,
+    'A Back prevented by beforeRemove is consumed (never closes the app) and keeps the focused screen.',
+);
+$blocked->unsubscribe();
+$assert($advancedNavigator->pop(), 'Removing a beforeRemove listener must release navigation.');
+$containerStateChanges = 0;
+$unhandledActions = 0;
+$container = NavigationContainer::make($advancedNavigator)
+    ->onStateChange(static function () use (&$containerStateChanges): void {
+        $containerStateChanges++;
+    })
+    ->onUnhandledAction(static function (NavigationAction $action) use (&$unhandledActions): void {
+        if ($action->type === NavigationActionType::Navigate) $unhandledActions++;
+    });
+$assert(
+    !$container->dispatch(NavigationAction::navigate('missing'))
+        && $unhandledActions === 1,
+    'NavigationContainer must report unhandled actions without mutating state.',
+);
+$assert(
+    $container->dispatch(NavigationAction::navigate('article', ['slug' => 'native core']))
+        && $container->currentPath() === '/articles/native%20core'
+        && $containerStateChanges === 1,
+    'NavigationContainer must dispatch actions and build canonical paths from state.',
+);
+$container->unmount();
+$advancedNavigator->navigate('profile', ['id' => 91]);
+$detachedStateChanges = $containerStateChanges;
+$container->mount();
+$advancedNavigator->navigate('article', ['slug' => 'remounted']);
+$assert(
+    $detachedStateChanges === 1 && $containerStateChanges === 2,
+    'NavigationContainer must release root listeners on unmount and restore exactly one subscription on remount.',
+);
+$navigationRef = new NavigationRef();
+$refNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route('profile', static fn () => Screen::make(Text::make('Profile')))
+    ->build();
+$assert(
+    $navigationRef->navigate('profile') && !$navigationRef->isReady(),
+    'Navigation refs must safely queue actions before the root container mounts.',
+);
+$refContainer = NavigationContainer::make($refNavigator, $navigationRef);
+$refContainer->mount();
+$assert(
+    $navigationRef->isReady()
+        && $navigationRef->currentRoute()?->name === 'profile'
+        && ($navigationRef->rootState()['index'] ?? null) === 1,
+    'Navigation refs must replay queued actions in order and expose the mounted root state.',
+);
+$refContainer->unmount();
+$assert(!$navigationRef->isReady(), 'Unmounting must detach navigation refs without retaining the container.');
+$navigationDevTools = new NavigationDevTools($container, capacity: 16);
+$container->dispatch(NavigationAction::navigate('article', ['slug' => 'observed']));
+$navigationTimeline = $navigationDevTools->timeline();
+$navigationExport = json_decode($navigationDevTools->exportJson(), true, flags: JSON_THROW_ON_ERROR);
+$navigationMetrics = $navigationDevTools->metrics();
+$assert(
+    $navigationTimeline !== []
+        && $navigationTimeline[0]['kind'] === NavigationTraceKind::Action->value
+        && ($navigationDevTools->tree()['routes'][0]['name'] ?? null) === 'home'
+        && ($navigationExport['schemaVersion'] ?? null) === 1
+        && ($navigationExport['surfaceCode'] ?? null) === 2
+        && is_int($navigationExport['capturedAtUnixMs'] ?? null)
+        && ($navigationExport['version'] ?? null) === 2
+        && ($navigationExport['metrics']['events'] ?? 0) === count($navigationTimeline)
+        && ($navigationMetrics['currentRoute'] ?? null) === 'article',
+    'Navigation DevTools must expose bounded traces, metrics and recursive tree snapshots.',
+);
+$navigationDevTools->detach();
+$preloadFactories = 0;
+$preloadNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route('detail', static function (RouteContext $route) use (&$preloadFactories): Screen {
+        $preloadFactories++;
+        return Screen::make(Text::make((string) $route->integer('id')));
+    })
+    ->build();
+$assert(
+    $preloadNavigator->preload('detail', ['id' => 42])
+        && $preloadFactories === 1,
+    'preload must instantiate a bounded route exactly once ahead of navigation.',
+);
+$preloadNavigator->push('detail', ['id' => 42]);
+$preloadNavigator->render();
+$preloadNavigator->render();
+$assert(
+    $preloadFactories === 1,
+    'An exact preloaded route must be consumed and retained without rerunning its factory.',
+);
+$boundedPreloadFactories = 0;
+$boundedPreloads = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route('detail', static function () use (&$boundedPreloadFactories): Screen {
+        $boundedPreloadFactories++;
+        return Screen::make(Text::make('Detail'));
+    })
+    ->build();
+for ($id = 1; $id <= 17; $id++) $boundedPreloads->preload('detail', ['id' => $id]);
+$boundedPreloads->push('detail', ['id' => 1]);
+$boundedPreloads->render();
+$boundedPreloads->preload('detail', ['id' => 99]);
+$boundedPreloads->trimMemory();
+$boundedPreloads->push('detail', ['id' => 99]);
+$boundedPreloads->render();
+$assert(
+    $boundedPreloadFactories === 20,
+    'Speculative routes must use a 16-entry LRU bound and be releasable under memory pressure.',
+);
+$prewarmBuilds = 0;
+$prewarmFlags = [];
+$prewarmScreen = new class extends Component implements NavigationLifecycleAware {
+    use InteractsWithNavigationLifecycle;
+
+    public int $focused = 0;
+    public int $removed = 0;
+    public bool $mountedWhilePrewarming = false;
+
+    public function mount(): void
+    {
+        $this->mountedWhilePrewarming = Navigator::isPrewarming();
+    }
+
+    public function navigationFocused(RouteContext $route): void
+    {
+        $this->focused++;
+    }
+
+    public function navigationRemoved(RouteContext $route): void
+    {
+        $this->removed++;
+    }
+
+    public function render(): \Pam\Desktop\Renderable
+    {
+        return Screen::make(Text::make('Prewarmed'));
+    }
+};
+$prewarmNavigator = Router::stack('home')
+    ->route('home', static fn () => Screen::make(Text::make('Home')))
+    ->route('detail', static function () use (&$prewarmBuilds, &$prewarmFlags, $prewarmScreen) {
+        $prewarmBuilds++;
+        $prewarmFlags[] = Navigator::isPrewarming();
+        return $prewarmScreen;
+    })
+    ->route('other', static fn () => Screen::make(Text::make('Other')))
+    ->build();
+$prewarmKeys = static fn (Navigator $navigator): array => array_map(
+    static fn ($screen): ?string => $screen->toElement()->elementKey(),
+    $navigator->render()->toElement()->children(),
+);
+$assert(
+    !$prewarmNavigator->prewarm('home') && $prewarmNavigator->prewarm('detail', ['id' => 7])
+        && $prewarmNavigator->isPrewarmed('detail', ['id' => 7])
+        && !$prewarmNavigator->isPrewarmed('detail', ['id' => 8]),
+    'prewarm() must mount a route other than the current one and match only its exact params.',
+);
+$warmKeys = $prewarmKeys($prewarmNavigator);
+$assert(
+    count($warmKeys) === 2 && $prewarmNavigator->currentRoute() === 'home'
+        && $prewarmBuilds === 1 && $prewarmScreen->mountedWhilePrewarming
+        && $prewarmScreen->focused === 0 && !Navigator::isPrewarming(),
+    'A prewarmed screen must render hidden under the current one, mounted while isPrewarming(), without focus.',
+);
+$prewarmGesture = static fn (Navigator $navigator): mixed => $navigator->render()->toElement()
+    ->properties()[PropKey::NavigationGestureEnabled->value] ?? null;
+$assert(
+    $prewarmGesture($prewarmNavigator) === false,
+    'The root of a stack must not enable the back gesture, even with a prewarmed screen mounted below it (the gesture uncovered it with nothing to pop).',
+);
+$prewarmNavigator->push('detail', ['id' => 7]);
+$assert(
+    $prewarmGesture($prewarmNavigator) === true,
+    'A stack with a route to go back to must enable the back gesture.',
+);
+$pushedKeys = $prewarmKeys($prewarmNavigator);
+$assert(
+    $prewarmBuilds === 1 && end($pushedKeys) === $warmKeys[0] && $prewarmScreen->focused === 1
+        && !$prewarmNavigator->isPrewarmed('detail', ['id' => 7]),
+    'push() must reuse the prewarmed screen (same element key, no new build) and focus it then.',
+);
+$prewarmNavigator->pop();
+$prewarmNavigator->render();
+$prewarmNavigator->prewarm('detail', ['id' => 9]);
+$prewarmNavigator->render();
+$prewarmNavigator->push('other');
+$prewarmNavigator->render();
+$assert(
+    !$prewarmNavigator->isPrewarmed('detail', ['id' => 9]) && $prewarmScreen->removed >= 1,
+    'Any other navigation must release an unused prewarmed screen.',
+);
+$prewarmNavigator->pop();
+$prewarmNavigator->prewarm('detail', ['id' => 10]);
+$prewarmNavigator->cancelPrewarm();
+$assert(
+    !$prewarmNavigator->isPrewarmed('detail', ['id' => 10]),
+    'cancelPrewarm() must unmount the prewarmed screen.',
+);
+$pendingModuleCalls = static fn (): int => count((new ReflectionProperty(Runtime::class, 'moduleCallbacks'))->getValue());
+$callsBeforeWarm = $pendingModuleCalls();
+$prewarmNavigator->prewarm('detail', ['id' => 11]);
+$callsAfterTimedWarm = $pendingModuleCalls();
+$prewarmNavigator->prewarm('detail', ['id' => 11], null);
+$prewarmNavigator->prewarm('detail', ['id' => 11], null);
+$assert(
+    $callsAfterTimedWarm === $callsBeforeWarm + 1 && $pendingModuleCalls() === $callsAfterTimedWarm
+        && $prewarmNavigator->isPrewarmed('detail', ['id' => 11]),
+    'prewarm(releaseAfterMs: null) must keep the screen warm without arming a release timer.',
+);
+$prewarmNavigator->trimMemory();
+$assert(
+    !$prewarmNavigator->isPrewarmed('detail', ['id' => 11]),
+    'trimMemory() must release a screen held warm without a timer.',
+);
+$lifecycleScreen = new class extends Component implements NavigationLifecycleAware {
+    use InteractsWithNavigationLifecycle;
+
+    public int $focused = 0;
+    public int $blurred = 0;
+    public int $removed = 0;
+
+    public function render(): \Pam\Desktop\Renderable
+    {
+        return Screen::make(Text::make('Lifecycle'));
+    }
+
+    public function navigationFocused(RouteContext $route): void
+    {
+        $this->focused++;
+    }
+
+    public function navigationBlurred(RouteContext $route): void
+    {
+        $this->blurred++;
+    }
+
+    public function navigationRemoved(RouteContext $route): void
+    {
+        $this->removed++;
+    }
+};
+$lifecycleNavigator = Router::stack('lifecycle')
+    ->route('lifecycle', static fn () => $lifecycleScreen)
+    ->route('next', static fn () => Screen::make(Text::make('Next')))
+    ->build();
+$lifecycleNavigator->render();
+$lifecycleNavigator->push('next');
+$transitionHost = $lifecycleNavigator->render()->toElement();
+$assert(
+    $lifecycleScreen->focused === 1 && $lifecycleScreen->blurred === 1,
+    'Navigation-aware components must receive focus and blur independently of mount state.',
+);
+($transitionHost->events()[EventKind::AnimationComplete->value])('');
+$lifecycleNavigator->pop();
+$lifecycleNavigator->render();
+$assert(
+    $lifecycleScreen->focused === 2,
+    'Returning to a retained route must deliver focus without recreating the component.',
+);
+$eventSubscription->unsubscribe();
+
+$tabNavigator = Router::tabs('home')
+    ->tab('home', 'Home', Screen::make(Text::make('Home tab')))
+    ->tab(
+        'orders',
+        'Orders',
+        Router::stack('orders.index')
+            ->route(
+                'orders.index',
+                static fn () => Screen::make(Text::make('Orders tab')),
+            )
+            ->build(),
+    )
+    ->presentation(TabPresentation::Bottom)
+    ->persistence('test-main-tabs')
+    ->build();
+$assert(
+    $tabNavigator instanceof TabNavigator
+        && $tabNavigator->selectedTab() === 'home'
+        && $tabNavigator->resolvedPresentation() === TabPresentation::Bottom,
+    'Tab router must build a typed native tab navigator.',
+);
+$assert(
+    $tabNavigator->select('orders')
+        && $tabNavigator->selectedTab() === 'orders'
+        && $tabNavigator->toElement()->kind() === NodeKind::TabHost,
+    'Tab navigator must retain independent content in a platform-native tab host.',
+);
+$restoredTabs = Router::tabs('home')
+    ->tab('home', 'Home', Screen::make(Text::make('Home tab')))
+    ->tab('orders', 'Orders', Screen::make(Text::make('Orders tab')))
+    ->persistence('test-main-tabs')
+    ->build();
+$assert(
+    $restoredTabs->selectedTab() === 'orders',
+    'Tab navigator must restore the selected destination.',
+);
+$topTabs = Router::topTabs('feed')
+    ->tab('feed', 'Feed', Screen::make(Text::make('Feed')))
+    ->tab('following', 'Following', Screen::make(Text::make('Following')))
+    ->behavior(swipeEnabled: true, scrollEnabled: true, lazy: true)
+    ->persistence('test-top-tabs')
+    ->build();
+$assert(
+    $topTabs->selectedTab() === 'feed'
+        && $topTabs->jumpTo('following')
+        && $topTabs->toElement()->kind() === NodeKind::TabHost,
+    'Top tabs must support lazy retained scenes, jumpTo and native swipe recognition.',
+);
+
+$homeTabRenders = 0;
+$ordersTabRenders = 0;
+$lazyTabs = Router::tabs('home')
+    ->tab('home', 'Home', static function () use (&$homeTabRenders): Screen {
+        $homeTabRenders++;
+        return Screen::make(Text::make('Lazy home'));
+    })
+    ->tab('orders', 'Orders', static function () use (&$ordersTabRenders): Screen {
+        $ordersTabRenders++;
+        return Screen::make(Text::make('Lazy orders'));
+    })
+    ->appearance(0xFF0F172A, 0xFF60A5FA, 0xFF94A3B8, 0xFF1E293B)
+    ->persistence('test-lazy-tabs')
+    ->build();
+$lazyTabs->toElement();
+$assert(
+    $homeTabRenders === 1 && $ordersTabRenders === 0,
+    'Tab navigation must mount only the selected destination during cold start.',
+);
+$lazyTabs->select('orders');
+$lazyTabs->toElement();
+$assert(
+    $homeTabRenders === 1 && $ordersTabRenders === 1,
+    'Selecting a tab must lazily mount only the next destination.',
+);
+$lazyTabs->select('home');
+$lazyTabs->toElement();
+$assert(
+    $homeTabRenders === 1 && $ordersTabRenders === 1,
+    'Previously visited tab scenes must be retained instead of invoking route factories again.',
+);
+$nestedStack = Router::stack('nested.index')
+    ->route('nested.index', static fn () => Screen::make(Text::make('Nested')))
+    ->build();
+$nestedTabs = Router::tabs('nested')
+    ->tab('nested', 'Nested', $nestedStack)
+    ->tab('other', 'Other', Screen::make(Text::make('Other')))
+    ->persistence('test-recursive-tabs')
+    ->build();
+$nestedTabs->toElement();
+$assert(
+    $nestedTabs->getState()['routes'][0]['state']['type'] === 1,
+    'Navigation state must recursively expose mounted child navigators.',
+);
+$nestedStack->push('nested.index');
+$outerNavigator = Router::stack('app')
+    ->route('app', static fn () => $nestedTabs)
+    ->build();
+$outerNavigator->render();
+$nestedStateEvents = 0;
+$nestedStateSubscription = $outerNavigator->addListener(
+    NavigationEventType::State,
+    static function () use (&$nestedStateEvents): void {
+        $nestedStateEvents++;
+    },
+);
+$nestedStack->push('nested.index');
+$assert(
+    $nestedStateEvents === 1
+        && $outerNavigator->getState()['routes'][0]['state']['routes'][0]['state']['index'] === 2,
+    'Nested state changes must bubble to the root without polling or remounting scenes.',
+);
+$assert(
+    $outerNavigator->canGoBack()
+        && $outerNavigator->goBack()
+        && $nestedStack->canGoBack()
+        && $outerNavigator->goBack()
+        && !$nestedStack->canGoBack(),
+    'Back must recurse into the focused child navigator before changing the parent stack.',
+);
+$assert(
+    $outerNavigator->dispatch(
+        NavigationAction::push('nested.index')->target($nestedStack->key()),
+    )
+        && $nestedStack->getState()['index'] === 1
+        && $outerNavigator->dispatch(NavigationAction::goBack()->target($nestedStack->key()))
+        && $nestedStack->getState()['index'] === 0,
+    'Targeted actions must traverse stack, tabs and the focused nested stack without being consumed by an ancestor.',
+);
+$nestedStack->push('nested.index', ['generation' => 2]);
+$savedNestedTree = $outerNavigator->saveState();
+$freshNestedStack = Router::stack('nested.index')
+    ->route('nested.index', static fn () => Screen::make(Text::make('Restored nested')))
+    ->build();
+$freshNestedTabs = Router::tabs('nested')
+    ->tab('nested', 'Nested', $freshNestedStack)
+    ->tab('other', 'Other', Screen::make(Text::make('Other')))
+    ->persistence('test-restored-recursive-tabs')
+    ->build();
+$freshOuter = Router::stack('app')
+    ->route('app', static fn () => $freshNestedTabs)
+    ->build();
+$freshOuter->restoreState($savedNestedTree);
+$freshOuter->render();
+$freshNestedTabs->toElement();
+$assert(
+    $freshNestedStack->getState()['index'] === 1
+        && $freshNestedStack->current()->integer('generation') === 2,
+    'Cold restoration must recursively rehydrate focused child stacks without eagerly mounting inactive tabs.',
+);
+$nestedStateSubscription->unsubscribe();
+$assert(
+    \Pam\Desktop\Protocol::SDK_VERSION === '1.46.34',
+    'The runtime SDK contract must match the 1.46.34 release.',
+);
+$protocolReport = \Pam\Desktop\Protocol::negotiate(new \Pam\Desktop\ProtocolHandshake(
+    abiVersion: 1,
+    minimumProtocolVersion: 1,
+    maximumProtocolVersion: 2,
+    capabilities: ['wire.binary.v1', 'renderer.incremental.v1', 'peer.future.v1'],
+));
+$assert(
+    $protocolReport->isCompatible()
+        && $protocolReport->protocolVersion === 1
+        && $protocolReport->capabilities === ['renderer.incremental.v1', 'wire.binary.v1']
+        && $protocolReport->requireCapabilities(['wire.binary.v1'])->isCompatible()
+        && $protocolReport->requireCapabilities(['renderer.gpu.v1'])->status
+            === \Pam\Desktop\ProtocolCompatibilityStatus::MissingCapability
+        && array_map(
+            static fn (\Pam\Desktop\ProtocolCompatibilityStatus $status): int => $status->value,
+            \Pam\Desktop\ProtocolCompatibilityStatus::cases(),
+        ) === [1, 2, 3, 4],
+    'Protocol negotiation must select the common ABI, version and capabilities deterministically.',
+);
+$assert(
+    \Pam\Desktop\Protocol::negotiate(new \Pam\Desktop\ProtocolHandshake(2, 1, 1, []))->status
+        === \Pam\Desktop\ProtocolCompatibilityStatus::AbiMismatch
+        && \Pam\Desktop\Protocol::negotiate(new \Pam\Desktop\ProtocolHandshake(1, 2, 3, []))->status
+            === \Pam\Desktop\ProtocolCompatibilityStatus::ProtocolMismatch,
+    'Protocol negotiation must fail closed for incompatible ABI and protocol ranges.',
+);
+$updateBundle = sys_get_temp_dir().'/pam-desktop-update-'.getmypid().'.bin';
+file_put_contents($updateBundle, 'signed-pam-desktop-bundle');
+$updateManifest = new \Pam\Desktop\Update\SignedUpdateManifest(
+    buildIdentifier: str_repeat('a', 64),
+    bundleSha256: hash_file('sha256', $updateBundle),
+    abiVersion: \Pam\Desktop\Protocol::ABI_VERSION,
+    protocolVersion: \Pam\Desktop\Protocol::VERSION,
+    channel: \Pam\Desktop\Update\UpdateChannel::Stable,
+    rolloutBasisPoints: 2_500,
+    capabilities: ['wire.binary.v1', 'renderer.incremental.v1'],
+);
+$updateJson = $updateManifest->canonicalJson();
+$updateKeyPair = sodium_crypto_sign_keypair();
+$updateSecretKey = sodium_crypto_sign_secretkey($updateKeyPair);
+$updatePublicKey = sodium_crypto_sign_publickey($updateKeyPair);
+$updateSignature = sodium_crypto_sign_detached($updateJson, $updateSecretKey);
+$approvedUpdate = \Pam\Desktop\Update\UpdateVerifier::evaluate(
+    $updateJson,
+    base64_encode($updateSignature),
+    base64_encode($updatePublicKey),
+    str_repeat('b', 64),
+    2_499,
+);
+$assert(
+    $approvedUpdate->approved()
+        && \Pam\Desktop\Update\UpdateVerifier::verifyBundle($updateBundle, $updateManifest)
+        && \Pam\Desktop\Update\UpdateVerifier::evaluate(
+            $updateJson,
+            base64_encode(str_repeat("\0", SODIUM_CRYPTO_SIGN_BYTES)),
+            base64_encode($updatePublicKey),
+            str_repeat('b', 64),
+            0,
+        )->status === \Pam\Desktop\Update\UpdateDecisionStatus::InvalidSignature
+        && \Pam\Desktop\Update\UpdateVerifier::evaluate(
+            $updateJson,
+            base64_encode($updateSignature),
+            base64_encode($updatePublicKey),
+            str_repeat('b', 64),
+            2_500,
+        )->status === \Pam\Desktop\Update\UpdateDecisionStatus::OutsideRollout
+        && array_map(
+            static fn (\Pam\Desktop\Update\UpdateDecisionStatus $status): int => $status->value,
+            \Pam\Desktop\Update\UpdateDecisionStatus::cases(),
+        ) === [1, 2, 3, 4, 5, 6],
+    'Signed OTA manifests must verify Ed25519, ABI, capabilities, rollout, and exact bundle bytes.',
+);
+$updateSlotsPath = sys_get_temp_dir().'/pam-desktop-update-slots-'.getmypid();
+if (is_dir($updateSlotsPath)) {
+    foreach (glob($updateSlotsPath.'/*') ?: [] as $updateSlotFile) {
+        if (is_file($updateSlotFile)) {
+            unlink($updateSlotFile);
+        }
+    }
+    rmdir($updateSlotsPath);
+}
+$updateSlots = new \Pam\Desktop\Update\UpdateSlotManager($updateSlotsPath);
+$runtimeStatePath = sys_get_temp_dir().'/pam-desktop-runtime-state-'.getmypid().'/pam/state';
+mkdir($runtimeStatePath, 0o700, true);
+$previousRuntimeState = getenv('PAM_DESKTOP_STATE_DIR');
+putenv('PAM_DESKTOP_STATE_DIR='.$runtimeStatePath);
+$runtimeUpdateSlots = \Pam\Desktop\Update\UpdateSlotManager::forRuntime();
+$assert(
+    is_dir(dirname($runtimeStatePath).'/updates'),
+    'Runtime OTA slots must use the private directory shared with Android and iOS hosts.',
+);
+putenv($previousRuntimeState === false ? 'PAM_DESKTOP_STATE_DIR' : 'PAM_DESKTOP_STATE_DIR='.$previousRuntimeState);
+$assert(
+    $updateSlots->stage($updateBundle, $updateManifest) === \Pam\Desktop\Update\UpdateActivationStatus::Staged
+        && $updateSlots->activate() === \Pam\Desktop\Update\UpdateActivationStatus::Activated
+        && file_get_contents((string) $updateSlots->activeBundle()) === 'signed-pam-desktop-bundle',
+    'The first verified OTA bundle must activate atomically.',
+);
+file_put_contents($updateBundle, 'second-signed-pam-desktop-bundle');
+$secondUpdateManifest = new \Pam\Desktop\Update\SignedUpdateManifest(
+    buildIdentifier: str_repeat('c', 64),
+    bundleSha256: (string) hash_file('sha256', $updateBundle),
+    abiVersion: \Pam\Desktop\Protocol::ABI_VERSION,
+    protocolVersion: \Pam\Desktop\Protocol::VERSION,
+    channel: \Pam\Desktop\Update\UpdateChannel::Stable,
+    rolloutBasisPoints: 10_000,
+    capabilities: ['wire.binary.v1'],
+);
+$assert(
+    $updateSlots->stage($updateBundle, $secondUpdateManifest) === \Pam\Desktop\Update\UpdateActivationStatus::Staged
+        && $updateSlots->activate() === \Pam\Desktop\Update\UpdateActivationStatus::Activated
+        && file_get_contents((string) $updateSlots->activeBundle()) === 'second-signed-pam-desktop-bundle'
+        && $updateSlots->rollback() === \Pam\Desktop\Update\UpdateActivationStatus::RolledBack
+        && file_get_contents((string) $updateSlots->activeBundle()) === 'signed-pam-desktop-bundle'
+        && array_map(
+            static fn (\Pam\Desktop\Update\UpdateActivationStatus $status): int => $status->value,
+            \Pam\Desktop\Update\UpdateActivationStatus::cases(),
+        ) === [1, 2, 3],
+    'OTA slots must preserve one previous verified bundle and roll back atomically.',
+);
+sodium_memzero($updateSecretKey);
+unlink($updateBundle);
+foreach (glob($updateSlotsPath.'/*') ?: [] as $updateSlotFile) {
+    if (is_file($updateSlotFile)) {
+        unlink($updateSlotFile);
+    }
+}
+rmdir($updateSlotsPath);
+foreach (glob(dirname($runtimeStatePath).'/updates/*') ?: [] as $runtimeUpdateFile) {
+    if (is_file($runtimeUpdateFile)) {
+        unlink($runtimeUpdateFile);
+    }
+}
+rmdir(dirname($runtimeStatePath).'/updates');
+rmdir($runtimeStatePath);
+rmdir(dirname($runtimeStatePath));
+rmdir(dirname(dirname($runtimeStatePath)));
+
+$bottomSheet = BottomSheet::make(
+    Text::make('Sheet content'),
+    [0.25, 0.6, 1.0],
+    1,
+)
+    ->dismissible(false)
+    ->backdropDismiss(false)
+    ->handleVisible(false)
+    ->dragEnabled(false)
+    ->cornerRadius(28)
+    ->keyboardBehavior(BottomSheetKeyboardBehavior::FillParent);
+$bottomSheetProperties = $bottomSheet->properties();
+$assert(
+    $bottomSheet->kind() === NodeKind::Modal
+        && $bottomSheetProperties[PropKey::BottomSheetIndex->value] === 1
+        && $bottomSheetProperties[PropKey::BottomSheetDismissible->value] === false
+        && $bottomSheetProperties[PropKey::BottomSheetKeyboardBehavior->value]
+            === BottomSheetKeyboardBehavior::FillParent->value,
+    'BottomSheet must compile its complete native configuration.',
+);
+$templateBottomSheet = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<BottomSheet index="1" keyboardBehavior="extend">'
+        .'<Text>Template sheet</Text></BottomSheet>',
+    ),
+    new class {
+    },
+    [],
+);
+$assert(
+    $templateBottomSheet->properties()[PropKey::BottomSheetIndex->value] === 1
+        && $templateBottomSheet->properties()[
+            PropKey::BottomSheetKeyboardBehavior->value
+        ] === BottomSheetKeyboardBehavior::Extend->value,
+    'BottomSheet must be available from declarative templates.',
+);
+$snapBytes = static fn (\Pam\Desktop\Element $sheet): string => ($sheet->properties()[PropKey::BottomSheetSnapPoints->value] ?? null)?->bytes ?? '';
+$dynamicSheet = BottomSheet::make(Text::make('Fits its content'), []);
+$templateDynamicSheet = TemplateRenderer::render(
+    TemplateCompiler::compile('<BottomSheet snapPoints="content"><Text>Anexar</Text></BottomSheet>'),
+    new class {
+    },
+    [],
+);
+$assert(
+    $snapBytes($dynamicSheet) === pack('v', 0)
+        && $snapBytes(BottomSheet::make(Text::make('x'), [0.5])->dynamicSizing()) === pack('v', 0)
+        && $snapBytes($templateDynamicSheet) === pack('v', 0)
+        && $dynamicSheet->properties()[PropKey::BottomSheetIndex->value] === 0,
+    'BottomSheet without snap points (snapPoints="content") must size itself to its content.',
+);
+$safeAreaCli = getenv('PAM_DESKTOP_CLI');
+if (is_string($safeAreaCli) && $safeAreaCli !== '' && is_file($safeAreaCli)) {
+    // A sheet without any bottom padding: the engine pads it, so the lint
+    // finds nothing; a SafeAreaView opt-out with a button at the bottom is
+    // reported for both navigation modes.
+    $clean = \Pam\Desktop\Tooling\SafeAreaLint::check(
+        Column::make(Text::make('Screen'), BottomSheet::make(Column::make(Text::make('Anexar')), []))->property(PropKey::FlexGrow, 1.0),
+    );
+    $optOut = \Pam\Desktop\Tooling\SafeAreaLint::check(
+        SafeAreaView::make(
+            Column::make(\Pam\Desktop\UI\View::make()->property(PropKey::FlexGrow, 1.0), Button::make('Enviar'))
+                ->property(PropKey::FlexGrow, 1.0),
+        )
+            ->property(PropKey::FlexGrow, 1.0)
+            ->edges(false, false, false, false),
+    );
+    $assert(
+        $clean === [] && count($optOut) === 2 && $optOut[0]['edge'] === 'bottom',
+        'SafeAreaLint must lay out with the real engine and report content inside the insets.',
+    );
+}
+$containedSheet = TemplateRenderer::render(
+    TemplateCompiler::compile('<BottomSheet keyboardBehavior="contain"><Text>Composer</Text></BottomSheet>'),
+    new class {
+    },
+    [],
+);
+$assert(
+    $containedSheet->properties()[PropKey::BottomSheetKeyboardBehavior->value]
+        === BottomSheetKeyboardBehavior::Contain->value
+        && BottomSheetKeyboardBehavior::Contain->value === 4,
+    'BottomSheet keyboardBehavior="contain" must keep the sheet in place (4).',
+);
+
+$animated = Animated::make(
+    Text::make('Animated'),
+    [
+        new AnimationKeyframe(0.0, opacity: 0.0, translationY: 12.0),
+        new AnimationKeyframe(1.0, opacity: 1.0, translationY: 0.0),
+    ],
+    420,
+)->iterations(2)->autoReverse();
+$assert(
+    $animated->properties()[PropKey::AnimationIterations->value] === 2
+        && $animated->properties()[PropKey::AnimationAutoReverse->value] === true,
+    'Animated must encode declarative native keyframes.',
+);
+
+$interaction = InteractionRegion::make(Text::make('Card'))
+    ->draggable('card:42')
+    ->acceptsDrop()
+    ->contextMenu([
+        new NativeMenuItem('inspect', 'Inspect'),
+        new NativeMenuItem('delete', 'Delete', destructive: true),
+    ]);
+$assert(
+    $interaction->properties()[PropKey::Draggable->value] === true
+        && $interaction->properties()[PropKey::DropEnabled->value] === true
+        && isset($interaction->properties()[PropKey::ContextMenuItems->value]),
+    'InteractionRegion must encode drag, drop and native menu behavior.',
+);
+
+$media = MediaPlayer::make('https://example.com/video.mp4', MediaType::Video)
+    ->autoPlay()
+    ->loop()
+    ->fit(ImageFit::Cover)
+    ->volume(0.5);
+$assert(
+    $media->kind() === NodeKind::Media
+        && $media->properties()[PropKey::MediaLoop->value] === true
+        && $media->properties()[PropKey::ImageFit->value] === ImageFit::Cover->value,
+    'MediaPlayer must compile into its dedicated native node kind.',
+);
+
+$cachedImage = Image::make('https://example.com/hero.webp')
+    ->cache(MediaCachePolicy::StaleWhileRevalidate)
+    ->cacheKey('hero:v3')
+    ->maxAge(2_592_000_000)
+    ->cacheTags(['feed', 'hero'])
+    ->pinOffline()
+    ->priority(MediaPriority::Visible)
+    ->maxCacheSize(64 * 1024 * 1024)
+    ->resize(720, 1280)
+    ->thumbnail('https://example.com/hero-thumb.webp')
+    ->sharedTransition(
+        'feed.hero.42',
+        SharedTransitionStyle::spring(durationMs: 420, damping: 0.76)
+            ->resize(SharedTransitionResizeMode::Clip)
+            ->crossFade(),
+    )
+    ->checksum(str_repeat('a', 64));
+$cachedImageProperties = $cachedImage->properties();
+$sharedTransitionConfig = json_decode(
+    $cachedImageProperties[PropKey::SharedTransitionConfig->value],
+    true,
+    flags: JSON_THROW_ON_ERROR,
+);
+$assert(
+    $cachedImageProperties[PropKey::MediaCachePolicy->value]
+        === MediaCachePolicy::StaleWhileRevalidate->value
+        && $cachedImageProperties[PropKey::MediaCacheKey->value] === 'hero:v3'
+        && $cachedImageProperties[PropKey::MediaCacheTags->value] === "feed\nhero"
+        && $cachedImageProperties[PropKey::SharedTransitionTag->value] === 'feed.hero.42'
+        && $sharedTransitionConfig['durationMs'] === 420
+        && $sharedTransitionConfig['easing'] === 3
+        && $sharedTransitionConfig['resizeMode'] === 2
+        && $sharedTransitionConfig['crossFade'] === true
+        && $sharedTransitionConfig['damping'] === 0.76
+        && $cachedImageProperties[PropKey::MediaCachePinOffline->value] === true
+        && $cachedImageProperties[PropKey::MediaResizeWidth->value] === 720
+        && $cachedImageProperties[PropKey::MediaCacheChecksum->value] === str_repeat('a', 64),
+    'Image media-cache helpers must encode the complete append-only native contract.',
+);
+
+$cachedMedia = MediaPlayer::make('https://example.com/movie.mp4')
+    ->cache(MediaCachePolicy::Disk)
+    ->cacheKey('movie:42')
+    ->streamingCache()
+    ->preloadSeconds(12)
+    ->downloadWhilePlaying()
+    ->pinOffline();
+$assert(
+    $cachedMedia->properties()[PropKey::MediaCacheStreaming->value] === true
+        && $cachedMedia->properties()[PropKey::MediaCachePreloadSeconds->value] === 12
+        && $cachedMedia->properties()[PropKey::MediaCacheDownloadWhilePlaying->value] === true,
+    'MediaPlayer must expose streaming, preload and offline cache controls.',
+);
+
+$cachedTagImage = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Image source="https://example.com/tag.webp" cache="stale-while-revalidate" '.
+        'cache-key="tag:v2" cache-max-age="30d" cache-tags="feed,avatar" pin-offline '.
+        'priority="visible" cache-max-bytes="64mb" resize-width="512" resize-height="512" />',
+    ),
+    null,
+    [],
+);
+$assert(
+    $cachedTagImage->properties()[PropKey::MediaCachePolicy->value]
+        === MediaCachePolicy::StaleWhileRevalidate->value
+        && $cachedTagImage->properties()[PropKey::MediaCacheMaxAgeMs->value] === 2_592_000_000
+        && $cachedTagImage->properties()[PropKey::MediaCacheMaxBytes->value] === 67_108_864
+        && $cachedTagImage->properties()[PropKey::MediaResizeHeight->value] === 512,
+    'Tag media-cache attributes must normalize kebab-case values and bounded units.',
+);
+$templateSharedStyle = SharedTransitionStyle::spring(durationMs: 360, damping: 0.8)
+    ->resize(SharedTransitionResizeMode::Clip)
+    ->crossFade();
+$sharedTagImage = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Image source="post.webp" shared-transition="post:42" '.
+        ':shared-transition-style="$sharedStyle" />',
+    ),
+    null,
+    ['sharedStyle' => $templateSharedStyle],
+);
+$assert(
+    $sharedTagImage->properties()[PropKey::SharedTransitionTag->value] === 'post:42'
+        && $sharedTagImage->properties()[PropKey::SharedTransitionConfig->value]
+            === $templateSharedStyle->toJson(),
+    'PAM templates must expose typed shared-element tags and motion styles.',
+);
+$returnStyle = SharedTransitionStyle::spring(durationMs: 360, damping: 0.82, stiffness: 240, mass: 0.9)
+    ->returning(200);
+$sharedTagView = TemplateRenderer::render(
+    TemplateCompiler::compile('<View shared="avatar:7" :sharedStyle="$style"><Text>A</Text></View>'),
+    null,
+    ['style' => $returnStyle],
+);
+$untaggedView = TemplateRenderer::render(TemplateCompiler::compile('<View :shared="$tag" />'), null, ['tag' => null]);
+$returnConfig = json_decode($returnStyle->toJson(), true);
+$assert(
+    $sharedTagView->properties()[PropKey::SharedTransitionTag->value] === 'avatar:7'
+        && $sharedTagView->properties()[PropKey::SharedTransitionConfig->value] === $returnStyle->toJson()
+        && !array_key_exists(PropKey::SharedTransitionTag->value, $untaggedView->properties())
+        && $returnConfig['returnDurationMs'] === 200
+        && $returnConfig['returnEasing'] === SharedTransitionEasing::EaseIn->value
+        && !array_key_exists('returnDurationMs', json_decode(SharedTransitionStyle::timing()->toJson(), true)),
+    'Any template element takes a `shared` tag (null leaves it untagged) and a style with a return curve.',
+);
+$modalShared = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<View><Image source="a.jpg" :shared="$tag" />'
+        .'<Modal p-if="$open" visible="true" presentation="fullScreen" animationType="fade">'
+        .'<View :shared="$tag" :sharedStyle="$style"><Image source="a-full.jpg" resizeMode="contain" /></View>'
+        .'</Modal></View>',
+    ),
+    null,
+    ['tag' => 'avatar:7', 'style' => $returnStyle, 'open' => true],
+);
+$modalSharedThumb = $modalShared->children()[0];
+$modalSharedModal = $modalShared->children()[1] ?? null;
+$modalSharedPhoto = $modalSharedModal?->children()[0] ?? null;
+$assert(
+    $modalSharedThumb->properties()[PropKey::SharedTransitionTag->value] === 'avatar:7'
+        && $modalSharedModal?->kind() === NodeKind::Modal
+        && $modalSharedPhoto?->properties()[PropKey::SharedTransitionTag->value] === 'avatar:7'
+        && $modalSharedPhoto->properties()[PropKey::SharedTransitionConfig->value] === $returnStyle->toJson(),
+    'A `shared` tag inside a Modal reaches the retained tree like any other element (the host pairs it with the screen below).',
+);
+
+$launchConfig = json_decode(SharedTransitionStyle::spring(360)->returning(200)->launchOnTap()->toJson(), true);
+$assert(
+    $launchConfig['launch'] === true && $launchConfig['launchBackdrop'] === '#000000' && $launchConfig['returnDurationMs'] === 200
+        && !array_key_exists('launch', json_decode(SharedTransitionStyle::spring(360)->toJson(), true)),
+    'launchOnTap() marks the tapped element to fly on the tap itself and keeps the other options.',
+);
+
+$permission = new PermissionDecision(
+    PermissionKind::Photos,
+    PermissionStatus::Limited,
+    false,
+);
+$assert(
+    $permission->granted()
+        && PermissionKind::LocationWhenInUse->value === 5
+        && PermissionKind::Contacts->value === 6
+        && PermissionStatus::Limited->value === 4
+,
+    'Production capability variants must remain sequential integer enums.',
+);
+
+Stores::resetRuntime();
+$counterStore = Stores::get(new class extends Store {
+    protected function state(): array
+    {
+        return ['count' => 1, 'label' => 'Counter', 'temporary' => false];
+    }
+
+    protected function persist(): array
+    {
+        return ['count'];
+    }
+
+    public function increment(int $amount = 1): void
+    {
+        $this->count += $amount;
+    }
+
+    public function failAfterMutation(): void
+    {
+        $this->count = 999;
+        throw new RuntimeException('rollback');
+    }
+
+    #[StoreComputed]
+    protected function doubled(): int
+    {
+        return $this->count * 2;
+    }
+}::class);
+$observedChanges = [];
+$counterStore->subscribe(static function ($change) use (&$observedChanges): void {
+    $observedChanges[] = $change;
+});
+$counterStore->dispatch('increment', ['amount' => 2]);
+$assert(
+    $counterStore->count === 3
+        && $counterStore->doubled === 6
+        && count($observedChanges) === 1
+        && $observedChanges[0]->diff['count'] === ['before' => 1, 'after' => 3],
+    'Pam Store actions must batch mutations, invalidate computed values and publish diffs.',
+);
+$counterStore->undo();
+$assert($counterStore->count === 1, 'Pam Store must support undo.');
+$counterStore->redo();
+$assert($counterStore->count === 3, 'Pam Store must support redo.');
+try {
+    $counterStore->dispatch('failAfterMutation');
+    $assert(false, 'Failed store actions must throw.');
+} catch (RuntimeException) {
+    $assert($counterStore->count === 3, 'Failed store actions must roll state back atomically.');
+}
+try {
+    $counterStore->optimistic(
+        'optimistic-increment',
+        static function () use ($counterStore): void {
+            $counterStore->count = 10;
+        },
+        static fn () => throw new RuntimeException('network'),
+    );
+    $assert(false, 'Failed optimistic tasks must throw.');
+} catch (RuntimeException) {
+    $assert($counterStore->count === 3, 'Optimistic updates must roll back on failure.');
+}
+$changeId = $observedChanges[0]->id;
+$counterStore->dispatch('increment', ['amount' => 5], ActionPolicy::Every);
+$assert(
+    Stores::timeTravel($changeId)
+        && $counterStore->count === 3
+        && StoreChangeKind::TimeTravel->value === 5,
+    'Pam Store DevTools history must support time travel with integer change kinds.',
+);
+$middlewareCalls = 0;
+Stores::middleware(new class($middlewareCalls) implements StoreMiddleware {
+    public function __construct(private int &$calls)
+    {
+    }
+
+    public function handle(Store $store, string $action, array $arguments, Closure $next): mixed
+    {
+        $this->calls++;
+
+        return $next();
+    }
+});
+$counterStore->dispatch('increment');
+$assert($middlewareCalls === 1, 'Pam Store middleware must wrap actions.');
+
+$componentLog = [];
+$component = new class($componentLog) extends Component {
+    public int $renders = 0;
+
+    public function __construct(private array &$log)
+    {
+    }
+
+    protected function initialState(): array
+    {
+        return ['count' => 1];
+    }
+
+    public function setup(): void
+    {
+        $this->log[] = 'setup';
+    }
+
+    public function mount(): void
+    {
+        $this->log[] = 'mount';
+    }
+
+    public function rendering(): void
+    {
+        $this->log[] = 'rendering';
+    }
+
+    public function render(): \Pam\Desktop\Renderable
+    {
+        $this->renders++;
+
+        return Text::make((string) $this->doubled);
+    }
+
+    #[\Pam\Desktop\Attributes\Computed]
+    protected function doubled(): int
+    {
+        return $this->state->count * 2;
+    }
+
+    protected function effects(): array
+    {
+        return [
+            \Pam\Desktop\Effect::watch(
+                fn (): int => $this->state->count,
+                function (int $count): Closure {
+                    $this->log[] = "effect:{$count}";
+
+                    return function (): void {
+                        $this->log[] = 'effect:cleanup';
+                    };
+                },
+            ),
+        ];
+    }
+
+    public function increment(): void
+    {
+        $this->state->count++;
+    }
+
+    public function shouldUpdate(\Pam\Desktop\ComponentChanges $changes): bool
+    {
+        return !$changes->changed('ignored');
+    }
+
+    public function cleanup(): void
+    {
+        $this->log[] = 'cleanup';
+    }
+
+    #[\Pam\Desktop\Attributes\Expose]
+    public function exposedCount(): int
+    {
+        return $this->state->count;
+    }
+
+    public function bind(\Pam\Desktop\ComponentRef $ref): void
+    {
+        $this->exposeTo($ref);
+    }
+};
+ComponentLifecycle::beginRender();
+$component->toElement();
+ComponentLifecycle::finishRender();
+ComponentLifecycle::commit();
+$assert(
+    $componentLog === ['setup', 'mount', 'rendering', 'effect:1']
+        && $component->renders === 1,
+    'Component setup, render and effect hooks must run in deterministic order.',
+);
+$component->increment();
+ComponentLifecycle::beginRender();
+$component->toElement();
+ComponentLifecycle::finishRender();
+ComponentLifecycle::commit();
+$assert(
+    $component->renders === 2
+        && array_slice($componentLog, -3) === ['rendering', 'effect:cleanup', 'effect:2'],
+    'Local state must invalidate computed values, render and clean changed effects.',
+);
+ComponentLifecycle::beginRender();
+$component->toElement();
+ComponentLifecycle::finishRender();
+ComponentLifecycle::commit();
+$assert(
+    $component->renders === 2,
+    'Dependency tracking must skip clean component subtrees.',
+);
+$ref = new \Pam\Desktop\ComponentRef();
+$component->bind($ref);
+$assert($ref->call('exposedCount') === 2, 'Component refs may call only exposed methods.');
+
+$boundary = new class extends Component {
+    public function render(): \Pam\Desktop\Renderable
+    {
+        throw new RuntimeException('child failed');
+    }
+
+    public function failed(
+        Throwable $error,
+        \Pam\Desktop\ErrorContext $context,
+    ): ?\Pam\Desktop\Renderable {
+        return Text::make($context->phase.':'.$error->getMessage());
+    }
+};
+ComponentLifecycle::beginRender();
+$boundaryElement = $boundary->toElement();
+ComponentLifecycle::finishRender();
+ComponentLifecycle::commit();
+$assert(
+    $boundaryElement->kind() === NodeKind::Text,
+    'Component error boundaries must recover a failed render with a fallback element.',
+);
+
+$context = new \stdClass();
+$provider = new class($context) extends Component {
+    public function __construct(private object $context)
+    {
+    }
+
+    protected function provide(): array
+    {
+        return [\stdClass::class => $this->context];
+    }
+
+    public function render(): \Pam\Desktop\Renderable
+    {
+        return Text::make('provider');
+    }
+};
+$consumer = new class extends Component {
+    public function context(): object
+    {
+        return $this->inject(\stdClass::class);
+    }
+
+    protected function slots(): array
+    {
+        return ['content' => \Pam\Desktop\Slot::required()];
+    }
+
+    public function render(): \Pam\Desktop\Renderable
+    {
+        return Text::make('consumer');
+    }
+};
+$provider->__pamConfigure([], []);
+$consumer->__pamConfigure(['content' => [Text::make('slot')]], [], $provider);
+$assert(
+    $consumer->context() === $context,
+    'Component provide/inject context and typed slot validation must follow ancestry.',
+);
+
+$nativeRef = new \Pam\Desktop\NativeRef();
+$focused = false;
+$nativeRef->attach([
+    'focus' => static function () use (&$focused): void {
+        $focused = true;
+    },
+    'blur' => static function (): void {},
+    'measure' => static fn (): array => [
+        'x' => 0.0,
+        'y' => 0.0,
+        'width' => 100.0,
+        'height' => 40.0,
+    ],
+    'scrollIntoView' => static function (): void {},
+]);
+$nativeRef->focus();
+$assert(
+    $focused && $nativeRef->measure()['width'] === 100.0,
+    'Native refs must expose lifecycle-safe focus and measurement operations.',
+);
+$nativeRef->detach();
+
+$schedulerOrder = [];
+\Pam\Desktop\Scheduling\Scheduler::reset();
+\Pam\Desktop\Scheduling\Scheduler::schedule(
+    static function () use (&$schedulerOrder): void {
+        $schedulerOrder[] = 'background';
+    },
+    \Pam\Desktop\Scheduling\TaskPriority::Background,
+);
+\Pam\Desktop\Scheduling\Scheduler::schedule(
+    static function () use (&$schedulerOrder): void {
+        $schedulerOrder[] = 'input';
+    },
+    \Pam\Desktop\Scheduling\TaskPriority::UserBlocking,
+);
+$obsolete = \Pam\Desktop\Scheduling\Scheduler::schedule(
+    static function () use (&$schedulerOrder): void {
+        $schedulerOrder[] = 'obsolete';
+    },
+    coalesce: 'search',
+);
+\Pam\Desktop\Scheduling\Scheduler::schedule(
+    static function () use (&$schedulerOrder): void {
+        $schedulerOrder[] = 'latest';
+    },
+    coalesce: 'search',
+);
+\Pam\Desktop\Scheduling\Scheduler::drain(100);
+$assert(
+    $obsolete->token->cancelled()
+        && $schedulerOrder === ['input', 'latest', 'background'],
+    'Scheduler must prioritize user work and coalesce obsolete tasks.',
+);
+$resource = new AsyncResource(
+    static fn (\Pam\Desktop\Scheduling\CancellationToken $token): array => ['ready'],
+    'dashboard',
+);
+$resource->load(\Pam\Desktop\Scheduling\TaskPriority::UserBlocking);
+\Pam\Desktop\Scheduling\Scheduler::drain(100);
+$suspended = Suspense::make(
+    $resource->value(),
+    static fn (array $data): Text => Text::make($data[0]),
+    Text::make('Loading'),
+);
+$assert(
+    $resource->value()->status === AsyncStatus::Content
+        && $suspended->toElement()->properties()[PropKey::Text->value] === 'ready',
+    'Async resources must run through the priority scheduler and reveal Suspense content.',
+);
+
+$idl = IdlCompiler::compile(json_encode([
+    'version' => 1,
+    'namespace' => 'Dev.Pam.Generated',
+    'modules' => [[
+        'id' => 1,
+        'name' => 'camera',
+        'methods' => [[
+            'id' => 1,
+            'name' => 'capture',
+            'parameters' => [[
+                'id' => 1,
+                'name' => 'quality',
+                'type' => 3,
+                'required' => false,
+            ]],
+        ]],
+    ]],
+], JSON_THROW_ON_ERROR));
+$assert(
+    str_contains($idl->php, 'final class CameraBridge')
+        && str_contains($idl->kotlin, 'const val CAPTURE: Int = 1')
+        && str_contains($idl->swift, 'static let capture: Int = 1')
+        && str_contains($idl->rust, 'CAMERA_CAPTURE: u16 = 1')
+        && strlen($idl->fingerprint) === 64,
+    'Typed IDL must generate fingerprinted PHP, Kotlin, Swift, and Rust contracts.',
+);
+$worklet = Worklet::input()
+    ->interpolate(0, 200, 1, 0)
+    ->clamp(0, 1);
+$assert(
+    abs($worklet->evaluate(50) - 0.75) < 0.000001
+        && str_starts_with($worklet->bytecode(), 'PNW1')
+        && strlen($worklet->bytecode()) < 256,
+    'Worklets must compile bounded data-only numeric programs deterministically.',
+);
+$nativeWorklet = Animated::worklet(
+    Text::make('Native frame'),
+    $worklet,
+    WorkletTarget::Opacity,
+    200,
+)->iterations(3);
+$nativeWorkletProperties = $nativeWorklet->properties();
+$assert(
+    $nativeWorkletProperties[PropKey::WorkletProgram->value] instanceof BinaryValue
+        && $nativeWorkletProperties[PropKey::WorkletTarget->value] === 1
+        && $nativeWorkletProperties[PropKey::WorkletDurationMs->value] === 200
+        && $nativeWorkletProperties[PropKey::WorkletIterations->value] === 3,
+    'Animated worklets must cross the render protocol as bounded native programs.',
+);
+$offline = new OfflineMutationQueue();
+$queued = $offline->enqueue('message:local-1', 'messages.send', ['body' => 'Hello']);
+$assert(
+    $offline->enqueue('message:local-1', 'messages.send', ['body' => 'Duplicate'])->id === $queued->id,
+    'Offline sync must deduplicate active mutations by idempotency key.',
+);
+$canvas = Canvas::make()
+    ->roundedRectangle(8, 8, 120, 48, 12, 0xFF6750A4)
+    ->circle(180, 32, 24, 0xFFFFD23F)
+    ->line(8, 80, 220, 80, 4, 0xFF111111);
+$assert(
+    $canvas->kind() === NodeKind::Canvas
+        && str_contains($canvas->properties()[PropKey::CanvasCommands->value], '"kind":2'),
+    'Canvas must encode bounded vector commands for hardware-accelerated native renderers.',
+);
+$serverAction = false;
+$serverTree = ServerDrivenUi::render(
+    json_encode([
+        'version' => 1,
+        'root' => [
+            'kind' => 2,
+            'props' => ['style' => ['padding' => 16, 'gap' => 8]],
+            'children' => [
+                ['kind' => 4, 'props' => ['text' => 'Remote offer']],
+                ['kind' => 5, 'props' => ['label' => 'Open', 'action' => 'offer.open']],
+            ],
+        ],
+    ], JSON_THROW_ON_ERROR),
+    static function (string $action) use (&$serverAction): ?Closure {
+        return $action === 'offer.open'
+            ? static function () use (&$serverAction): void { $serverAction = true; }
+            : null;
+    },
+);
+$serverElement = $serverTree->toElement();
+$assert(
+    $serverElement->kind() === NodeKind::Column
+        && count($serverElement->children()) === 2,
+    'Server-driven UI must render only allowlisted bounded native nodes and actions.',
+);
+$jobRan = false;
+$jobs = new BackgroundJobs();
+$jobs->register(
+    'sync.messages',
+    static function (array $payload, \Pam\Desktop\Scheduling\CancellationToken $token) use (&$jobRan): void {
+        $token->throwIfCancelled();
+        $jobRan = ($payload['conversationId'] ?? null) === 42;
+    },
+);
+$jobs->dispatch('sync.messages', 'conversation:42', ['conversationId' => 42]);
+$assert($jobs->runReady(1_000) === 1, 'Background jobs must schedule ready persisted work.');
+\Pam\Desktop\Scheduling\Scheduler::drain(100);
+$assert(
+    $jobRan && str_contains($jobs->snapshot(), '"status":3'),
+    'Background jobs must execute with cancellation and persist applied state.',
+);
+$offline->sending($queued->id);
+$retry = $offline->retry($queued->id, 1_000, 'network');
+$restoredOffline = OfflineMutationQueue::restore($offline->export());
+$assert(
+    $retry->status === MutationStatus::Retry
+        && $restoredOffline->ready($retry->availableAtMs)[0]->key === 'message:local-1',
+    'Offline sync must persist typed retry state and deterministic backoff.',
+);
+
+$firstLinkingSubscription = \Pam\Desktop\System\Linking::listen(static function (string $url): void {});
+\Pam\Desktop\Internal\Runtime::shutdown();
+$secondLinkingSubscription = \Pam\Desktop\System\Linking::listen(static function (string $url): void {});
+$assert(
+    $firstLinkingSubscription === 1 && $secondLinkingSubscription === 1,
+    'Runtime shutdown must clear process-local listeners before hot reload.',
+);
+\Pam\Desktop\System\Linking::unsubscribe($secondLinkingSubscription);
+
+ComponentLifecycle::shutdown();
+$assert(
+    in_array('effect:cleanup', $componentLog, true)
+        && end($componentLog) === 'cleanup',
+    'Component shutdown must guarantee effect and component cleanup.',
+);
+
+require __DIR__.'/language2.php';
+require __DIR__.'/style_conformance.php';
+require __DIR__.'/singularity.php';
+require __DIR__.'/signals.php';
+require __DIR__.'/visual_dom.php';
+require __DIR__.'/memoization.php';
+require __DIR__.'/hot_reload_state.php';
+require __DIR__.'/appearance.php';
+require __DIR__.'/keyboard_visibility.php';
+
+foreach ($testPluginRoots as $testPluginRoot) {
+    $compatibilityTests = $testPluginRoot.'/tests/core-compat.php';
+    if (is_file($compatibilityTests)) {
+        $manifest = json_decode(file_get_contents($testPluginRoot.'/pam-desktop.plugin.json'), true, flags: JSON_THROW_ON_ERROR);
+        $providerClass = $manifest['php']['provider'];
+        $provider = new $providerClass();
+        $provider->register();
+        $provider->boot();
+        require $compatibilityTests;
+        \Pam\Desktop\Plugin\RuntimeHooks::forget($providerClass);
+    }
+}
+
+require __DIR__.'/native_capabilities.php';
+require __DIR__.'/moved_to_plugin.php';
+require __DIR__.'/i18n.php';
+require __DIR__.'/text_whitespace.php';
+require __DIR__.'/typography_parity.php';
+require __DIR__.'/gestures_animations.php';
+require __DIR__.'/gesture_drivers.php';
+require __DIR__.'/refresh_control.php';
+require __DIR__.'/drag_text.php';
+require __DIR__.'/error_reporting.php';
+require __DIR__.'/conditional_identity.php';
+require __DIR__.'/expression_codegen.php';
+require __DIR__.'/prebuilt_components.php';
+require __DIR__.'/prebuilt_recovery.php';
+require __DIR__.'/gesture_scope.php';
+// The polyfill is compared with the installed ext-mbstring. Desktop workers
+// normally ship the real extension, and libmbfl revisions disagree on a few
+// legacy single-byte encodings, so the differential run is strict only on demand.
+try {
+    require __DIR__.'/mbstring_polyfill.php';
+} catch (RuntimeException $mbstringDifference) {
+    if (getenv('PAM_DESKTOP_STRICT_MBSTRING') === '1') {
+        throw $mbstringDifference;
+    }
+    fwrite(STDERR, "warning: mbstring polyfill differs from this ext-mbstring build (set PAM_DESKTOP_STRICT_MBSTRING=1 to fail).\n");
+}
+require __DIR__.'/runtime_audit.php';
+require __DIR__.'/native_crypto.php';
+require __DIR__.'/navigation_lifecycle.php';
+require __DIR__.'/optional_navigation.php';
+
+require __DIR__.'/view_ref.php';
+require __DIR__.'/portal.php';
+require __DIR__.'/image_events.php';
+require __DIR__.'/encoder_patches.php';
+require __DIR__.'/framework_utilities.php';
+require __DIR__.'/route_coverage.php';
+require __DIR__.'/keyboard_persist_taps.php';
+require __DIR__.'/keyboard_dismiss_mode_lists.php';
+require __DIR__.'/route_error_boundary.php';
+require __DIR__.'/list_window.php';
+require __DIR__.'/list_window_size.php';
+require __DIR__.'/component_root_props.php';
+require __DIR__.'/text_scale_policy.php';
+require __DIR__.'/list_window_template.php';
+require __DIR__.'/list_native_scroll.php';
+require __DIR__.'/launch_url.php';
+require __DIR__.'/handler_purity.php';
+require __DIR__.'/protocol_extension.php';
+require __DIR__.'/memory_bounds.php';
+// Heap measurements need an isolated process, without prior tests' retained fixtures.
+passthru(escapeshellarg(PHP_BINARY).' '.escapeshellarg(__DIR__.'/navigation_memory.php'), $navigationMemoryStatus);
+$assert($navigationMemoryStatus === 0, 'Navigation memory regression harness must pass.');
+require __DIR__.'/media_idle_surface.php';
+require __DIR__.'/media_autoplay_visible.php';
+require __DIR__.'/arch_v2_signals.php';
+require __DIR__.'/arch_v2_signal_fanout.php';
+require __DIR__.'/arch_v2_signal_rendering.php';
+require __DIR__.'/arch_v2_setup_lifecycle.php';
+require __DIR__.'/arch_v2_globals.php';
+require __DIR__.'/arch_v2_composables.php';
+require __DIR__.'/arch_v2_resource.php';
+require __DIR__.'/arch_v2_resource_production.php';
+require __DIR__.'/arch_v2_resource_options.php';
+require __DIR__.'/arch_v2_component_discovery.php';
+require __DIR__.'/arch_v2_routing.php';
+require __DIR__.'/arch_v2_route_compiler.php';
+require __DIR__.'/arch_v2_http.php';
+require __DIR__.'/arch_v2_promise.php';
+require __DIR__.'/arch_v2_locale.php';
+require __DIR__.'/arch_v2_testing.php';
+require __DIR__.'/arch_v2_navigation_modes.php';
+require __DIR__.'/arch_v2_focus_order.php';
+
+echo "Pam Desktop PHP SDK tests passed.\n";

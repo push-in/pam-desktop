@@ -1,0 +1,96 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\System;
+
+use Closure;
+use Pam\Desktop\AppState;
+use Pam\Desktop\Internal\Runtime;
+use Pam\Desktop\Internal\Wire;
+use Pam\Desktop\ModuleResultStatus;
+use Pam\Desktop\NativeOperation;
+use Pam\Desktop\UserInterfaceAppearance;
+use RuntimeException;
+
+final readonly class DeviceInfo
+{
+    public function __construct(
+        public float $width,
+        public float $height,
+        public float $density,
+        public UserInterfaceAppearance $appearance,
+        public AppState $appState,
+        public float $safeAreaTop = 0.0,
+        public float $safeAreaRight = 0.0,
+        public float $safeAreaBottom = 0.0,
+        public float $safeAreaLeft = 0.0,
+        public string $timeZone = 'UTC',
+        public int $memoryClassMb = 0,
+        public bool $lowRamDevice = false,
+        public bool $powerSaveMode = false,
+        /** Installed app version (Android versionName, iOS CFBundleShortVersionString); '' when unknown. */
+        public string $appVersion = '',
+        /** Installed build number (Android versionCode, iOS CFBundleVersion); '' when unknown. */
+        public string $buildNumber = '',
+        /** System language as a BCP 47 tag ("pt-BR"); '' when unknown. See I18n::resolve(). */
+        public string $locale = '',
+        /** Android Build.MANUFACTURER; empty when the host does not provide it. */
+        public string $manufacturer = '',
+        /** Android Build.MODEL; empty when the host does not provide it. */
+        public string $model = '',
+    ) {
+    }
+
+    /** True when the device should run reduced caches, prefetching and animations. */
+    public function constrained(): bool
+    {
+        return $this->lowRamDevice
+            || $this->powerSaveMode
+            || ($this->memoryClassMb > 0 && $this->memoryClassMb <= 128);
+    }
+
+    /**
+     * @param Closure(self): void $callback
+     * @param (Closure(string): void)|null $failure receives the host's message; without one, a failure is thrown (reported as a module error)
+     */
+    public static function get(Closure $callback, ?Closure $failure = null): int
+    {
+        return Runtime::callNative(
+            NativeOperation::DeviceInfo,
+            '',
+            static function (ModuleResultStatus $status, string $payload) use ($callback, $failure): void {
+                if ($status === ModuleResultStatus::Failure) {
+                    if ($failure !== null) {
+                        $failure($payload);
+
+                        return;
+                    }
+                    throw new RuntimeException($payload);
+                }
+
+                $values = Wire::decodeMap($payload);
+                $callback(new self(
+                    width: (float) ($values['width'] ?? 0.0),
+                    height: (float) ($values['height'] ?? 0.0),
+                    density: (float) ($values['density'] ?? 1.0),
+                    appearance: UserInterfaceAppearance::from((int) ($values['appearance'] ?? 1)),
+                    appState: AppState::from((int) ($values['appState'] ?? 1)),
+                    safeAreaTop: (float) ($values['safeAreaTop'] ?? 0.0),
+                    safeAreaRight: (float) ($values['safeAreaRight'] ?? 0.0),
+                    safeAreaBottom: (float) ($values['safeAreaBottom'] ?? 0.0),
+                    safeAreaLeft: (float) ($values['safeAreaLeft'] ?? 0.0),
+                    timeZone: (string) ($values['timeZone'] ?? 'UTC'),
+                    memoryClassMb: max(0, (int) ($values['memoryClassMb'] ?? 0)),
+                    lowRamDevice: (bool) ($values['lowRamDevice'] ?? false),
+                    powerSaveMode: (bool) ($values['powerSaveMode'] ?? false),
+                    appVersion: trim((string) ($values['appVersion'] ?? '')),
+                    buildNumber: trim((string) ($values['buildNumber'] ?? '')),
+                    locale: trim((string) ($values['locale'] ?? '')),
+                    manufacturer: trim((string) ($values['manufacturer'] ?? '')),
+                    model: trim((string) ($values['model'] ?? '')),
+                ));
+            },
+        );
+    }
+}

@@ -4,260 +4,335 @@ declare(strict_types=1);
 
 namespace Pam\Desktop;
 
-use Pam\Desktop\Attributes\Command as CommandAttribute;
-use Pam\Desktop\Attributes\Desktop as DesktopAttribute;
-use Pam\Desktop\Attributes\Menu as MenuAttribute;
-use Pam\Desktop\Attributes\MenuItem as MenuItemAttribute;
-use Pam\Desktop\Attributes\MenuSeparator;
-use Pam\Desktop\Attributes\Listen as ListenAttribute;
-use Pam\Desktop\Attributes\Window as WindowAttribute;
-use ReflectionClass;
-use ReflectionMethod;
-use RuntimeException;
+use Closure;
+use Pam\Desktop\Diagnostics\ErrorReporter;
+use Pam\Desktop\Diagnostics\RuntimeError;
+use Pam\Desktop\Diagnostics\RuntimeErrorPhase;
+use Pam\Desktop\Internal\PamPhpRegistry;
+use Pam\Desktop\Internal\Runtime;
+use Pam\Desktop\Dom\Document;
+use Pam\Desktop\Plugin\PluginManager;
+use Pam\Desktop\Navigation\TabNavigator;
+use Pam\Desktop\Routing\MiddlewareRegistry;
+use Pam\Desktop\Routing\RouteArguments;
+use Pam\Desktop\Routing\RouteCollection;
+use Pam\Desktop\Routing\RouteNavigator;
+use Throwable;
 
-abstract class App
+final class App
 {
-    final public static function run(): never
+    private static ?Theme $activeTheme = null;
+
+    private static ?Closure $appStateHandler = null;
+
+    /** @var array<int, Closure(AppState): void> */
+    private static array $stateListeners = [];
+
+    private static int $nextStateListener = 1;
+
+    private static ?AppState $currentState = null;
+
+    /** True once components were registered explicitly or discovered by convention. */
+    private static bool $componentsConfigured = false;
+
+    private function __construct()
     {
-        static::application()->run();
     }
 
-    final public static function application(?Container $container = null): Application
+    /**
+     * Boots the app. Accepts a root Renderable/closure, a screen class, or
+     * the routes registered by routes.php: `App::run(require 'routes.php')`
+     * (require returns 1, or the RouteCollection when the file returns one).
+     *
+     * @param Renderable|Closure|RouteCollection|class-string<Renderable>|int $root
+     */
+    public static function run(Renderable|Closure|RouteCollection|string|int $root): void
     {
-        $container ??= new Container();
-        foreach (static::bindings() as $id => $binding) {
-            $container->bind($id, $binding);
+        try {
+            self::discoverConventionalComponents();
+            $projectRoot = self::projectRoot();
+            if ($projectRoot !== null) MiddlewareRegistry::loadConfig($projectRoot.'/config/middleware.php');
+            $root = self::resolveRoot($root);
+            PluginManager::boot();
+            if ($root instanceof TabNavigator) {
+                Runtime::onDimensions($root->dimensions(...));
+            }
+            Runtime::boot($root);
+        } catch (Throwable $error) {
+            Runtime::reportError($error, RuntimeErrorPhase::Boot);
+
+            throw $error;
         }
-        $reflection = new ReflectionClass(static::class);
-        $attributes = $reflection->getAttributes(DesktopAttribute::class);
-        if (count($attributes) !== 1) {
-            throw new RuntimeException(
-                static::class.' must declare exactly one #[Desktop] attribute.',
+    }
+
+    /**
+     * Route middleware aliases: `App::middleware(['auth' => Authenticate::class])`,
+     * then `Route::middleware('auth')` or `->middleware('auth')` in routes.php.
+     * Without arguments it only reads them. Aliases kept in
+     * `config/middleware.php` (`return ['auth' => Authenticate::class];`) are
+     * loaded by App::run() and by Testing\routes(), so tests share them.
+     *
+     * @param array<string, class-string<Middleware>|Middleware|Closure>|null $aliases
+     * @return array<string, class-string<Middleware>|Middleware|Closure> every registered alias
+     */
+    public static function middleware(?array $aliases = null): array
+    {
+        if ($aliases !== null) MiddlewareRegistry::alias($aliases);
+
+        return MiddlewareRegistry::aliases();
+    }
+
+    /** @param Renderable|Closure|RouteCollection|class-string<Renderable>|int $root */
+    private static function resolveRoot(Renderable|Closure|RouteCollection|string|int $root): Renderable|Closure
+    {
+        if ($root instanceof Renderable || $root instanceof Closure) return $root;
+        if ($root instanceof RouteCollection || $root === 1 || ($root !== '' && is_string($root) && is_file($root))) {
+            if (is_string($root)) {
+                RouteCollection::reset();
+                $loaded = require $root;
+                if ($loaded instanceof RouteCollection) $root = $loaded;
+            }
+            $routes = $root instanceof RouteCollection ? $root : RouteCollection::current();
+            $navigator = new RouteNavigator($routes);
+            RouteCollection::activate($navigator);
+            $navigator->listen();
+
+            return $navigator->view();
+        }
+        if (is_string($root) && is_a($root, Renderable::class, true)) {
+            $screen = RouteArguments::instantiate($root, [], $root);
+            if (!$screen instanceof Component && method_exists($screen, 'setup')) $screen->setup();
+            /** @var Renderable $screen */
+            return $screen;
+        }
+
+        throw new \InvalidArgumentException('App::run() needs a Renderable, a screen class or the routes from routes.php.');
+    }
+
+    /**
+     * Registers application-wide values, visible as `$name` in every template
+     * and as `$this->name` in every component. Adds to what is already
+     * registered; a repeated key overwrites. Values may be anything: a signal,
+     * a composable (`useColorScheme()`), an object, an array, a scalar or a
+     * closure. Reactive values re-render whoever reads them.
+     *
+     * ```php
+     * App::globals(['scheme' => useColorScheme(), 'insets' => useSafeAreaInsets()]);
+     * ```
+     *
+     * @param array<string, mixed> $values
+     */
+    public static function globals(array $values): void
+    {
+        Globals::merge($values);
+    }
+
+    /**
+     * Registers one global. Registering a name twice without `replace: true`
+     * is an error in development builds.
+     */
+    public static function global(string $name, mixed $value, bool $replace = false): void
+    {
+        Globals::set($name, $value, $replace);
+    }
+
+    /** Removes a global; readers re-render without it. */
+    public static function forget(string $name): void
+    {
+        Globals::forget($name);
+    }
+
+    /**
+     * Creates a retained, queryable visual document that can be passed directly
+     * to App::run(). The document remains the mutation handle for its lifetime.
+     */
+    public static function document(Renderable $root): Document
+    {
+        return Document::from($root);
+    }
+
+    public static function views(string $path, ?string $cachePath = null): void
+    {
+        View::configure($path, $cachePath);
+    }
+
+    public static function components(
+        string $path,
+        ?string $cachePath = null,
+    ): void {
+        self::$componentsConfigured = true;
+        try {
+            PamPhpRegistry::discover(
+                $path,
+                $cachePath ?? getcwd().'/.pam/components',
             );
+        } catch (Throwable $error) {
+            Runtime::reportError($error, RuntimeErrorPhase::Boot);
+
+            throw $error;
         }
-
-        /** @var DesktopAttribute $metadata */
-        $metadata = $attributes[0]->newInstance();
-        $window = Window::create($metadata->name)
-            ->load($metadata->page)
-            ->minimumSize($metadata->minimumWidth, $metadata->minimumHeight)
-            ->size($metadata->width, $metadata->height)
-            ->theme($metadata->theme);
-        $application = Application::make(
-            id: $metadata->id,
-            name: $metadata->name,
-            version: $metadata->version,
-            window: $window,
-        )
-            ->category($metadata->category)
-            ->publisher($metadata->publisher ?? $metadata->name);
-        if ($metadata->description !== '') {
-            $application->description($metadata->description);
-        }
-
-        /** @var static $app */
-        $app = $container->get(static::class);
-        $desktop = new Desktop($application);
-        $app->configure($desktop);
-        $app->registerWindows($desktop);
-
-        $invoker = new CommandInvoker($container, $desktop->windowIds(), $desktop->windowClasses());
-        $app->registerCommands($application, $invoker, $app);
-        $app->registerListeners($application, $invoker, $app);
-        foreach ($app->commands() as $command) {
-            $target = is_string($command) ? $container->get($command) : $command;
-            $app->registerCommands($application, $invoker, $target);
-            $app->registerListeners($application, $invoker, $target);
-        }
-        $app->registerMenus($application, $invoker, $container);
-
-        return $application;
     }
 
-    protected function configure(Desktop $desktop): void
+    /**
+     * Architecture v2 convention: without an App::components() call, App::run()
+     * registers the components under `<project root>/src` with the compiled
+     * cache in `<project root>/.pam-desktop/components`. Call App::components()
+     * before App::run() to use other paths.
+     *
+     * @internal
+     */
+    public static function discoverConventionalComponents(?string $projectRoot = null): bool
     {
-    }
-
-    /** @return array<class-string, object> */
-    protected static function bindings(): array
-    {
-        return [];
-    }
-
-    /** @return list<class-string|object> */
-    protected function commands(): array
-    {
-        return [];
-    }
-
-    /** @return list<class-string> */
-    protected function windows(): array
-    {
-        return [];
-    }
-
-    /** @return list<class-string|object> */
-    protected function menus(): array
-    {
-        return [];
-    }
-
-    private function registerWindows(Desktop $desktop): void
-    {
-        foreach ($this->windows() as $class) {
-            $reflection = new ReflectionClass($class);
-            $attributes = $reflection->getAttributes(WindowAttribute::class);
-            if (count($attributes) !== 1) {
-                throw new RuntimeException("{$class} must declare exactly one #[Window] attribute.");
-            }
-            /** @var WindowAttribute $metadata */
-            $metadata = $attributes[0]->newInstance();
-            if (!$reflection->isSubclassOf(DesktopWindow::class)) {
-                throw new RuntimeException("{$class} must extend ".DesktopWindow::class.'.');
-            }
-            /** @var class-string<DesktopWindow> $class */
-            $desktop->windowClass(
-                $class,
-                $metadata->name,
-                Window::create($metadata->title)
-                    ->load($metadata->page)
-                    ->minimumSize($metadata->minimumWidth, $metadata->minimumHeight)
-                    ->size($metadata->width, $metadata->height)
-                    ->visible($metadata->visible)
-                    ->theme($metadata->theme),
-            );
+        if (self::$componentsConfigured) {
+            return false;
         }
+        $root = $projectRoot ?? self::projectRoot();
+        if ($root === null || !is_dir($root.'/src')) {
+            return false;
+        }
+        self::components($root.'/src', $root.'/.pam-desktop/components');
+
+        return true;
     }
 
-    private function registerCommands(
-        Application $application,
-        CommandInvoker $invoker,
-        object $target,
-    ): void {
-        $reflection = new ReflectionClass($target);
-        $classAttributes = $reflection->getAttributes(CommandAttribute::class);
-        if ($classAttributes !== []) {
-            if (!$reflection->hasMethod('__invoke')) {
-                throw new RuntimeException("Attributed command {$reflection->getName()} must be invokable.");
-            }
-            /** @var CommandAttribute $attribute */
-            $attribute = $classAttributes[0]->newInstance();
-            $this->registerCommand($application, $invoker, $target, '__invoke', $attribute);
+    /**
+     * The app's root: the nearest directory with vendor/composer/installed.json,
+     * else the directory of the entry script.
+     */
+    private static function projectRoot(): ?string
+    {
+        $root = PluginManager::projectRoot();
+        if ($root === null) {
+            $script = $_SERVER['SCRIPT_FILENAME'] ?? null;
+            $root = is_string($script) && $script !== '' ? dirname($script) : null;
         }
 
-        foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
-            foreach ($method->getAttributes(CommandAttribute::class) as $attribute) {
-                /** @var CommandAttribute $command */
-                $command = $attribute->newInstance();
-                $this->registerCommand($application, $invoker, $target, $method->getName(), $command);
-            }
-        }
+        return $root;
     }
 
-    private function registerCommand(
-        Application $application,
-        CommandInvoker $invoker,
-        object $target,
-        string $method,
-        CommandAttribute $attribute,
-    ): void {
-        $name = $attribute->name ?? self::commandName($method === '__invoke'
-            ? (new ReflectionClass($target))->getShortName()
-            : $method);
-        $application->command(
-            $name,
-            static fn (CommandContext $context): CommandResult => $invoker->invoke($target, $method, $context),
-            $attribute->execution,
-        );
-    }
-
-    private function registerListeners(
-        Application $application,
-        CommandInvoker $invoker,
-        object $target,
-    ): void {
-        $reflection = new ReflectionClass($target);
-        foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
-            foreach ($method->getAttributes(ListenAttribute::class) as $attribute) {
-                /** @var ListenAttribute $listener */
-                $listener = $attribute->newInstance();
-                $name = $listener->event ?? self::commandName($method->getName());
-                $application->on(
-                    $name,
-                    static fn (EventContext $context): CommandResult => $invoker->invokeEvent(
-                        $target,
-                        $method->getName(),
-                        $context,
-                    ),
-                );
-            }
-        }
-    }
-
-    private function registerMenus(
-        Application $application,
-        CommandInvoker $invoker,
-        Container $container,
-    ): void {
-        $menus = [];
-        $shortcuts = [];
-        $tray = null;
-        foreach ($this->menus() as $menuDefinition) {
-            $target = is_string($menuDefinition) ? $container->get($menuDefinition) : $menuDefinition;
-            $reflection = new ReflectionClass($target);
-            $attributes = $reflection->getAttributes(MenuAttribute::class);
-            if (count($attributes) !== 1) {
-                throw new RuntimeException("{$reflection->getName()} must declare exactly one #[Menu] attribute.");
-            }
-            /** @var MenuAttribute $metadata */
-            $metadata = $attributes[0]->newInstance();
-            $items = [];
-            foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
-                if ($method->getAttributes(MenuSeparator::class) !== []) {
-                    $items[] = MenuItem::separator();
-                }
-                foreach ($method->getAttributes(MenuItemAttribute::class) as $itemAttribute) {
-                    /** @var MenuItemAttribute $item */
-                    $item = $itemAttribute->newInstance();
-                    $id = $item->id ?? self::commandName($method->getName());
-                    $items[] = $item->checkbox
-                        ? MenuItem::checkbox($id, $item->label, $item->checked, $item->shortcut)
-                        : MenuItem::command($id, $item->label, $item->shortcut);
-                    if ($item->shortcut !== null) {
-                        $shortcuts[] = GlobalShortcut::create($id, $item->shortcut);
-                    }
-                    $this->registerCommand(
-                        $application,
-                        $invoker,
-                        $target,
-                        $method->getName(),
-                        new CommandAttribute($id),
-                    );
-                }
-            }
-            $menus[] = Menu::create($metadata->id, $metadata->label, ...$items);
-            if ($metadata->tray) {
-                if ($tray !== null) {
-                    throw new RuntimeException('Only one attributed tray menu is supported on Linux.');
-                }
-                $tray = Tray::create($metadata->id, $metadata->tooltip ?? $metadata->label)
-                    ->closeBehavior($metadata->close);
-            }
-        }
-        if ($menus !== []) {
-            $shell = Shell::none()->menu(...$menus);
-            if ($tray !== null) {
-                $shell = $shell->tray($tray);
-            }
-            if ($shortcuts !== []) {
-                $shell = $shell->shortcut(...$shortcuts);
-            }
-            $application->shell($shell);
-        }
-    }
-
-    private static function commandName(string $name): string
+    /** @internal Test hook: forget whether components were configured. */
+    public static function resetComponentDiscovery(): void
     {
-        return strtolower(preg_replace('/(?<!^)[A-Z]/', '.$0', $name) ?? $name);
+        self::$componentsConfigured = false;
+    }
+
+    /** @param array<string, mixed> $props */
+    public static function make(string $className, array $props = []): Component
+    {
+        return PamPhpRegistry::make($className, $props);
+    }
+
+    public static function theme(Theme $theme): void
+    {
+        self::$activeTheme = $theme;
+        $theme->apply();
+    }
+
+    /**
+     * Component render memoization (enabled by default). Components re-render
+     * when their own properties, props, slots, tracked state/stores/signals
+     * change or an event handler ran on them; disable to re-render the whole
+     * tree on every event as in releases before 1.0.38.
+     */
+    public static function memoization(bool $enabled): void
+    {
+        \Pam\Desktop\Internal\DependencyTracker::memoization($enabled);
+    }
+
+    public static function activeTheme(): ?Theme
+    {
+        return self::$activeTheme;
+    }
+
+    public static function appearance(): UserInterfaceAppearance
+    {
+        return Runtime::windowMetrics()->appearance;
+    }
+
+    public static function windowMetrics(): WindowMetrics
+    {
+        return Runtime::windowMetrics();
+    }
+
+    public static function component(string $tag, string $view): void
+    {
+        TemplateRegistry::view($tag, $view);
+    }
+
+    /**
+     * Subscribes to every uncaught runtime error (render, event, module result
+     * and boot failures) in all build modes, e.g. to forward them to Sentry.
+     * The report carries app-relative frames and whether the error was fatal.
+     * Returns an id for offError().
+     *
+     * @param Closure(Throwable, RuntimeError): void $listener
+     */
+    public static function onError(Closure $listener): int
+    {
+        return ErrorReporter::listen($listener);
+    }
+
+    public static function offError(int $subscription): void
+    {
+        ErrorReporter::unsubscribe($subscription);
+    }
+
+    public static function onBack(Closure $handler): void
+    {
+        Runtime::onBack($handler);
+    }
+
+    public static function onAppState(Closure $handler): void
+    {
+        self::$appStateHandler = $handler;
+        self::installStateDispatcher();
+    }
+
+    /**
+     * Subscribes to foreground/background transitions, like React Native AppState.
+     * Active = foreground and interactive, Inactive = transitioning or covered by
+     * system UI, Background = not visible. Returns an id for offStateChange().
+     *
+     * @param Closure(AppState): void $listener
+     */
+    public static function onStateChange(Closure $listener): int
+    {
+        $id = self::$nextStateListener++;
+        self::$stateListeners[$id] = $listener;
+        self::installStateDispatcher();
+
+        return $id;
+    }
+
+    public static function offStateChange(int $subscription): void
+    {
+        unset(self::$stateListeners[$subscription]);
+    }
+
+    /** Last state reported by the host, or null before the first transition. */
+    public static function state(): ?AppState
+    {
+        return self::$currentState;
+    }
+
+    private static function installStateDispatcher(): void
+    {
+        Runtime::onAppState(static function (AppState $state): void {
+            self::$currentState = $state;
+            self::$appStateHandler?->__invoke($state);
+            foreach (self::$stateListeners as $listener) {
+                $listener($state);
+            }
+        });
+    }
+
+    public static function onDimensions(Closure $handler): void
+    {
+        Runtime::onDimensions($handler);
+    }
+
+    public static function onMemoryPressure(Closure $handler): void
+    {
+        Runtime::onMemoryPressure($handler);
     }
 }

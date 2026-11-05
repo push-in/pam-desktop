@@ -1,0 +1,59 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+$autoloadCandidates = [
+    dirname(__DIR__, 3).'/autoload.php',
+    dirname(__DIR__).'/vendor/autoload.php',
+];
+$loaded = false;
+foreach ($autoloadCandidates as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+        $loaded = true;
+        break;
+    }
+}
+if (!$loaded) {
+    spl_autoload_register(static function (string $class): void {
+        $prefix = 'Pam\\Desktop\\';
+        if (!str_starts_with($class, $prefix)) {
+            return;
+        }
+        $path = dirname(__DIR__).'/src/'
+            .str_replace('\\', '/', substr($class, strlen($prefix))).'.php';
+        if (is_file($path)) {
+            require $path;
+        }
+    });
+}
+
+use Pam\Desktop\Internal\PamPhpPreloader;
+
+if ($argc < 3) {
+    fwrite(STDERR, "Usage: pam-desktop-optimize <component-directory> <cache-directory> [--entry=Tag ...]\n");
+    exit(2);
+}
+
+try {
+    $entries = [];
+    foreach (array_slice($argv, 3) as $argument) {
+        if (!str_starts_with($argument, '--entry=') || strlen($argument) <= 8) {
+            throw new InvalidArgumentException("Unknown optimize option {$argument}.");
+        }
+        $entries[] = substr($argument, 8);
+    }
+    $result = PamPhpPreloader::optimize($argv[1], $argv[2], $entries);
+    fwrite(
+        STDOUT,
+        "Optimized {$result['components']} of {$result['discovered']} PAM components ({$result['eliminated']} eliminated).\n"
+        ."Preload: {$result['preload']}\n"
+        ."Manifest: {$result['manifest']}\n"
+        ."Freeze: {$result['freeze']}\n"
+        ."Build: {$result['buildId']}\n",
+    );
+} catch (Throwable $error) {
+    fwrite(STDERR, $error->getMessage()."\n");
+    exit(1);
+}

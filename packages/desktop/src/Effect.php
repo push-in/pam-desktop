@@ -4,28 +4,25 @@ declare(strict_types=1);
 
 namespace Pam\Desktop;
 
+use Closure;
+
 final readonly class Effect
 {
-    /**
-     * @param array<string, mixed> $payload
-     */
+    /** @param Closure(): mixed $dependencies @param Closure(mixed): (Closure(): void)|null $run */
     public function __construct(
-        public EffectKind $kind,
-        public string $windowId = 'main',
-        public array $payload = [],
+        public Closure $dependencies,
+        public Closure $run,
+        public bool $once = false,
     ) {
-        Identifier::assert($windowId, 'The effect window identifier');
     }
 
-    /**
-     * @return array{kind: int, windowId: string, payload: array<string, mixed>}
-     */
-    public function toArray(): array
+    public static function watch(Closure $dependencies, Closure $run): self
     {
-        return [
-            'kind' => $this->kind->value,
-            'windowId' => $this->windowId,
-            'payload' => $this->payload,
-        ];
+        return new self($dependencies, $run);
+    }
+
+    public static function once(Closure $run): self
+    {
+        return new self(static fn (): array => [], $run, true);
     }
 }

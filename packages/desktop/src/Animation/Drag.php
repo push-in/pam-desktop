@@ -1,0 +1,411 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Animation;
+
+use InvalidArgumentException;
+use Stringable;
+
+use function count;
+use function is_int;
+use function is_string;
+
+/**
+ * UI-thread drag contract for a pan `GestureDetector` (react-native-gesture-handler
+ * `Gesture.Pan()` + Reanimated shared values). The target follows the finger
+ * on one axis inside optional bounds, driver properties are interpolated from
+ * the translation every frame, and on release the target settles onto a snap
+ * point with a spring or timing curve. PHP only receives `on:gestureEnd`
+ * (with `snapIndex`/`thresholdReached`) and `on:gestureSettle`.
+ *
+ * ```php
+ * // Story drag-to-dismiss
+ * Drag::vertical()
+ *     ->bounds(min: 0)
+ *     ->snapPoints(0, '100%')
+ *     ->threshold(120, velocity: 900)
+ *     ->settle(new Spring(230, 22, 0.72))
+ *     ->settleAt(1, Easing::EaseOut, 190)
+ *     ->drive('', 'scale', [0, '50%'], [1, 0.955])
+ *     ->drive('', 'borderRadius', [0, 120], [0, 18]);
+ * ```
+ */
+final readonly class Drag implements Stringable
+{
+    /**
+     * @param list<string> $snaps
+     * @param array<int, string> $settles
+     * @param list<string> $drivers
+     * @param list<int> $holds
+     */
+    private function __construct(
+        private bool $horizontal,
+        private ?float $minimum = null,
+        private ?float $maximum = null,
+        private float $rubber = 0.0,
+        private string $target = '',
+        private array $snaps = ['0'],
+        private string $settle = 'spring:260:22:1',
+        private array $settles = [],
+        private float $threshold = 0.0,
+        private float $velocity = 0.0,
+        private bool $haptic = false,
+        private string $group = '',
+        private array $drivers = [],
+        private array $textDrivers = [],
+        private ?float $touchInset = null,
+        private bool $snapOnRelease = true,
+        private bool $unbounded = false,
+        private array $holds = [],
+        private float $follow = 1.0,
+    ) {
+    }
+
+    public static function horizontal(): self
+    {
+        return new self(true);
+    }
+
+    public static function vertical(): self
+    {
+        return new self(false);
+    }
+
+    /** Translation limits in dp relative to the resting position (null = unbounded). */
+    public function bounds(?float $min = null, ?float $max = null): self
+    {
+        if ($min !== null && $max !== null && $min > $max) {
+            throw new InvalidArgumentException('Drag minimum cannot exceed its maximum.');
+        }
+
+        return new self(
+            $this->horizontal,
+            $min,
+            $max,
+            $this->rubber,
+            $this->target,
+            $this->snaps,
+            $this->settle,
+            $this->settles,
+            $this->threshold,
+            $this->velocity,
+            $this->haptic,
+            $this->group,
+            $this->drivers,
+            $this->textDrivers,
+            $this->touchInset,
+            $this->snapOnRelease,
+            $this->unbounded,
+            $this->holds,
+            $this->follow,
+        );
+    }
+
+    /** Fraction of finger movement applied past the bounds (0 = hard stop, 0.5 = iOS-like). */
+    public function rubberBand(float $factor): self
+    {
+        return $this->with(rubber: max(0.0, min(1.0, $factor)));
+    }
+
+    /** Fraction of finger displacement and release velocity applied to the target (0..1). */
+    public function follow(float $factor): self
+    {
+        if (!is_finite($factor) || $factor < 0.0 || $factor > 1.0) {
+            throw new InvalidArgumentException('Drag follow must be finite and between 0 and 1.');
+        }
+
+        return $this->with(follow: $factor);
+    }
+
+    /** `nativeRef` of the view that moves; defaults to the detector's child. */
+    public function target(string $nativeRef): self
+    {
+        return $this->with(target: self::ref($nativeRef));
+    }
+
+    /** Resting positions in dp or percent of the target extent ("100%"). */
+    public function snapPoints(float|int|string ...$points): self
+    {
+        if ($points === [] || count($points) > 16) {
+            throw new InvalidArgumentException('Drags require between 1 and 16 snap points.');
+        }
+
+        return $this->with(snaps: array_map(Motion::value(...), array_values($points)));
+    }
+
+    /**
+     * Release rule: crossing [distance] dp from the starting snap, or flinging
+     * faster than [velocity] dp/s, moves to the adjacent snap in that direction.
+     */
+    public function threshold(float $distance, float $velocity = 0.0): self
+    {
+        return $this->with(threshold: max(0.0, $distance), velocity: max(0.0, $velocity));
+    }
+
+    /** Default settle animation. */
+    public function settle(Spring|Easing|string $curve, int $durationMs = 200): self
+    {
+        return $this->with(settle: self::curve($curve, $durationMs));
+    }
+
+    /** Settle animation used when landing on snap [index] (e.g. a timed dismiss). */
+    public function settleAt(int $index, Spring|Easing|string $curve, int $durationMs = 200): self
+    {
+        if ($index < 0 || $index > 15) {
+            throw new InvalidArgumentException('Snap index must be between 0 and 15.');
+        }
+        $settles = $this->settles;
+        $settles[$index] = self::curve($curve, $durationMs);
+
+        return $this->with(settles: $settles);
+    }
+
+    /** Light haptic tick when the threshold is crossed (swipe-to-reply). */
+    public function haptic(bool $enabled = true): self
+    {
+        return $this->with(haptic: $enabled);
+    }
+
+    /** Only one drag per group rests away from zero (Swipeable rows). */
+    public function group(string $name): self
+    {
+        if (preg_match('/^[A-Za-z0-9_.:-]{1,64}$/D', $name) !== 1) {
+            throw new InvalidArgumentException('Drag group names use 1-64 letters, digits, "_", ".", ":" or "-".');
+        }
+
+        return $this->with(group: $name);
+    }
+
+    /**
+     * Interpolates [property] of `nativeRef` [ref] ('' = the target) from the
+     * drag translation (dp or "%" of the target extent), clamped at the ends.
+     * [ref] is looked up inside the detector, then on the rest of the screen
+     * (a backdrop behind a dragged viewer).
+     *
+     * @param list<float|int|string> $input
+     * @param list<float|int|string> $output
+     */
+    public function drive(string $ref, string $property, array $input, array $output): self
+    {
+        return $this->with(drivers: [...$this->drivers, $this->driver($ref, $property, $input, $output)]);
+    }
+
+    /**
+     * Like {@see drive()}, but reads the raw finger translation (before
+     * `bounds()` and `rubberBand()`) and extrapolates past the first and last
+     * points instead of clamping, so the property keeps following the finger
+     * beyond the limits (pull-to-zoom headers, overscroll stretch).
+     *
+     * @param list<float|int|string> $input
+     * @param list<float|int|string> $output
+     */
+    public function driveRaw(string $ref, string $property, array $input, array $output): self
+    {
+        return $this->with(drivers: [...$this->drivers, '!'.$this->driver($ref, $property, $input, $output)]);
+    }
+
+    /** Every `drive()` driver of this drag behaves like {@see driveRaw()}. */
+    public function driveUnbounded(bool $enabled = true): self
+    {
+        return $this->with(unbounded: $enabled);
+    }
+
+    /**
+     * @param list<float|int|string> $input
+     * @param list<float|int|string> $output
+     */
+    private function driver(string $ref, string $property, array $input, array $output): string
+    {
+        if (count($input) < 2 || count($input) !== count($output) || count($input) > 8) {
+            throw new InvalidArgumentException('Drag drivers need 2-8 matching input and output points.');
+        }
+        if (count($this->drivers) >= 16) {
+            throw new InvalidArgumentException('Drags support up to 16 drivers.');
+        }
+        return ($ref === '' ? '' : self::ref($ref)).'|'.Motion::property($property).'|'
+            .implode(',', array_map(Motion::value(...), $input)).'|'
+            .implode(',', array_map(Motion::value(...), $output));
+    }
+
+    /** Anchor translation to the pointer inside the detector, for continuous controls. */
+    public function atTouch(float $inset = 0.0): self
+    {
+        Motion::number($inset);
+        return $this->with(touchInset: $inset);
+    }
+
+    /**
+     * A release that picks one of these snaps keeps the view where the finger
+     * let go instead of animating there; `on:gestureSettle` reports that snap
+     * at once. Drag-to-dismiss uses it so the navigation transition (e.g. a
+     * shared element flying home) starts from the released frame. Renderers
+     * without this hook animate to the snap as before.
+     */
+    public function holdAt(int ...$indexes): self
+    {
+        foreach ($indexes as $index) {
+            if ($index < 0 || $index > 15) {
+                throw new InvalidArgumentException('Snap index must be between 0 and 15.');
+            }
+        }
+        $holds = array_values(array_unique($indexes));
+        sort($holds);
+
+        return $this->with(holds: $holds);
+    }
+
+    /** Keep the released translation instead of animating to a snap point. */
+    public function snapOnRelease(bool $enabled = true): self
+    {
+        return $this->with(snapOnRelease: $enabled);
+    }
+
+    /**
+     * Update a native Text label only when its formatted value changes.
+     * Inputs are translation dp/percent; outputs are finite numbers/seconds.
+     * ClockWithTotal uses the last output value for the total.
+     *
+     * @param list<float|int|string> $input
+     * @param list<float|int> $output
+     */
+    public function driveText(string $ref, array $input, array $output, DragTextFormat $format = DragTextFormat::Number, int $decimals = 0): self
+    {
+        if (count($input) < 2 || count($input) !== count($output) || count($input) > 8
+            || count($this->textDrivers) >= 8 || $decimals < 0 || $decimals > 3) {
+            throw new InvalidArgumentException('Text drivers require 2-8 matching points, at most 8 labels and 0-3 decimals.');
+        }
+        $driver = self::ref($ref).'|'.$format->value.'|'.$decimals.'|'
+            .implode(',', array_map(Motion::value(...), $input)).'|'
+            .implode(',', array_map(Motion::number(...), $output));
+        return $this->with(textDrivers: [...$this->textDrivers, $driver]);
+    }
+
+    public function encode(): string
+    {
+        $lines = ['axis='.($this->horizontal ? 'x' : 'y')];
+        if ($this->minimum !== null) $lines[] = 'min='.Motion::number($this->minimum);
+        if ($this->maximum !== null) $lines[] = 'max='.Motion::number($this->maximum);
+        if ($this->follow !== 1.0) $lines[] = 'follow='.Motion::number($this->follow);
+        if ($this->rubber > 0) $lines[] = 'rubber='.Motion::number($this->rubber);
+        if ($this->target !== '') $lines[] = 'target='.$this->target;
+        if ($this->touchInset !== null) $lines[] = 'touch='.Motion::number($this->touchInset);
+        if (!$this->snapOnRelease) $lines[] = 'snapOnRelease=0';
+        $lines[] = 'snaps='.implode(',', $this->snaps);
+        $lines[] = 'settle='.$this->settle;
+        $settles = $this->settles;
+        ksort($settles);
+        foreach ($settles as $index => $settle) {
+            $lines[] = "settle.{$index}={$settle}";
+        }
+        if ($this->holds !== []) $lines[] = 'hold='.implode(',', $this->holds);
+        if ($this->threshold > 0) $lines[] = 'threshold='.Motion::number($this->threshold);
+        if ($this->velocity > 0) $lines[] = 'velocity='.Motion::number($this->velocity);
+        if ($this->haptic) $lines[] = 'haptic=1';
+        if ($this->group !== '') $lines[] = 'group='.$this->group;
+        if ($this->unbounded) $lines[] = 'driveUnbounded=1';
+        foreach ($this->drivers as $driver) {
+            $lines[] = str_starts_with($driver, '!') ? 'driveRaw='.substr($driver, 1) : 'drive='.$driver;
+        }
+        foreach ($this->textDrivers as $driver) $lines[] = 'text='.$driver;
+
+        return implode("\n", $lines);
+    }
+
+    public function __toString(): string
+    {
+        return $this->encode();
+    }
+
+    /**
+     * Encodes a programmatic snap request for `dragSnap`: snap [index], issued
+     * again whenever [request] changes (e.g. a "close row" counter). Templates
+     * may also pass "index@request".
+     */
+    public static function snapRequest(int $index, int $request = 0): int
+    {
+        if ($index < 0 || $index > 15 || $request < 0 || $request > 100_000_000) {
+            throw new InvalidArgumentException('Snap requests need an index 0-15 and a non-negative request.');
+        }
+
+        return $request * 64 + $index;
+    }
+
+    /** @internal */
+    public static function snapRequestValue(mixed $value): int
+    {
+        if (is_string($value) && preg_match('/^(\d{1,2})@(\d{1,9})$/D', trim($value), $match) === 1) {
+            return self::snapRequest((int) $match[1], (int) $match[2]);
+        }
+        if (is_int($value) || (is_string($value) && ctype_digit($value))) {
+            return self::snapRequest((int) $value % 64, intdiv((int) $value, 64));
+        }
+        throw new InvalidArgumentException('dragSnap expects an index or "index@request".');
+    }
+
+    public static function ref(string $ref): string
+    {
+        if (preg_match('/^[A-Za-z0-9_.:-]{1,64}$/D', $ref) !== 1) {
+            throw new InvalidArgumentException('nativeRef values use 1-64 letters, digits, "_", ".", ":" or "-".');
+        }
+
+        return $ref;
+    }
+
+    private static function curve(Spring|Easing|string $curve, int $durationMs): string
+    {
+        if ($curve instanceof Spring) {
+            return $curve->token();
+        }
+        Motion::milliseconds($durationMs, 'Drag settle duration');
+
+        return 'timing:'.$durationMs.':'.Easing::token($curve);
+    }
+
+    /**
+     * @param list<string>|null $snaps
+     * @param array<int, string>|null $settles
+     * @param list<string>|null $drivers
+     * @param list<int>|null $holds
+     */
+    private function with(
+        ?float $rubber = null,
+        ?string $target = null,
+        ?array $snaps = null,
+        ?string $settle = null,
+        ?array $settles = null,
+        ?float $threshold = null,
+        ?float $velocity = null,
+        ?bool $haptic = null,
+        ?string $group = null,
+        ?array $drivers = null,
+        ?array $textDrivers = null,
+        ?float $touchInset = null,
+        ?bool $snapOnRelease = null,
+        ?bool $unbounded = null,
+        ?array $holds = null,
+        ?float $follow = null,
+    ): self {
+        return new self(
+            $this->horizontal,
+            $this->minimum,
+            $this->maximum,
+            $rubber ?? $this->rubber,
+            $target ?? $this->target,
+            $snaps ?? $this->snaps,
+            $settle ?? $this->settle,
+            $settles ?? $this->settles,
+            $threshold ?? $this->threshold,
+            $velocity ?? $this->velocity,
+            $haptic ?? $this->haptic,
+            $group ?? $this->group,
+            $drivers ?? $this->drivers,
+            $textDrivers ?? $this->textDrivers,
+            $touchInset ?? $this->touchInset,
+            $snapOnRelease ?? $this->snapOnRelease,
+            $unbounded ?? $this->unbounded,
+            $holds ?? $this->holds,
+            $follow ?? $this->follow,
+        );
+    }
+}

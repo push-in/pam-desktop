@@ -1,5 +1,7 @@
 /target/
 /packages/desktop/vendor/
+/examples/*/vendor/
+/examples/*/.pam/
 /.idea/
 /.vscode/
 *.log

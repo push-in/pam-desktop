@@ -1,0 +1,1095 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Internal;
+
+use Closure;
+use JsonException;
+use LogicException;
+use Pam\Desktop\AppState;
+use Pam\Desktop\App;
+use Pam\Desktop\Appearance;
+use Pam\Desktop\Element;
+use Pam\Desktop\EventKind;
+use Pam\Desktop\MemoryPressure;
+use Pam\Desktop\ModuleResultStatus;
+use Pam\Desktop\Modules\NativeModuleTransport;
+use Pam\Desktop\NativeOperation;
+use Pam\Desktop\Renderable;
+use Pam\Desktop\RendererContract;
+use Pam\Desktop\State;
+use Pam\Desktop\Store\Stores;
+use Pam\Desktop\Diagnostics\ErrorReporter;
+use Pam\Desktop\Diagnostics\Profiler;
+use Pam\Desktop\Diagnostics\RuntimeError;
+use Pam\Desktop\Diagnostics\RuntimeErrorPhase;
+use Pam\Desktop\Scheduling\Scheduler;
+use Pam\Desktop\Scheduling\TaskPriority;
+use Pam\Desktop\System\Linking;
+use Pam\Desktop\TemplateException;
+use Pam\Desktop\Theme;
+use Pam\Desktop\Style\StyleVariables;
+use Pam\Desktop\UserInterfaceAppearance;
+use Pam\Desktop\WindowMetrics;
+use Pam\Desktop\BuildConfiguration;
+use Pam\Desktop\BuildMode;
+use Throwable;
+
+use function is_array;
+use function is_float;
+use function is_int;
+use function is_string;
+use function strlen;
+
+final class Runtime
+{
+    private static Renderable|Closure|null $root = null;
+
+    /** @var array<string, Closure> */
+    private static array $eventCallbacks = [];
+
+    /** @var array<int, Closure> */
+    private static array $moduleCallbacks = [];
+
+    private static int $nextRequestId = 1;
+    private static ?NativeModuleTransport $moduleTransport = null;
+    private static ?string $lastFrame = null;
+
+    /** Roots buffered before a frame-aligned cycle collection (PHP: 10,001). */
+    private const CYCLE_ROOT_BUDGET = 40_000;
+
+    private static bool $cycleCollection = false;
+    private static int $cycleRootBudget = self::CYCLE_ROOT_BUDGET;
+    private static ?Closure $backHandler = null;
+    private static ?Closure $appStateHandler = null;
+    private static ?Closure $dimensionsHandler = null;
+    /** @var array<int, Closure(WindowMetrics): void> */
+    private static array $metricsListeners = [];
+    private static int $nextMetricsListener = 1;
+    private static ?Closure $memoryPressureHandler = null;
+    private static ?TreeEncoder $encoder = null;
+    private static bool $rendering = false;
+    private static bool $renderRequested = false;
+    private static bool $dispatchingEvent = false;
+
+    /** @var list<Closure(): void> imperative native calls waiting for the next commit */
+    private static array $afterCommit = [];
+    private static ?Throwable $renderFailure = null;
+    private static WindowMetrics $windowMetrics;
+    /** When true the native bridge drains its queue and calls flush() once. */
+    private static bool $deferred = false;
+    private static bool $pending = false;
+    private static ?Element $lastRoot = null;
+    private static ?Element $lastThemed = null;
+
+    /** A windowed list grew its materialized rows: encode even an unchanged tree. */
+    private static bool $windowChanged = false;
+    private static ?Theme $lastTheme = null;
+    private static ?string $environmentKey = null;
+    /** @var \WeakMap<Theme, \WeakMap<Element, Element>>|null */
+    private static ?\WeakMap $themed = null;
+
+    private function __construct()
+    {
+    }
+
+    public static function boot(Renderable|Closure $root): void
+    {
+        if (self::$root !== null) {
+            throw new LogicException('Pam Desktop is already running.');
+        }
+
+        self::$root = $root;
+        self::$encoder = new TreeEncoder();
+        Profiler::enabled(BuildConfiguration::mode() !== BuildMode::Production);
+        self::manageCycleCollection();
+        try {
+            // Handshake: an incompatible renderer is refused before any frame.
+            RendererContract::current()->assertCompatible();
+            self::render();
+        } catch (Throwable $error) {
+            self::reportError($error, RuntimeErrorPhase::Boot);
+        }
+    }
+
+    /** @internal The booted root (Testing checks whether it owns the runtime). */
+    public static function root(): Renderable|Closure|null
+    {
+        return self::$root;
+    }
+
+    public static function windowMetrics(): WindowMetrics
+    {
+        return self::$windowMetrics ??= self::bootMetrics();
+    }
+
+    /**
+     * Restyles the tree for an appearance chosen in PHP (or reconciled from a
+     * host event) without remounting it.
+     */
+    public static function replaceAppearance(UserInterfaceAppearance $appearance, bool $render = true): void
+    {
+        $metrics = self::windowMetrics();
+        if ($metrics->appearance === $appearance) {
+            return;
+        }
+        self::$windowMetrics = new WindowMetrics(
+            width: $metrics->width,
+            height: $metrics->height,
+            density: $metrics->density,
+            appearance: $appearance,
+            fontScale: $metrics->fontScale,
+            safeAreaTop: $metrics->safeAreaTop,
+            safeAreaRight: $metrics->safeAreaRight,
+            safeAreaBottom: $metrics->safeAreaBottom,
+            safeAreaLeft: $metrics->safeAreaLeft,
+            refreshRate: $metrics->refreshRate,
+            reducedMotion: $metrics->reducedMotion,
+            deviceType: $metrics->deviceType,
+            pointer: $metrics->pointer,
+            inputMode: $metrics->inputMode,
+            dynamicRange: $metrics->dynamicRange,
+            displayMode: $metrics->displayMode,
+            foldPosture: $metrics->foldPosture,
+            memoryClass: $metrics->memoryClass,
+            performanceTier: $metrics->performanceTier,
+        );
+        DependencyTracker::invalidateAll();
+        if ($render) {
+            self::requestRender();
+        }
+    }
+
+    /**
+     * The host exports the effective appearance before PHP starts, so the
+     * first frame already matches the native window instead of defaulting to
+     * light and correcting itself after the first dimensions event.
+     */
+    private static function bootMetrics(): WindowMetrics
+    {
+        // Hosts export the window (size, density, safe areas) before PHP
+        // starts so the very first render already sees the real geometry.
+        $raw = getenv('PAM_BOOT_METRICS');
+        $values = is_string($raw) && $raw !== '' && strlen($raw) < 4_096
+            ? json_decode($raw, true)
+            : null;
+        if (!is_array($values)) {
+            return new WindowMetrics(0.0, 0.0, 1.0, Appearance::bootAppearance());
+        }
+        $number = static function (string $key, float $default) use ($values): float {
+            $value = $values[$key] ?? null;
+            return (is_int($value) || is_float($value)) && is_finite((float) $value) && $value >= 0
+                ? (float) $value
+                : $default;
+        };
+
+        // Hosts that also export the style environment let the first
+        // dimensions event match these metrics, so it skips a full re-render.
+        return new WindowMetrics(
+            width: $number('width', 0.0),
+            height: $number('height', 0.0),
+            density: max(0.1, $number('density', 1.0)),
+            appearance: Appearance::bootAppearance(),
+            fontScale: max(0.1, $number('fontScale', 1.0)),
+            safeAreaTop: $number('safeAreaTop', 0.0),
+            safeAreaRight: $number('safeAreaRight', 0.0),
+            safeAreaBottom: $number('safeAreaBottom', 0.0),
+            safeAreaLeft: $number('safeAreaLeft', 0.0),
+            refreshRate: $number('refreshRate', 60.0),
+            reducedMotion: ($values['reducedMotion'] ?? false) === true,
+            deviceType: self::styleEnvironmentKeyword($values['deviceType'] ?? null, 'phone'),
+            pointer: self::styleEnvironmentKeyword($values['pointer'] ?? null, 'coarse'),
+            inputMode: self::styleEnvironmentKeyword($values['inputMode'] ?? null, 'touch'),
+            dynamicRange: self::styleEnvironmentKeyword($values['dynamicRange'] ?? null, 'standard'),
+            displayMode: self::styleEnvironmentKeyword($values['displayMode'] ?? null, 'standalone'),
+            foldPosture: self::styleEnvironmentKeyword($values['foldPosture'] ?? null, 'flat'),
+            memoryClass: $number('memoryClass', 0.0),
+            performanceTier: $number('performanceTier', 1.0),
+        );
+    }
+
+    public static function render(): void
+    {
+        if (self::$rendering) {
+            self::$renderRequested = true;
+
+            return;
+        }
+        $root = self::$root;
+
+        if ($root === null) {
+            throw new LogicException('Pam Desktop has not been booted.');
+        }
+
+        self::$rendering = true;
+        $renderStarted = hrtime(true);
+        PortalRegistry::instance()->beginRender();
+        try {
+            do {
+                self::$renderRequested = false;
+                self::$pending = false;
+                $theme = App::activeTheme();
+                $environment = spl_object_id(self::windowMetrics()).':'
+                    .StyleVariables::revision().':'
+                    .($theme === null ? 0 : spl_object_id($theme));
+                if ($environment !== self::$environmentKey) {
+                    self::$environmentKey = $environment;
+                    DependencyTracker::invalidateAll();
+                }
+                ComponentLifecycle::detectChanges();
+                PamPhpRegistry::beginRender();
+                ComponentLifecycle::beginRender();
+                PortalRegistry::instance()->beginPass();
+                try {
+                $element = Profiler::measure('php.render', static function () use ($root): ?Element {
+                    $rendered = $root instanceof Renderable ? $root : $root();
+
+                    return $rendered instanceof Renderable ? $rendered->toElement() : null;
+                });
+
+                if (!$element instanceof Element) {
+                    throw new LogicException('The Pam Desktop root must be renderable.');
+                }
+                $untouched = $element;
+                if ($theme !== null) {
+                    $themed = self::$themed ??= new \WeakMap();
+                    $memo = $themed[$theme] ?? null;
+                    if ($memo === null) {
+                        $memo = new \WeakMap();
+                        $themed[$theme] = $memo;
+                    }
+                    $element = Profiler::measure(
+                        'php.theme',
+                        static fn (): Element => $theme->applyTo($element, $memo),
+                    );
+                }
+                // When every component was memoized the committed tree is current.
+                $unchanged = $untouched === self::$lastRoot
+                    && $theme === self::$lastTheme
+                    && $element === self::$lastThemed
+                    && !self::$windowChanged;
+                self::$windowChanged = false;
+
+                $encoder = self::$encoder ??= new TreeEncoder();
+                if ($unchanged) {
+                    HandlerPurity::verify(false);
+                }
+                if (!$unchanged) {
+                $encoded = Profiler::measure(
+                    'php.encode',
+                    static fn (): array => $encoder->encode($element),
+                );
+                self::$eventCallbacks = $encoded['callbacks'];
+                $frame = $encoded['frame'];
+                $current = true;
+                // Renders inferred-pure handlers skipped, done anyway in dev.
+                HandlerPurity::verify($frame !== null);
+
+                if ($frame !== null) {
+                    $committed = true;
+                    if (function_exists('pam_desktop_commit')) {
+                        $committed = pam_desktop_commit($frame);
+                        if (!$committed && !$encoded['full']) {
+                            $encoder->forceFullFrame();
+                            $recovery = $encoder->encode($element);
+                            self::$eventCallbacks = $recovery['callbacks'];
+                            $frame = $recovery['frame'];
+                            $committed = $frame !== null && pam_desktop_commit($frame);
+                        }
+                        if (!$committed) {
+                            $current = false;
+                            @file_put_contents(
+                                sys_get_temp_dir() . '/pam-desktop-invalid-frame.bin',
+                                $frame,
+                            );
+                        }
+                    }
+                    if ($committed) {
+                        self::$lastFrame = $frame;
+                        RuntimeSupervisor::committed(
+                            $frame,
+                            (hrtime(true) - $renderStarted) / 1_000_000,
+                        );
+                    }
+                }
+                if ($current) {
+                    self::$lastRoot = $untouched;
+                    self::$lastTheme = $theme;
+                    self::$lastThemed = $element;
+                }
+                }
+                } finally {
+                    TemplateRenderer::releaseFrame();
+                    ComponentLifecycle::finishRender();
+                    PamPhpRegistry::finishRender();
+                }
+                ComponentLifecycle::commit();
+                if (PortalRegistry::instance()->endPass()) {
+                    self::$renderRequested = true;
+                }
+            } while (self::$renderRequested);
+        } catch (Throwable $error) {
+            self::$renderFailure = $error;
+
+            throw $error;
+        } finally {
+            self::$rendering = false;
+            self::drainAfterCommit();
+            self::collectCycles();
+        }
+    }
+
+    /**
+     * Runs $task once the UI update in progress is committed to the native
+     * host: after the render that follows the current event, module result
+     * or render pass, or at once when PHP is idle. Imperative view calls
+     * (ViewRef focus/selection/measure) use it so they reach the native view
+     * after the props of the same handler, never before.
+     *
+     * @internal
+     * @param Closure(): void $task
+     */
+    public static function afterCommit(Closure $task): void
+    {
+        self::$afterCommit[] = $task;
+        if (self::$root === null) {
+            self::drainAfterCommit();
+        }
+    }
+
+    private static function drainAfterCommit(): void
+    {
+        if (self::$rendering || self::$afterCommit === []) {
+            return;
+        }
+        if (self::$root !== null && self::$deferred && self::$pending) {
+            // The host's flush() renders (and drains) once its queue is empty.
+            return;
+        }
+        $tasks = self::$afterCommit;
+        self::$afterCommit = [];
+        foreach ($tasks as $task) {
+            try {
+                $task();
+            } catch (Throwable $error) {
+                self::reportError($error, RuntimeErrorPhase::Event);
+            }
+        }
+    }
+
+    private static function collectCycles(): void
+    {
+        if (self::$cycleCollection && gc_status()['roots'] >= self::$cycleRootBudget) {
+            gc_collect_cycles();
+        }
+        self::watchMemory();
+    }
+
+    private static ?int $memoryLimit = null;
+    private static bool $memoryWarned = false;
+
+    /**
+     * Above 75% of memory_limit between frames: collect cycles now (the frame
+     * collector may still be under its root budget) and, if the heap stays
+     * high, say so once in the log. It never raises the limit: a growing heap
+     * is a leak to fix, not to hide.
+     */
+    private static function watchMemory(): void
+    {
+        if (self::$memoryLimit === null) {
+            $limit = trim((string) ini_get('memory_limit'));
+            $bytes = (int) $limit;
+            $bytes *= match (strtoupper(substr($limit, -1))) {
+                'G' => 1 << 30,
+                'M' => 1 << 20,
+                'K' => 1 << 10,
+                default => 1,
+            };
+            self::$memoryLimit = $bytes > 0 ? $bytes : 0;
+        }
+        if (self::$memoryLimit === 0 || memory_get_usage() < self::$memoryLimit * 0.75) {
+            return;
+        }
+        gc_collect_cycles();
+        $usage = memory_get_usage();
+        if ($usage >= self::$memoryLimit * 0.75 && !self::$memoryWarned) {
+            self::$memoryWarned = true;
+            error_log(sprintf(
+                'Pam Desktop: PHP heap at %d of %d bytes after a frame (%d nodes). A growing heap is a leak.',
+                $usage,
+                self::$memoryLimit,
+                count(self::$encoder?->frameNodes() ?? []),
+            ));
+        }
+    }
+
+    /**
+     * Runs PHP's cycle collector between frames instead of in the middle of
+     * one. Each collection traverses the live component and element graphs,
+     * so collecting once per larger root budget, after a frame was committed,
+     * removes most of its cost from rendering. PAM_DESKTOP_FRAME_GC=0 keeps
+     * PHP's own scheduling.
+     */
+    private static function manageCycleCollection(): void
+    {
+        $setting = getenv('PAM_DESKTOP_FRAME_GC');
+        if (self::$cycleCollection || !gc_enabled() || $setting === '0') {
+            return;
+        }
+        self::$cycleRootBudget = is_string($setting) && ctype_digit($setting)
+            ? max(10_001, (int) $setting)
+            : self::CYCLE_ROOT_BUDGET;
+        gc_disable();
+        self::$cycleCollection = true;
+    }
+
+    /**
+     * Requests a render after an untracked change: every memoized component
+     * re-renders. Prefer scheduleRender() when the change already marked the
+     * affected components dirty (tracked state, stores, signals).
+     */
+    public static function requestRender(): void
+    {
+        if (self::$root === null) {
+            return;
+        }
+        DependencyTracker::invalidateAll();
+        self::scheduleRender();
+    }
+
+    /** @internal True while a render pass runs. */
+    public static function isRendering(): bool
+    {
+        return self::$rendering;
+    }
+
+    /** Requests a render after a tracked change; memoized components stay reused. */
+    public static function scheduleRender(): void
+    {
+        if (self::$root === null) {
+            return;
+        }
+        if (self::$dispatchingEvent) {
+            // dispatchEvent() renders once after the callback. Coalesce state
+            // mutations raised inside that callback instead of traversing the
+            // tree immediately and then traversing it again.
+            return;
+        }
+        if (self::$rendering) {
+            self::$renderRequested = true;
+
+            return;
+        }
+        if (self::$deferred) {
+            self::$pending = true;
+
+            return;
+        }
+        Scheduler::schedule(
+            static fn () => self::render(),
+            TaskPriority::Render,
+            'runtime.render',
+        );
+        Scheduler::drain();
+    }
+
+    /**
+     * Enables queue-drained rendering: events and module results only mark
+     * the runtime dirty and the host calls flush() once its queue is empty
+     * (or its frame budget elapsed), so bursts render once.
+     */
+    public static function deferRendering(bool $enabled = true): void
+    {
+        self::$deferred = $enabled;
+        if (!$enabled) {
+            self::flush();
+        }
+    }
+
+    /**
+     * Renders once if anything was dispatched or scheduled since the last
+     * render. With deferred rendering (the device hosts) this is the only
+     * place the host hands PHP its turn, so the task queue runs here too:
+     * work scheduled by handlers (useResource loaders) before the render,
+     * work scheduled while rendering (a resource first read in setup())
+     * right after it, and one more render for what those tasks changed.
+     */
+    public static function flush(): bool
+    {
+        if (self::$root === null) {
+            return false;
+        }
+        self::drainScheduledTasks();
+        if (!self::$pending) {
+            return false;
+        }
+        for ($pass = 0; $pass < 2 && self::$pending; $pass++) {
+            self::$pending = false;
+            try {
+                self::render();
+            } catch (Throwable $error) {
+                self::reportError($error, RuntimeErrorPhase::Render);
+            }
+            self::drainScheduledTasks();
+        }
+
+        return true;
+    }
+
+    private static function drainScheduledTasks(): void
+    {
+        if (Scheduler::pending() === 0) {
+            return;
+        }
+        try {
+            Scheduler::drain();
+        } catch (Throwable $error) {
+            self::reportError($error, RuntimeErrorPhase::Render);
+        }
+    }
+
+    public static function hasPendingRender(): bool
+    {
+        return self::$pending;
+    }
+
+    private static function afterDispatch(): void
+    {
+        if (self::$deferred) {
+            self::$pending = true;
+            self::collectCycles();
+
+            return;
+        }
+        self::render();
+    }
+
+    public static function dispatchEvent(int $nodeId, int $eventKind, string $payload): void
+    {
+        try {
+            self::dispatchEventNow($nodeId, $eventKind, $payload);
+        } finally {
+            // A handler that rendered nothing (pure, unchanged) still flushes its view calls.
+            self::drainAfterCommit();
+        }
+    }
+
+    private static function dispatchEventNow(int $nodeId, int $eventKind, string $payload): void
+    {
+        try {
+            if ($eventKind === EventKind::Back->value) {
+                DependencyTracker::invalidateAll();
+                self::$backHandler?->__invoke();
+                self::afterDispatch();
+
+                return;
+            }
+            if ($eventKind === EventKind::AppState->value) {
+                $appState = AppState::from((int) $payload);
+                \Pam\Desktop\System\Keyboard::setActive($appState === AppState::Active);
+                ComponentLifecycle::appState($appState);
+                DependencyTracker::invalidateAll();
+                self::$appStateHandler?->__invoke($appState);
+                self::afterDispatch();
+
+                return;
+            }
+            if ($eventKind === EventKind::ListWindow->value) {
+                // Framework-owned: native shows rows near placeholders of a
+                // windowed list. Materialize ahead of them; no app callback
+                // and no component is invalidated.
+                // "first,last": node ids of the visible rows; "@first,last"
+                // (or "@first,last,rows"): row indexes (rows inside a
+                // placeholder run have no node), with the row count the host
+                // had, so a report made before rows joined is recognized.
+                $rows = str_starts_with($payload, '@');
+                // "@first,last,rows,pathFirst,pathLast": a released fling
+                // also names the rows it sweeps and lands on.
+                $ids = explode(',', $rows ? substr($payload, 1) : $payload, 5);
+                if (
+                    count($ids) >= 2
+                    && (
+                        $rows
+                            ? self::$encoder?->extendWindowRows(
+                                $nodeId,
+                                (int) $ids[0],
+                                (int) $ids[1],
+                                isset($ids[2]) ? (int) $ids[2] : null,
+                                isset($ids[4]) ? [(int) $ids[3], (int) $ids[4]] : null,
+                            )
+                            : self::$encoder?->extendWindow($nodeId, (int) $ids[0], (int) $ids[1])
+                    ) === true
+                ) {
+                    self::$windowChanged = true;
+                    self::afterDispatch();
+                }
+
+                return;
+            }
+            if ($eventKind === EventKind::KeyboardVisibility->value) {
+                if (\Pam\Desktop\System\Keyboard::synchronizePayload($payload)) {
+                    self::afterDispatch();
+                }
+
+                return;
+            }
+            if ($eventKind === EventKind::Dimensions->value) {
+                $values = Wire::decodeMap($payload);
+                $previousMetrics = self::windowMetrics();
+                $previousAppearance = $previousMetrics->appearance;
+                self::$windowMetrics = new WindowMetrics(
+                    width: (float) ($values['width'] ?? 0.0),
+                    height: (float) ($values['height'] ?? 0.0),
+                    density: (float) ($values['density'] ?? 1.0),
+                    appearance: UserInterfaceAppearance::tryFrom(
+                        (int) ($values['appearance'] ?? UserInterfaceAppearance::Light->value),
+                    ) ?? UserInterfaceAppearance::Light,
+                    fontScale: (float) ($values['fontScale'] ?? 1.0),
+                    safeAreaTop: (float) ($values['safeAreaTop'] ?? 0.0),
+                    safeAreaRight: (float) ($values['safeAreaRight'] ?? 0.0),
+                    safeAreaBottom: (float) ($values['safeAreaBottom'] ?? 0.0),
+                    safeAreaLeft: (float) ($values['safeAreaLeft'] ?? 0.0),
+                    refreshRate: (float) ($values['refreshRate'] ?? 60.0),
+                    reducedMotion: (bool) ($values['reducedMotion'] ?? false),
+                    deviceType: self::styleEnvironmentKeyword($values['deviceType'] ?? null, 'phone'),
+                    pointer: self::styleEnvironmentKeyword($values['pointer'] ?? null, 'coarse'),
+                    inputMode: self::styleEnvironmentKeyword($values['inputMode'] ?? null, 'touch'),
+                    dynamicRange: self::styleEnvironmentKeyword($values['dynamicRange'] ?? null, 'standard'),
+                    displayMode: self::styleEnvironmentKeyword($values['displayMode'] ?? null, 'standalone'),
+                    foldPosture: self::styleEnvironmentKeyword($values['foldPosture'] ?? null, 'flat'),
+                    memoryClass: (float) ($values['memoryClass'] ?? 0.0),
+                    performanceTier: (float) ($values['performanceTier'] ?? 1.0),
+                );
+                Appearance::synchronize($values, $previousAppearance);
+                // Hosts re-send the window on every surface bind (also right
+                // after boot). Identical metrics cannot change any rendered
+                // output, so only real changes re-render the whole tree.
+                if (self::$windowMetrics == $previousMetrics) {
+                    // Keep the instance: render() keys the style environment
+                    // on its identity and would invalidate everything again.
+                    self::$windowMetrics = $previousMetrics;
+                } else {
+                    DependencyTracker::invalidateAll();
+                }
+                self::$dimensionsHandler?->__invoke(self::$windowMetrics);
+                if (self::$windowMetrics !== $previousMetrics) {
+                    foreach (self::$metricsListeners as $listener) {
+                        $listener(self::$windowMetrics);
+                    }
+                }
+                self::afterDispatch();
+
+                return;
+            }
+            if ($eventKind === EventKind::MemoryPressure->value) {
+                DependencyTracker::invalidateAll();
+                self::$memoryPressureHandler?->__invoke(MemoryPressure::from((int) $payload));
+                self::afterDispatch();
+                // Hidden or low on memory: what the handlers and the frame
+                // dropped goes back to the system (Zend MM keeps freed chunks
+                // cached for the next allocation otherwise).
+                gc_collect_cycles();
+                gc_mem_caches();
+
+                return;
+            }
+
+            $callback = self::$eventCallbacks[$nodeId.':'.$eventKind] ?? null;
+            if ($callback === null) {
+                return;
+            }
+            $pure = self::isPureCallback($callback);
+            if (!$pure && !self::marksItsScope($callback)) {
+                // Arbitrary element closures may mutate any state: re-render
+                // everything. Template handlers mark their component dirty.
+                DependencyTracker::invalidateAll();
+            }
+            $revision = DependencyTracker::revision();
+            $epoch = DependencyTracker::epoch();
+            self::$dispatchingEvent = true;
+            try {
+                $callback($payload);
+            } finally {
+                self::$dispatchingEvent = false;
+            }
+            if (
+                $pure
+                && DependencyTracker::revision() === $revision
+                && DependencyTracker::epoch() === $epoch
+            ) {
+                // #[PureHandler]: nothing it touched changed, so nothing can
+                // render differently. Skip the tree walk, encode and patch.
+                return;
+            }
+            self::afterDispatch();
+        } catch (Throwable $error) {
+            self::reportError($error, RuntimeErrorPhase::Event);
+        }
+    }
+
+    /**
+     * A #[PureHandler] template method, a closure carrying the attribute, or
+     * an element wrapper (payload decoding) around only such handlers.
+     */
+    private static function isPureCallback(Closure $callback, int $depth = 0): bool
+    {
+        if (TemplateRenderer::isPureHandler($callback)) {
+            return true;
+        }
+        $function = new \ReflectionFunction($callback);
+        if ($function->getAttributes(\Pam\Desktop\Attributes\PureHandler::class) !== []) {
+            return true;
+        }
+        $scope = $function->getClosureScopeClass()?->getName();
+        if (
+            $depth >= 3
+            || $scope === null
+            || !str_starts_with($scope, 'Pam\\Desktop\\')
+            || !is_a($scope, Element::class, true)
+        ) {
+            return false;
+        }
+        $wrapped = [];
+        foreach ($function->getClosureUsedVariables() as $variable) {
+            if ($variable instanceof Closure) {
+                $wrapped[] = $variable;
+            }
+        }
+        if ($wrapped === []) {
+            return false;
+        }
+        foreach ($wrapped as $inner) {
+            if (!self::isPureCallback($inner, $depth + 1)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Template handlers mark their own component dirty. Elements wrap
+     * handlers to decode gesture payloads (Pressable doubleTap/pressIn/
+     * pressOut/pressMove, image, media, input events...); such a wrapper
+     * marks its scope when every handler it wraps does.
+     */
+    private static function marksItsScope(Closure $callback, int $depth = 0): bool
+    {
+        $function = new \ReflectionFunction($callback);
+        $scope = $function->getClosureScopeClass()?->getName();
+        if ($scope === TemplateRenderer::class) {
+            return true;
+        }
+        if (
+            $depth >= 3
+            || $scope === null
+            || !str_starts_with($scope, 'Pam\\Desktop\\')
+            || !is_a($scope, Element::class, true)
+        ) {
+            return false;
+        }
+        $wrapped = [];
+        foreach ($function->getClosureUsedVariables() as $variable) {
+            if ($variable instanceof Closure) {
+                $wrapped[] = $variable;
+            } elseif (is_array($variable)) {
+                foreach ($variable as $item) {
+                    if ($item instanceof Closure) {
+                        $wrapped[] = $item;
+                    }
+                }
+            }
+        }
+        if ($wrapped === []) {
+            return false;
+        }
+        foreach ($wrapped as $inner) {
+            if (!self::marksItsScope($inner, $depth + 1)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static function styleEnvironmentKeyword(mixed $value, string $fallback): string
+    {
+        return is_string($value) && preg_match('/^[a-z][a-z0-9-]{0,31}$/D', $value) === 1
+            ? $value
+            : $fallback;
+    }
+
+    public static function dispatchModuleResult(
+        int $requestId,
+        int $status,
+        string $payload,
+    ): void {
+        $callback = self::$moduleCallbacks[$requestId] ?? null;
+        unset(self::$moduleCallbacks[$requestId]);
+
+        if ($callback === null) {
+            return;
+        }
+
+        try {
+            $callback(ModuleResultStatus::from($status), $payload);
+            self::afterDispatch();
+        } catch (Throwable $error) {
+            self::reportError($error, RuntimeErrorPhase::ModuleResult);
+        } finally {
+            self::drainAfterCommit();
+        }
+    }
+
+    public static function call(
+        string $module,
+        string $method,
+        string $payload,
+        Closure $callback,
+    ): int {
+        if (
+            preg_match('/^[a-z0-9][a-z0-9._-]{0,63}$/', $module) !== 1
+            || preg_match('/^[A-Za-z][A-Za-z0-9_]{0,63}$/', $method) !== 1
+        ) {
+            throw new LogicException('Native module and method names must be safe identifiers.');
+        }
+
+        $requestId = self::$nextRequestId++;
+        self::$moduleCallbacks[$requestId] = $callback;
+
+        if (self::$moduleTransport !== null) {
+            self::$moduleTransport->invoke(
+                $requestId,
+                $module,
+                $method,
+                $payload,
+                static fn (ModuleResultStatus $status, string $result): null => self::completeTransportCall(
+                    $requestId,
+                    $status,
+                    $result,
+                ),
+            );
+        } elseif (function_exists('pam_desktop_call')) {
+            pam_desktop_call($requestId, $module, $method, $payload);
+        }
+
+        return $requestId;
+    }
+
+    public static function setModuleTransport(?NativeModuleTransport $transport): void
+    {
+        self::$moduleTransport = $transport;
+    }
+
+    private static function completeTransportCall(
+        int $requestId,
+        ModuleResultStatus $status,
+        string $payload,
+    ): null {
+        self::dispatchModuleResult($requestId, $status->value, $payload);
+
+        return null;
+    }
+
+    public static function callNative(
+        NativeOperation $operation,
+        string $payload,
+        Closure $callback,
+    ): int {
+        $requestId = self::$nextRequestId++;
+        self::$moduleCallbacks[$requestId] = $callback;
+
+        if (function_exists('pam_desktop_call_typed')) {
+            pam_desktop_call_typed($requestId, $operation->value, $payload);
+        }
+
+        return $requestId;
+    }
+
+    /**
+     * Reports an uncaught error to App::onError() listeners and the native
+     * host. Errors raised by a render pass are always reported as fatal
+     * (Render) whatever path triggered that render.
+     */
+    public static function reportError(Throwable $error, ?RuntimeErrorPhase $phase = null): void
+    {
+        if ($error === self::$renderFailure) {
+            $phase = $phase === RuntimeErrorPhase::Boot ? $phase : RuntimeErrorPhase::Render;
+            self::$renderFailure = null;
+        }
+        $phase ??= RuntimeErrorPhase::Other;
+        if ($phase !== RuntimeErrorPhase::UnhandledRejection) {
+            // A forgotten catch() (an offline request) must not push the app into safe mode.
+            RuntimeSupervisor::failed($error);
+        }
+        try {
+            $report = RuntimeError::from(
+                $error,
+                $phase,
+                withSnippet: BuildConfiguration::mode() !== BuildMode::Production,
+            );
+        } catch (Throwable) {
+            $report = null;
+        }
+        if ($report !== null) {
+            ErrorReporter::notify($error, $report);
+        }
+        if (!function_exists('pam_desktop_error')) {
+            return;
+        }
+        try {
+            $payload = json_encode([
+                'version' => 2,
+                ...($report?->toArray() ?? [
+                    'type' => $error::class,
+                    'message' => $error->getMessage(),
+                    'file' => $error->getFile(),
+                    'line' => $error->getLine(),
+                    'column' => 1,
+                    'phase' => $phase->value,
+                    'fatal' => $phase->fatal(),
+                ]),
+                'trace' => substr($report?->traceAsString() ?? $error->getTraceAsString(), 0, 12_000),
+            ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+            pam_desktop_error("PAMERR1\n".$payload);
+        } catch (JsonException) {
+            pam_desktop_error($error::class.': '.$error->getMessage());
+        }
+    }
+
+    /**
+     * Called by the native host right before a hot reload shuts this request
+     * down (never on a regular stop): records component state for the next
+     * request. Best effort; development only.
+     */
+    public static function checkpointHotReload(): void
+    {
+        try {
+            ComponentLifecycle::checkpointHotReload();
+        } catch (Throwable) {
+            // A broken request (the edit that is being fixed) simply restarts fresh.
+        }
+    }
+
+    public static function shutdown(): void
+    {
+        self::$root = null;
+        self::$eventCallbacks = [];
+        self::$moduleCallbacks = [];
+        self::$afterCommit = [];
+        self::$lastFrame = null;
+        self::$nextRequestId = 1;
+        self::$moduleTransport = null;
+        self::$backHandler = null;
+        self::$appStateHandler = null;
+        self::$dimensionsHandler = null;
+        self::$memoryPressureHandler = null;
+        self::$encoder = null;
+        self::$rendering = false;
+        self::$renderRequested = false;
+        self::$dispatchingEvent = false;
+        self::$deferred = false;
+        self::$pending = false;
+        self::$lastRoot = null;
+        self::$lastThemed = null;
+        self::$lastTheme = null;
+        self::$environmentKey = null;
+        self::$themed = null;
+        // Composable sources first: stopping them unsubscribes from the
+        // platform listeners reset below, and a hot reload must not keep a
+        // source whose signal still points at the previous request's state.
+        \Pam\Desktop\Composables\Sources::reset();
+        Appearance::resetRuntime();
+        \Pam\Desktop\System\Keyboard::resetRuntime();
+        PortalRegistry::reset();
+        self::$windowMetrics = self::bootMetrics();
+        ComponentLifecycle::shutdown();
+        PamPhpRegistry::releaseInstances();
+        Stores::resetRuntime();
+        Scheduler::reset();
+        Profiler::reset();
+        RuntimeSupervisor::reset();
+        ErrorReporter::reset();
+        self::$renderFailure = null;
+        Linking::resetRuntime();
+        \Pam\Desktop\Routing\Route::resetRuntime();
+        \Pam\Desktop\Events\EventBus::resetRuntime();
+        \Pam\Desktop\Plugin\RuntimeHooks::reset();
+        State::resetCache();
+        TemplateRenderer::releaseFrame();
+        if (self::$cycleCollection) {
+            // Collect what the frames left behind now, during teardown, so
+            // re-enabling PHP's collector does not run it in the next frame.
+            self::$cycleCollection = false;
+            gc_collect_cycles();
+            gc_enable();
+        }
+    }
+
+    public static function lastFrame(): ?string
+    {
+        return self::$lastFrame;
+    }
+
+    public static function onBack(Closure $handler): void
+    {
+        self::$backHandler = $handler;
+    }
+
+    public static function onAppState(Closure $handler): void
+    {
+        self::$appStateHandler = $handler;
+    }
+
+    public static function onDimensions(Closure $handler): void
+    {
+        self::$dimensionsHandler = $handler;
+    }
+
+    /**
+     * Adds a listener for real window metric changes (size, insets, font
+     * scale, density...). Unlike onDimensions(), any number may be active.
+     *
+     * @param Closure(WindowMetrics): void $listener
+     */
+    public static function onWindowMetrics(Closure $listener): int
+    {
+        $id = self::$nextMetricsListener++;
+        self::$metricsListeners[$id] = $listener;
+
+        return $id;
+    }
+
+    public static function offWindowMetrics(int $subscription): void
+    {
+        unset(self::$metricsListeners[$subscription]);
+    }
+
+    /** Active onWindowMetrics() listeners, for leak diagnostics and tests. */
+    public static function windowMetricsListeners(): int
+    {
+        return \count(self::$metricsListeners);
+    }
+
+    /** @internal Test hook: installs metrics as if the host had sent them. */
+    public static function replaceWindowMetrics(WindowMetrics $metrics): void
+    {
+        $previous = self::windowMetrics();
+        self::$windowMetrics = $metrics;
+        if ($metrics == $previous) {
+            self::$windowMetrics = $previous;
+
+            return;
+        }
+        DependencyTracker::invalidateAll();
+        foreach (self::$metricsListeners as $listener) {
+            $listener($metrics);
+        }
+    }
+
+    public static function onMemoryPressure(Closure $handler): void
+    {
+        self::$memoryPressureHandler = $handler;
+    }
+}

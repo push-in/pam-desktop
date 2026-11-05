@@ -1,0 +1,665 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\System;
+
+use Closure;
+use Pam\Desktop\FileDownloadProgress;
+use Pam\Desktop\FileReference;
+use Pam\Desktop\Internal\Wire;
+use Pam\Desktop\MediaPickerType;
+use Pam\Desktop\ModuleResultStatus;
+use Pam\Desktop\Modules\NativeModules;
+use JsonException;
+use InvalidArgumentException;
+use RuntimeException;
+
+use function count;
+use function in_array;
+use function is_array;
+use function is_int;
+use function is_string;
+use function strlen;
+
+final class Files
+{
+    private static int $nextDownload = 1;
+
+    /** @var array<int, array{failure: ?Closure, native: ?int, progress: ?Closure, success: Closure}> */
+    private static array $downloads = [];
+
+    private function __construct()
+    {
+    }
+
+    /** @param Closure(string): void $callback */
+    public static function read(string $path, Closure $callback): int
+    {
+        return self::invoke('read', ['path' => $path], static function (array $values) use ($callback): void {
+            $decoded = base64_decode((string) ($values['data'] ?? ''), true);
+            if ($decoded === false) {
+                throw new RuntimeException('Native file payload is invalid.');
+            }
+            $callback($decoded);
+        });
+    }
+
+    /**
+     * Hash a private file natively without moving its bytes through PHP.
+     * @param Closure(string): void $callback
+     * @param null|Closure(string): void $failure
+     */
+    public static function sha256(string $path, Closure $callback, ?Closure $failure = null): int
+    {
+        if (trim($path) === '' || strlen($path) > 4096 || str_starts_with($path, '/')
+            || str_contains($path, '\\') || preg_match('/[\x00-\x1f\x7f]/', $path)
+            || array_intersect(explode('/', $path), ['', '.', '..']) !== []) {
+            throw new InvalidArgumentException('Hash source must be a relative private file path.');
+        }
+
+        return self::invokeOptionalFailure('sha256', ['path' => $path], static function (array $values) use ($callback): void {
+            $digest = $values['sha256'] ?? null;
+            if (!is_string($digest) || preg_match('/^[a-f0-9]{64}$/D', $digest) !== 1) {
+                throw new RuntimeException('Native SHA-256 result is invalid.');
+            }
+            $callback($digest);
+        }, $failure);
+    }
+
+    public static function write(string $path, string $contents, ?Closure $callback = null): int
+    {
+        return self::invoke(
+            'write',
+            ['path' => $path, 'data' => base64_encode($contents)],
+            static fn (array $_): mixed => $callback?->__invoke(),
+        );
+    }
+
+    /** @param Closure(FileReference): void $callback */
+    public static function copyAsset(string $assetPath, string $destination, Closure $callback): int
+    {
+        $assetPath = self::assetPath($assetPath);
+
+        return self::invoke(
+            'copyAsset',
+            ['assetPath' => $assetPath, 'path' => $destination],
+            static fn (array $values): mixed => $callback(self::reference($values)),
+        );
+    }
+
+    /**
+     * Downloads an HTTPS resource into the PAM file sandbox.
+     *
+     * @param Closure(FileReference): void $callback
+     */
+    public static function download(
+        string $url,
+        string $destination,
+        Closure $callback,
+        int $maximumBytes = 67_108_864,
+        array $headers = [],
+        ?Closure $failure = null,
+    ): int {
+        self::validateDownload($url, $maximumBytes);
+        $headers = self::downloadHeaders($headers);
+
+        return self::invokeOptionalFailure(
+            'download',
+            [
+                'url' => $url,
+                'path' => $destination,
+                'maximumBytes' => $maximumBytes,
+                'headers' => json_encode($headers, JSON_THROW_ON_ERROR | JSON_FORCE_OBJECT),
+            ],
+            static fn (array $values): mixed => $callback(self::reference($values)),
+            $failure,
+        );
+    }
+
+    /**
+     * Downloads an HTTPS resource with optional request headers and progress.
+     *
+     * @param Closure(FileReference): void $callback
+     * @param null|Closure(FileDownloadProgress): void $progress
+     * @param array<string, string> $headers
+     * @param null|Closure(string): void $failure
+     */
+    public static function downloadWithProgress(
+        string $url,
+        string $destination,
+        Closure $callback,
+        ?Closure $progress = null,
+        array $headers = [],
+        int $maximumBytes = 67_108_864,
+        ?Closure $failure = null,
+    ): int {
+        self::validateDownload($url, $maximumBytes);
+        $headers = self::downloadHeaders($headers);
+        $download = self::$nextDownload++;
+        self::$downloads[$download] = [
+            'failure' => $failure,
+            'native' => null,
+            'progress' => $progress,
+            'success' => $callback,
+        ];
+        NativeModules::call('files', 'downloadStart', [
+            'url' => $url,
+            'path' => $destination,
+            'maximumBytes' => $maximumBytes,
+            'headers' => json_encode($headers, JSON_THROW_ON_ERROR | JSON_FORCE_OBJECT),
+        ], static function ($result) use ($download): void {
+            if ($result->status === ModuleResultStatus::Failure) {
+                self::finishDownloadFailure($download, $result->payload);
+
+                return;
+            }
+            $native = (int) (Wire::decodeMap($result->payload)['subscription'] ?? 0);
+            if (!isset(self::$downloads[$download])) {
+                NativeModules::call('files', 'downloadCancel', ['subscription' => $native], static fn (): null => null);
+
+                return;
+            }
+            self::$downloads[$download]['native'] = $native;
+            self::nextDownload($download);
+        });
+
+        return $download;
+    }
+
+    public static function cancelDownload(int $download): void
+    {
+        $active = self::$downloads[$download] ?? null;
+        unset(self::$downloads[$download]);
+        if (is_array($active) && is_int($active['native'])) {
+            NativeModules::call(
+                'files',
+                'downloadCancel',
+                ['subscription' => $active['native']],
+                static fn (): null => null,
+            );
+        }
+    }
+
+    /** @param Closure(): void $callback @param null|Closure(string): void $failure */
+    public static function open(
+        string $path,
+        ?string $mimeType,
+        Closure $callback,
+        ?Closure $failure = null,
+    ): int {
+        return self::invokeOptionalFailure(
+            'open',
+            ['path' => $path, 'mimeType' => trim((string) $mimeType)],
+            static fn (array $_): mixed => $callback(),
+            $failure,
+        );
+    }
+
+    /**
+     * Native message both hosts report for a private file that is not there.
+     *
+     * @internal
+     */
+    public const MISSING_FILE_MESSAGE = 'File does not exist';
+
+    /**
+     * Metadata of a private file. A missing file is not an error: it calls
+     * [$missing] (or nothing) instead of throwing. Other native failures go to
+     * [$failure], or throw when it is null.
+     *
+     * @param Closure(FileReference): void $callback
+     * @param null|Closure(): void $missing
+     * @param null|Closure(string): void $failure
+     */
+    public static function stat(
+        string $path,
+        Closure $callback,
+        ?Closure $missing = null,
+        ?Closure $failure = null,
+    ): int {
+        return NativeModules::call('files', 'stat', ['path' => $path], static function ($result) use ($callback, $missing, $failure): void {
+            if ($result->status === ModuleResultStatus::Failure) {
+                if ($result->payload === self::MISSING_FILE_MESSAGE) {
+                    $missing?->__invoke();
+
+                    return;
+                }
+                if ($failure !== null) {
+                    $failure($result->payload);
+
+                    return;
+                }
+                throw new RuntimeException($result->payload);
+            }
+            $callback(self::reference($result->payload === '' ? [] : Wire::decodeMap($result->payload)));
+        });
+    }
+
+    /**
+     * Nullable form of {@see stat()}: the callback receives null when the
+     * private file does not exist.
+     *
+     * @param Closure(?FileReference): void $callback
+     * @param null|Closure(string): void $failure
+     */
+    public static function find(string $path, Closure $callback, ?Closure $failure = null): int
+    {
+        return self::stat(
+            $path,
+            static function (FileReference $file) use ($callback): void {
+                $callback($file);
+            },
+            static function () use ($callback): void {
+                $callback(null);
+            },
+            $failure,
+        );
+    }
+
+    /**
+     * Whether a private file exists (directories report false), off the UI
+     * thread. Only invalid paths (outside the sandbox) fail.
+     *
+     * @param Closure(bool): void $callback
+     * @param null|Closure(string): void $failure
+     */
+    public static function exists(string $path, Closure $callback, ?Closure $failure = null): int
+    {
+        return self::invokeOptionalFailure(
+            'exists',
+            ['path' => $path],
+            static fn (array $values): mixed => $callback((bool) ($values['exists'] ?? false)),
+            $failure,
+        );
+    }
+
+    /** @param Closure(list<FileReference>): void $callback */
+    public static function list(string $directory, Closure $callback): int
+    {
+        return self::invoke('list', ['path' => $directory], static function (array $values) use ($callback): void {
+            $items = json_decode((string) ($values['items'] ?? '[]'), true, flags: JSON_THROW_ON_ERROR);
+            if (!is_array($items)) {
+                throw new RuntimeException('Native file listing is invalid.');
+            }
+            $callback(array_map(
+                static fn (mixed $item): FileReference => self::reference(is_array($item) ? $item : []),
+                $items,
+            ));
+        });
+    }
+
+    public static function delete(string $path, ?Closure $callback = null): int
+    {
+        return self::invoke(
+            'delete',
+            ['path' => $path],
+            static fn (array $_): mixed => $callback?->__invoke(),
+        );
+    }
+
+    /**
+     * Moves a private file or directory without sending its bytes through PHP.
+     *
+     * @param null|Closure(FileReference): void $callback
+     * @param null|Closure(string): void $failure
+     */
+    public static function move(
+        string $from,
+        string $to,
+        ?Closure $callback = null,
+        ?Closure $failure = null,
+        bool $overwrite = false,
+    ): int {
+        return self::transfer('move', $from, $to, $callback, $failure, $overwrite);
+    }
+
+    /**
+     * Copies a private file natively and publishes the destination atomically.
+     *
+     * @param null|Closure(FileReference): void $callback
+     * @param null|Closure(string): void $failure
+     */
+    public static function copy(
+        string $from,
+        string $to,
+        ?Closure $callback = null,
+        ?Closure $failure = null,
+        bool $overwrite = false,
+    ): int {
+        return self::transfer('copy', $from, $to, $callback, $failure, $overwrite);
+    }
+
+    /**
+     * Creates a private directory and any missing parents.
+     *
+     * @param null|Closure(string): void $callback Receives the normalized relative path.
+     * @param null|Closure(string): void $failure
+     */
+    public static function makeDirectory(string $path, ?Closure $callback = null, ?Closure $failure = null): int
+    {
+        return self::invokeOptionalFailure(
+            'makeDirectory',
+            ['path' => self::privatePath($path, 'Directory')],
+            static fn (array $values): mixed => $callback?->__invoke((string) ($values['path'] ?? $path)),
+            $failure,
+        );
+    }
+
+    /** @internal Validates a sandbox-relative path before it crosses the bridge. */
+    public static function privatePath(string $path, string $label = 'File'): string
+    {
+        if (trim($path) === '' || strlen($path) > 4096 || str_starts_with($path, '/')
+            || str_contains($path, '\\') || preg_match('/[\x00-\x1f\x7f]/', $path)
+            || array_intersect(explode('/', $path), ['', '.', '..']) !== []) {
+            throw new InvalidArgumentException("{$label} must be a relative private file path.");
+        }
+
+        return $path;
+    }
+
+    private static function transfer(
+        string $method,
+        string $from,
+        string $to,
+        ?Closure $callback,
+        ?Closure $failure,
+        bool $overwrite,
+    ): int {
+        return self::invokeOptionalFailure(
+            $method,
+            [
+                'from' => self::privatePath($from, 'Source'),
+                'to' => self::privatePath($to, 'Destination'),
+                'overwrite' => $overwrite,
+            ],
+            static fn (array $values): mixed => $callback?->__invoke(self::reference($values)),
+            $failure,
+        );
+    }
+
+    private static function assetPath(string $path): string
+    {
+        $path = str_replace('\\', '/', trim($path));
+        if (
+            $path === ''
+            || str_starts_with($path, '/')
+            || strlen($path) > 1_024
+            || array_any(
+                explode('/', $path),
+                static fn (string $segment): bool => $segment === '' || $segment === '.' || $segment === '..',
+            )
+        ) {
+            throw new InvalidArgumentException('Bundled asset path must be safe and project-relative.');
+        }
+
+        return $path;
+    }
+
+    /**
+     * @param Closure(?FileReference): void $callback
+     *
+     * A user-cancelled platform picker resolves with null. Cancellation is a
+     * normal UI outcome and is never surfaced as a native-module exception.
+     * The default import limit remains 64 MiB. Larger documents are copied
+     * directly into the private file sandbox without loading them into PHP.
+     *
+     * @param null|Closure(string): void $failure
+     */
+    public static function pick(
+        MediaPickerType $type,
+        Closure $callback,
+        ?string $mimeType = null,
+        ?Closure $failure = null,
+        int $maximumBytes = 67_108_864,
+    ): int {
+        if ($mimeType !== null && preg_match('~^[a-zA-Z0-9!#$&^_.+-]+/[a-zA-Z0-9!#$&^_.+*-]+$~D', $mimeType) !== 1) {
+            throw new InvalidArgumentException('Picker MIME type is invalid.');
+        }
+        if ($maximumBytes < 1 || $maximumBytes > 8_589_934_592) {
+            throw new InvalidArgumentException('Picker import limit must be between 1 byte and 8 GiB.');
+        }
+
+        return self::invokeOptionalFailure(
+            'pick',
+            [
+                'type' => $type->value,
+                'mimeType' => $mimeType ?? '',
+                'maximumBytes' => $maximumBytes,
+            ],
+            static function (array $values) use ($callback): mixed {
+                $reference = self::reference($values);
+
+                return $callback($reference->path === '' ? null : $reference);
+            },
+            $failure,
+        );
+    }
+
+    /**
+     * @param Closure(list<FileReference>): void $callback
+     *
+     * A user-cancelled platform picker resolves with an empty list. Each file
+     * may use up to `$maximumBytes` (1 byte to 8 GiB); the selection may use
+     * at least 256 MiB. A failed import reaches `$failure` when given.
+     *
+     * @param null|Closure(string): void $failure
+     */
+    public static function pickMany(
+        MediaPickerType $type,
+        Closure $callback,
+        int $limit = 10,
+        ?Closure $failure = null,
+        int $maximumBytes = 67_108_864,
+    ): int {
+        if ($maximumBytes < 1 || $maximumBytes > 8_589_934_592) {
+            throw new InvalidArgumentException('Picker import limit must be between 1 byte and 8 GiB.');
+        }
+
+        return self::invokeOptionalFailure(
+            'pickMany',
+            [
+                'limit' => max(1, min(50, $limit)),
+                'maximumBytes' => $maximumBytes,
+                'type' => $type->value,
+            ],
+            static function (array $values) use ($callback): mixed {
+                try {
+                    $items = json_decode(
+                        (string) ($values['items'] ?? '[]'),
+                        true,
+                        flags: JSON_THROW_ON_ERROR,
+                    );
+                } catch (JsonException $error) {
+                    throw new RuntimeException(
+                        'Native multi-file payload is invalid.',
+                        previous: $error,
+                    );
+                }
+                if (!is_array($items)) {
+                    throw new RuntimeException('Native multi-file payload is invalid.');
+                }
+                $references = [];
+                foreach ($items as $item) {
+                    if (is_array($item)) {
+                        $references[] = self::reference($item);
+                    }
+                }
+                $callback($references);
+
+                return null;
+            },
+            $failure,
+        );
+    }
+
+    /**
+     * Copies a granted Android content URI or an iOS PhotoKit asset into the PAM file
+     * sandbox so it can be uploaded, edited and retained safely.
+     *
+     * @param Closure(FileReference): void $callback
+     */
+    public static function importUri(string $uri, Closure $callback): int
+    {
+        if (!str_starts_with($uri, 'content://') && !str_starts_with($uri, 'phasset://asset/')) {
+            throw new RuntimeException('Only content or PhotoKit asset URIs can be imported.');
+        }
+
+        return self::invoke(
+            'importUri',
+            ['uri' => $uri],
+            static fn (array $values): mixed => $callback(self::reference($values)),
+        );
+    }
+
+    private static function reference(array $values): FileReference
+    {
+        return new FileReference(
+            path: (string) ($values['path'] ?? ''),
+            name: (string) ($values['name'] ?? ''),
+            mimeType: (string) ($values['mimeType'] ?? 'application/octet-stream'),
+            size: (int) ($values['size'] ?? 0),
+        );
+    }
+
+    private static function invoke(string $method, array $payload, Closure $callback): int
+    {
+        return NativeModules::call('files', $method, $payload, static function ($result) use ($callback): void {
+            if ($result->status === ModuleResultStatus::Failure) {
+                throw new RuntimeException($result->payload);
+            }
+            $callback($result->payload === '' ? [] : Wire::decodeMap($result->payload));
+        });
+    }
+
+    private static function invokeOptionalFailure(
+        string $method,
+        array $payload,
+        Closure $callback,
+        ?Closure $failure,
+    ): int {
+        return NativeModules::call('files', $method, $payload, static function ($result) use ($callback, $failure): void {
+            if ($result->status === ModuleResultStatus::Failure) {
+                if ($failure !== null) {
+                    $failure($result->payload);
+
+                    return;
+                }
+                throw new RuntimeException($result->payload);
+            }
+            $callback($result->payload === '' ? [] : Wire::decodeMap($result->payload));
+        });
+    }
+
+    private static function nextDownload(int $download): void
+    {
+        $active = self::$downloads[$download] ?? null;
+        if (!is_array($active) || !is_int($active['native'])) {
+            return;
+        }
+        NativeModules::call('files', 'downloadNext', [
+            'subscription' => $active['native'],
+        ], static function ($result) use ($download): void {
+            $active = self::$downloads[$download] ?? null;
+            if (!is_array($active)) {
+                return;
+            }
+            if ($result->status === ModuleResultStatus::Failure) {
+                self::finishDownloadFailure($download, $result->payload);
+
+                return;
+            }
+            $values = Wire::decodeMap($result->payload);
+            $state = (int) ($values['state'] ?? 0);
+            if ($state === 1) {
+                if ($active['progress'] !== null) {
+                    ($active['progress'])(new FileDownloadProgress(
+                        bytesWritten: max(0, (int) ($values['bytesWritten'] ?? 0)),
+                        totalBytes: max(0, (int) ($values['totalBytes'] ?? 0)),
+                    ));
+                }
+                self::nextDownload($download);
+
+                return;
+            }
+            if ($state === 2) {
+                NativeModules::call(
+                    'files',
+                    'downloadCancel',
+                    ['subscription' => $active['native']],
+                    static fn (): null => null,
+                );
+                unset(self::$downloads[$download]);
+                ($active['success'])(self::reference($values));
+
+                return;
+            }
+            self::finishDownloadFailure($download, (string) ($values['message'] ?? 'Download failed.'));
+        });
+    }
+
+    private static function finishDownloadFailure(int $download, string $message): void
+    {
+        $active = self::$downloads[$download] ?? null;
+        unset(self::$downloads[$download]);
+        if (!is_array($active)) {
+            return;
+        }
+        if (is_int($active['native'])) {
+            NativeModules::call(
+                'files',
+                'downloadCancel',
+                ['subscription' => $active['native']],
+                static fn (): null => null,
+            );
+        }
+        if ($active['failure'] !== null) {
+            ($active['failure'])($message);
+
+            return;
+        }
+        throw new RuntimeException($message);
+    }
+
+    private static function validateDownload(string $url, int $maximumBytes): void
+    {
+        $parts = parse_url($url);
+        if (
+            strlen($url) > 2_048
+            || !is_array($parts)
+            || strtolower((string) ($parts['scheme'] ?? '')) !== 'https'
+            || ($parts['host'] ?? '') === ''
+            || isset($parts['user'])
+            || isset($parts['pass'])
+        ) {
+            throw new InvalidArgumentException('Download URL must be an absolute HTTPS URL without credentials.');
+        }
+        if ($maximumBytes < 1 || $maximumBytes > 268_435_456) {
+            throw new InvalidArgumentException('Download limit must be between 1 byte and 256 MiB.');
+        }
+    }
+
+    /** @param array<string, string> $headers @return array<string, string> */
+    private static function downloadHeaders(array $headers): array
+    {
+        if (count($headers) > 32) {
+            throw new InvalidArgumentException('Downloads accept at most 32 request headers.');
+        }
+        $normalized = [];
+        foreach ($headers as $name => $value) {
+            if (
+                !is_string($name)
+                || !is_string($value)
+                || preg_match('/^[!#$%&\'*+.^_`|~0-9A-Za-z-]{1,64}$/D', $name) !== 1
+                || preg_match('/[\r\n]/', $value) === 1
+                || strlen($value) > 8_192
+                || in_array(strtolower($name), ['connection', 'content-length', 'host', 'transfer-encoding'], true)
+            ) {
+                throw new InvalidArgumentException('Download request headers are invalid or unsafe.');
+            }
+            $normalized[$name] = $value;
+        }
+
+        return $normalized;
+    }
+}
