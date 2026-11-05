@@ -440,6 +440,9 @@ pub struct App {
     draining: Cell<bool>,
     /// `quit` ran: windows are gone and the loop is ending.
     pub quitting: Cell<bool>,
+    /// Menus are dark. Outside the state: the window procedure reads it
+    /// while it draws the menu bar, which can happen under a state borrow.
+    pub menus_dark: Cell<bool>,
 }
 
 thread_local! {
@@ -532,6 +535,7 @@ impl App {
             repaint_pending: Cell::new(false),
             draining: Cell::new(false),
             quitting: Cell::new(false),
+            menus_dark: Cell::new(false),
         });
         APP.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&app)));
         Ok(app)

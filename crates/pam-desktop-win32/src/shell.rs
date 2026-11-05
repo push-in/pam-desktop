@@ -270,9 +270,10 @@ fn refresh_appearance(app: &Rc<App>) {
         )
     });
     if let Some((dark, windows)) = windows {
-        for hwnd in windows {
-            apply_title_bar_theme(hwnd, dark);
+        for hwnd in &windows {
+            apply_title_bar_theme(*hwnd, dark);
         }
+        crate::menu_theme::apply(app, dark, &windows);
     }
 }
 

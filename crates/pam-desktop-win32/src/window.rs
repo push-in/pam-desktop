@@ -55,7 +55,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_GESTURE, WM_GESTURENOTIFY, WM_GETMINMAXINFO,
     WM_GETOBJECT, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
     WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCACTIVATE, WM_NCCALCSIZE,
-    WM_NCCREATE, WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_NOTIFY, WM_PAINT, WM_PARENTNOTIFY,
+    WM_NCCREATE, WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_NCPAINT, WM_NOTIFY, WM_PAINT, WM_PARENTNOTIFY,
     WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR,
     WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONUP, WNDCLASSEXW, WS_CLIPCHILDREN, WS_MAXIMIZEBOX,
     WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME, WindowFromPoint, XBUTTON1,
@@ -66,6 +66,7 @@ use crate::app::{App, State};
 use crate::events;
 use crate::gfx::Surface;
 use crate::media::Press as MediaPress;
+use crate::menu_theme::{self, WM_UAHDRAWMENU, WM_UAHDRAWMENUITEM};
 use crate::scroll::{BarDrag, LINE_EXTENT};
 use crate::util::{from_wide, hiword, loword, lparam_point, pixel_rect, wide};
 
@@ -351,6 +352,7 @@ pub fn open(app: &Rc<App>, window: WindowId, config: &WindowConfig) {
         }
     });
     crate::shell::apply_title_bar_theme(hwnd, dark);
+    menu_theme::apply(app, dark, &[hwnd]);
     crate::dragdrop::register(app, hwnd, window);
 }
 
@@ -2052,12 +2054,31 @@ fn handle(
                 })
                 .flatten()?;
             if decorated {
-                return None;
+                if !(app.menus_dark.get() && has_menu(hwnd)) {
+                    return None;
+                }
+                // The default procedure repaints the frame, and with it
+                // the light line under the menu bar.
+                // SAFETY: forwarding the unmodified message.
+                let result = unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
+                menu_theme::paint_bar_edge(hwnd);
+                return Some(result);
             }
             // Without a frame there is no caption to repaint: -1 keeps the
             // default handler from drawing one over the client area.
             // SAFETY: forwarding the message with the documented lParam.
             Some(unsafe { DefWindowProcW(hwnd, message, wparam, LPARAM(-1)) })
+        }
+        WM_NCPAINT if app.menus_dark.get() && has_menu(hwnd) => {
+            // SAFETY: forwarding the unmodified message.
+            let result = unsafe { DefWindowProcW(hwnd, message, wparam, lparam) };
+            menu_theme::paint_bar_edge(hwnd);
+            Some(result)
+        }
+        // The theme engine asks the window to draw its menu bar: dark
+        // here, light by the default procedure.
+        WM_UAHDRAWMENU | WM_UAHDRAWMENUITEM if app.menus_dark.get() => {
+            menu_theme::draw_bar(hwnd, message, lparam).then_some(LRESULT(0))
         }
         WM_NCHITTEST => {
             let (decorated, dpi, resizable) = app

@@ -16,6 +16,7 @@ mod images;
 mod input;
 mod instance;
 mod media;
+mod menu_theme;
 mod native;
 mod paint;
 mod render;

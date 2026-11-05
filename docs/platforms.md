@@ -135,6 +135,7 @@ Design of `pam-desktop-win32` (Windows 10 version 1809 and later, and Windows 11
 - With `singleInstance`, a named mutex tells a second launch that the application runs; the second launch hands its link to the first with `WM_COPYDATA` and exits.
 - `Window::progress()` is the progress of the taskbar button. `Screen::secure()` excludes every window from captures (`WDA_EXCLUDEFROMCAPTURE`), or shows it black where the system only supports that.
 - Dark mode, text scale and the animation setting are read again on `WM_SETTINGCHANGE`.
+- Menus have no public dark mode on Windows. In the dark appearance, popup and context menus follow the application mode of the theme engine, set through functions `uxtheme.dll` exports by ordinal only (Windows 10 1809 and later), and the window draws its own menu bar.
 - A release build of the host is a windowed program, so starting an application opens no console. Started from a terminal, the host attaches to the console of its parent, so `build`, `init` and the other commands still print. A debug build is a console program.
 - The host embeds an application manifest: version 6 of the common controls, per-monitor DPI awareness, long paths and UTF-8 as the code page of the process.
 - The host uses the system TLS stack and the Credential Manager.
