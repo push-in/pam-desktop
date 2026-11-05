@@ -1179,6 +1179,12 @@ impl Backend for GtkBackend {
             .set_menu_bar(menu, window.as_ref(), pam_desktop_ui::backend::MAIN_WINDOW);
     }
 
+    fn share(&mut self, window: WindowId, request: &pam_desktop_ui::shell::ShareRequest) -> bool {
+        self.windows.get(&window).is_some_and(|entry| {
+            crate::share::open(&self.shell, &entry.window, &entry.host, request)
+        })
+    }
+
     fn popup_menu(
         &mut self,
         window: WindowId,

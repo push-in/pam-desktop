@@ -166,9 +166,25 @@ Files::pick(MediaPickerType::Image, function (?FileReference $file): void {
 
 To get the real path of a user's file instead of a private copy, use `Dialog`: see [Desktop shell](desktop-shell.md#file-dialogs).
 
+### Sharing
+
+`Share::text()` and `Share::files()` open the share sheet of the system on macOS (the sharing service picker) and on Windows (the share dialog); neither was run on a real machine.
+
+Linux has no share sheet, so the host opens a menu at the pointer with what a desktop can do with the content:
+
+| Entry | Shown for | Does |
+| --- | --- | --- |
+| Open link | text that is one `http` or `https` address | opens it in the browser |
+| Copy | text, files | puts the text, or the files as a file list, on the clipboard |
+| Send by e-mail… | text; files when `xdg-email` is installed | opens a message in the mail application, with the title as subject and the files attached |
+| Open with… | one file | asks for the application to open it with |
+| Show in folder | files | opens the file manager on the first file |
+
+On every system the call succeeds once the sheet or the menu was shown, also when the user closes it without choosing.
+
 ### Not available on desktop
 
-`Share::text()` and `Share::files()` open the share sheet of the system on macOS (the sharing service picker) and on Windows (the share dialog); neither was run on a real machine. Linux has no share sheet: the calls fail with "Sharing is not available on this platform". Sharing with one application (`packageName`, `fileToPackage()`) is refused everywhere: the user picks the application in the sheet. `Files::importUri()` fails with "Only content URIs can be imported".
+Sharing with one application (`packageName`, `fileToPackage()`) is refused everywhere: the user picks the application in the sheet. `Files::importUri()` fails with "Only content URIs can be imported".
 
 ## HTTP
 

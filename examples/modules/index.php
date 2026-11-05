@@ -101,7 +101,7 @@ final class Modules extends Component
                         });
                     });
                 })->style(new Style(flexGrow: 1)),
-                // The share sheet of macOS and Windows; Linux has none and says so.
+                // The share sheet of macOS and Windows; a menu on Linux, which has none.
                 Button::make('Share')->onPress(function (): void {
                     Share::text(
                         "Timer at {$this->seconds} s",

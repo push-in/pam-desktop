@@ -15,6 +15,7 @@ mod hotkeys;
 mod input;
 mod media;
 mod paint;
+mod share;
 mod shell;
 mod system;
 mod text;

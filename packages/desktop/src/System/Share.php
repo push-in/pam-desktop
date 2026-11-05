@@ -24,8 +24,8 @@ final class Share
 
     /**
      * Shares plain text through the share sheet of the system (macOS and
-     * Windows). Linux has none: the call fails with "Sharing is not available
-     * on this platform".
+     * Windows). Linux has none: a menu offers to copy the text, send it by
+     * e-mail or, when it is a link, open it.
      *
      * `$opened` fires once the sheet was presented. When the native side
      * fails, `$failure` receives its message; without `$failure` the failure
@@ -102,8 +102,9 @@ final class Share
 
     /**
      * Shares private sandbox files through the share sheet of the system
-     * (macOS and Windows). Linux has none: the call fails with "Sharing is
-     * not available on this platform". `$packageName` targets one application
+     * (macOS and Windows). Linux has none: a menu offers to copy the files,
+     * send them by e-mail, open one with another application or show them in
+     * the file manager. `$packageName` targets one application
      * and is refused on desktop, where the user picks it in the sheet.
      *
      * `$text` (optional) travels beside the files, so a picture can be shared
