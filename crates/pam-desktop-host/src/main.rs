@@ -1,10 +1,14 @@
 //! `pam-desktop`: the native host of PAM Desktop applications.
 
+mod paths;
+
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use pam_desktop_ui::backend::WindowConfig;
+
+use crate::paths::AppPaths;
 use pam_desktop_ui::geometry::Size;
 use pam_desktop_ui::runtime::RuntimeConfig;
 use pam_desktop_ui::worker::WorkerCommand;
@@ -52,6 +56,25 @@ fn worker_bootstrap(project: &Path) -> Option<PathBuf> {
         directory = current.parent();
     }
     candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+/// `applicationId` of `pam-desktop.json`, or one derived from the folder name.
+fn application_id(project: &Path) -> String {
+    let declared = std::fs::read_to_string(project.join("pam-desktop.json"))
+        .ok()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+        .and_then(|manifest| manifest.get("applicationId").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .filter(|id| paths::valid_application_id(id));
+    declared.unwrap_or_else(|| {
+        let name: String = project
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("app")
+            .chars()
+            .map(|character| if character.is_ascii_alphanumeric() { character.to_ascii_lowercase() } else { '_' })
+            .collect();
+        format!("dev.pam.desktop.app_{name}")
+    })
 }
 
 /// The first window, from `pam-desktop.json` (`window.title`, `width`,
@@ -112,14 +135,19 @@ fn run(target: &Path, development: bool) -> ExitCode {
     } else {
         "linux"
     };
-    let mut environment = vec![("PAM_DESKTOP_PROJECT_ROOT".into(), project.display().to_string())];
-    if development {
-        // Component state survives a hot reload through this directory.
-        let state = project.join(".pam-desktop").join("state");
-        if std::fs::create_dir_all(&state).is_ok() {
-            environment.push(("PAM_DESKTOP_STATE_DIR".into(), state.display().to_string()));
-        }
+    let application_id = application_id(&project);
+    let mut environment = vec![
+        ("PAM_DESKTOP_PROJECT_ROOT".into(), project.display().to_string()),
+        ("PAM_DESKTOP_APPLICATION_ID".into(), application_id.clone()),
+    ];
+    // Navigation state, hot reload checkpoints and module storage are per application.
+    let app_paths = if development { AppPaths::for_development(&project) } else { AppPaths::for_application(&application_id) }
+        .with_overrides();
+    if let Err(error) = app_paths.create() {
+        eprintln!("pam-desktop: cannot create the application directories: {error}");
+        return ExitCode::from(73);
     }
+    environment.extend(app_paths.environment());
     let config = RuntimeConfig {
         worker: WorkerCommand { program, arguments, entry, working_directory: Some(project.clone()), environment },
         window: window_config(&project),
@@ -130,11 +158,11 @@ fn run(target: &Path, development: bool) -> ExitCode {
 
     #[cfg(target_os = "linux")]
     {
-        pam_desktop_gtk::run("dev.pam.desktop", config)
+        pam_desktop_gtk::run(&application_id, config)
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = config;
+        let _ = (config, application_id);
         eprintln!("pam-desktop: this platform is not supported yet");
         ExitCode::FAILURE
     }

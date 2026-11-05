@@ -487,6 +487,9 @@ impl Backend for GtkBackend {
     }
 
     fn set_scroll_content(&mut self, id: NodeId, size: Size) {
+        if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() {
+            eprintln!("scroll content {id} {size:?}");
+        }
         if let Some(entry) = self.views.get(&id) {
             entry.container.set_content_size(Some(size));
         }

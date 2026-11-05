@@ -540,6 +540,9 @@ impl<B: Backend> Runtime<B> {
                 if pointer.window != MAIN_WINDOW {
                     return;
                 }
+                if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() && pointer.phase != crate::backend::PointerPhase::Move {
+                    eprintln!("pointer {:?} at {:?} hit {:?}", pointer.phase, pointer.position, self.scene.hit_test(pointer.position));
+                }
                 let action = {
                     let mut ctx = ctx!(self);
                     self.interaction.on_pointer(&mut ctx, pointer)
@@ -607,7 +610,12 @@ impl<B: Backend> Runtime<B> {
                     self.interaction.on_timer(&mut ctx, timer);
                 }
             }
-            BackendEvent::ScrollChanged { id, offset } => self.scene.set_scroll_offset(id, offset),
+            BackendEvent::ScrollChanged { id, offset } => {
+                if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() {
+                    eprintln!("scroll {id} -> {offset:?}");
+                }
+                self.scene.set_scroll_offset(id, offset);
+            }
             BackendEvent::ImageLoaded { .. } | BackendEvent::ImageFailed { .. } => {}
         }
     }

@@ -21,6 +21,9 @@ if ! xdpyinfo -display "$display" >/dev/null 2>&1; then
 fi
 export DISPLAY=$display
 log=$(mktemp)
+# Every capture starts from a clean application state.
+state=$(mktemp -d)
+export PAM_DESKTOP_STATE_DIR=$state PAM_DESKTOP_DATA_DIR=$state/data PAM_DESKTOP_CACHE_DIR=$state/cache
 PAM_DESKTOP_WINDOW=$size timeout $(( seconds + 30 )) "$root/target/debug/pam-desktop" run "$app" >"$log" 2>&1 &
 host=$!
 sleep "$seconds"
@@ -32,4 +35,4 @@ import -window root -crop "${size}+0+0" +repage "$output"
 kill "$host" 2>/dev/null || true
 wait "$host" 2>/dev/null || true
 grep -v 'DRI3\|MESA\|Note: you can' "$log" | head -40 || true
-rm -f "$log"
+rm -rf "$log" "$state"
