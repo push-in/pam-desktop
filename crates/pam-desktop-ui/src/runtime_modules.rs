@@ -327,6 +327,9 @@ impl<B: Backend> Runtime<B> {
             let mut ctx = ctx!(self);
             self.interaction.refresh_defaults(&mut ctx);
             self.controls.refresh(&mut ctx);
+            if self.error_overlay.is_visible() {
+                self.refresh_error_overlay();
+            }
         }
         self.send_dimensions();
     }

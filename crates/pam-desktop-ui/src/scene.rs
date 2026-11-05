@@ -94,6 +94,8 @@ pub enum Action {
     NavigationBack { host: NodeId },
     /// Flip a switch.
     Toggle { id: NodeId },
+    /// A button of the host's own chrome (error reports).
+    Chrome { command: u16 },
 }
 
 /// Compositing applied on top of what the node's properties say. Several
@@ -436,6 +438,9 @@ pub struct Scene {
     scroll_offsets: IdMap<Point>,
     /// Views stacked above the root, back to front (presented modals).
     overlays: Vec<NodeId>,
+    /// Host chrome above everything (error reports, toasts): parentless
+    /// synthetic nodes placed by their own frame.
+    host_overlays: Vec<NodeId>,
     overlays_dirty: bool,
     next_synthetic: u64,
     pub environment: Environment,
@@ -527,6 +532,7 @@ impl Scene {
         self.style_overlays.clear();
         self.scroll_offsets.clear();
         self.overlays.clear();
+        self.host_overlays.clear();
         self.overlays_dirty = false;
         self.root = 0;
         self.root_dirty = false;
@@ -646,6 +652,10 @@ impl Scene {
             self.scroll_offsets.remove(&removed);
             if let Some(position) = self.overlays.iter().position(|overlay| *overlay == removed) {
                 self.overlays.remove(position);
+                self.overlays_dirty = true;
+            }
+            if let Some(position) = self.host_overlays.iter().position(|overlay| *overlay == removed) {
+                self.host_overlays.remove(position);
                 self.overlays_dirty = true;
             }
             self.removed.push(removed);
@@ -853,6 +863,23 @@ impl Scene {
         &self.overlays
     }
 
+    /// Replaces the host chrome shown above the application and its modals,
+    /// back to front. Unlike modals these only take the pointer inside
+    /// their own frame.
+    pub fn set_host_overlays(&mut self, overlays: Vec<NodeId>) {
+        if self.host_overlays != overlays {
+            self.host_overlays = overlays;
+            self.overlays_dirty = true;
+        }
+    }
+
+    /// The paragraph a text node shows, exactly as the backend receives it.
+    #[must_use]
+    pub fn text_block(&self, id: NodeId) -> Option<TextBlock> {
+        let node = self.nodes.get(&id)?;
+        self.text_content(node, self.overlaid(node)).map(|content| content.block)
+    }
+
     pub fn set_scroll_offset(&mut self, id: NodeId, offset: Point) {
         if self.nodes.contains_key(&id) {
             self.scroll_offsets.insert(id, offset);
@@ -958,6 +985,11 @@ impl Scene {
     /// presented modal takes every hit: nothing below it is reachable.
     #[must_use]
     pub fn hit_test(&self, point: Point) -> Option<NodeId> {
+        for overlay in self.host_overlays.iter().rev() {
+            if let Some(hit) = self.hit_test_node(*overlay, point) {
+                return Some(hit);
+            }
+        }
         if let Some(top) = self.overlays.last() {
             return self.hit_test_node(*top, point).or(Some(*top));
         }
@@ -1360,7 +1392,12 @@ impl Scene {
         }
         if self.overlays_dirty {
             self.overlays_dirty = false;
-            backend.set_window_overlays(window, &self.overlays);
+            if self.host_overlays.is_empty() {
+                backend.set_window_overlays(window, &self.overlays);
+            } else {
+                let stacked: Vec<NodeId> = self.overlays.iter().chain(&self.host_overlays).copied().collect();
+                backend.set_window_overlays(window, &stacked);
+            }
             commands += 1;
         }
 

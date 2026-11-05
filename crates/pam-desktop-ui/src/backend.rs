@@ -511,8 +511,9 @@ pub trait Backend {
     fn window_metrics(&self, window: WindowId) -> WindowMetrics;
     /// Attaches the root view of a window's content.
     fn set_window_root(&mut self, window: WindowId, root: Option<NodeId>);
-    /// Views stacked above the root, back to front, each covering the window
-    /// (presented modals).
+    /// Views stacked above the root, back to front, each placed by its own
+    /// frame: presented modals cover the window, host chrome (error
+    /// reports, toasts) may be smaller.
     fn set_window_overlays(&mut self, window: WindowId, overlays: &[NodeId]);
 
     // ---- views ---------------------------------------------------------

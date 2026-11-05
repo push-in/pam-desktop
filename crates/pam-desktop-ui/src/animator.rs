@@ -416,6 +416,8 @@ pub enum Timer {
     MediaRelease(NodeId),
     /// A web page took too long to load.
     WebViewTimeout(NodeId),
+    /// A production application reloads after a fatal error.
+    ErrorRecovery,
 }
 
 #[derive(Default)]

@@ -257,6 +257,7 @@ pub struct Runtime<B: Backend> {
     web_views: crate::webview::WebViews,
     pub(crate) selection: crate::selection::TextSelection,
     drag_drop: crate::dragdrop::DragDrop,
+    pub(crate) error_overlay: crate::error_overlay::ErrorOverlay,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
     pub(crate) shell: Shell,
@@ -403,6 +404,7 @@ impl<B: Backend> Runtime<B> {
             web_views: crate::webview::WebViews::default(),
             selection: crate::selection::TextSelection::default(),
             drag_drop: crate::dragdrop::DragDrop::default(),
+            error_overlay: crate::error_overlay::ErrorOverlay::new(config.development, &crate::modules::system::locale_tag()),
             modules,
             directories,
             shell: Shell::default(),
@@ -584,6 +586,12 @@ impl<B: Backend> Runtime<B> {
             }
             Inbound::Worker(_, WorkerMessage::Error(message)) => {
                 eprintln!("[pam-desktop] {}", describe_php_error(&message));
+                if let Some(delay) = self.error_overlay.report(&message) {
+                    // Production: try to recover without bothering the user.
+                    let now = self.now_ms();
+                    self.timers.schedule(Timer::ErrorRecovery, now + u64::from(delay));
+                }
+                self.refresh_error_overlay();
             }
             Inbound::Worker(_, WorkerMessage::Ready | WorkerMessage::Idle) => {}
             Inbound::Worker(_, WorkerMessage::Exited(_)) => {
@@ -629,6 +637,8 @@ impl<B: Backend> Runtime<B> {
         self.outbox.clear();
         self.modules.reset();
         self.shell.reset();
+        self.error_overlay.reset();
+        self.refresh_error_overlay();
         match spawn_worker(&self.worker_command, &self.metrics, self.system_dark, self.settings.appearance_mode, &self.inbox, self.generation) {
             Ok(worker) => self.worker = Some(worker),
             Err(error) => eprintln!("[pam-desktop] could not restart the PHP worker: {error}"),
@@ -659,7 +669,19 @@ impl<B: Backend> Runtime<B> {
         }
     }
 
+    /// Rebuilds the error overlay for its current state and the window size.
+    pub(crate) fn refresh_error_overlay(&mut self) {
+        let dark = self.metrics.dark;
+        let backend = &mut self.backend;
+        let mut measure = |block: &crate::text::TextBlock, width: f32| backend.measure_text(block, width);
+        let mut ctx = ctx!(self);
+        self.error_overlay.rebuild(&mut ctx, &mut measure, dark);
+    }
+
     fn commit(&mut self, frame: &[u8]) {
+        if self.error_overlay.frame_committed() {
+            self.refresh_error_overlay();
+        }
         let committed = self.with_engine(|engine, batch| engine.commit_into(frame, batch));
         let applied = match committed {
             Ok(()) => self.apply_batch(),
@@ -676,6 +698,7 @@ impl<B: Backend> Runtime<B> {
     /// Drops the mounted tree and asks PHP for a complete frame.
     fn resynchronize(&mut self) {
         self.scene.clear(&mut self.backend);
+        self.refresh_error_overlay();
         self.engine = new_engine(&self.metrics, self.measure.as_mut());
         if let Some(worker) = &mut self.worker {
             worker.resynchronize();
@@ -793,6 +816,9 @@ impl<B: Backend> Runtime<B> {
                 let _ = self.engine.set_viewport(size.width, size.height);
                 self.relayout();
                 self.send_dimensions();
+                if self.error_overlay.is_visible() {
+                    self.refresh_error_overlay();
+                }
             }
             BackendEvent::WindowResized { .. } => {}
             BackendEvent::WindowCloseRequested { window } => {
@@ -829,11 +855,13 @@ impl<B: Backend> Runtime<B> {
             BackendEvent::Wake => {
                 self.armed_wake = None;
                 let due = self.timers.take_due(self.now_ms());
+                let mut recover = false;
                 let mut ctx = ctx!(self);
                 for timer in due {
                     match timer {
                         Timer::InputDebounce(id) => self.inputs.on_timer(&mut ctx, id),
                         Timer::WebViewTimeout(id) => self.web_views.on_timer(&mut ctx, id),
+                        Timer::ErrorRecovery => recover = true,
                         Timer::MediaProgress(id) | Timer::MediaRelease(id) => {
                             let position = self.backend.media_position(id);
                             self.media.on_timer(&mut ctx, timer, position);
@@ -844,6 +872,9 @@ impl<B: Backend> Runtime<B> {
                         Timer::ScrollRest(_) | Timer::ListWindow(_) | Timer::RefreshFallback(_) => self.scrolling.on_timer(&mut ctx, timer),
                         _ => self.interaction.on_timer(&mut ctx, timer),
                     }
+                }
+                if recover {
+                    self.reload();
                 }
             }
             BackendEvent::ScrollChanged { id, offset } => {
@@ -942,6 +973,15 @@ impl<B: Backend> Runtime<B> {
             }
             Action::ModalBackdrop { modal } => self.modals.backdrop_pressed(&mut ctx, modal),
             Action::Toggle { id } => self.controls.toggle(&mut ctx, id),
+            Action::Chrome { command } => {
+                drop(ctx);
+                match self.error_overlay.run(command) {
+                    crate::error_overlay::Effect::Reload => return self.reload(),
+                    crate::error_overlay::Effect::Copy(text) => self.backend.clipboard_set_text(&text),
+                    crate::error_overlay::Effect::None => {}
+                }
+                self.refresh_error_overlay();
+            }
             Action::NavigationBack { .. } => {
                 drop(ctx);
                 self.go_back();
@@ -1038,6 +1078,13 @@ impl<B: Backend> Runtime<B> {
             return;
         }
         if key.pressed && !key.repeat && self.selection_key(key) {
+            return;
+        }
+        if self.error_overlay.is_blocking() {
+            // The report covers the application: only Escape means something.
+            if key.pressed && key.key == "Escape" && self.error_overlay.escape() {
+                self.refresh_error_overlay();
+            }
             return;
         }
         if key.pressed && !key.repeat {

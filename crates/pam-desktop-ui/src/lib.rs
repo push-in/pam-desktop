@@ -12,6 +12,7 @@ pub mod color;
 pub mod context;
 pub mod controls;
 pub mod dragdrop;
+pub mod error_overlay;
 pub mod drawing;
 pub mod geometry;
 pub mod images;
