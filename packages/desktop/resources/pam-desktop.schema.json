@@ -1,527 +1,122 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://pam.dev/schemas/pam-desktop.v1.schema.json",
-    "title": "Pam Desktop application manifest",
+    "$id": "https://pam.dev/schemas/pam-desktop.v2.schema.json",
+    "title": "PAM Desktop application manifest",
+    "description": "pam-desktop.json: identity, first window, links and distribution of a PAM Desktop application. Every field is optional when running; pam-desktop build validates them.",
     "type": "object",
-    "additionalProperties": false,
-    "required": [
-        "version",
-        "applicationId",
-        "name",
-        "entry"
-    ],
     "properties": {
         "$schema": {
             "type": "string"
         },
-        "version": {
-            "const": 1
-        },
         "applicationId": {
+            "description": "Lowercase reverse-DNS name. It names the package, the desktop entry, the data directories and the update feed.",
             "type": "string",
-            "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$"
+            "maxLength": 155,
+            "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$"
         },
         "name": {
+            "description": "The name shown to users.",
             "type": "string",
             "minLength": 1,
             "maxLength": 80
         },
-        "entry": {
+        "version": {
             "type": "string",
-            "pattern": "^[^/\\\\][^\\u0000]*\\.php$"
+            "maxLength": 64,
+            "pattern": "^[0-9][0-9A-Za-z.+~-]*$"
         },
-        "runtime": {
+        "build": {
+            "type": "string",
+            "maxLength": 64
+        },
+        "entry": {
+            "description": "The script run, dev and the bundle start, relative to the project.",
+            "type": "string",
+            "default": "index.php"
+        },
+        "description": {
+            "type": "string",
+            "maxLength": 256
+        },
+        "publisher": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+        },
+        "category": {
+            "enum": ["development", "productivity", "graphics", "audio-video", "network", "utility", "game", "education"],
+            "default": "utility"
+        },
+        "icon": {
+            "description": "Project-relative PNG (square, 64 to 1024 px) or self-contained SVG.",
+            "type": "string"
+        },
+        "window": {
+            "description": "The first window.",
             "type": "object",
-            "additionalProperties": false,
             "properties": {
-                "php": {
+                "title": { "type": "string" },
+                "width": { "type": "number", "minimum": 1 },
+                "height": { "type": "number", "minimum": 1 },
+                "minWidth": { "type": "number", "minimum": 0 },
+                "minHeight": { "type": "number", "minimum": 0 },
+                "resizable": { "type": "boolean", "default": true }
+            },
+            "additionalProperties": false
+        },
+        "urlSchemes": {
+            "description": "Schemes of the links that open the application.",
+            "type": "array",
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9+.-]{1,31}$",
+                "not": { "enum": ["http", "https", "file", "mailto", "javascript", "data"] }
+            }
+        },
+        "singleInstance": {
+            "description": "One running instance: a second launch hands its link to the first. Defaults to true when urlSchemes is not empty.",
+            "type": "boolean"
+        },
+        "exclude": {
+            "description": "Project-relative paths left out of the bundle.",
+            "type": "array",
+            "maxItems": 256,
+            "items": { "type": "string" }
+        },
+        "extensions": {
+            "description": "PHP extensions shipped in the bundle instead of every shared extension loaded on the build machine.",
+            "type": "array",
+            "maxItems": 128,
+            "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+        },
+        "updates": {
+            "type": "object",
+            "required": ["endpoint", "publicKey"],
+            "properties": {
+                "endpoint": {
+                    "description": "HTTPS URL of the signed feed.",
                     "type": "string",
-                    "pattern": "^8\\.[45]$",
-                    "default": "8.5"
+                    "maxLength": 2048,
+                    "pattern": "^https://"
+                },
+                "publicKey": {
+                    "description": "Ed25519 public key, 64 lowercase hexadecimal characters.",
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
                 },
                 "channel": {
                     "type": "string",
-                    "enum": [
-                        "stable"
-                    ],
-                    "default": "stable"
+                    "default": "stable",
+                    "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,63}$"
+                },
+                "policy": {
+                    "enum": ["manual", "notify", "automatic"],
+                    "default": "manual"
                 }
-            }
-        },
-        "versionCode": {
-            "type": "integer",
-            "minimum": 1,
-            "default": 1
-        },
-        "versionName": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64,
-            "default": "0.2.1"
-        },
-        "android": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "minSdk": {
-                    "type": "integer",
-                    "minimum": 26,
-                    "maximum": 36,
-                    "default": 26
-                },
-                "targetSdk": {
-                    "type": "integer",
-                    "minimum": 26,
-                    "maximum": 36,
-                    "default": 36
-                },
-                "debugApplicationIdSuffix": {
-                    "type": "string",
-                    "pattern": "^\\.[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)*$"
-                },
-                "benchmarkApplicationIdSuffix": {
-                    "type": "string",
-                    "pattern": "^\\.[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)*$",
-                    "description": "Package suffix for the installable release-optimized build (`pam-desktop build --benchmark`, `run --release`, benchmark/profile). Such builds omit Firebase Messaging."
-                },
-                "debugFirebase": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Set to false to build debug variants without Firebase Messaging, e.g. when google-services.json has no client for the debug application id."
-                },
-                "permissions": {
-                    "type": "array",
-                    "uniqueItems": true,
-                    "items": {
-                        "type": "string",
-                        "pattern": "^android\\.permission\\.[A-Z0-9_]+$"
-                    }
-                },
-                "deepLinks": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                            "scheme"
-                        ],
-                        "properties": {
-                            "scheme": {
-                                "type": "string",
-                                "pattern": "^[A-Za-z][A-Za-z0-9+.-]{0,63}$"
-                            },
-                            "host": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 253,
-                                "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$"
-                            },
-                            "pathPrefix": {
-                                "type": "string",
-                                "pattern": "^/[^\\u0000\\r\\n\"<>&]{0,511}$"
-                            },
-                            "autoVerify": {
-                                "type": "boolean",
-                                "default": false
-                            }
-                        }
-                    }
-                },
-                "shareTargets": {
-                    "type": "array",
-                    "uniqueItems": true,
-                    "maxItems": 16,
-                    "items": {
-                        "type": "string",
-                        "pattern": "^[A-Za-z0-9!#$&^_.+*-]+/(?:[A-Za-z0-9!#$&^_.+*-]+|\\*)$"
-                    }
-                },
-                "safeAreaBottomFallback": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 96,
-                    "default": 0,
-                    "description": "Bottom safe-area inset in dp used when Android reports none (e.g. some gesture-navigation configurations), like React Native apps' getBottomSafeInset() fallback of 48. 0 disables it."
-                },
-                "icon": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                        "foreground"
-                    ],
-                    "description": "Adaptive launcher icon (API 26+). The Android 12+ system splash screen draws it too unless appearance.splash sets its own icon.",
-                    "properties": {
-                        "foreground": {
-                            "type": "string",
-                            "pattern": "^[^/][^\\\\]*\\.(?:png|webp|PNG|WEBP)$",
-                            "description": "Project-relative PNG/WebP foreground on the 108 dp adaptive canvas (432 px or larger)."
-                        },
-                        "background": {
-                            "type": "string",
-                            "anyOf": [
-                                {
-                                    "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$"
-                                },
-                                {
-                                    "pattern": "^[^/][^\\\\]*\\.(?:png|webp|PNG|WEBP)$"
-                                }
-                            ],
-                            "default": "#FFFFFF",
-                            "description": "Background layer: #RGB/#RRGGBB colour or a project-relative PNG/WebP."
-                        },
-                        "monochrome": {
-                            "type": "string",
-                            "pattern": "^[^/][^\\\\]*\\.(?:png|webp|PNG|WEBP)$",
-                            "description": "Optional single-colour layer for Android 13+ themed icons."
-                        }
-                    }
-                }
-            }
-        },
-        "ios": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-                "minimumVersion": {
-                    "type": "string",
-                    "pattern": "^(?:1[5-9]|[2-9][0-9])\\.[0-9]+$",
-                    "default": "15.0"
-                },
-                "icon": {
-                    "type": "string",
-                    "pattern": "^[^/][^\\\\]*\\.(?:png|PNG)$",
-                    "description": "Project-relative 1024x1024 PNG used as the home-screen and App Store icon (AppIcon)."
-                },
-                "urlSchemes": {
-                    "type": "array",
-                    "maxItems": 32,
-                    "uniqueItems": true,
-                    "items": {
-                        "type": "string",
-                        "maxLength": 64,
-                        "pattern": "^[A-Za-z][A-Za-z0-9+.-]*$"
-                    },
-                    "description": "Custom application URL schemes. HTTP, HTTPS, file and pam-desktop-* are reserved. Existing plugin and diagnostic URL types are preserved."
-                },
-                "associatedDomains": {
-                    "type": "array",
-                    "maxItems": 32,
-                    "uniqueItems": true,
-                    "items": {
-                        "type": "string",
-                        "maxLength": 264,
-                        "pattern": "^applinks:(?:\\*\\.)?[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$"
-                    },
-                    "description": "Universal-link entitlements, e.g. applinks:example.com. Requires Associated Domains capability and a matching apple-app-site-association document. Merges with plugin entitlements."
-                },
-                "bundleIdentifier": {
-                    "type": "string",
-                    "maxLength": 155,
-                    "pattern": "^[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+$",
-                    "description": "iOS bundle identifier when it differs from applicationId (for example an App Store app published under another id). Used for the app, its extensions, App Group, launch and diagnostics."
-                },
-                "usageDescriptions": {
-                    "type": "object",
-                    "maxProperties": 64,
-                    "propertyNames": {
-                        "pattern": "^(?:NS[A-Za-z0-9]+UsageDescription|NFCReaderUsageDescription)$"
-                    },
-                    "additionalProperties": {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 1000
-                    },
-                    "description": "Privacy strings the app needs, e.g. NSPhotoLibraryUsageDescription, NSContactsUsageDescription, NSLocationWhenInUseUsageDescription, NSFaceIDUsageDescription, NSPhotoLibraryAddUsageDescription. iOS terminates the app when it requests a protected resource without one. App values override plugin defaults."
-                },
-                "orientations": {
-                    "type": "array",
-                    "uniqueItems": true,
-                    "minItems": 1,
-                    "items": {
-                        "enum": [
-                            "portrait",
-                            "portraitUpsideDown",
-                            "landscapeLeft",
-                            "landscapeRight"
-                        ]
-                    },
-                    "description": "Supported interface orientations (iPhone and iPad). Omit to keep the host default (portrait and both landscapes)."
-                },
-                "developmentRegion": {
-                    "type": "string",
-                    "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$",
-                    "maxLength": 35,
-                    "description": "Language of the app's own texts (BCP 47, e.g. \"pt-BR\"). Becomes the Xcode development region and CFBundleDevelopmentRegion, so system UI (photo picker, share sheet, default alert buttons) falls back to it instead of English. Omit to keep \"en\"."
-                },
-                "localizations": {
-                    "type": "array",
-                    "uniqueItems": true,
-                    "maxItems": 64,
-                    "items": {
-                        "type": "string",
-                        "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$",
-                        "maxLength": 35
-                    },
-                    "description": "Languages the app is localized in (CFBundleLocalizations and the Xcode known regions). The development region is always included."
-                }
-            }
-        },
-        "devErrorOverlay": {
-            "description": "Runtime error overlay (LogBox-style). true: debug builds only (default). false: never, debug builds show the release fallback. \"always\": also in release builds, for internal QA builds. Release builds otherwise never show stacks: fatal errors show a friendly retry screen and every error reaches App::onError().",
-            "oneOf": [
-                {
-                    "type": "boolean"
-                },
-                {
-                    "enum": [
-                        "debug",
-                        "off",
-                        "always"
-                    ]
-                }
-            ],
-            "default": true
-        },
-        "appearance": {
-            "type": "object",
-            "additionalProperties": false,
-            "description": "Native light/dark window colours applied before the first PHP frame and the default Appearance mode.",
-            "properties": {
-                "defaultMode": {
-                    "enum": [
-                        "system",
-                        "light",
-                        "dark"
-                    ],
-                    "default": "system",
-                    "description": "Preference used until the app calls Appearance::set()."
-                },
-                "legacyStartingWindow": {
-                    "enum": [
-                        "theme",
-                        "none"
-                    ],
-                    "default": "theme",
-                    "description": "Android 8-11 draw the starting window from the system scheme before the app process starts, so it cannot follow a persisted override. \"none\" skips it so a mismatched scheme is never shown; Android 12+ always keeps its splash screen."
-                },
-                "firstFrame": {
-                    "enum": [
-                        "php",
-                        "window"
-                    ],
-                    "default": "php",
-                    "description": "\"php\" keeps the launch screen until PHP's first frame is committed. \"window\" draws the themed window at once (Android: native modules are built right after that draw) and PHP's first frame replaces it; use it when the first PHP frame paints only the app background."
-                },
-                "light": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "description": "Colours for the light scheme.",
-                    "properties": {
-                        "background": {
-                            "type": "string",
-                            "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$",
-                            "default": "#FFFFFF",
-                            "description": "Window background painted before the first PHP frame."
-                        },
-                        "statusBar": {
-                            "type": "string",
-                            "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$",
-                            "description": "Status bar colour before edge-to-edge content; defaults to background. Icon contrast is derived from its luminance."
-                        },
-                        "navigationBar": {
-                            "type": "string",
-                            "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$",
-                            "description": "Navigation bar colour before edge-to-edge content; defaults to background. Icon contrast is derived from its luminance."
-                        },
-                        "splashBackground": {
-                            "type": "string",
-                            "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$",
-                            "description": "Android 12+ splash screen background; defaults to background."
-                        }
-                    }
-                },
-                "dark": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "description": "Colours for the dark scheme.",
-                    "properties": {
-                        "background": {
-                            "type": "string",
-                            "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$",
-                            "default": "#121212",
-                            "description": "Window background painted before the first PHP frame."
-                        },
-                        "statusBar": {
-                            "type": "string",
-                            "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$",
-                            "description": "Status bar colour before edge-to-edge content; defaults to background. Icon contrast is derived from its luminance."
-                        },
-                        "navigationBar": {
-                            "type": "string",
-                            "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$",
-                            "description": "Navigation bar colour before edge-to-edge content; defaults to background. Icon contrast is derived from its luminance."
-                        },
-                        "splashBackground": {
-                            "type": "string",
-                            "pattern": "^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$",
-                            "description": "Android 12+ splash screen background; defaults to background."
-                        }
-                    }
-                },
-                "splash": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "description": "Centered splash logo on the Android 12+ SplashScreen and the legacy starting window.",
-                    "properties": {
-                        "logo": {
-                            "type": "string",
-                            "pattern": "^[^/][^\\\\]*\\.(?:png|webp|PNG|WEBP)$",
-                            "description": "Project-relative PNG/WebP logo for the light scheme (and dark when darkLogo is not set)."
-                        },
-                        "darkLogo": {
-                            "type": "string",
-                            "pattern": "^[^/][^\\\\]*\\.(?:png|webp|PNG|WEBP)$",
-                            "description": "Optional logo for the dark scheme; same format as logo."
-                        },
-                        "size": {
-                            "type": "integer",
-                            "minimum": 24,
-                            "maximum": 288,
-                            "default": 96,
-                            "description": "Logo box edge in dp (24-240). Android 12+ masks splash icons to a 160 dp circle inside 240 dp. Up to 288 with android12Icon \"appIcon\", where only the API 26-30 starting window draws the logo."
-                        },
-                        "android12Icon": {
-                            "enum": [
-                                "logo",
-                                "appIcon"
-                            ],
-                            "default": "logo",
-                            "description": "Android 12+ splash icon: the logo, or the launcher icon (android.icon) like a theme without windowSplashScreenAnimatedIcon (React Native/Expo). With appIcon the logo only paints the API 26-30 starting window."
-                        }
-                    }
-                }
-            }
-        },
-        "modules": {
-            "$ref": "#/$defs/nativeBindings"
-        },
-        "views": {
-            "$ref": "#/$defs/nativeBindings"
-        },
-        "plugins": {
-            "type": "object",
-            "description": "Per-application plugin configuration, keyed by the configKey a plugin declares. Example: {\"shareExtension\": {\"accept\": [\"text/plain\", \"image/*\"], \"multiple\": [\"image/*\"]}}.",
-            "propertyNames": {
-                "pattern": "^[a-z][A-Za-z0-9]{0,63}$"
             },
-            "additionalProperties": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "accept": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": 16,
-                        "uniqueItems": true,
-                        "items": {
-                            "$ref": "#/$defs/shareMimeType"
-                        }
-                    },
-                    "multiple": {
-                        "$ref": "#/$defs/shareMultiple"
-                    }
-                }
-            }
-        },
-        "links": {
-            "type": "object",
-            "additionalProperties": false,
-            "description": "Where routes.php paths are reachable from. Android deep links, iOS URL schemes and associated domains are derived from every route path (and ->alias()) for these schemes and hosts.",
-            "properties": {
-                "schemes": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "pattern": "^[A-Za-z][A-Za-z0-9+.-]{0,63}$"
-                    },
-                    "description": "Custom URI schemes, e.g. myapp for myapp://chat/5."
-                },
-                "hosts": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "description": "HTTPS hosts for Android App Links and iOS universal links."
-                },
-                "autoVerify": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "Android autoVerify for the https hosts."
-                }
-            }
-        },
-        "routes": {
-            "type": "object",
-            "additionalProperties": false,
-            "description": "Route compiler options (pam-desktop-routes runs before every build when the routes file exists).",
-            "properties": {
-                "file": {
-                    "type": "string",
-                    "default": "routes.php"
-                },
-                "namespace": {
-                    "type": "string",
-                    "default": "App\\Navigation\\Generated"
-                },
-                "output": {
-                    "type": "string",
-                    "default": "src/Navigation/Generated"
-                }
-            }
-        }
-    },
-    "$defs": {
-        "shareMimeType": {
-            "type": "string",
-            "pattern": "^[a-z0-9!#$&^_.+*-]+/(?:[a-z0-9!#$&^_.+*-]+|\\*)$"
-        },
-        "shareMultiple": {
-            "description": "true: every accepted type may arrive several at once; false: single items only; or the accepted types that may arrive several at once.",
-            "oneOf": [
-                {
-                    "type": "boolean"
-                },
-                {
-                    "type": "array",
-                    "maxItems": 16,
-                    "uniqueItems": true,
-                    "items": {
-                        "$ref": "#/$defs/shareMimeType"
-                    }
-                }
-            ]
-        },
-        "nativeBindings": {
-            "type": "array",
-            "uniqueItems": true,
-            "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                    "name",
-                    "class"
-                ],
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
-                    },
-                    "class": {
-                        "type": "string",
-                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$"
-                    }
-                }
-            }
+            "additionalProperties": false
         }
     }
 }

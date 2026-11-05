@@ -1,5 +1,9 @@
 name: Release host
 
+# A tag vX.Y.Z builds the host for every platform and attaches the archives
+# the Composer launcher downloads (pam-desktop-X.Y.Z-<target>.tar.gz and
+# their .sha256) to the GitHub release of the tag.
+
 on:
   push:
     tags: ["v*"]
@@ -9,209 +13,100 @@ permissions:
   id-token: write
   attestations: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  source-contracts:
-    name: Certify tagged Desktop source contracts
+  checks:
+    name: Checks
     uses: ./.github/workflows/ci.yml
 
-  platform-contracts:
-    name: Certify tagged macOS and Windows contracts
-    uses: ./.github/workflows/platform-compatibility.yml
-
-  native-changes:
-    name: Detect native host changes
-    runs-on: ubuntu-22.04
+  version:
+    name: The tag matches the sources
+    runs-on: ubuntu-24.04
     outputs:
-      rebuild: ${{ steps.native.outputs.rebuild }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - id: native
-        name: Compare with the previous release
-        shell: bash
-        run: |
-          previous_tag=$(git tag --merged "${GITHUB_SHA}^" --sort=-version:refname | head -n 1)
-          if [ -z "${previous_tag}" ]; then
-            echo "rebuild=true" >> "${GITHUB_OUTPUT}"
-          elif git diff --quiet "${previous_tag}" "${GITHUB_SHA}" -- \
-            Cargo.toml Cargo.lock crates compat/rust-plugin-v1 \
-            scripts/package-host-linux.sh scripts/test-host-archive.sh \
-            scripts/package-host-portable.py scripts/verify-host-portable.py \
-            scripts/host-reproducibility-evidence.sh \
-            scripts/test-host-reproducibility-evidence.sh \
-            scripts/desktop-footprint-evidence.sh \
-            scripts/test-desktop-footprint-evidence.sh \
-            .github/workflows/release.yml; then
-            echo "rebuild=false" >> "${GITHUB_OUTPUT}"
-          else
-            echo "rebuild=true" >> "${GITHUB_OUTPUT}"
-          fi
-
-  build:
-    needs:
-      - native-changes
-      - platform-contracts
-      - source-contracts
-    if: needs.native-changes.outputs.rebuild == 'true'
-    name: x86_64-unknown-linux-gnu
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.88.0
-      - name: Verify the supported Rust toolchain
-        run: rustc --version | grep -E '^rustc 1\.88\.'
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: pam-desktop-release
-      - uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.5"
-          coverage: none
-      - name: Validate the public Composer package
-        run: composer validate --strict composer.json
-      - name: Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            curl jq libegl1 libfontconfig1-dev libgl1-mesa-dri \
-            libxkbcommon-x11-0 pkg-config xvfb
-          curl --fail --location --silent --show-error \
-            --output "${RUNNER_TEMP}/llvm.sh" \
-            https://apt.llvm.org/llvm.sh
-          chmod 0755 "${RUNNER_TEMP}/llvm.sh"
-          sudo "${RUNNER_TEMP}/llvm.sh" 18
-          sudo apt-get install -y libclang-18-dev
-          echo "/usr/lib/llvm-18/bin" >> "${GITHUB_PATH}"
-      - name: Build production host
-        env:
-          CC: clang-18
-          CXX: clang++-18
-          CLANG_PATH: /usr/bin/clang-18
-          LIBCLANG_PATH: /usr/lib/llvm-18/lib
-        run: |
-          clang --version
-          case "$(clang -print-resource-dir)" in
-            /usr/lib/llvm-18/lib/clang/*) ;;
-            *) exit 1 ;;
-          esac
-          cargo build --locked --release -p pam-desktop
-      - name: Package and verify reproducible Linux host
+      - id: version
         run: |
           version=${GITHUB_REF_NAME#v}
-          source_epoch=$(git log -1 --format=%ct)
-          mkdir -p dist verification
-          SOURCE_DATE_EPOCH="${source_epoch}" scripts/package-host-linux.sh \
-            target/release \
-            dist \
-            "${version}"
-          SOURCE_DATE_EPOCH="${source_epoch}" scripts/package-host-linux.sh \
-            target/release \
-            verification \
-            "${version}"
-          PAM_EVIDENCE_REVISION="${GITHUB_SHA}" SOURCE_DATE_EPOCH="${source_epoch}" \
-            scripts/host-reproducibility-evidence.sh create \
-            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "verification/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.reproducibility.json"
-          scripts/host-reproducibility-evidence.sh verify \
-            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.reproducibility.json"
-          PAM_EVIDENCE_REVISION="${GITHUB_SHA}" \
-            scripts/desktop-footprint-evidence.sh create \
-            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.footprint.json"
-          scripts/desktop-footprint-evidence.sh verify \
-            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.footprint.json"
-          scripts/test-host-archive.sh \
-            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
-          install -m 0755 target/release/pam-desktop \
-            "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu"
-          sha256sum "dist/pam-desktop-${version}-x86_64-unknown-linux-gnu" \
-            >"dist/pam-desktop-${version}-x86_64-unknown-linux-gnu.sha256"
-      - name: Compare accepted release footprint
-        env:
-          GH_TOKEN: ${{ github.token }}
+          cargo_version=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          launcher_version=$(sed -n "s/^const HOST_VERSION = '\([^']*\)';$/\1/p" packages/desktop/bin/pam-desktop)
+          [ "${version}" = "${cargo_version}" ] || { echo "Cargo.toml says ${cargo_version}, the tag says ${version}"; exit 1; }
+          [ "${version}" = "${launcher_version}" ] || { echo "The launcher says ${launcher_version}, the tag says ${version}"; exit 1; }
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: ${{ matrix.target }}
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            binary: pam-desktop
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            binary: pam-desktop
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            binary: pam-desktop
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            binary: pam-desktop
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            binary: pam-desktop.exe
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: Install GTK 4 and WebKitGTK 6
+        if: runner.os == 'Linux'
         run: |
-          mkdir -p baseline
-          if previous_tag=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null) \
-            && gh release download "${previous_tag}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --pattern '*.footprint.json' \
-              --dir baseline 2>/dev/null
-          then
-            set -- baseline/*.footprint.json
-            scripts/desktop-footprint-evidence.sh compare \
-              "dist/pam-desktop-${GITHUB_REF_NAME#v}-x86_64-unknown-linux-gnu.footprint.json" \
-              "$1" \
-              5
-          else
-            echo '::notice::Desktop footprint not compared: the last accepted release has no footprint evidence.'
-          fi
-      - name: Attest reproducible Linux host archive
-        uses: actions/attest@v4
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
+      - name: Build the host
+        run: cargo build --locked --release -p pam-desktop-host --target ${{ matrix.target }}
+      - name: Pack the host
+        shell: bash
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) scripts/package-host.sh \
+            "target/${{ matrix.target }}/release/${{ matrix.binary }}" dist \
+            "${{ needs.version.outputs.version }}" "${{ matrix.target }}"
+      - uses: actions/attest@v4
         with:
           subject-path: |
             dist/*.tar.gz
-            dist/pam-desktop-*-x86_64-unknown-linux-gnu
-            dist/*.reproducibility.json
-            dist/*.footprint.json
+            dist/*.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: pam-desktop-x86_64-unknown-linux-gnu
+          name: pam-desktop-${{ matrix.target }}
           path: dist/pam-desktop-*
           if-no-files-found: error
-      - name: Clean-room create, dev, package, install and launch
-        run: |
-          curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
-            --connect-timeout 15 --max-time 60 --max-filesize 1048576 \
-            -fsSL https://github.com/push-in/pam/releases/latest/download/install.sh | sh
-          PAM_CLEAN_ROOM_PAM="${HOME}/.local/bin/pam" \
-            PAM_DESKTOP_HOST_BINARY="${GITHUB_WORKSPACE}/target/release/pam-desktop" \
-            xvfb-run --auto-servernum --server-args='-screen 0 1280x720x24' \
-            scripts/clean-room-desktop.sh
-      - name: Remove build intermediates
-        if: always()
-        run: cargo clean
+          retention-days: 14
 
   publish:
-    needs:
-      - native-changes
-      - build
-      - platform-contracts
-      - source-contracts
-    if: >-
-      always() && needs.native-changes.outputs.rebuild == 'true'
-      && needs.build.result == 'success'
-      && needs.platform-contracts.result == 'success'
-      && needs.source-contracts.result == 'success'
-    runs-on: ubuntu-22.04
+    name: Publish the release
+    needs: [checks, build]
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: dist
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*
           generate_release_notes: true
-
-  publish-api:
-    needs:
-      - native-changes
-      - platform-contracts
-      - source-contracts
-    if: needs.native-changes.outputs.rebuild == 'false'
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: write
-    steps:
-      - name: Publish API-only release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "${GITHUB_REF_NAME}"
-          --repo "${GITHUB_REPOSITORY}"
-          --generate-notes
-          --verify-tag
+          fail_on_unmatched_files: true
+          files: |
+            dist/pam-desktop-*.tar.gz
+            dist/pam-desktop-*.tar.gz.sha256

@@ -10,94 +10,95 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  contracts:
-    runs-on: ubuntu-22.04
+  linux:
+    name: Linux (GTK 4)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy,rustfmt
-      - name: Verify the supported Rust toolchain
-        run: rustc --version | grep -E '^rustc 1\.88\.'
+      - uses: Swatinem/rust-cache@v2
       - uses: shivammathur/setup-php@v2
         with:
           php-version: "8.5"
           coverage: none
-      - name: Install strict sandbox test backend
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --locked --workspace --all-targets --no-default-features --features gateway -- -D warnings
-      - run: cargo test --locked --workspace --no-default-features --features gateway
-      - name: Linux host archive contract
+      - name: Install GTK 4, WebKitGTK 6 and a virtual display
         run: |
-          sh -n scripts/package-host-linux.sh scripts/test-host-archive.sh scripts/test-host-cache.sh scripts/host-reproducibility-evidence.sh scripts/test-host-reproducibility-evidence.sh scripts/desktop-footprint-evidence.sh scripts/test-desktop-footprint-evidence.sh scripts/clean-room-desktop.sh
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev libwebkitgtk-6.0-dev gstreamer1.0-plugins-good xvfb xdotool
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
+      - name: Host without the optional backend features
+        run: cargo check --locked -p pam-desktop-host --no-default-features
+      - name: PHP package
+        run: |
+          composer validate --strict composer.json
+          composer validate --strict packages/desktop/composer.json
+          composer install --working-dir=packages/desktop --no-interaction --prefer-dist
+          composer test --working-dir=packages/desktop
+          composer analyse --working-dir=packages/desktop
+      - name: Composer launcher
+        run: |
+          sh -n scripts/package-host.sh scripts/test-host-cache.sh
           php -l packages/desktop/bin/pam-desktop
-          test -x packages/desktop/bin/pam-desktop
           scripts/test-host-cache.sh
-          scripts/test-host-reproducibility-evidence.sh
-          scripts/test-desktop-footprint-evidence.sh
-          cargo build --locked -p pam-desktop --no-default-features --features gateway --bins
-          version=$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pam-desktop") | .version')
-          mkdir -p "${RUNNER_TEMP}/host-one" "${RUNNER_TEMP}/host-two"
-          SOURCE_DATE_EPOCH=0 scripts/package-host-linux.sh target/debug "${RUNNER_TEMP}/host-one" "${version}"
-          SOURCE_DATE_EPOCH=0 scripts/package-host-linux.sh target/debug "${RUNNER_TEMP}/host-two" "${version}"
-          PAM_EVIDENCE_REVISION="${GITHUB_SHA}" SOURCE_DATE_EPOCH=0 \
-            scripts/host-reproducibility-evidence.sh create \
-            "${RUNNER_TEMP}/host-one/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "${RUNNER_TEMP}/host-two/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "${RUNNER_TEMP}/host-evidence/evidence-manifest.json"
-          scripts/host-reproducibility-evidence.sh verify \
-            "${RUNNER_TEMP}/host-one/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "${RUNNER_TEMP}/host-evidence/evidence-manifest.json"
-          PAM_EVIDENCE_REVISION="${GITHUB_SHA}" \
-            scripts/desktop-footprint-evidence.sh create \
-            "${RUNNER_TEMP}/host-one/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "${RUNNER_TEMP}/host-evidence/footprint-manifest.json"
-          scripts/desktop-footprint-evidence.sh verify \
-            "${RUNNER_TEMP}/host-one/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz" \
-            "${RUNNER_TEMP}/host-evidence/footprint-manifest.json"
-          scripts/test-host-archive.sh \
-            "${RUNNER_TEMP}/host-one/pam-desktop-${version}-x86_64-unknown-linux-gnu.tar.gz"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pam-desktop-reproducibility-${{ github.sha }}
-          path: ${{ runner.temp }}/host-evidence/*.json
-          if-no-files-found: error
-          retention-days: 14
-      - run: composer validate --strict composer.json
-      - run: composer install --working-dir=packages/desktop --no-interaction --prefer-dist
-      - run: composer validate --strict packages/desktop/composer.json
-      - run: composer test --working-dir=packages/desktop
-      - run: composer analyse --working-dir=packages/desktop
-      - run: php scripts/test-release-workflows.php
-      - name: Validate native platform evidence contracts
-        run: >-
-          python3 -m unittest
-          tests/test_desktop_platform_evidence.py
-          tests/test_desktop_performance_evidence.py
-          tests/test_host_portable.py
-      - name: Remove build intermediates
-        if: always()
-        run: cargo clean
+      - name: The counter example opens a window
+        run: |
+          composer install --no-interaction --prefer-dist
+          cargo build --locked -p pam-desktop-host
+          xvfb-run -a sh -c '
+            target/debug/pam-desktop run examples/counter &
+            host=$!
+            for attempt in $(seq 1 40); do
+              xdotool search --name "PAM Desktop counter" >/dev/null 2>&1 && break
+              sleep 0.5
+            done
+            xdotool search --name "PAM Desktop counter" >/dev/null
+            kill "$host"
+          '
+      - name: Host archive is reproducible
+        run: |
+          version=$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pam-desktop-host") | .version')
+          scripts/package-host.sh target/debug/pam-desktop "${RUNNER_TEMP}/one" "${version}" x86_64-unknown-linux-gnu
+          scripts/package-host.sh target/debug/pam-desktop "${RUNNER_TEMP}/two" "${version}" x86_64-unknown-linux-gnu
+          cmp "${RUNNER_TEMP}"/one/*.tar.gz "${RUNNER_TEMP}"/two/*.tar.gz
 
-  otlp-collector:
-    runs-on: ubuntu-22.04
+  native:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (AppKit)
+            runner: macos-15
+          - name: Windows (Win32)
+            runner: windows-2025
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.88.0
-      - name: Verify the supported Rust toolchain
-        run: rustc --version | grep -E '^rustc 1\.88\.'
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      - name: Verify official Collector image signature
-        run: |
-          cosign verify \
-            --certificate-identity='https://github.com/open-telemetry/opentelemetry-collector-releases/.github/workflows/base-release.yaml@refs/tags/v0.157.0' \
-            --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
-            'ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector:0.157.0@sha256:4019ce4d7e7791a1a255fffb2f407af66d5017cc65543469ba565c4f47f795b8'
-      - name: Certify Desktop OTLP interoperability
-        run: scripts/certify-desktop-otlp.sh
-      - name: Remove build intermediates
-        if: always()
-        run: cargo clean
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.5"
+          coverage: none
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
+      - run: cargo build --locked -p pam-desktop-host
+      - name: PHP package
+        run: php packages/desktop/tests/run.php

@@ -50,7 +50,7 @@ final class View implements Renderable
 
     public function toElement(): Element
     {
-        $base = self::$basePath ?? getcwd().'/resources/native';
+        $base = self::$basePath ?? getcwd().'/resources/views';
         $source = $base.'/'.str_replace('.', '/', $this->name).'.pam';
         $resolved = realpath($source);
         $baseResolved = realpath($base);

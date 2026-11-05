@@ -8,7 +8,6 @@ members = [
     "crates/pam-desktop-appkit",
     "crates/pam-desktop-host",
 ]
-exclude = ["legacy"]
 resolver = "2"
 
 [workspace.package]

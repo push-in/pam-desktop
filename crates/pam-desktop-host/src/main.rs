@@ -10,6 +10,7 @@ mod manifest;
 mod modules;
 mod packager;
 mod paths;
+mod scaffold;
 mod updater;
 
 use std::ffi::OsString;
@@ -27,6 +28,7 @@ fn usage() -> ExitCode {
     eprintln!(
         "PAM Desktop {}\n\n\
          usage:\n  \
+         pam-desktop init [directory]          write the files of a new application\n  \
          pam-desktop dev [app] [url]           run with hot reload (default: current directory)\n  \
          pam-desktop run [app] [url]           run the application, opened with a link\n  \
          pam-desktop build [app] [options]     bundle the application and build its installers\n  \
@@ -215,6 +217,11 @@ fn main() -> ExitCode {
             let link = arguments.next().and_then(|link| link.into_string().ok());
             run(&target, command == "dev", link)
         }
+        Some("init") => report(scaffold::InitOptions::parse(arguments).and_then(|options| scaffold::init(&options)).map(|lines| {
+            for line in lines {
+                println!("{line}");
+            }
+        })),
         Some("build") => report(run_build(arguments)),
         Some("update-key") => report(run_update_key(&arguments.collect::<Vec<_>>())),
         Some("publish-update") => report(run_publish_update(arguments.collect())),

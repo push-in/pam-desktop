@@ -16,7 +16,7 @@ use Pam\Desktop\Routing\Route;
 require __DIR__.'/vendor/autoload.php';
 
 App::views(
-    __DIR__.'/resources/native',
+    __DIR__.'/resources/views',
     __DIR__.'/.pam-desktop/views',
 );
 App::components(

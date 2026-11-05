@@ -6829,27 +6829,6 @@ $assert(
         && $dynamicSheet->properties()[PropKey::BottomSheetIndex->value] === 0,
     'BottomSheet without snap points (snapPoints="content") must size itself to its content.',
 );
-$safeAreaCli = getenv('PAM_DESKTOP_CLI');
-if (is_string($safeAreaCli) && $safeAreaCli !== '' && is_file($safeAreaCli)) {
-    // A sheet without any bottom padding: the engine pads it, so the lint
-    // finds nothing; a SafeAreaView opt-out with a button at the bottom is
-    // reported for both navigation modes.
-    $clean = \Pam\Desktop\Tooling\SafeAreaLint::check(
-        Column::make(Text::make('Screen'), BottomSheet::make(Column::make(Text::make('Anexar')), []))->property(PropKey::FlexGrow, 1.0),
-    );
-    $optOut = \Pam\Desktop\Tooling\SafeAreaLint::check(
-        SafeAreaView::make(
-            Column::make(\Pam\Desktop\UI\View::make()->property(PropKey::FlexGrow, 1.0), Button::make('Enviar'))
-                ->property(PropKey::FlexGrow, 1.0),
-        )
-            ->property(PropKey::FlexGrow, 1.0)
-            ->edges(false, false, false, false),
-    );
-    $assert(
-        $clean === [] && count($optOut) === 2 && $optOut[0]['edge'] === 'bottom',
-        'SafeAreaLint must lay out with the real engine and report content inside the insets.',
-    );
-}
 $containedSheet = TemplateRenderer::render(
     TemplateCompiler::compile('<BottomSheet keyboardBehavior="contain"><Text>Composer</Text></BottomSheet>'),
     new class {
@@ -7563,7 +7542,6 @@ try {
     }
     fwrite(STDERR, "warning: mbstring polyfill differs from this ext-mbstring build (set PAM_DESKTOP_STRICT_MBSTRING=1 to fail).\n");
 }
-require __DIR__.'/runtime_audit.php';
 require __DIR__.'/native_crypto.php';
 require __DIR__.'/navigation_lifecycle.php';
 require __DIR__.'/optional_navigation.php';

@@ -2,6 +2,7 @@
 /packages/desktop/vendor/
 /examples/*/vendor/
 /examples/*/.pam/
+/examples/*/.pam-desktop/
 /.idea/
 /.vscode/
 *.log
