@@ -16,10 +16,11 @@ use std::time::Instant;
 use pam_desktop_engine::{Engine, PamTextMeasureRequest, PamTextMeasureResult};
 use pam_desktop_wire::decode_batch;
 
-use crate::animator::{Animator, Owner, Timers};
+use crate::animator::{Animator, Owner, Timer, Timers};
 use crate::backend::{Backend, BackendEvent, KeyEvent, NodeId, WindowConfig, WindowMetrics, MAIN_WINDOW};
 use crate::context::{event_kind, Ctx, HostCommand, OutEvent};
 use crate::geometry::Size;
+use crate::inputs::Inputs;
 use crate::interaction::Interaction;
 use crate::presenter::coverage::Coverage;
 use crate::presenter::modal::Modals;
@@ -211,6 +212,7 @@ pub struct Runtime<B: Backend> {
     modals: Modals,
     coverage: Coverage,
     interaction: Interaction,
+    inputs: Inputs,
     /// Events for PHP produced while handling the current work.
     outbox: Vec<OutEvent>,
     commands: Vec<HostCommand>,
@@ -283,6 +285,7 @@ impl<B: Backend> Runtime<B> {
             modals: Modals::default(),
             coverage: Coverage::default(),
             interaction: Interaction::new(metrics.dark),
+            inputs: Inputs::default(),
             outbox: Vec::new(),
             commands: Vec::new(),
             started: Instant::now(),
@@ -345,6 +348,9 @@ impl<B: Backend> Runtime<B> {
             match command {
                 HostCommand::Focus(id) => self.backend.focus(id),
                 HostCommand::ScrollTo { id, offset, animated } => self.backend.scroll_to(id, offset, animated),
+                HostCommand::InputConfig { id, config } => self.backend.set_input_config(id, &config),
+                HostCommand::InputText { id, text, selection } => self.backend.set_input_text(id, &text, selection),
+                HostCommand::InputSelection { id, start, end } => self.backend.set_input_selection(id, start, end),
             }
         }
         if let Some(worker) = &mut self.worker {
@@ -392,11 +398,14 @@ impl<B: Backend> Runtime<B> {
                 self.modals.on_change(&mut ctx, change);
                 self.coverage.on_change(&mut ctx, change);
                 self.interaction.on_change(&mut ctx, change);
+                self.inputs.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             self.tabs.after_commit(&mut ctx);
             self.modals.after_commit(&mut ctx);
+            self.inputs.after_commit(&mut ctx);
             self.coverage.invalidate();
+            self.inputs.retry_autofocus();
         }
         let mut ctx = ctx!(self);
         self.coverage.evaluate(&mut ctx);
@@ -545,6 +554,9 @@ impl<B: Backend> Runtime<B> {
                 }
                 let action = {
                     let mut ctx = ctx!(self);
+                    if pointer.phase == crate::backend::PointerPhase::Up {
+                        self.inputs.flush_before_press(&mut ctx);
+                    }
                     self.interaction.on_pointer(&mut ctx, pointer)
                 };
                 if let Some(action) = action {
@@ -559,7 +571,12 @@ impl<B: Backend> Runtime<B> {
             }
             BackendEvent::FocusChanged { id, focused } => {
                 let mut ctx = ctx!(self);
+                self.inputs.on_focus(&mut ctx, id, focused);
                 self.interaction.on_focus(&mut ctx, id, focused);
+            }
+            BackendEvent::Input { id, event } => {
+                let mut ctx = ctx!(self);
+                self.inputs.on_event(&mut ctx, id, event);
             }
             BackendEvent::WindowResized { window, size, scale } if window == MAIN_WINDOW => {
                 let changed = self.metrics.size != size || self.metrics.scale != scale;
@@ -607,7 +624,10 @@ impl<B: Backend> Runtime<B> {
                 let due = self.timers.take_due(self.now_ms());
                 let mut ctx = ctx!(self);
                 for timer in due {
-                    self.interaction.on_timer(&mut ctx, timer);
+                    match timer {
+                        Timer::InputDebounce(id) => self.inputs.on_timer(&mut ctx, id),
+                        _ => self.interaction.on_timer(&mut ctx, timer),
+                    }
                 }
             }
             BackendEvent::ScrollChanged { id, offset } => {

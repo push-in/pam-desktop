@@ -80,6 +80,9 @@ pub enum HostCommand {
     /// Moves keyboard focus to a node, or clears it.
     Focus(Option<NodeId>),
     ScrollTo { id: NodeId, offset: Point, animated: bool },
+    InputConfig { id: NodeId, config: Box<crate::backend::InputConfig> },
+    InputText { id: NodeId, text: String, selection: Option<(u32, u32)> },
+    InputSelection { id: NodeId, start: u32, end: u32 },
 }
 
 pub struct Ctx<'a> {

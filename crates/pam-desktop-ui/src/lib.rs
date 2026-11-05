@@ -10,6 +10,8 @@ pub mod backend;
 pub mod color;
 pub mod context;
 pub mod geometry;
+pub mod input_format;
+pub mod inputs;
 pub mod interaction;
 pub mod presenter;
 pub mod props;

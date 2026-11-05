@@ -9,6 +9,7 @@
 #![cfg(target_os = "linux")]
 
 mod backend;
+mod input;
 mod paint;
 mod text;
 mod view;

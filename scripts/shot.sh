@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs an example on a private virtual display and captures the window.
 #
-#   scripts/shot.sh <app dir> <output.png> [WIDTHxHEIGHT] [seconds] [-- xdotool arguments…]
+#   scripts/shot.sh <app dir> <output.png> [WIDTHxHEIGHT] [seconds] [-- xdotool arguments… [then more…]]
 #
 # Used for visual checks during development; nothing is shown on the real screen.
 set -euo pipefail
@@ -27,10 +27,18 @@ export PAM_DESKTOP_STATE_DIR=$state PAM_DESKTOP_DATA_DIR=$state/data PAM_DESKTOP
 PAM_DESKTOP_WINDOW=$size timeout $(( seconds + 30 )) "$root/target/debug/pam-desktop" run "$app" >"$log" 2>&1 &
 host=$!
 sleep "$seconds"
-if [ "$#" -gt 0 ]; then
-    xdotool "$@"
-    sleep 1
-fi
+# The xdotool arguments may hold several commands separated by a literal
+# "then" (needed after `type`, which consumes every following argument).
+step=()
+for argument in "$@" then; do
+    if [ "$argument" = then ]; then
+        [ "${#step[@]}" -gt 0 ] && xdotool "${step[@]}"
+        step=()
+    else
+        step+=("$argument")
+    fi
+done
+[ "$#" -gt 0 ] && sleep 1
 import -window root -crop "${size}+0+0" +repage "$output"
 kill "$host" 2>/dev/null || true
 wait "$host" 2>/dev/null || true

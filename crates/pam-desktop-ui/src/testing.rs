@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 
 use crate::backend::{
-    Backend, ImageContent, ImageKey, ImageSource, NodeId, ScrollConfig, TextContent, ViewClass, WindowConfig, WindowId,
-    WindowMetrics,
+    Backend, ImageContent, ImageKey, ImageSource, InputConfig, NodeId, ScrollConfig, TextContent, ViewClass, WindowConfig,
+    WindowId, WindowMetrics,
 };
 use crate::geometry::{Point, Rect, Size};
 use crate::style::{Decoration, LayerState};
@@ -26,6 +26,9 @@ pub enum Command {
     Text(NodeId, Option<String>),
     Focusable(NodeId, bool),
     Focus(Option<NodeId>),
+    InputConfig(NodeId, Box<InputConfig>),
+    InputText(NodeId, String, Option<(u32, u32)>),
+    InputSelection(NodeId, u32, u32),
     LoadImage(ImageKey),
     ReleaseImage(ImageKey),
     Image(NodeId, Option<ImageContent>),
@@ -46,6 +49,8 @@ pub struct RecordingBackend {
     pub children: HashMap<NodeId, Vec<NodeId>>,
     pub frames: HashMap<NodeId, Rect>,
     pub texts: HashMap<NodeId, TextContent>,
+    /// Text last set on each native input.
+    pub inputs: HashMap<NodeId, String>,
     pub metrics: WindowMetrics,
     /// Width of one character used by the fake text measurer.
     pub character_width: f32,
@@ -155,6 +160,19 @@ impl Backend for RecordingBackend {
 
     fn focus(&mut self, id: Option<NodeId>) {
         self.commands.push(Command::Focus(id));
+    }
+
+    fn set_input_config(&mut self, id: NodeId, config: &InputConfig) {
+        self.commands.push(Command::InputConfig(id, Box::new(config.clone())));
+    }
+
+    fn set_input_text(&mut self, id: NodeId, text: &str, selection: Option<(u32, u32)>) {
+        self.inputs.insert(id, text.to_owned());
+        self.commands.push(Command::InputText(id, text.to_owned(), selection));
+    }
+
+    fn set_input_selection(&mut self, id: NodeId, start: u32, end: u32) {
+        self.commands.push(Command::InputSelection(id, start, end));
     }
 
     fn load_image(&mut self, key: ImageKey, _source: ImageSource) {

@@ -343,6 +343,35 @@ impl<'a> TextSource<'a> {
     }
 }
 
+/// Length of `text` in UTF-16 code units (the unit of protocol offsets).
+#[must_use]
+pub fn utf16_len(text: &str) -> u32 {
+    text.chars().map(|character| character.len_utf16() as u32).sum()
+}
+
+/// Converts a UTF-16 offset to a character (code point) offset, clamped to
+/// the text and never splitting a surrogate pair.
+#[must_use]
+pub fn utf16_to_char_offset(text: &str, offset: u32) -> u32 {
+    let mut units = 0_u32;
+    let mut characters = 0_u32;
+    for character in text.chars() {
+        let width = character.len_utf16() as u32;
+        if units + width > offset {
+            break;
+        }
+        units += width;
+        characters += 1;
+    }
+    characters
+}
+
+/// Converts a character (code point) offset to UTF-16 code units.
+#[must_use]
+pub fn char_to_utf16_offset(text: &str, offset: u32) -> u32 {
+    text.chars().take(offset as usize).map(|character| character.len_utf16() as u32).sum()
+}
+
 /// Accessibility text scale after `allowFontScaling` / `maxFontSizeMultiplier`.
 #[must_use]
 pub fn effective_font_scale(props: Props<'_>, scale: f32) -> f32 {
@@ -413,6 +442,20 @@ mod tests {
         assert_eq!(effective_font_scale(Props::new(&map), 1.5), 1.2);
         map.insert(PropKey::TextAllowFontScaling, PropValue::Boolean(false));
         assert_eq!(effective_font_scale(Props::new(&map), 1.5), 1.0);
+    }
+
+    #[test]
+    fn utf16_offsets_convert_without_splitting_pairs() {
+        let text = "a😀é";
+        assert_eq!(utf16_len(text), 4);
+        assert_eq!(utf16_to_char_offset(text, 0), 0);
+        assert_eq!(utf16_to_char_offset(text, 1), 1);
+        // Offset 2 falls inside the surrogate pair: stay before it.
+        assert_eq!(utf16_to_char_offset(text, 2), 1);
+        assert_eq!(utf16_to_char_offset(text, 3), 2);
+        assert_eq!(utf16_to_char_offset(text, 99), 3);
+        assert_eq!(char_to_utf16_offset(text, 2), 3);
+        assert_eq!(char_to_utf16_offset(text, 99), 4);
     }
 
     #[test]

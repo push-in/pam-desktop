@@ -110,6 +110,7 @@ pub enum BackendEvent {
     BackRequested { window: WindowId },
     /// Keyboard focus entered or left a focusable view.
     FocusChanged { id: NodeId, focused: bool },
+    Input { id: NodeId, event: InputEvent },
     WindowResized { window: WindowId, size: Size, scale: f32 },
     WindowCloseRequested { window: WindowId },
     WindowFocusChanged { window: WindowId, focused: bool },
@@ -122,6 +123,107 @@ pub enum BackendEvent {
     /// An image finished decoding; `size` is in image pixels.
     ImageLoaded { key: ImageKey, size: Size },
     ImageFailed { key: ImageKey, message: String },
+}
+
+/// What the field is for: backends map it to input hints, on-screen
+/// keyboards and autofill.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum InputPurpose {
+    #[default]
+    Text,
+    Email,
+    /// Whole numbers.
+    Number,
+    /// Signed decimals.
+    Decimal,
+    Phone,
+    Url,
+    Search,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Capitalization {
+    None,
+    #[default]
+    Sentences,
+    Words,
+    Characters,
+}
+
+/// Everything a native text field or editor needs besides its text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct InputConfig {
+    pub placeholder: String,
+    pub placeholder_color: Option<Color>,
+    pub font: crate::text::FontSpec,
+    /// `None` uses the platform's text color.
+    pub color: Option<Color>,
+    pub align: crate::text::TextAlign,
+    pub vertical: VerticalAlign,
+    /// Space between the box edges and the text (padding plus borders).
+    pub insets: Insets,
+    pub letter_spacing: f32,
+    /// Password masking (single-line only).
+    pub secure: bool,
+    /// `false` is read-only: focusable and selectable, never modified.
+    pub editable: bool,
+    pub enabled: bool,
+    /// Maximum length in UTF-16 code units.
+    pub max_length: Option<u32>,
+    pub purpose: InputPurpose,
+    pub capitalization: Capitalization,
+    pub spellcheck: bool,
+    pub selection_color: Option<Color>,
+    pub caret_color: Option<Color>,
+    pub caret_hidden: bool,
+    pub context_menu_hidden: bool,
+    pub select_on_focus: bool,
+    /// Enter submits instead of inserting a line break (editors only; a
+    /// single-line field always reports Enter).
+    pub submit_on_enter: bool,
+}
+
+impl Default for InputConfig {
+    fn default() -> Self {
+        Self {
+            placeholder: String::new(),
+            placeholder_color: None,
+            font: crate::text::FontSpec::default(),
+            color: None,
+            align: crate::text::TextAlign::Start,
+            vertical: VerticalAlign::Center,
+            insets: Insets::ZERO,
+            letter_spacing: 0.0,
+            secure: false,
+            editable: true,
+            enabled: true,
+            max_length: None,
+            purpose: InputPurpose::Text,
+            capitalization: Capitalization::Sentences,
+            spellcheck: true,
+            selection_color: None,
+            caret_color: None,
+            caret_hidden: false,
+            context_menu_hidden: false,
+            select_on_focus: false,
+            submit_on_enter: false,
+        }
+    }
+}
+
+/// What the user did in a native text control. Offsets are UTF-16 code units.
+#[derive(Clone, Debug, PartialEq)]
+pub enum InputEvent {
+    /// The text changed by typing, pasting, deleting or an input method.
+    /// Never sent for text set through `set_input_text`.
+    Edited { text: String, selection: (u32, u32) },
+    SelectionChanged { start: u32, end: u32 },
+    /// A key about to edit the text: `"Enter"`, `"Backspace"` or the inserted text.
+    KeyPressed { key: String },
+    /// Enter in a single-line field, or in an editor with `submit_on_enter`.
+    Submitted,
+    /// Size of the laid out text, for controls that grow with their content.
+    ContentSizeChanged { size: Size },
 }
 
 /// Identifies a decoded image owned by the backend.
@@ -241,6 +343,15 @@ pub trait Backend {
     fn set_focusable(&mut self, id: NodeId, focusable: bool);
     /// Moves keyboard focus to a view, or clears it with `None`.
     fn focus(&mut self, id: Option<NodeId>);
+
+    // ---- text input ----------------------------------------------------
+
+    /// Configures a `ViewClass::Input` or `ViewClass::TextArea` view.
+    fn set_input_config(&mut self, id: NodeId, config: &InputConfig);
+    /// Replaces the text (and optionally the selection, UTF-16 offsets)
+    /// without reporting an edit back.
+    fn set_input_text(&mut self, id: NodeId, text: &str, selection: Option<(u32, u32)>);
+    fn set_input_selection(&mut self, id: NodeId, start: u32, end: u32);
 
     // ---- images --------------------------------------------------------
 

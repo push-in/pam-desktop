@@ -8,7 +8,8 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib, graphene, pango};
 use pam_desktop_ui::backend::{
-    Backend, BackendEvent, ImageContent, ImageKey, ImageSource, KeyEvent, Modifiers, NodeId, PointerButton, PointerEvent,
+    Backend, BackendEvent, ImageContent, ImageKey, ImageSource, InputConfig, KeyEvent, Modifiers, NodeId, PointerButton,
+    PointerEvent,
     PointerPhase, ScrollConfig, TextContent, ViewClass,
     WindowConfig, WindowId, WindowMetrics,
 };
@@ -18,6 +19,7 @@ use pam_desktop_ui::scene::IdMap;
 use pam_desktop_ui::style::{Decoration, LayerState};
 use pam_desktop_ui::text::{TextBlock, TextMetrics};
 
+use crate::input::InputHost;
 use crate::text;
 use crate::view::{self, ImageState, PamView};
 
@@ -27,6 +29,8 @@ struct ViewEntry {
     /// Where child node widgets are added.
     container: PamView,
     class: ViewClass,
+    /// The native text control of input classes.
+    input: Option<InputHost>,
 }
 
 struct WindowEntry {
@@ -349,11 +353,19 @@ impl Backend for GtkBackend {
             }
             _ => container.clone().upcast(),
         };
-        self.views.insert(id, ViewEntry { widget, container, class });
+        let input = match class {
+            ViewClass::Input => Some(InputHost::new(id, false, &container, &self.events)),
+            ViewClass::TextArea => Some(InputHost::new(id, true, &container, &self.events)),
+            _ => None,
+        };
+        self.views.insert(id, ViewEntry { widget, container, class, input });
     }
 
     fn destroy_view(&mut self, id: NodeId) {
         if let Some(entry) = self.views.remove(&id) {
+            if let Some(input) = &entry.input {
+                input.destroy();
+            }
             if entry.widget.parent().is_some() {
                 entry.widget.unparent();
             }
@@ -385,10 +397,13 @@ impl Backend for GtkBackend {
     }
 
     fn set_frame(&mut self, id: NodeId, frame: Rect) {
-        let Some(entry) = self.views.get(&id) else { return };
+        let Some(entry) = self.views.get_mut(&id) else { return };
         view::set_layout(&entry.widget, |layout| layout.frame = frame);
         if entry.class != ViewClass::Scroll {
             entry.container.set_size(frame.size());
+        }
+        if let Some(input) = &mut entry.input {
+            input.layout(frame.size(), &entry.container);
         }
         if let Some(parent) = entry.widget.parent() {
             parent.queue_allocate();
@@ -430,14 +445,39 @@ impl Backend for GtkBackend {
 
     fn focus(&mut self, id: Option<NodeId>) {
         match id.and_then(|id| self.views.get(&id)) {
-            Some(entry) => {
-                entry.container.grab_focus();
-            }
+            Some(entry) => match &entry.input {
+                Some(input) => {
+                    input.focus_target().grab_focus();
+                }
+                None => {
+                    entry.container.grab_focus();
+                }
+            },
             None => {
                 for window in self.windows.values() {
                     gtk::prelude::GtkWindowExt::set_focus(&window.window, None::<&gtk::Widget>);
                 }
             }
+        }
+    }
+
+    fn set_input_config(&mut self, id: NodeId, config: &InputConfig) {
+        if let Some(entry) = self.views.get_mut(&id) {
+            if let Some(input) = &mut entry.input {
+                input.configure(config, &entry.container);
+            }
+        }
+    }
+
+    fn set_input_text(&mut self, id: NodeId, text: &str, selection: Option<(u32, u32)>) {
+        if let Some(input) = self.views.get(&id).and_then(|entry| entry.input.as_ref()) {
+            input.set_text(text, selection);
+        }
+    }
+
+    fn set_input_selection(&mut self, id: NodeId, start: u32, end: u32) {
+        if let Some(input) = self.views.get(&id).and_then(|entry| entry.input.as_ref()) {
+            input.set_selection(start, end);
         }
     }
 
