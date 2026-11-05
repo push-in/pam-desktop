@@ -23,6 +23,13 @@ pub fn status() -> Status {
     platform::status()
 }
 
+/// Whether the system is saving energy, without waiting for anything:
+/// asked from the UI thread. On macOS it is what the last probe saw.
+#[must_use]
+pub fn low_power_hint() -> bool {
+    platform::low_power_hint()
+}
+
 #[cfg(target_os = "linux")]
 mod platform {
     use std::fs;
@@ -93,6 +100,10 @@ mod platform {
         connected
     }
 
+    pub fn low_power_hint() -> bool {
+        low_power()
+    }
+
     /// The firmware power profile, where the machine exposes one.
     fn low_power() -> bool {
         fs::read_to_string("/sys/firmware/acpi/platform_profile")
@@ -135,6 +146,14 @@ mod macos {
         };
         *known = Some((Instant::now(), status));
         status
+    }
+
+    pub fn low_power_hint() -> bool {
+        KNOWN
+            .try_lock()
+            .ok()
+            .and_then(|known| *known)
+            .is_some_and(|(_, status)| status.low_power)
     }
 
     fn output(program: &str, arguments: &[&str]) -> String {
@@ -273,6 +292,10 @@ mod platform {
         }
     }
 
+    pub fn low_power_hint() -> bool {
+        status().low_power
+    }
+
     /// The best connected adapter that has a gateway.
     fn network() -> i64 {
         let flags = GAA_FLAG_INCLUDE_GATEWAYS
@@ -332,6 +355,10 @@ mod platform {
             network: NETWORK_OTHER,
             low_power: false,
         }
+    }
+
+    pub fn low_power_hint() -> bool {
+        false
     }
 }
 

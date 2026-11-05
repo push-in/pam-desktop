@@ -15,7 +15,7 @@ final readonly class DeviceStatus
     ) {
     }
 
-    /** The system's power-saving mode. Alias of $lowPowerMode; always false on desktop. */
+    /** The system's power-saving mode (battery saver, Low Power Mode). Alias of $lowPowerMode. */
     public function powerSaveMode(): bool
     {
         return $this->lowPowerMode;

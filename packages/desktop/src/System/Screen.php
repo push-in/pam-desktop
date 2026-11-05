@@ -21,7 +21,8 @@ use Pam\Desktop\Modules\NativeModules;
  * Independent features (an app lock, a screen showing a secret) use named
  * claims: Screen::claim('app-lock') / Screen::release('app-lock'); secure
  * mode stays on while any claim is held.
- * No desktop backend enforces it yet; the callback then receives false.
+ * macOS and Windows keep the windows of the application out of captures;
+ * Linux has no such control, and the callback then receives false.
  */
 final class Screen
 {

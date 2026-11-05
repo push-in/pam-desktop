@@ -262,7 +262,7 @@ Variables you can set before starting the host:
 | `PAM_DESKTOP_FRAME_GC` | `0` leaves PHP's cycle collector on its own schedule instead of running it between frames. |
 | `TZ`, `LC_ALL`, `LC_NUMERIC`, `LANG` | Read for `DeviceInfo::$timeZone`, `DeviceInfo::$locale` and currency input formatting. |
 
-A relative path in one of the three directory variables is ignored. `vendor/bin/pam-desktop` reads `PAM_DESKTOP_CACHE_DIR` as well: when it is set, the launcher keeps the downloaded host there. Variables that only affect `pam-desktop build` are listed in [Distribution](distribution.md).
+A relative path in one of the three directory variables is ignored. `vendor/bin/pam-desktop` keeps the downloaded host in the cache of the user; `PAM_DESKTOP_HOST_CACHE_DIR` names another absolute directory for it. Variables that only affect `pam-desktop build` are listed in [Distribution](distribution.md).
 
 Variables the host sets for the worker (read them, do not set them):
 

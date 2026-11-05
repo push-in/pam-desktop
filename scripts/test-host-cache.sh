@@ -21,7 +21,7 @@ done
 mkdir -p "${FIXTURE}/.download-1.2.0.stale"
 touch -d '3 days ago' "${FIXTURE}/.download-1.2.0.stale"
 
-output=$(PAM_DESKTOP_CACHE_DIR="$FIXTURE" \
+output=$(PAM_DESKTOP_HOST_CACHE_DIR="$FIXTURE" \
     "$ROOT/packages/desktop/bin/pam-desktop" doctor)
 
 [ "$output" = 'host doctor' ]

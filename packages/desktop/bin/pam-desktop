@@ -13,6 +13,7 @@ declare(strict_types=1);
  * release, verified against its published SHA-256 and kept in the cache of
  * the user. PAM_DESKTOP_HOST points at a host binary to run instead, with no
  * download (a build of this repository, an air-gapped machine).
+ * PAM_DESKTOP_HOST_CACHE_DIR names another absolute directory for the cache.
  */
 
 const HOST_VERSION = '2.0.0';
@@ -189,7 +190,7 @@ foreach (['PAM_DESKTOP_HOST', 'PAM_DESKTOP_HOST_BINARY'] as $variable) {
 
 $target = target();
 $suffix = PHP_OS_FAMILY === 'Windows' ? '.exe' : '';
-$cacheBase = getenv('PAM_DESKTOP_CACHE_DIR');
+$cacheBase = getenv('PAM_DESKTOP_HOST_CACHE_DIR');
 if (!is_string($cacheBase) || $cacheBase === '') {
     $cacheBase = match (PHP_OS_FAMILY) {
         'Windows' => (getenv('LOCALAPPDATA') ?: fail('LOCALAPPDATA is unavailable')) . '\\pam-desktop',

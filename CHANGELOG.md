@@ -141,7 +141,7 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
   (`composer analyse`).
 - A CI workflow (Linux: build, tests, clippy, rustfmt, PHP tests and PHPStan;
   macOS and Windows: build and tests) and a release workflow that builds the
-  host for five targets and publishes the archives of a tag. Neither has run
+  host for six targets and publishes the archives of a tag. Neither has run
   yet.
 
 ### Accessibility

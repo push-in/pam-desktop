@@ -371,7 +371,7 @@ impl<B: Backend> Runtime<B> {
             .with("timeZone", time_zone())
             .with("memoryClassMb", 0_i64)
             .with("lowRamDevice", false)
-            .with("powerSaveMode", false)
+            .with("powerSaveMode", crate::modules::probe::low_power_hint())
             .with("appVersion", self.app_version.as_str())
             .with("buildNumber", self.build_number.as_str())
             .with("locale", locale_tag())

@@ -61,6 +61,9 @@ jobs:
           - target: x86_64-pc-windows-msvc
             runner: windows-2025
             binary: pam-desktop.exe
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            binary: pam-desktop.exe
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
