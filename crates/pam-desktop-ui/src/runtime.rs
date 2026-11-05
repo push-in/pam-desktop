@@ -14,32 +14,21 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use pam_desktop_engine::{Engine, PamTextMeasureRequest, PamTextMeasureResult};
-use pam_desktop_wire::{decode_batch, NodeKind, PropKey};
+use pam_desktop_wire::decode_batch;
 
-use crate::backend::{
-    Backend, BackendEvent, NodeId, PointerButton, PointerEvent, PointerPhase, WindowConfig, WindowMetrics, MAIN_WINDOW,
-};
-use crate::geometry::{Point, Size};
-use crate::scene::{IdMap, Scene};
+use crate::animator::{Animator, Owner, Timers};
+use crate::backend::{Backend, BackendEvent, KeyEvent, NodeId, WindowConfig, WindowMetrics, MAIN_WINDOW};
+use crate::context::{event_kind, Ctx, HostCommand, OutEvent};
+use crate::geometry::Size;
+use crate::interaction::Interaction;
+use crate::presenter::coverage::Coverage;
+use crate::presenter::modal::Modals;
+use crate::presenter::navigation::Navigation;
+use crate::presenter::tabs::Tabs;
+use crate::scene::{Action, Change, Scene};
 use crate::text::TextSource;
 use crate::wiremap::WireMap;
 use crate::worker::{Worker, WorkerCommand, WorkerMessage};
-
-/// Event kinds of the wire protocol (`Pam\Desktop\EventKind`).
-pub mod event_kind {
-    pub const PRESS: u16 = 1;
-    pub const CHANGE: u16 = 2;
-    pub const BACK: u16 = 3;
-    pub const LONG_PRESS: u16 = 5;
-    pub const FOCUS: u16 = 6;
-    pub const BLUR: u16 = 7;
-    pub const SUBMIT: u16 = 8;
-    pub const SCROLL: u16 = 9;
-    pub const APP_STATE: u16 = 16;
-    pub const DIMENSIONS: u16 = 17;
-    pub const PRESS_IN: u16 = 28;
-    pub const PRESS_OUT: u16 = 29;
-}
 
 pub const MODULE_SUCCESS: u8 = 1;
 pub const MODULE_FAILURE: u8 = 2;
@@ -176,6 +165,9 @@ unsafe extern "C" fn measure_trampoline<B: Backend>(
         transform: i64::from(request.text_transform),
         max_lines: request.max_lines,
     };
+    // An empty paragraph (an input without text) still occupies one line box.
+    let empty = source.text.is_empty();
+    let source = if empty { TextSource { text: " ", spans: "", ..source } } else { source };
     let block = source.measure_block();
     let max_width = if request.available_width.is_finite() && request.available_width > 0.0 {
         request.available_width
@@ -184,7 +176,10 @@ unsafe extern "C" fn measure_trampoline<B: Backend>(
     };
     // SAFETY: `backend` points at the runtime's backend for the duration of
     // the engine call that triggered this measurement.
-    let metrics = unsafe { (*context.backend).measure_text(&block, max_width) };
+    let mut metrics = unsafe { (*context.backend).measure_text(&block, max_width) };
+    if empty {
+        metrics.width = 0.0;
+    }
     *result = PamTextMeasureResult {
         width: metrics.width,
         height: metrics.height,
@@ -192,12 +187,6 @@ unsafe extern "C" fn measure_trampoline<B: Backend>(
         line_count: metrics.line_count,
     };
     1
-}
-
-#[derive(Clone, Copy, Debug)]
-struct PressState {
-    node: NodeId,
-    started: Point,
 }
 
 pub struct Runtime<B: Backend> {
@@ -215,34 +204,47 @@ pub struct Runtime<B: Backend> {
     batch: Vec<u8>,
     metrics: WindowMetrics,
     platform: &'static str,
-    scroll_offsets: IdMap<Point>,
-    pressed: Option<PressState>,
+    animator: Animator,
+    timers: Timers,
+    navigation: Navigation,
+    tabs: Tabs,
+    modals: Modals,
+    coverage: Coverage,
+    interaction: Interaction,
+    /// Events for PHP produced while handling the current work.
+    outbox: Vec<OutEvent>,
+    commands: Vec<HostCommand>,
     started: Instant,
     draining: bool,
-    first_frame: bool,
     quit_requested: bool,
+    /// The deadline last handed to the backend (avoids re-arming every drain).
+    armed_wake: Option<u64>,
     /// Set when the worker exited or the window closed: the host should quit.
     pub finished: bool,
+}
+
+/// Borrows the controller context out of a runtime's fields.
+macro_rules! ctx {
+    ($runtime:expr) => {
+        Ctx {
+            scene: &mut $runtime.scene,
+            animator: &mut $runtime.animator,
+            timers: &mut $runtime.timers,
+            events: &mut $runtime.outbox,
+            commands: &mut $runtime.commands,
+            now_ms: u64::try_from($runtime.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            viewport: $runtime.metrics.size,
+            reduced_motion: $runtime.metrics.reduced_motion,
+        }
+    };
 }
 
 impl<B: Backend> Runtime<B> {
     pub fn new(mut backend: B, inbox: Arc<Inbox>, events: Rc<EventQueue>, config: RuntimeConfig) -> std::io::Result<Self> {
         backend.open_window(MAIN_WINDOW, &config.window);
         let metrics = backend.window_metrics(MAIN_WINDOW);
-        let mut engine = Engine::new();
-        let _ = engine.set_viewport(metrics.size.width, metrics.size.height);
-        let _ = engine.set_text_scale(metrics.font_scale);
-        let _ = engine.set_refresh_rate(f64::from(metrics.refresh_rate));
-
         let mut measure = Box::new(MeasureContext::<B> { backend: std::ptr::null_mut() });
-        // SAFETY: the context is heap allocated, owned by this runtime and
-        // outlives the engine; its backend pointer is only set around engine calls.
-        unsafe {
-            engine.set_text_measurer(Some((
-                measure_trampoline::<B>,
-                std::ptr::from_mut::<MeasureContext<B>>(measure.as_mut()).cast::<c_void>(),
-            )));
-        }
+        let engine = new_engine(&metrics, measure.as_mut());
 
         let mut scene = Scene::new();
         scene.environment.scale = metrics.scale;
@@ -274,12 +276,19 @@ impl<B: Backend> Runtime<B> {
             batch: Vec::with_capacity(64 * 1024),
             metrics,
             platform: config.platform,
-            scroll_offsets: IdMap::default(),
-            pressed: None,
+            animator: Animator::new(),
+            timers: Timers::default(),
+            navigation: Navigation::default(),
+            tabs: Tabs::default(),
+            modals: Modals::default(),
+            coverage: Coverage::default(),
+            interaction: Interaction::new(metrics.dark),
+            outbox: Vec::new(),
+            commands: Vec::new(),
             started: Instant::now(),
             draining: false,
-            first_frame: true,
             quit_requested: false,
+            armed_wake: None,
             finished: false,
         })
     }
@@ -300,6 +309,10 @@ impl<B: Backend> Runtime<B> {
         self.metrics
     }
 
+    fn now_ms(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
     /// Applies all queued work, then flushes the scene and the worker once.
     pub fn drain(&mut self) {
         if self.draining {
@@ -310,20 +323,48 @@ impl<B: Backend> Runtime<B> {
             let mut progressed = false;
             while let Some(event) = self.events.pop() {
                 self.handle_backend_event(event);
+                self.settle();
                 progressed = true;
             }
             let inbound = self.inbox.take();
             for item in inbound {
                 self.handle_inbound(item);
+                self.settle();
                 progressed = true;
             }
             if !progressed {
                 break;
             }
         }
+        {
+            let mut ctx = ctx!(self);
+            self.interaction.flush(&mut ctx);
+        }
         self.scene.flush(&mut self.backend, MAIN_WINDOW);
+        for command in std::mem::take(&mut self.commands) {
+            match command {
+                HostCommand::Focus(id) => self.backend.focus(id),
+                HostCommand::ScrollTo { id, offset, animated } => self.backend.scroll_to(id, offset, animated),
+            }
+        }
         if let Some(worker) = &mut self.worker {
+            for event in self.outbox.drain(..) {
+                worker.send_event(event.node, event.kind, &event.payload);
+            }
             worker.flush();
+        } else {
+            self.outbox.clear();
+        }
+        if !self.animator.is_idle() {
+            self.backend.request_frame();
+        }
+        let deadline = self.timers.next_deadline();
+        if deadline != self.armed_wake {
+            self.armed_wake = deadline;
+            if let Some(deadline) = deadline {
+                let delay = deadline.saturating_sub(self.now_ms()).min(u64::from(u32::MAX)) as u32;
+                self.backend.schedule_wake(delay);
+            }
         }
         self.draining = false;
         if self.finished && !self.quit_requested {
@@ -331,6 +372,34 @@ impl<B: Backend> Runtime<B> {
             self.worker = None;
             self.backend.quit();
         }
+    }
+
+    /// Lets every controller react to what changed in the scene, until the
+    /// scene is quiet (controllers add chrome and overrides of their own).
+    fn settle(&mut self) {
+        for _ in 0..8 {
+            let changes = self.scene.take_changes();
+            if changes.is_empty() {
+                break;
+            }
+            let mut ctx = ctx!(self);
+            for change in changes {
+                if let Change::Removed(id, _) = change {
+                    ctx.animator.forget(id);
+                }
+                self.navigation.on_change(&mut ctx, change);
+                self.tabs.on_change(&mut ctx, change);
+                self.modals.on_change(&mut ctx, change);
+                self.coverage.on_change(&mut ctx, change);
+                self.interaction.on_change(&mut ctx, change);
+            }
+            self.navigation.after_commit(&mut ctx);
+            self.tabs.after_commit(&mut ctx);
+            self.modals.after_commit(&mut ctx);
+            self.coverage.invalidate();
+        }
+        let mut ctx = ctx!(self);
+        self.coverage.evaluate(&mut ctx);
     }
 
     fn handle_inbound(&mut self, item: Inbound) {
@@ -374,7 +443,7 @@ impl<B: Backend> Runtime<B> {
             worker.shutdown();
         }
         self.generation += 1;
-        self.pressed = None;
+        self.outbox.clear();
         match spawn_worker(&self.worker_command, &self.metrics, &self.inbox, self.generation) {
             Ok(worker) => self.worker = Some(worker),
             Err(error) => eprintln!("[pam-desktop] could not restart the PHP worker: {error}"),
@@ -414,9 +483,7 @@ impl<B: Backend> Runtime<B> {
                 false
             }
         };
-        if applied {
-            self.first_frame = false;
-        } else {
+        if !applied {
             self.resynchronize();
         }
     }
@@ -424,20 +491,7 @@ impl<B: Backend> Runtime<B> {
     /// Drops the mounted tree and asks PHP for a complete frame.
     fn resynchronize(&mut self) {
         self.scene.clear(&mut self.backend);
-        self.engine = {
-            let mut engine = Engine::new();
-            let _ = engine.set_viewport(self.metrics.size.width, self.metrics.size.height);
-            let _ = engine.set_text_scale(self.metrics.font_scale);
-            let _ = engine.set_refresh_rate(f64::from(self.metrics.refresh_rate));
-            // SAFETY: same contract as in `new`.
-            unsafe {
-                engine.set_text_measurer(Some((
-                    measure_trampoline::<B>,
-                    std::ptr::from_mut::<MeasureContext<B>>(self.measure.as_mut()).cast::<c_void>(),
-                )));
-            }
-            engine
-        };
+        self.engine = new_engine(&self.metrics, self.measure.as_mut());
         if let Some(worker) = &mut self.worker {
             worker.resynchronize();
         }
@@ -455,9 +509,7 @@ impl<B: Backend> Runtime<B> {
     }
 
     fn send_event(&mut self, node: NodeId, kind: u16, payload: &[u8]) {
-        if let Some(worker) = &mut self.worker {
-            worker.send_event(node, kind, payload);
-        }
+        self.outbox.push(OutEvent { node, kind, payload: payload.to_vec() });
     }
 
     fn send_dimensions(&mut self) {
@@ -484,7 +536,28 @@ impl<B: Backend> Runtime<B> {
 
     fn handle_backend_event(&mut self, event: BackendEvent) {
         match event {
-            BackendEvent::Pointer(pointer) => self.handle_pointer(pointer),
+            BackendEvent::Pointer(pointer) => {
+                if pointer.window != MAIN_WINDOW {
+                    return;
+                }
+                let action = {
+                    let mut ctx = ctx!(self);
+                    self.interaction.on_pointer(&mut ctx, pointer)
+                };
+                if let Some(action) = action {
+                    self.run_action(action);
+                }
+            }
+            BackendEvent::Key(key) => self.handle_key(&key),
+            BackendEvent::BackRequested { window } => {
+                if window == MAIN_WINDOW {
+                    self.go_back();
+                }
+            }
+            BackendEvent::FocusChanged { id, focused } => {
+                let mut ctx = ctx!(self);
+                self.interaction.on_focus(&mut ctx, id, focused);
+            }
             BackendEvent::WindowResized { window, size, scale } if window == MAIN_WINDOW => {
                 let changed = self.metrics.size != size || self.metrics.scale != scale;
                 if !changed {
@@ -519,156 +592,163 @@ impl<B: Backend> Runtime<B> {
             BackendEvent::AppearanceChanged { dark } => {
                 if self.metrics.dark != dark {
                     self.metrics.dark = dark;
+                    self.interaction.dark = dark;
+                    let mut ctx = ctx!(self);
+                    self.interaction.refresh_defaults(&mut ctx);
                     self.send_dimensions();
                 }
             }
-            BackendEvent::Frame { .. } => {}
-            BackendEvent::ScrollChanged { id, offset } => {
-                self.scroll_offsets.insert(id, offset);
+            BackendEvent::Frame { .. } => self.tick(),
+            BackendEvent::Wake => {
+                self.armed_wake = None;
+                let due = self.timers.take_due(self.now_ms());
+                let mut ctx = ctx!(self);
+                for timer in due {
+                    self.interaction.on_timer(&mut ctx, timer);
+                }
             }
+            BackendEvent::ScrollChanged { id, offset } => self.scene.set_scroll_offset(id, offset),
             BackendEvent::ImageLoaded { .. } | BackendEvent::ImageFailed { .. } => {}
         }
     }
 
-    // ---- pointer -------------------------------------------------------
-
-    /// Deepest node under `point` (window coordinates), front to back.
-    #[must_use]
-    pub fn hit_test(&self, point: Point) -> Option<NodeId> {
-        self.hit_test_node(self.scene.root(), point)
+    /// One display frame: every running animation advances.
+    fn tick(&mut self) {
+        let now = self.now_ms();
+        let samples = self.animator.tick(now);
+        let mut ctx = ctx!(self);
+        for sample in samples {
+            match sample.owner {
+                Owner::Navigation(id) => {
+                    self.navigation.on_sample(&mut ctx, id, sample.value, sample.finished);
+                    if sample.finished {
+                        self.coverage.invalidate();
+                    }
+                }
+                Owner::ModalBackdrop(_) | Owner::ModalContent(_) => {
+                    self.modals.on_sample(&mut ctx, sample.owner, sample.value, sample.finished);
+                }
+                Owner::Press(id) => self.interaction.on_press_sample(&mut ctx, id, sample.value),
+                Owner::Transition(..) | Owner::Motion(..) => {}
+            }
+        }
     }
 
-    fn hit_test_node(&self, id: NodeId, point: Point) -> Option<NodeId> {
-        let node = self.scene.node(id)?;
-        if !node.layer.visible || node.props().integer(PropKey::PointerEvents) == Some(2) {
-            return None;
+    fn run_action(&mut self, action: Action) {
+        let mut ctx = ctx!(self);
+        match action {
+            Action::TabSelect { host, index } => {
+                self.tabs.select(&mut ctx, host, index);
+                self.coverage.invalidate();
+            }
+            Action::ModalBackdrop { modal } => self.modals.backdrop_pressed(&mut ctx, modal),
+            Action::NavigationBack { .. } => {
+                drop(ctx);
+                self.go_back();
+            }
         }
-        let inside = node.frame.contains(point);
-        let clips = node.decoration.clip || node.class == crate::backend::ViewClass::Scroll;
-        if !inside && clips {
-            return None;
-        }
-        // Scrolled content is laid out unscrolled: move the point into it.
-        let child_point = match self.scroll_offsets.get(&id) {
-            Some(offset) => point.offset(offset.x, offset.y),
-            None => point,
+    }
+
+    /// A back request: a presented modal takes it, otherwise PHP navigates.
+    fn go_back(&mut self) {
+        let consumed = {
+            let mut ctx = ctx!(self);
+            self.modals.request_close_top(&mut ctx)
         };
-        let mut ordered: Vec<(f32, u32, NodeId)> = node
-            .children
-            .iter()
-            .filter_map(|child| {
-                let child_node = self.scene.node(*child)?;
-                Some((child_node.props().number_or(PropKey::ZIndex, 0.0), child_node.index, *child))
-            })
-            .collect();
-        ordered.sort_by(|left, right| right.0.total_cmp(&left.0).then(right.1.cmp(&left.1)));
-        for (_, _, child) in ordered {
-            if let Some(hit) = self.hit_test_node(child, child_point) {
-                return Some(hit);
-            }
-        }
-        inside.then_some(id)
-    }
-
-    /// Nearest node at or above `id` that reacts to presses.
-    fn press_target(&self, id: NodeId) -> Option<NodeId> {
-        let mut current = id;
-        loop {
-            let node = self.scene.node(current)?;
-            let pressable = matches!(node.kind, NodeKind::Button | NodeKind::Pressable)
-                || node.handles(PropKey::OnPress)
-                || node.handles(PropKey::OnLongPress)
-                || node.handles(PropKey::OnPressIn)
-                || node.handles(PropKey::OnPressOut);
-            if pressable {
-                return node.props().flag_or(PropKey::Enabled, true).then_some(current);
-            }
-            if node.parent == 0 {
-                return None;
-            }
-            current = node.parent;
+        if !consumed {
+            self.send_event(0, event_kind::BACK, b"");
         }
     }
 
-    fn press_payload(&self, node: NodeId, position: Point, time_ms: u64) -> Vec<u8> {
-        let origin = self.scene.node(node).map_or(Point::ZERO, |node| node.frame.origin());
-        WireMap::new()
-            .with("x", position.x - origin.x)
-            .with("y", position.y - origin.y)
-            .with("pageX", position.x)
-            .with("pageY", position.y)
-            .with("timestamp", i64::try_from(time_ms).unwrap_or(0))
-            .with("pointerId", 0_i64)
-            .encode()
-    }
-
-    fn handle_pointer(&mut self, pointer: PointerEvent) {
-        if pointer.window != MAIN_WINDOW {
+    fn handle_key(&mut self, key: &KeyEvent) {
+        if key.window != MAIN_WINDOW {
             return;
         }
-        match pointer.phase {
-            PointerPhase::Down if pointer.button == PointerButton::Primary => {
-                let target = self.hit_test(pointer.position).and_then(|hit| self.press_target(hit));
-                if let Some(node) = target {
-                    self.pressed = Some(PressState { node, started: pointer.position });
-                    if self.scene.node(node).is_some_and(|node| node.handles(PropKey::OnPressIn)) {
-                        let payload = self.press_payload(node, pointer.position, pointer.time_ms);
-                        self.send_event(node, event_kind::PRESS_IN, &payload);
-                    }
+        if key.pressed && !key.repeat {
+            let back = match key.key.as_str() {
+                // The conventional "back" chords of each system.
+                "ArrowLeft" => key.modifiers.alt && !cfg!(target_os = "macos"),
+                "[" => key.modifiers.meta && cfg!(target_os = "macos"),
+                "BrowserBack" => true,
+                _ => false,
+            };
+            if back {
+                return self.go_back();
+            }
+            if key.key == "Escape" {
+                let mut ctx = ctx!(self);
+                if self.modals.request_close_top(&mut ctx) {
+                    return;
                 }
             }
-            PointerPhase::Up if pointer.button == PointerButton::Primary => {
-                if let Some(press) = self.pressed.take() {
-                    let Some(node) = self.scene.node(press.node) else { return };
-                    let handles_out = node.handles(PropKey::OnPressOut);
-                    let handles_press = node.handles(PropKey::OnPress);
-                    let payload = self.press_payload(press.node, pointer.position, pointer.time_ms);
-                    if handles_out {
-                        self.send_event(press.node, event_kind::PRESS_OUT, &payload);
-                    }
-                    let still_over = self
-                        .hit_test(pointer.position)
-                        .and_then(|hit| self.press_target(hit))
-                        .is_some_and(|target| target == press.node);
-                    if handles_press && still_over && press.started.distance(pointer.position) < 10_000.0 {
-                        self.send_event(press.node, event_kind::PRESS, &payload);
-                    }
-                }
-            }
-            PointerPhase::Cancel | PointerPhase::Leave => {
-                self.pressed = None;
-            }
-            _ => {}
+        }
+        let action = {
+            let mut ctx = ctx!(self);
+            self.interaction.on_key(&mut ctx, key)
+        };
+        if let Some(action) = action {
+            self.run_action(action);
         }
     }
 
     // ---- native modules ------------------------------------------------
 
-    fn call_module(&mut self, request: u64, module: &str, method: &str, _payload: &[u8]) {
-        // Unknown modules fail fast so application callbacks never hang.
-        let message = format!("Native module {module}.{method} is not available on this platform.");
+    fn reply(&mut self, request: u64, status: u8, payload: &[u8]) {
         if let Some(worker) = &mut self.worker {
-            worker.send_module_result(request, MODULE_FAILURE, message.as_bytes());
+            worker.send_module_result(request, status, payload);
         }
     }
 
+    fn call_module(&mut self, request: u64, module: &str, method: &str, _payload: &[u8]) {
+        // Unknown modules fail fast so application callbacks never hang.
+        let message = format!("Native module {module}.{method} is not available on this platform.");
+        self.reply(request, MODULE_FAILURE, message.as_bytes());
+    }
+
     fn call_typed(&mut self, request: u64, operation: u16, _payload: &[u8]) {
-        let message = format!("Native operation {operation} is not available on this platform.");
-        if let Some(worker) = &mut self.worker {
-            worker.send_module_result(request, MODULE_FAILURE, message.as_bytes());
+        match operation {
+            // CloseApp: PHP has nowhere left to go back to.
+            14 => {
+                self.reply(request, MODULE_SUCCESS, b"");
+                if let Some(worker) = &mut self.worker {
+                    worker.shutdown();
+                }
+                self.finished = true;
+            }
+            _ => {
+                let message = format!("Native operation {operation} is not available on this platform.");
+                self.reply(request, MODULE_FAILURE, message.as_bytes());
+            }
         }
     }
 
     /// Milliseconds since the runtime started (diagnostics).
     #[must_use]
     pub fn uptime_ms(&self) -> u64 {
-        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+        self.now_ms()
     }
 
     #[must_use]
     pub fn platform(&self) -> &'static str {
         self.platform
     }
+}
+
+/// An engine configured for a desktop window, measuring text with the backend.
+fn new_engine<B: Backend>(metrics: &WindowMetrics, measure: &mut MeasureContext<B>) -> Engine {
+    let mut engine = Engine::new();
+    let _ = engine.set_viewport(metrics.size.width, metrics.size.height);
+    let _ = engine.set_text_scale(metrics.font_scale);
+    let _ = engine.set_refresh_rate(f64::from(metrics.refresh_rate));
+    // SAFETY: the context is heap allocated, owned by the runtime and outlives
+    // the engine; its backend pointer is only set around engine calls.
+    unsafe {
+        engine.set_text_measurer(Some((
+            measure_trampoline::<B>,
+            std::ptr::from_mut::<MeasureContext<B>>(measure).cast::<c_void>(),
+        )));
+    }
+    engine
 }
 
 /// Starts a worker that sees the window exactly as it is now.

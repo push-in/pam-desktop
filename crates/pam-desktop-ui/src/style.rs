@@ -575,7 +575,7 @@ mod tests {
         map.insert(PropKey::BorderColor, PropValue::Integer(0xFF00_0000));
         map.insert(PropKey::BackgroundColor, PropValue::Integer(0xFFFF_FFFF));
         map.insert(PropKey::BoxShadows, PropValue::String("[[0,4,12,0,1493172224,0],[0,1,0,0,-1,1]]".into()));
-        let decoration = Decoration::resolve(NodeKind::View, Props(&map));
+        let decoration = Decoration::resolve(NodeKind::View, Props::new(&map));
         assert_eq!(decoration.radii, Radii { top_left: 2.0, top_right: 8.0, bottom_right: 8.0, bottom_left: 8.0 });
         assert_eq!(decoration.border.widths, [1.0, 1.0, 1.0, 3.0]);
         assert!(decoration.border.is_visible() && !decoration.border.is_uniform());
@@ -589,9 +589,9 @@ mod tests {
     fn elevation_becomes_a_shadow_only_without_css_shadows() {
         let mut map = PropMap::new();
         map.insert(PropKey::Elevation, PropValue::Float(4.0));
-        assert_eq!(Decoration::resolve(NodeKind::View, Props(&map)).shadows.len(), 1);
+        assert_eq!(Decoration::resolve(NodeKind::View, Props::new(&map)).shadows.len(), 1);
         map.insert(PropKey::ShadowColor, PropValue::Integer(0x4000_0000));
-        let decoration = Decoration::resolve(NodeKind::View, Props(&map));
+        let decoration = Decoration::resolve(NodeKind::View, Props::new(&map));
         assert_eq!(decoration.shadows.len(), 1);
         assert_eq!(decoration.shadows[0].color, Color::from_argb(0x4000_0000));
     }
@@ -620,7 +620,7 @@ mod tests {
         map.insert(PropKey::ScaleX, PropValue::Float(2.0));
         map.insert(PropKey::ScaleY, PropValue::Float(2.0));
         map.insert(PropKey::TranslationX, PropValue::Float(10.0));
-        let transform = resolve_transform(Props(&map), Size::new(100.0, 40.0));
+        let transform = resolve_transform(Props::new(&map), Size::new(100.0, 40.0));
         assert_eq!(transform.apply(Point::new(50.0, 20.0)), Point::new(60.0, 20.0));
         assert_eq!(transform.apply(Point::new(0.0, 0.0)), Point::new(-40.0, -20.0));
     }

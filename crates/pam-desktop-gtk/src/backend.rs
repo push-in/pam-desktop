@@ -8,7 +8,7 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib, graphene, pango};
 use pam_desktop_ui::backend::{
-    Backend, BackendEvent, ImageContent, ImageKey, ImageSource, Modifiers, NodeId, PointerButton, PointerEvent,
+    Backend, BackendEvent, ImageContent, ImageKey, ImageSource, KeyEvent, Modifiers, NodeId, PointerButton, PointerEvent,
     PointerPhase, ScrollConfig, TextContent, ViewClass,
     WindowConfig, WindowId, WindowMetrics,
 };
@@ -34,6 +34,8 @@ struct WindowEntry {
     host: PamView,
     size: Rc<Cell<Size>>,
     presented: bool,
+    root: Option<NodeId>,
+    overlays: Vec<NodeId>,
 }
 
 pub struct GtkBackend {
@@ -44,6 +46,9 @@ pub struct GtkBackend {
     measure_layout: Option<pango::Layout>,
     frame_requested: Rc<Cell<bool>>,
     textures: Rc<RefCell<HashMap<ImageKey, gdk::Texture>>>,
+    wake_source: Option<glib::SourceId>,
+    /// Set when the pending wake already ran (its source id is then stale).
+    wake_fired: Rc<Cell<bool>>,
 }
 
 impl GtkBackend {
@@ -57,6 +62,8 @@ impl GtkBackend {
             measure_layout: None,
             frame_requested: Rc::new(Cell::new(false)),
             textures: Rc::new(RefCell::new(HashMap::new())),
+            wake_source: None,
+            wake_fired: Rc::new(Cell::new(false)),
         }
     }
 
@@ -73,6 +80,75 @@ impl GtkBackend {
             settings.is_gtk_application_prefer_dark_theme()
                 || settings.gtk_theme_name().is_some_and(|name| name.to_lowercase().contains("dark"))
         })
+    }
+
+    fn modifiers(state: gdk::ModifierType) -> Modifiers {
+        Modifiers {
+            shift: state.contains(gdk::ModifierType::SHIFT_MASK),
+            control: state.contains(gdk::ModifierType::CONTROL_MASK),
+            alt: state.contains(gdk::ModifierType::ALT_MASK),
+            meta: state.contains(gdk::ModifierType::META_MASK) || state.contains(gdk::ModifierType::SUPER_MASK),
+        }
+    }
+
+    /// Keys nobody consumed (bubble phase), as W3C `key` values.
+    fn install_key_events(&self, window: WindowId, native: &gtk::ApplicationWindow) {
+        let controller = gtk::EventControllerKey::new();
+        controller.set_propagation_phase(gtk::PropagationPhase::Bubble);
+        let events = Rc::clone(&self.events);
+        controller.connect_key_pressed(move |_, key, _, state| {
+            events.push(BackendEvent::Key(KeyEvent {
+                window,
+                pressed: true,
+                key: key_name(key),
+                modifiers: GtkBackend::modifiers(state),
+                repeat: false,
+            }));
+            glib::Propagation::Proceed
+        });
+        let events = Rc::clone(&self.events);
+        controller.connect_key_released(move |_, key, _, state| {
+            events.push(BackendEvent::Key(KeyEvent {
+                window,
+                pressed: false,
+                key: key_name(key),
+                modifiers: GtkBackend::modifiers(state),
+                repeat: false,
+            }));
+        });
+        native.add_controller(controller);
+    }
+
+    /// The window host holds the root view and, above it, the overlays.
+    fn arrange_window(entry: &WindowEntry, views: &IdMap<ViewEntry>) {
+        let wanted: Vec<gtk::Widget> = entry
+            .root
+            .iter()
+            .chain(entry.overlays.iter())
+            .filter_map(|id| views.get(id).map(|view| view.widget.clone()))
+            .collect();
+        // Detach whatever is no longer presented in this window.
+        let mut child = entry.host.first_child();
+        while let Some(current) = child {
+            child = current.next_sibling();
+            if !wanted.contains(&current) {
+                current.unparent();
+            }
+        }
+        let mut previous: Option<gtk::Widget> = None;
+        for widget in wanted {
+            let owned = widget.parent().is_some_and(|parent| parent == *entry.host.upcast_ref::<gtk::Widget>());
+            if !owned {
+                if widget.parent().is_some() {
+                    widget.unparent();
+                }
+                widget.insert_after(&entry.host, previous.as_ref());
+            } else if widget.prev_sibling() != previous {
+                widget.insert_after(&entry.host, previous.as_ref());
+            }
+            previous = Some(widget);
+        }
+        entry.host.queue_allocate();
     }
 
     fn install_pointer_events(&self, window: WindowId, host: &PamView) {
@@ -103,6 +179,14 @@ impl GtkBackend {
             let button = match event.downcast_ref::<gdk::ButtonEvent>().map(gdk::ButtonEvent::button) {
                 Some(2) => PointerButton::Middle,
                 Some(3) => PointerButton::Secondary,
+                // The "back" side button of a mouse.
+                Some(8) => {
+                    if phase == PointerPhase::Up {
+                        events.push(BackendEvent::BackRequested { window });
+                    }
+                    return glib::Propagation::Proceed;
+                }
+                Some(button) if button > 3 => return glib::Propagation::Proceed,
                 _ => PointerButton::Primary,
             };
             let state = event.modifier_state();
@@ -111,12 +195,7 @@ impl GtkBackend {
                 phase,
                 position,
                 button,
-                modifiers: Modifiers {
-                    shift: state.contains(gdk::ModifierType::SHIFT_MASK),
-                    control: state.contains(gdk::ModifierType::CONTROL_MASK),
-                    alt: state.contains(gdk::ModifierType::ALT_MASK),
-                    meta: state.contains(gdk::ModifierType::META_MASK) || state.contains(gdk::ModifierType::SUPER_MASK),
-                },
+                modifiers: GtkBackend::modifiers(state),
                 click_count: 1,
                 time_ms: u64::from(event.time()),
             }));
@@ -167,6 +246,7 @@ impl Backend for GtkBackend {
         }
         native.set_child(Some(&host));
         self.install_pointer_events(window, &host);
+        self.install_key_events(window, &native);
 
         let events = Rc::clone(&self.events);
         native.connect_close_request(move |_| {
@@ -190,7 +270,7 @@ impl Backend for GtkBackend {
         if self.measure_layout.is_none() {
             self.measure_layout = Some(host.create_pango_layout(None));
         }
-        self.windows.insert(window, WindowEntry { window: native, host, size, presented: false });
+        self.windows.insert(window, WindowEntry { window: native, host, size, presented: false, root: None, overlays: Vec::new() });
     }
 
     fn close_window(&mut self, window: WindowId) {
@@ -220,24 +300,30 @@ impl Backend for GtkBackend {
 
     fn set_window_root(&mut self, window: WindowId, root: Option<NodeId>) {
         let Some(entry) = self.windows.get_mut(&window) else { return };
-        while let Some(child) = entry.host.first_child() {
-            child.unparent();
-        }
-        if let Some(view) = root.and_then(|root| self.views.get(&root)) {
-            if view.widget.parent().is_some() {
-                view.widget.unparent();
-            }
-            view.widget.set_parent(&entry.host);
-        }
-        entry.host.queue_allocate();
-        if !entry.presented {
+        entry.root = root;
+        Self::arrange_window(entry, &self.views);
+        if root.is_some() && !entry.presented {
             entry.presented = true;
             entry.window.present();
         }
     }
 
+    fn set_window_overlays(&mut self, window: WindowId, overlays: &[NodeId]) {
+        let Some(entry) = self.windows.get_mut(&window) else { return };
+        entry.overlays = overlays.to_vec();
+        Self::arrange_window(entry, &self.views);
+    }
+
     fn create_view(&mut self, id: NodeId, class: ViewClass) {
         let container = PamView::new();
+        {
+            let focus = gtk::EventControllerFocus::new();
+            let events = Rc::clone(&self.events);
+            focus.connect_enter(move |_| events.push(BackendEvent::FocusChanged { id, focused: true }));
+            let events = Rc::clone(&self.events);
+            focus.connect_leave(move |_| events.push(BackendEvent::FocusChanged { id, focused: false }));
+            container.add_controller(focus);
+        }
         let widget: gtk::Widget = match class {
             ViewClass::Scroll => {
                 let scrolled = gtk::ScrolledWindow::new();
@@ -328,6 +414,30 @@ impl Backend for GtkBackend {
     fn set_text(&mut self, id: NodeId, text: Option<&TextContent>) {
         if let Some(entry) = self.views.get(&id) {
             entry.container.set_text(text);
+        }
+    }
+
+    fn set_focusable(&mut self, id: NodeId, focusable: bool) {
+        if let Some(entry) = self.views.get(&id) {
+            entry.container.set_focusable(focusable);
+            if focusable {
+                entry.container.add_css_class("pam-focusable");
+            } else {
+                entry.container.remove_css_class("pam-focusable");
+            }
+        }
+    }
+
+    fn focus(&mut self, id: Option<NodeId>) {
+        match id.and_then(|id| self.views.get(&id)) {
+            Some(entry) => {
+                entry.container.grab_focus();
+            }
+            None => {
+                for window in self.windows.values() {
+                    gtk::prelude::GtkWindowExt::set_focus(&window.window, None::<&gtk::Widget>);
+                }
+            }
         }
     }
 
@@ -434,6 +544,23 @@ impl Backend for GtkBackend {
         });
     }
 
+    fn schedule_wake(&mut self, delay_ms: u32) {
+        if let Some(source) = self.wake_source.take() {
+            // Removing a source that already ran is an error in GLib.
+            if !self.wake_fired.get() {
+                source.remove();
+            }
+        }
+        let events = Rc::clone(&self.events);
+        let slot = Rc::clone(&self.wake_fired);
+        slot.set(false);
+        let fired = Rc::clone(&slot);
+        self.wake_source = Some(glib::timeout_add_local_once(std::time::Duration::from_millis(u64::from(delay_ms)), move || {
+            fired.set(true);
+            events.push(BackendEvent::Wake);
+        }));
+    }
+
     fn quit(&mut self) {
         for (_, entry) in self.windows.drain() {
             entry.window.destroy();
@@ -441,6 +568,63 @@ impl Backend for GtkBackend {
         self.application.quit();
     }
 }
+
+/// GDK key symbol to the W3C UI Events `key` value.
+fn key_name(key: gdk::Key) -> String {
+    let named = match key {
+        gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::ISO_Enter => "Enter",
+        gdk::Key::Escape => "Escape",
+        gdk::Key::Tab | gdk::Key::ISO_Left_Tab | gdk::Key::KP_Tab => "Tab",
+        gdk::Key::BackSpace => "Backspace",
+        gdk::Key::Delete | gdk::Key::KP_Delete => "Delete",
+        gdk::Key::Insert | gdk::Key::KP_Insert => "Insert",
+        gdk::Key::Left | gdk::Key::KP_Left => "ArrowLeft",
+        gdk::Key::Right | gdk::Key::KP_Right => "ArrowRight",
+        gdk::Key::Up | gdk::Key::KP_Up => "ArrowUp",
+        gdk::Key::Down | gdk::Key::KP_Down => "ArrowDown",
+        gdk::Key::Home | gdk::Key::KP_Home => "Home",
+        gdk::Key::End | gdk::Key::KP_End => "End",
+        gdk::Key::Page_Up | gdk::Key::KP_Page_Up => "PageUp",
+        gdk::Key::Page_Down | gdk::Key::KP_Page_Down => "PageDown",
+        gdk::Key::space | gdk::Key::KP_Space => " ",
+        gdk::Key::Shift_L | gdk::Key::Shift_R => "Shift",
+        gdk::Key::Control_L | gdk::Key::Control_R => "Control",
+        gdk::Key::Alt_L | gdk::Key::Alt_R => "Alt",
+        gdk::Key::Meta_L | gdk::Key::Meta_R | gdk::Key::Super_L | gdk::Key::Super_R => "Meta",
+        gdk::Key::Caps_Lock => "CapsLock",
+        gdk::Key::Menu => "ContextMenu",
+        gdk::Key::Print => "PrintScreen",
+        gdk::Key::Pause => "Pause",
+        gdk::Key::F1 => "F1",
+        gdk::Key::F2 => "F2",
+        gdk::Key::F3 => "F3",
+        gdk::Key::F4 => "F4",
+        gdk::Key::F5 => "F5",
+        gdk::Key::F6 => "F6",
+        gdk::Key::F7 => "F7",
+        gdk::Key::F8 => "F8",
+        gdk::Key::F9 => "F9",
+        gdk::Key::F10 => "F10",
+        gdk::Key::F11 => "F11",
+        gdk::Key::F12 => "F12",
+        _ => "",
+    };
+    if !named.is_empty() {
+        return named.to_owned();
+    }
+    match key.to_unicode() {
+        Some(character) if !character.is_control() => character.to_string(),
+        _ => key.name().map_or_else(|| String::from("Unidentified"), |name| name.to_string()),
+    }
+}
+
+/// Focus ring of keyboard-focusable boxes, drawn by GTK around the widget.
+const STYLESHEET: &str = "
+.pam-focusable:focus-visible {
+    outline: 2px solid @accent_color;
+    outline-offset: 2px;
+}
+";
 
 /// Runs a PAM Desktop application on GTK until its window closes.
 pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
@@ -453,6 +637,11 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
     let failure = Rc::clone(&failed);
     application.connect_activate(move |application| {
         let Some(config) = config.borrow_mut().take() else { return };
+        if let Some(display) = gdk::Display::default() {
+            let provider = gtk::CssProvider::new();
+            provider.load_from_string(STYLESHEET);
+            gtk::style_context_add_provider_for_display(&display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        }
         let events = EventQueue::new();
         let inbox = Inbox::new(|| {
             glib::MainContext::default().invoke(runtime::pump);

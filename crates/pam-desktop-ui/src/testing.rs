@@ -16,6 +16,7 @@ pub enum Command {
     OpenWindow(WindowId),
     CloseWindow(WindowId),
     SetWindowRoot(WindowId, Option<NodeId>),
+    Overlays(WindowId, Vec<NodeId>),
     Create(NodeId, ViewClass),
     Destroy(NodeId),
     Children(NodeId, Vec<NodeId>),
@@ -23,6 +24,8 @@ pub enum Command {
     Decoration(NodeId, Decoration),
     Layer(NodeId, LayerState),
     Text(NodeId, Option<String>),
+    Focusable(NodeId, bool),
+    Focus(Option<NodeId>),
     LoadImage(ImageKey),
     ReleaseImage(ImageKey),
     Image(NodeId, Option<ImageContent>),
@@ -30,6 +33,7 @@ pub enum Command {
     ScrollConfig(NodeId, ScrollConfig),
     ScrollTo(NodeId, Point, bool),
     RequestFrame,
+    ScheduleWake(u32),
     Quit,
 }
 
@@ -80,6 +84,13 @@ impl Backend for RecordingBackend {
 
     fn set_window_root(&mut self, window: WindowId, root: Option<NodeId>) {
         self.commands.push(Command::SetWindowRoot(window, root));
+    }
+
+    fn set_window_overlays(&mut self, window: WindowId, overlays: &[NodeId]) {
+        for overlay in overlays {
+            assert!(self.views.contains_key(overlay), "overlay {overlay} has no view");
+        }
+        self.commands.push(Command::Overlays(window, overlays.to_vec()));
     }
 
     fn create_view(&mut self, id: NodeId, class: ViewClass) {
@@ -138,6 +149,14 @@ impl Backend for RecordingBackend {
         self.commands.push(Command::Text(id, text.map(|content| content.block.plain_text())));
     }
 
+    fn set_focusable(&mut self, id: NodeId, focusable: bool) {
+        self.commands.push(Command::Focusable(id, focusable));
+    }
+
+    fn focus(&mut self, id: Option<NodeId>) {
+        self.commands.push(Command::Focus(id));
+    }
+
     fn load_image(&mut self, key: ImageKey, _source: ImageSource) {
         self.commands.push(Command::LoadImage(key));
     }
@@ -182,6 +201,10 @@ impl Backend for RecordingBackend {
 
     fn request_frame(&mut self) {
         self.commands.push(Command::RequestFrame);
+    }
+
+    fn schedule_wake(&mut self, delay_ms: u32) {
+        self.commands.push(Command::ScheduleWake(delay_ms));
     }
 
     fn quit(&mut self) {

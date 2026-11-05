@@ -88,17 +88,36 @@ pub struct PointerEvent {
     pub time_ms: u64,
 }
 
+/// A key press or release that no native control consumed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KeyEvent {
+    pub window: WindowId,
+    pub pressed: bool,
+    /// The W3C UI Events `key` value: `"Enter"`, `"Escape"`, `"ArrowLeft"`,
+    /// `"Tab"`, `" "`, `"a"`, `"F5"`, …
+    pub key: String,
+    pub modifiers: Modifiers,
+    pub repeat: bool,
+}
+
 /// Everything a backend reports to the core. Backends push these into the
 /// shared queue and ask the runtime to drain it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BackendEvent {
     Pointer(PointerEvent),
+    Key(KeyEvent),
+    /// The user asked to go back (mouse back button, system back gesture).
+    BackRequested { window: WindowId },
+    /// Keyboard focus entered or left a focusable view.
+    FocusChanged { id: NodeId, focused: bool },
     WindowResized { window: WindowId, size: Size, scale: f32 },
     WindowCloseRequested { window: WindowId },
     WindowFocusChanged { window: WindowId, focused: bool },
     AppearanceChanged { dark: bool },
     /// A display frame for running animations (monotonic milliseconds).
     Frame { time_ms: u64 },
+    /// The deadline asked with `schedule_wake` passed.
+    Wake,
     ScrollChanged { id: NodeId, offset: Point },
     /// An image finished decoding; `size` is in image pixels.
     ImageLoaded { key: ImageKey, size: Size },
@@ -203,6 +222,9 @@ pub trait Backend {
     fn window_metrics(&self, window: WindowId) -> WindowMetrics;
     /// Attaches the root view of a window's content.
     fn set_window_root(&mut self, window: WindowId, root: Option<NodeId>);
+    /// Views stacked above the root, back to front, each covering the window
+    /// (presented modals).
+    fn set_window_overlays(&mut self, window: WindowId, overlays: &[NodeId]);
 
     // ---- views ---------------------------------------------------------
 
@@ -215,6 +237,10 @@ pub trait Backend {
     fn set_decoration(&mut self, id: NodeId, decoration: &Decoration);
     fn set_layer(&mut self, id: NodeId, layer: &LayerState);
     fn set_text(&mut self, id: NodeId, text: Option<&TextContent>);
+    /// Whether the view takes part in keyboard focus traversal (Tab).
+    fn set_focusable(&mut self, id: NodeId, focusable: bool);
+    /// Moves keyboard focus to a view, or clears it with `None`.
+    fn focus(&mut self, id: Option<NodeId>);
 
     // ---- images --------------------------------------------------------
 
@@ -243,6 +269,9 @@ pub trait Backend {
 
     /// Requests one `BackendEvent::Frame` on the next display refresh.
     fn request_frame(&mut self);
+    /// Requests one `BackendEvent::Wake` after `delay_ms` (long press and
+    /// debounce deadlines). A newer request replaces a pending one.
+    fn schedule_wake(&mut self, delay_ms: u32);
 
     // ---- application ---------------------------------------------------
 

@@ -5,9 +5,13 @@
 //! [`backend::Backend`] (GTK, AppKit or Win32) with resolved, ready-to-paint
 //! state.
 
+pub mod animator;
 pub mod backend;
 pub mod color;
+pub mod context;
 pub mod geometry;
+pub mod interaction;
+pub mod presenter;
 pub mod props;
 pub mod runtime;
 pub mod scene;

@@ -228,6 +228,32 @@ pub fn calculate_incremental_with_text_metrics(
     Ok((result, context.visited_nodes.get()))
 }
 
+/// Thickness of the host-drawn tab bar for each `TabPosition`.
+pub const TAB_BAR_BOTTOM_HEIGHT: f32 = 64.0;
+pub const TAB_BAR_TOP_HEIGHT: f32 = 56.0;
+pub const TAB_BAR_RAIL_WIDTH: f32 = 104.0;
+
+/// The part of a `TabHost` its scenes occupy: 1 bottom bar, 2 top strip,
+/// 3 side rail (leading edge).
+fn tab_scene_area(node: &Node, inner: Layout) -> Layout {
+    match integer(node, PropKey::TabPosition).unwrap_or(1) {
+        2 => Layout {
+            y: inner.y + TAB_BAR_TOP_HEIGHT.min(inner.height),
+            height: (inner.height - TAB_BAR_TOP_HEIGHT).max(0.0),
+            ..inner
+        },
+        3 => Layout {
+            x: inner.x + TAB_BAR_RAIL_WIDTH.min(inner.width),
+            width: (inner.width - TAB_BAR_RAIL_WIDTH).max(0.0),
+            ..inner
+        },
+        _ => Layout {
+            height: (inner.height - TAB_BAR_BOTTOM_HEIGHT).max(0.0),
+            ..inner
+        },
+    }
+}
+
 /// Lays out every visible `Modal`/`BottomSheet` on its own presentation
 /// surface: the surface viewport and safe area come from the window insets
 /// and the host's [`SurfacePolicy`](crate::surface::SurfacePolicy), so a
@@ -963,6 +989,14 @@ fn layout_node(
             .rev()
             .find(|child| visible(child))
             .map(|child| child.id);
+        // Desktop: the host draws the tab bar inside the TabHost, so scenes
+        // are laid out in the area the bar leaves free (the mobile hosts
+        // shrink the mounted views instead).
+        let inner = if node.kind == NodeKind::TabHost {
+            tab_scene_area(node, inner)
+        } else {
+            inner
+        };
         for child in node_children {
             if visible(child) {
                 let _sheet = route_insets

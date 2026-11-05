@@ -1,5 +1,6 @@
-//! The retained scene: every node the engine mounted, its resolved paint
-//! state, and the minimal set of backend commands needed after each batch of
+//! The retained scene: every node the engine mounted plus the chrome the
+//! core synthesizes (tab bars, modal backdrops), their resolved paint state,
+//! and the minimal set of backend commands needed after each batch of
 //! mutations.
 
 use std::collections::HashMap;
@@ -9,7 +10,7 @@ use pam_desktop_wire::{Mutation, Node, NodeKind, PropKey, PropValue};
 
 use crate::backend::{Backend, NodeId, ScrollConfig, TextContent, VerticalAlign, ViewClass, WindowId, MAIN_WINDOW};
 use crate::color::Color;
-use crate::geometry::{Insets, Point, Rect, Size};
+use crate::geometry::{Affine, Insets, Point, Rect, Size};
 use crate::props::{PropMap, Props};
 use crate::style::{resolve_transform, Decoration, LayerState};
 use crate::text::{Ellipsize, TextAlign, TextBlock, TextShadow, TextSource};
@@ -37,6 +38,13 @@ impl Hasher for IdHasher {
 }
 
 pub type IdMap<V> = HashMap<NodeId, V, BuildHasherDefault<IdHasher>>;
+
+/// Ids of nodes created by the core itself. PHP ids are positive signed
+/// 64-bit integers, so the top bit never collides with them.
+pub const SYNTHETIC_BIT: NodeId = 1 << 63;
+
+/// Synthetic children are ordered after every engine child.
+const SYNTHETIC_INDEX_BASE: u32 = 1 << 30;
 
 /// What must be pushed to the backend for a node.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -75,6 +83,77 @@ impl Dirty {
     }
 }
 
+/// What a press on a synthetic node does (it has no PHP handler).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Action {
+    TabSelect { host: NodeId, index: u32 },
+    ModalBackdrop { modal: NodeId },
+    NavigationBack { host: NodeId },
+}
+
+/// Compositing applied on top of what the node's properties say. Several
+/// independent sources (presentation, press feedback, motion) each own a slot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LayerOverride {
+    /// Multiplies the node's opacity.
+    pub opacity: f32,
+    /// Applied after the node's own transform, in the same space.
+    pub transform: Affine,
+    pub hidden: bool,
+}
+
+impl Default for LayerOverride {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
+impl LayerOverride {
+    pub const NONE: Self = Self { opacity: 1.0, transform: Affine::IDENTITY, hidden: false };
+    pub const HIDDEN: Self = Self { opacity: 1.0, transform: Affine::IDENTITY, hidden: true };
+
+    #[must_use]
+    pub fn is_none(&self) -> bool {
+        *self == Self::NONE
+    }
+}
+
+/// Who owns a [`LayerOverride`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LayerSlot {
+    /// Navigation, tabs and modal presentation.
+    Presenter = 0,
+    /// Press and hover feedback.
+    Interaction = 1,
+    /// Declarative animations.
+    Motion = 2,
+}
+
+const LAYER_SLOTS: usize = 3;
+
+/// Who owns a style overlay (properties layered over the node's own).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StyleLayer {
+    /// Interaction state styles (hover, focus, pressed) and control defaults.
+    Interaction = 0,
+    /// Presentation chrome (sheet corners) and animated fills.
+    Presenter = 1,
+}
+
+const STYLE_LAYERS: usize = 2;
+
+/// What changed in the scene during `apply`, for the controllers that react
+/// to it (navigation, tabs, modals, lists, inputs, images…).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Change {
+    Created(NodeId, NodeKind),
+    Removed(NodeId, NodeKind),
+    Updated(NodeId, PropKey),
+    /// The node gained, lost or reordered children.
+    Children(NodeId),
+    Frame(NodeId),
+}
+
 #[derive(Debug)]
 pub struct SceneNode {
     pub id: NodeId,
@@ -87,19 +166,23 @@ pub struct SceneNode {
     pub frame: Rect,
     pub class: ViewClass,
     pub decoration: Decoration,
+    /// Final compositing state (properties and overrides combined).
     pub layer: LayerState,
+    /// Set for chrome created by the core.
+    pub action: Option<Action>,
     dirty: Dirty,
     /// Frame last pushed to the backend (parent relative).
     pushed_frame: Option<Rect>,
     has_text: bool,
     pushed_content: Option<Size>,
     pushed_scroll: Option<ScrollConfig>,
+    pushed_focusable: bool,
 }
 
 impl SceneNode {
     #[must_use]
     pub fn props(&self) -> Props<'_> {
-        Props(&self.props)
+        Props::new(&self.props)
     }
 
     #[must_use]
@@ -110,6 +193,23 @@ impl SceneNode {
     #[must_use]
     pub fn is_text_bearing(&self) -> bool {
         matches!(self.kind, NodeKind::Text | NodeKind::Button)
+    }
+
+    #[must_use]
+    pub fn is_synthetic(&self) -> bool {
+        self.id & SYNTHETIC_BIT != 0
+    }
+
+    /// Reacts to presses, either through PHP handlers or a core action.
+    #[must_use]
+    pub fn is_pressable(&self) -> bool {
+        self.action.is_some()
+            || matches!(self.kind, NodeKind::Button | NodeKind::Pressable)
+            || self.handles(PropKey::OnPress)
+            || self.handles(PropKey::OnLongPress)
+            || self.handles(PropKey::OnPressIn)
+            || self.handles(PropKey::OnPressOut)
+            || self.handles(PropKey::OnDoubleTap)
     }
 }
 
@@ -239,6 +339,15 @@ pub struct Scene {
     root_dirty: bool,
     touched: Vec<NodeId>,
     removed: Vec<NodeId>,
+    changes: Vec<Change>,
+    layer_overrides: IdMap<[LayerOverride; LAYER_SLOTS]>,
+    /// Properties that win over the node's own while resolving paint state.
+    style_overlays: IdMap<[Option<PropMap>; STYLE_LAYERS]>,
+    scroll_offsets: IdMap<Point>,
+    /// Views stacked above the root, back to front (presented modals).
+    overlays: Vec<NodeId>,
+    overlays_dirty: bool,
+    next_synthetic: u64,
     pub environment: Environment,
     /// Counters for diagnostics and tests.
     pub stats: SceneStats,
@@ -277,12 +386,13 @@ impl Scene {
         self.nodes.get(&id)
     }
 
-    pub fn node_mut(&mut self, id: NodeId) -> Option<&mut SceneNode> {
-        self.nodes.get_mut(&id)
-    }
-
     pub fn nodes(&self) -> impl Iterator<Item = &SceneNode> {
         self.nodes.values()
+    }
+
+    /// The changes recorded since the last call.
+    pub fn take_changes(&mut self) -> Vec<Change> {
+        std::mem::take(&mut self.changes)
     }
 
     /// Marks a node for the next flush.
@@ -309,18 +419,24 @@ impl Scene {
         if self.nodes.contains_key(&self.root) {
             self.collect_post_order(self.root, &mut ids);
         }
-        for id in self.nodes.keys() {
-            if !ids.contains(id) {
-                ids.push(*id);
-            }
-        }
+        let known: std::collections::HashSet<NodeId> = ids.iter().copied().collect();
+        ids.extend(self.nodes.keys().copied().filter(|id| !known.contains(id)));
+        backend.set_window_overlays(MAIN_WINDOW, &[]);
         backend.set_window_root(MAIN_WINDOW, None);
         for id in ids {
+            if let Some(node) = self.nodes.get(&id) {
+                self.changes.push(Change::Removed(id, node.kind));
+            }
             backend.destroy_view(id);
         }
         self.nodes.clear();
         self.touched.clear();
         self.removed.clear();
+        self.layer_overrides.clear();
+        self.style_overlays.clear();
+        self.scroll_offsets.clear();
+        self.overlays.clear();
+        self.overlays_dirty = false;
         self.root = 0;
         self.root_dirty = false;
     }
@@ -335,22 +451,7 @@ impl Scene {
                 Mutation::Update { id, key, value } => self.update(id, key, value),
                 Mutation::Move { id, parent, index } => self.reparent(id, parent, index),
                 Mutation::Layout { id, frame } => {
-                    let frame = Rect::new(frame.x, frame.y, frame.width, frame.height);
-                    let children = match self.nodes.get_mut(&id) {
-                        Some(node) => {
-                            let moved = node.frame.origin() != frame.origin();
-                            let resized = node.frame.size() != frame.size();
-                            node.frame = frame;
-                            (moved || resized).then(|| node.children.clone())
-                        }
-                        None => None,
-                    };
-                    // A resize can change percent transforms and text wrapping.
-                    self.touch(id, Dirty::FRAME.union(Dirty::LAYER));
-                    // Children are positioned relative to this origin.
-                    for child in children.into_iter().flatten() {
-                        self.touch(child, Dirty::FRAME);
-                    }
+                    self.set_frame(id, Rect::new(frame.x, frame.y, frame.width, frame.height));
                 }
                 Mutation::SetRoot { id } => {
                     if self.root != id {
@@ -362,18 +463,37 @@ impl Scene {
         }
     }
 
-    fn create(&mut self, node: Node) {
+    fn set_frame(&mut self, id: NodeId, frame: Rect) {
+        let children = match self.nodes.get_mut(&id) {
+            Some(node) => {
+                if node.frame == frame {
+                    return;
+                }
+                node.frame = frame;
+                node.children.clone()
+            }
+            None => return,
+        };
+        self.changes.push(Change::Frame(id));
+        // A resize can change percent transforms and text wrapping.
+        self.touch(id, Dirty::FRAME.union(Dirty::LAYER));
+        // Children are positioned relative to this origin.
+        for child in children {
+            self.touch(child, Dirty::FRAME);
+        }
+    }
+
+    fn insert(&mut self, node: Node, action: Option<Action>) {
         if self.nodes.contains_key(&node.id) {
             self.remove(node.id);
         }
-        let class = view_class(node.kind, Props(&node.properties));
-        let id = node.id;
-        let parent = node.parent;
+        let class = view_class(node.kind, Props::new(&node.properties));
+        let (id, parent, kind) = (node.id, node.parent, node.kind);
         self.nodes.insert(
             id,
             SceneNode {
                 id,
-                kind: node.kind,
+                kind,
                 parent,
                 index: node.index,
                 props: node.properties,
@@ -382,18 +502,26 @@ impl Scene {
                 class,
                 decoration: Decoration::default(),
                 layer: LayerState::default(),
+                action,
                 dirty: Dirty::NONE,
                 pushed_frame: None,
                 has_text: false,
                 pushed_content: None,
                 pushed_scroll: None,
+                pushed_focusable: false,
             },
         );
         self.touch(id, Dirty::ALL);
+        self.changes.push(Change::Created(id, kind));
         if let Some(parent_node) = self.nodes.get_mut(&parent) {
             parent_node.children.push(id);
             self.touch(parent, Dirty::CHILDREN);
+            self.changes.push(Change::Children(parent));
         }
+    }
+
+    fn create(&mut self, node: Node) {
+        self.insert(node, None);
     }
 
     fn collect_post_order(&self, id: NodeId, output: &mut Vec<NodeId>) {
@@ -410,11 +538,21 @@ impl Scene {
         if let Some(parent_node) = self.nodes.get_mut(&parent) {
             parent_node.children.retain(|child| *child != id);
             self.touch(parent, Dirty::CHILDREN);
+            self.changes.push(Change::Children(parent));
         }
         let mut subtree = Vec::new();
         self.collect_post_order(id, &mut subtree);
         for removed in subtree {
-            self.nodes.remove(&removed);
+            if let Some(node) = self.nodes.remove(&removed) {
+                self.changes.push(Change::Removed(removed, node.kind));
+            }
+            self.layer_overrides.remove(&removed);
+            self.style_overlays.remove(&removed);
+            self.scroll_offsets.remove(&removed);
+            if let Some(position) = self.overlays.iter().position(|overlay| *overlay == removed) {
+                self.overlays.remove(position);
+                self.overlays_dirty = true;
+            }
             self.removed.push(removed);
         }
         if self.root == id {
@@ -427,12 +565,18 @@ impl Scene {
         let Some(node) = self.nodes.get_mut(&id) else { return };
         match value {
             Some(value) => {
+                if node.props.get(&key) == Some(&value) {
+                    return;
+                }
                 node.props.insert(key, value);
             }
             None => {
-                node.props.remove(&key);
+                if node.props.remove(&key).is_none() {
+                    return;
+                }
             }
         }
+        self.changes.push(Change::Updated(id, key));
         let dirty = dirty_for(key);
         let parent = node.parent;
         if dirty.contains(Dirty::CHILD_TEXT) {
@@ -457,23 +601,149 @@ impl Scene {
                 new.children.push(id);
             }
             self.touch(old_parent, Dirty::CHILDREN);
+            self.changes.push(Change::Children(old_parent));
         }
         if let Some(node) = self.nodes.get_mut(&id) {
             node.parent = parent;
             node.index = index;
         }
         self.touch(parent, Dirty::CHILDREN);
+        self.changes.push(Change::Children(parent));
         self.touch(id, Dirty::FRAME.union(Dirty::TEXT));
     }
 
-    /// Children in paint order: `zIndex` first, then document order.
-    fn ordered_children(&self, id: NodeId) -> Vec<NodeId> {
+    // ---- chrome created by the core --------------------------------------
+
+    /// Adds a node that exists only in the host: a tab bar item, a modal
+    /// backdrop, a navigation header. It paints, hit-tests and animates like
+    /// any other node; presses run `action` instead of a PHP handler.
+    /// `order` sorts synthetic siblings; they follow every engine child unless
+    /// their `ZIndex` says otherwise.
+    pub fn add_synthetic(
+        &mut self,
+        parent: NodeId,
+        kind: NodeKind,
+        props: PropMap,
+        frame: Rect,
+        order: u32,
+        action: Option<Action>,
+    ) -> NodeId {
+        self.next_synthetic += 1;
+        let id = SYNTHETIC_BIT | self.next_synthetic;
+        self.insert(Node { id, parent, index: SYNTHETIC_INDEX_BASE + order, kind, properties: props }, action);
+        self.set_frame(id, frame);
+        id
+    }
+
+    /// Changes a property of any node from the host side.
+    pub fn set_prop(&mut self, id: NodeId, key: PropKey, value: Option<PropValue>) {
+        self.update(id, key, value);
+    }
+
+    /// Moves a synthetic node (frames are window coordinates, like the engine's).
+    pub fn set_synthetic_frame(&mut self, id: NodeId, frame: Rect) {
+        self.set_frame(id, frame);
+    }
+
+    pub fn remove_synthetic(&mut self, id: NodeId) {
+        if id & SYNTHETIC_BIT != 0 {
+            self.remove(id);
+        }
+    }
+
+    // ---- overrides ---------------------------------------------------------
+
+    pub fn set_layer_override(&mut self, id: NodeId, slot: LayerSlot, value: LayerOverride) {
+        if !self.nodes.contains_key(&id) {
+            return;
+        }
+        let slots = self.layer_overrides.entry(id).or_insert([LayerOverride::NONE; LAYER_SLOTS]);
+        if slots[slot as usize] == value {
+            return;
+        }
+        slots[slot as usize] = value;
+        if slots.iter().all(LayerOverride::is_none) {
+            self.layer_overrides.remove(&id);
+        }
+        self.touch(id, Dirty::LAYER);
+    }
+
+    #[must_use]
+    pub fn layer_override(&self, id: NodeId, slot: LayerSlot) -> LayerOverride {
+        self.layer_overrides.get(&id).map_or(LayerOverride::NONE, |slots| slots[slot as usize])
+    }
+
+    /// Replaces the properties one layer puts over a node's own (state
+    /// styles, presentation chrome). `None` removes them.
+    pub fn set_style_overlay(&mut self, id: NodeId, layer: StyleLayer, overlay: Option<PropMap>) {
+        if !self.nodes.contains_key(&id) {
+            return;
+        }
+        let overlay = overlay.filter(|overlay| !overlay.is_empty());
+        let current = self.style_overlays.get(&id).and_then(|layers| layers[layer as usize].as_ref());
+        if current == overlay.as_ref() {
+            return;
+        }
+        let layers = self.style_overlays.entry(id).or_insert_with(|| [None, None]);
+        layers[layer as usize] = overlay;
+        if layers.iter().all(Option::is_none) {
+            self.style_overlays.remove(&id);
+        }
+        self.touch(id, Dirty::DECORATION.union(Dirty::TEXT).union(Dirty::LAYER));
+    }
+
+    fn overlaid<'a>(&'a self, node: &'a SceneNode) -> Props<'a> {
+        match self.style_overlays.get(&node.id) {
+            Some(layers) => Props::with_overlays(&node.props, [layers[0].as_ref(), layers[1].as_ref()]),
+            None => Props::new(&node.props),
+        }
+    }
+
+    /// The node's properties with its style overlays applied.
+    #[must_use]
+    pub fn effective_props(&self, id: NodeId) -> Option<Props<'_>> {
+        self.nodes.get(&id).map(|node| self.overlaid(node))
+    }
+
+    /// Views stacked above the root view, back to front.
+    pub fn set_overlays(&mut self, overlays: Vec<NodeId>) {
+        if self.overlays != overlays {
+            self.overlays = overlays;
+            self.overlays_dirty = true;
+        }
+    }
+
+    #[must_use]
+    pub fn overlays(&self) -> &[NodeId] {
+        &self.overlays
+    }
+
+    pub fn set_scroll_offset(&mut self, id: NodeId, offset: Point) {
+        if self.nodes.contains_key(&id) {
+            self.scroll_offsets.insert(id, offset);
+        }
+    }
+
+    #[must_use]
+    pub fn scroll_offset(&self, id: NodeId) -> Point {
+        self.scroll_offsets.get(&id).copied().unwrap_or(Point::ZERO)
+    }
+
+    // ---- queries -----------------------------------------------------------
+
+    /// Children in paint order: `zIndex` first, then document order. Modals
+    /// are presented above the window, never inside their logical parent.
+    #[must_use]
+    pub fn ordered_children(&self, id: NodeId) -> Vec<NodeId> {
         let Some(node) = self.nodes.get(&id) else { return Vec::new() };
         let mut children: Vec<(f32, u32, NodeId)> = node
             .children
             .iter()
             .filter_map(|child| {
                 let child_node = self.nodes.get(child)?;
+                if child_node.kind == NodeKind::Modal {
+                    return None;
+                }
                 Some((child_node.props().number_or(PropKey::ZIndex, 0.0), child_node.index, *child))
             })
             .collect();
@@ -481,10 +751,114 @@ impl Scene {
         children.into_iter().map(|(_, _, child)| child).collect()
     }
 
+    /// True when `ancestor` is `id` or one of its ancestors.
+    #[must_use]
+    pub fn is_within(&self, id: NodeId, ancestor: NodeId) -> bool {
+        let mut current = id;
+        loop {
+            if current == ancestor {
+                return true;
+            }
+            match self.nodes.get(&current) {
+                Some(node) if node.parent != 0 => current = node.parent,
+                _ => return false,
+            }
+        }
+    }
+
+    /// Whether the node and every ancestor are shown.
+    #[must_use]
+    pub fn is_effectively_visible(&self, id: NodeId) -> bool {
+        let mut current = id;
+        loop {
+            let Some(node) = self.nodes.get(&current) else { return false };
+            if !node.layer.visible {
+                return false;
+            }
+            if node.kind == NodeKind::Modal {
+                return self.overlays.contains(&current);
+            }
+            if node.parent == 0 {
+                return true;
+            }
+            current = node.parent;
+        }
+    }
+
+    /// Deepest node under `point` (window coordinates), front to back. A
+    /// presented modal takes every hit: nothing below it is reachable.
+    #[must_use]
+    pub fn hit_test(&self, point: Point) -> Option<NodeId> {
+        if let Some(top) = self.overlays.last() {
+            return self.hit_test_node(*top, point).or(Some(*top));
+        }
+        self.hit_test_node(self.root, point)
+    }
+
+    fn hit_test_node(&self, id: NodeId, point: Point) -> Option<NodeId> {
+        let node = self.nodes.get(&id)?;
+        if !node.layer.visible || node.layer.opacity <= 0.0 {
+            return None;
+        }
+        let pointer_events = node.props().integer_or(PropKey::PointerEvents, 1);
+        // 2 none: the subtree is transparent to the pointer.
+        if pointer_events == 2 {
+            return None;
+        }
+        // Undo the node's transform: frames are laid out untransformed.
+        let point = if node.layer.transform.is_identity() {
+            point
+        } else {
+            let origin = node.frame.origin();
+            let inverse = node.layer.transform.invert()?;
+            let local = inverse.apply(Point::new(point.x - origin.x, point.y - origin.y));
+            Point::new(local.x + origin.x, local.y + origin.y)
+        };
+        let inside = node.frame.contains(point);
+        let clips = node.decoration.clip || node.class == ViewClass::Scroll;
+        if !inside && clips {
+            return None;
+        }
+        // 4 box-only: children never take the hit.
+        if pointer_events != 4 {
+            // Scrolled content is laid out unscrolled: move the point into it.
+            let child_point = match self.scroll_offsets.get(&id) {
+                Some(offset) => point.offset(offset.x, offset.y),
+                None => point,
+            };
+            for child in self.ordered_children(id).into_iter().rev() {
+                if let Some(hit) = self.hit_test_node(child, child_point) {
+                    return Some(hit);
+                }
+            }
+        }
+        // 3 box-none: the box itself is transparent, only children hit.
+        (inside && pointer_events != 3).then_some(id)
+    }
+
+    /// The node's origin on screen: its frame moved by every scroll offset above it.
+    #[must_use]
+    pub fn window_origin(&self, id: NodeId) -> Point {
+        let Some(node) = self.nodes.get(&id) else { return Point::ZERO };
+        let mut origin = node.frame.origin();
+        let mut current = node.parent;
+        while let Some(ancestor) = self.nodes.get(&current) {
+            if let Some(offset) = self.scroll_offsets.get(&current) {
+                origin = origin.offset(-offset.x, -offset.y);
+            }
+            current = ancestor.parent;
+        }
+        origin
+    }
+
     /// Frame relative to the parent view, snapped to the device pixel grid.
     fn relative_frame(&self, node: &SceneNode) -> Rect {
         let scale = self.environment.scale;
         let own = node.frame.snapped(scale);
+        if node.kind == NodeKind::Modal {
+            // Presented in the window, not inside its logical parent.
+            return own;
+        }
         match self.nodes.get(&node.parent) {
             Some(parent) => {
                 let origin = parent.frame.snapped(scale).origin();
@@ -496,8 +870,7 @@ impl Scene {
 
     /// 1 start, 2 center, 3 end, 4 justify; unset text follows how its flex
     /// parent aligns it (the box moves, wrapped lines stay at the start).
-    fn text_align(&self, node: &SceneNode) -> TextAlign {
-        let props = node.props();
+    fn text_align(&self, node: &SceneNode, props: Props<'_>) -> TextAlign {
         match props.integer(PropKey::TextAlign) {
             Some(2) => return TextAlign::Center,
             Some(3) => return TextAlign::End,
@@ -531,11 +904,10 @@ impl Scene {
         }
     }
 
-    fn text_content(&self, node: &SceneNode) -> Option<TextContent> {
+    fn text_content(&self, node: &SceneNode, props: Props<'_>) -> Option<TextContent> {
         if !node.is_text_bearing() {
             return None;
         }
-        let props = node.props();
         let source = TextSource::from_props(node.kind, props, self.environment.font_scale);
         if source.text.is_empty() {
             return None;
@@ -543,7 +915,7 @@ impl Scene {
         let shadow_color = props.color(PropKey::TextShadowColor).unwrap_or(Color::TRANSPARENT);
         let block = TextBlock {
             runs: source.runs(props.color(PropKey::TextColor), props.integer_or(PropKey::TextDecoration, 1)),
-            align: self.text_align(node),
+            align: self.text_align(node, props),
             max_lines: source.max_lines,
             ellipsize: match props.integer(PropKey::TextEllipsizeMode) {
                 Some(2) => Ellipsize::Head,
@@ -577,6 +949,24 @@ impl Scene {
         })
     }
 
+    fn resolve_layer(&self, node: &SceneNode, props: Props<'_>) -> LayerState {
+        let mut layer = LayerState {
+            opacity: props.number_or(PropKey::Opacity, 1.0).clamp(0.0, 1.0),
+            transform: resolve_transform(props, node.frame.size()),
+            visible: props.flag_or(PropKey::Visible, true),
+        };
+        if let Some(slots) = self.layer_overrides.get(&node.id) {
+            for slot in slots {
+                layer.opacity *= slot.opacity.clamp(0.0, 1.0);
+                if !slot.transform.is_identity() {
+                    layer.transform = layer.transform.then(&slot.transform);
+                }
+                layer.visible &= !slot.hidden;
+            }
+        }
+        layer
+    }
+
     /// Pushes everything that changed since the last flush to the backend.
     pub fn flush(&mut self, backend: &mut impl Backend, window: WindowId) {
         let mut commands = 0_u64;
@@ -604,7 +994,7 @@ impl Scene {
             let Some(node) = self.nodes.get(id) else { continue };
             let dirty = node.dirty;
             if dirty.contains(Dirty::DECORATION) {
-                let decoration = Decoration::resolve(node.kind, node.props());
+                let decoration = Decoration::resolve(node.kind, self.overlaid(node));
                 if dirty.contains(Dirty::CREATED) || decoration != node.decoration {
                     if !(dirty.contains(Dirty::CREATED) && decoration.is_plain()) {
                         backend.set_decoration(*id, &decoration);
@@ -616,8 +1006,9 @@ impl Scene {
                 }
             }
             let Some(node) = self.nodes.get(id) else { continue };
+            let props = self.overlaid(node);
             if dirty.contains(Dirty::TEXT) && node.is_text_bearing() {
-                let content = self.text_content(node);
+                let content = self.text_content(node, props);
                 if content.is_some() || node.has_text {
                     backend.set_text(*id, content.as_ref());
                     commands += 1;
@@ -628,18 +1019,26 @@ impl Scene {
                 }
             }
             let Some(node) = self.nodes.get(id) else { continue };
+            let props = self.overlaid(node);
             if dirty.contains(Dirty::LAYER) {
-                let props = node.props();
-                let layer = LayerState {
-                    opacity: props.number_or(PropKey::Opacity, 1.0).clamp(0.0, 1.0),
-                    transform: resolve_transform(props, node.frame.size()),
-                    visible: props.flag_or(PropKey::Visible, true),
-                };
+                let layer = self.resolve_layer(node, props);
                 if layer != node.layer {
                     backend.set_layer(*id, &layer);
                     commands += 1;
                     if let Some(node) = self.nodes.get_mut(id) {
                         node.layer = layer;
+                    }
+                }
+            }
+            let Some(node) = self.nodes.get(id) else { continue };
+            if dirty.contains(Dirty::CONFIG) && node.class == ViewClass::Box {
+                // Pressable boxes take part in keyboard focus traversal.
+                let focusable = node.is_pressable() && node.props().flag_or(PropKey::Enabled, true);
+                if focusable != node.pushed_focusable {
+                    backend.set_focusable(*id, focusable);
+                    commands += 1;
+                    if let Some(node) = self.nodes.get_mut(id) {
+                        node.pushed_focusable = focusable;
                     }
                 }
             }
@@ -658,6 +1057,11 @@ impl Scene {
             self.root_dirty = false;
             let root = self.nodes.contains_key(&self.root).then_some(self.root);
             backend.set_window_root(window, root);
+            commands += 1;
+        }
+        if self.overlays_dirty {
+            self.overlays_dirty = false;
+            backend.set_window_overlays(window, &self.overlays);
             commands += 1;
         }
 
@@ -888,5 +1292,134 @@ mod tests {
         scene.clear(&mut backend);
         assert!(scene.is_empty());
         assert!(backend.views.is_empty());
+    }
+
+    #[test]
+    fn layer_overrides_compose_with_properties() {
+        let (mut scene, mut backend) = mounted();
+        backend.take();
+        scene.set_layer_override(
+            2,
+            LayerSlot::Presenter,
+            LayerOverride { opacity: 0.5, transform: Affine::translation(100.0, 0.0), hidden: false },
+        );
+        scene.apply(vec![Mutation::Update { id: 2, key: PropKey::Opacity, value: Some(PropValue::Float(0.5)) }]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        let layer = scene.node(2).unwrap().layer;
+        assert_eq!(layer.opacity, 0.25);
+        assert_eq!(layer.transform, Affine::translation(100.0, 0.0));
+        scene.set_layer_override(2, LayerSlot::Presenter, LayerOverride::HIDDEN);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert!(!scene.node(2).unwrap().layer.visible);
+        assert_eq!(scene.hit_test(Point::new(20.0, 20.0)), Some(1));
+        scene.set_layer_override(2, LayerSlot::Presenter, LayerOverride::NONE);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(scene.hit_test(Point::new(20.0, 20.0)), Some(2));
+    }
+
+    #[test]
+    fn synthetic_nodes_paint_above_engine_children_and_carry_actions() {
+        let (mut scene, mut backend) = mounted();
+        let mut props = PropMap::new();
+        props.insert(PropKey::BackgroundColor, PropValue::Integer(0xFF11_2233));
+        let bar = scene.add_synthetic(
+            1,
+            NodeKind::View,
+            props,
+            Rect::new(0.0, 236.0, 400.0, 64.0),
+            0,
+            Some(Action::TabSelect { host: 1, index: 2 }),
+        );
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(backend.children[&1], vec![2, 3, bar]);
+        assert_eq!(backend.frames[&bar], Rect::new(0.0, 236.0, 400.0, 64.0));
+        assert_eq!(scene.hit_test(Point::new(10.0, 250.0)), Some(bar));
+        assert!(scene.node(bar).unwrap().is_pressable());
+        scene.remove_synthetic(bar);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(backend.children[&1], vec![2, 3]);
+        assert!(!backend.views.contains_key(&bar));
+    }
+
+    #[test]
+    fn modals_are_presented_as_window_overlays() {
+        let (mut scene, mut backend) = mounted();
+        scene.apply(vec![
+            node(9, 3, 0, NodeKind::Modal, &[]),
+            node(10, 9, 0, NodeKind::View, &[]),
+            layout(9, 0.0, 0.0, 400.0, 300.0),
+            layout(10, 100.0, 100.0, 200.0, 100.0),
+        ]);
+        scene.set_overlays(vec![9]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        // Not mounted inside its logical parent, and framed in window coordinates.
+        assert!(backend.children.get(&3).is_none_or(Vec::is_empty));
+        assert_eq!(backend.frames[&9], Rect::new(0.0, 0.0, 400.0, 300.0));
+        assert!(backend.commands.contains(&Command::Overlays(MAIN_WINDOW, vec![9])));
+        // The presented modal takes every hit.
+        assert_eq!(scene.hit_test(Point::new(150.0, 150.0)), Some(10));
+        assert_eq!(scene.hit_test(Point::new(10.0, 10.0)), Some(9));
+        scene.apply(vec![Mutation::Remove { id: 9 }]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert!(scene.overlays().is_empty());
+    }
+
+    #[test]
+    fn hit_testing_honours_scroll_offsets_pointer_events_and_transforms() {
+        let mut scene = Scene::new();
+        let mut backend = RecordingBackend::new();
+        scene.apply(vec![
+            Mutation::SetRoot { id: 1 },
+            node(1, 0, 0, NodeKind::Scroll, &[]),
+            node(2, 1, 0, NodeKind::Column, &[(PropKey::PointerEvents, PropValue::Integer(3))]),
+            node(3, 2, 0, NodeKind::View, &[]),
+            node(4, 2, 1, NodeKind::View, &[(PropKey::TranslationX, PropValue::Float(50.0))]),
+            layout(1, 0.0, 0.0, 200.0, 100.0),
+            layout(2, 0.0, 0.0, 200.0, 400.0),
+            layout(3, 0.0, 300.0, 100.0, 50.0),
+            layout(4, 0.0, 0.0, 40.0, 40.0),
+        ]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        // The column is box-none: an empty area falls through to the scroll view.
+        assert_eq!(scene.hit_test(Point::new(150.0, 80.0)), Some(1));
+        // Node 4 was translated 50 to the right.
+        assert_eq!(scene.hit_test(Point::new(10.0, 10.0)), Some(1));
+        assert_eq!(scene.hit_test(Point::new(60.0, 10.0)), Some(4));
+        // Scrolled by 290: node 3 (content y 300) is now at window y 10.
+        scene.set_scroll_offset(1, Point::new(0.0, 290.0));
+        assert_eq!(scene.hit_test(Point::new(10.0, 20.0)), Some(3));
+        assert_eq!(scene.window_origin(3), Point::new(0.0, 10.0));
+    }
+
+    #[test]
+    fn style_overlays_win_while_resolving_paint_state() {
+        let (mut scene, mut backend) = mounted();
+        backend.take();
+        let mut overlay = PropMap::new();
+        overlay.insert(PropKey::BackgroundColor, PropValue::Integer(0xFF00_00FF));
+        scene.set_style_overlay(1, StyleLayer::Interaction, Some(overlay));
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(scene.node(1).unwrap().decoration.background, Color::from_argb(0xFF00_00FF));
+        scene.set_style_overlay(1, StyleLayer::Interaction, None);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(scene.node(1).unwrap().decoration.background, Color::WHITE);
+    }
+
+    #[test]
+    fn changes_are_reported_once() {
+        let (mut scene, _backend) = mounted();
+        let changes = scene.take_changes();
+        assert!(changes.contains(&Change::Created(2, NodeKind::Text)));
+        assert!(changes.contains(&Change::Frame(3)));
+        scene.apply(vec![
+            Mutation::Update { id: 2, key: PropKey::Text, value: Some(PropValue::String("Hello".into())) },
+            Mutation::Update { id: 2, key: PropKey::FontSize, value: Some(PropValue::Integer(20)) },
+            Mutation::Remove { id: 3 },
+        ]);
+        assert_eq!(
+            scene.take_changes(),
+            vec![Change::Updated(2, PropKey::FontSize), Change::Children(1), Change::Removed(3, NodeKind::Button)],
+        );
+        assert!(scene.take_changes().is_empty());
     }
 }

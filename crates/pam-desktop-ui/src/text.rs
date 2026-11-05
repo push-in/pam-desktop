@@ -363,7 +363,7 @@ mod tests {
     use pam_desktop_wire::PropValue;
 
     fn source<'a>(map: &'a PropMap) -> TextSource<'a> {
-        TextSource::from_props(NodeKind::Text, Props(map), 1.0)
+        TextSource::from_props(NodeKind::Text, Props::new(map), 1.0)
     }
 
     #[test]
@@ -401,18 +401,18 @@ mod tests {
     fn single_line_inputs_measure_one_line() {
         let mut map = PropMap::new();
         map.insert(PropKey::NumberOfLines, PropValue::Integer(3));
-        assert_eq!(TextSource::from_props(NodeKind::Input, Props(&map), 1.0).max_lines, 1);
-        assert_eq!(TextSource::from_props(NodeKind::Text, Props(&map), 1.0).max_lines, 3);
+        assert_eq!(TextSource::from_props(NodeKind::Input, Props::new(&map), 1.0).max_lines, 1);
+        assert_eq!(TextSource::from_props(NodeKind::Text, Props::new(&map), 1.0).max_lines, 3);
     }
 
     #[test]
     fn font_scale_respects_the_node_policy() {
         let mut map = PropMap::new();
-        assert_eq!(effective_font_scale(Props(&map), 1.5), 1.5);
+        assert_eq!(effective_font_scale(Props::new(&map), 1.5), 1.5);
         map.insert(PropKey::TextMaxFontSizeMultiplier, PropValue::Float(1.2));
-        assert_eq!(effective_font_scale(Props(&map), 1.5), 1.2);
+        assert_eq!(effective_font_scale(Props::new(&map), 1.5), 1.2);
         map.insert(PropKey::TextAllowFontScaling, PropValue::Boolean(false));
-        assert_eq!(effective_font_scale(Props(&map), 1.5), 1.0);
+        assert_eq!(effective_font_scale(Props::new(&map), 1.5), 1.0);
     }
 
     #[test]
