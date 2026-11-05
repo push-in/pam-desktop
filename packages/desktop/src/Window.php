@@ -156,7 +156,9 @@ final class Window
             static function (array $values) use ($completed): void {
                 $completed(WindowState::fromJson(is_string($values['state'] ?? null) ? $values['state'] : '{}'));
             },
-            static fn (): mixed => $completed(new WindowState()),
+            static function () use ($completed): void {
+                $completed(new WindowState());
+            },
         );
     }
 
@@ -180,7 +182,7 @@ final class Window
         ShellEvents::unsubscribe('drop', $subscription);
     }
 
-    /** @param array<string, mixed> $payload */
+    /** @param array<string, bool|float|int|string> $payload */
     private static function command(string $command, array $payload = []): void
     {
         ShellEvents::send('window', ['command' => $command] + $payload);

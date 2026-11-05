@@ -64,7 +64,7 @@ final class ShellEvents
     /**
      * Sends a command to the desktop shell.
      *
-     * @param array<string, mixed> $payload
+     * @param array<string, bool|float|int|string> $payload
      * @param (Closure(array<string, mixed>): void)|null $completed receives the decoded reply
      * @param (Closure(string): void)|null $failed receives the failure message
      */

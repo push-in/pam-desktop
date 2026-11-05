@@ -73,7 +73,7 @@ final class Dialog
     /**
      * @param list<FileFilter> $filters
      * @param Closure(list<string>): mixed $completed
-     * @param array<string, mixed> $extra
+     * @param array<string, bool|float|int|string> $extra
      */
     private static function pick(string $method, string $title, array $filters, ?string $directory, Closure $completed, array $extra = []): void
     {
@@ -92,7 +92,9 @@ final class Dialog
                 $paths = json_decode(is_string($values['paths'] ?? null) ? $values['paths'] : '[]', true);
                 $completed(array_values(array_filter(is_array($paths) ? $paths : [], is_string(...))));
             },
-            static fn (): mixed => $completed([]),
+            static function () use ($completed): void {
+                $completed([]);
+            },
         );
     }
 }
