@@ -356,3 +356,84 @@ impl Backend for RecordingBackend {
         self.commands.push(Command::Quit);
     }
 }
+
+/// Everything a controller needs besides a backend, for tests that drive
+/// controllers directly: build a tree, hand out a [`Ctx`], inspect what the
+/// controller emitted and asked the host to do.
+pub struct Harness {
+    pub scene: crate::scene::Scene,
+    pub animator: crate::animator::Animator,
+    pub timers: crate::animator::Timers,
+    pub events: Vec<crate::context::OutEvent>,
+    pub commands: Vec<crate::context::HostCommand>,
+    pub now_ms: u64,
+    pub viewport: Size,
+}
+
+impl Harness {
+    /// A scene holding `nodes`: `(id, parent, kind, properties, frame)` in
+    /// creation order; the first one is the root.
+    #[must_use]
+    pub fn with_tree(nodes: &[(NodeId, NodeId, pam_desktop_wire::NodeKind, &[(pam_desktop_wire::PropKey, pam_desktop_wire::PropValue)], Rect)]) -> Self {
+        use pam_desktop_wire::{Layout, Mutation, Node};
+        let mut mutations = Vec::new();
+        if let Some((root, ..)) = nodes.first() {
+            mutations.push(Mutation::SetRoot { id: *root });
+        }
+        let mut indexes: HashMap<NodeId, u32> = HashMap::new();
+        for (id, parent, kind, properties, _) in nodes {
+            let index = indexes.entry(*parent).or_insert(0);
+            mutations.push(Mutation::Create(Node { id: *id, parent: *parent, index: *index, kind: *kind, properties: properties.iter().cloned().collect() }));
+            *index += 1;
+        }
+        for (id, _, _, _, frame) in nodes {
+            mutations.push(Mutation::Layout { id: *id, frame: Layout { x: frame.x, y: frame.y, width: frame.width, height: frame.height } });
+        }
+        let mut scene = crate::scene::Scene::new();
+        scene.apply(mutations);
+        let viewport = nodes.first().map_or(Size::ZERO, |(.., frame)| frame.size());
+        Self { scene, animator: crate::animator::Animator::new(), timers: crate::animator::Timers::default(), events: Vec::new(), commands: Vec::new(), now_ms: 0, viewport }
+    }
+
+    pub fn ctx(&mut self) -> crate::context::Ctx<'_> {
+        crate::context::Ctx {
+            scene: &mut self.scene,
+            animator: &mut self.animator,
+            timers: &mut self.timers,
+            events: &mut self.events,
+            commands: &mut self.commands,
+            now_ms: self.now_ms,
+            viewport: self.viewport,
+            reduced_motion: false,
+        }
+    }
+
+    /// Feeds the pending scene changes to `react`, like the runtime does
+    /// after a commit.
+    pub fn settle(&mut self, mut react: impl FnMut(&mut crate::context::Ctx<'_>, crate::scene::Change)) {
+        for change in self.scene.take_changes() {
+            let mut ctx = self.ctx();
+            react(&mut ctx, change);
+        }
+    }
+
+    /// A primary-button pointer event at a window position.
+    #[must_use]
+    pub fn pointer(&self, phase: crate::backend::PointerPhase, x: f32, y: f32) -> crate::backend::PointerEvent {
+        crate::backend::PointerEvent {
+            window: crate::backend::MAIN_WINDOW,
+            phase,
+            position: Point::new(x, y),
+            button: crate::backend::PointerButton::Primary,
+            modifiers: crate::backend::Modifiers::default(),
+            click_count: 1,
+            time_ms: self.now_ms,
+        }
+    }
+
+    /// The kinds of the events emitted so far, in order.
+    #[must_use]
+    pub fn event_kinds(&self) -> Vec<u16> {
+        self.events.iter().map(|event| event.kind).collect()
+    }
+}
