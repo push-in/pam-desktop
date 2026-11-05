@@ -11,6 +11,7 @@
 mod accessibility;
 mod backend;
 mod input;
+mod media;
 mod paint;
 mod shell;
 mod text;

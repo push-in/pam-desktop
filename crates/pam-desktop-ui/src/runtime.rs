@@ -54,6 +54,8 @@ pub enum Inbound {
     OpenUrl(String),
     /// Progress or result of an image download.
     Image(crate::images::ImageInbound),
+    /// Progress or result of a media cache download.
+    Media(crate::media::MediaInbound),
 }
 
 /// Thread-safe queue into the UI thread.
@@ -251,6 +253,7 @@ pub struct Runtime<B: Backend> {
     scrolling: Scrolling,
     images: crate::images::Images,
     drawings: crate::drawing::Drawings,
+    media: crate::media::Media,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
     pub(crate) shell: Shell,
@@ -332,6 +335,13 @@ impl<B: Backend> Runtime<B> {
         }
         let directories = config.directories.clone();
         let http_client = config.http_client.clone();
+        let media = crate::media::Media::new(crate::media::MediaEnvironment {
+            cache_root: directories.cache.join("pam-media-v1"),
+            files_root: crate::modules::files::sandbox_root(&directories.data),
+            assets: directories.assets.clone(),
+            client: http_client.clone(),
+            inbox: Arc::clone(&inbox),
+        });
         let images = crate::images::Images::new(crate::images::ImageEnvironment {
             cache_root: crate::modules::image::cache_root(&directories.cache),
             files_root: crate::modules::files::sandbox_root(&directories.data),
@@ -386,6 +396,7 @@ impl<B: Backend> Runtime<B> {
             scrolling: Scrolling::default(),
             images,
             drawings: crate::drawing::Drawings::default(),
+            media,
             modules,
             directories,
             shell: Shell::default(),
@@ -467,6 +478,7 @@ impl<B: Backend> Runtime<B> {
                 HostCommand::ReleaseImage(key) => self.backend.release_image(key),
                 HostCommand::SetImage { id, content } => self.backend.set_image(id, content.as_ref()),
                 HostCommand::SetDrawing { id, commands } => self.backend.set_drawing(id, &commands),
+                HostCommand::SetMedia { id, state } => self.backend.set_media(id, &state),
             }
         }
         if let Some(worker) = &mut self.worker {
@@ -523,6 +535,7 @@ impl<B: Backend> Runtime<B> {
                 self.scrolling.on_change(&mut ctx, change);
                 self.images.on_change(&mut ctx, change);
                 self.drawings.on_change(&mut ctx, change);
+                self.media.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             self.tabs.after_commit(&mut ctx);
@@ -535,6 +548,10 @@ impl<B: Backend> Runtime<B> {
             self.drawings.after_commit(&mut ctx);
             for (id, size) in self.images.take_natural_sizes() {
                 self.drawings.set_natural_size(&mut ctx, id, size);
+            }
+            self.media.after_commit(&mut ctx);
+            for (id, hidden) in self.media.take_poster_changes() {
+                self.images.set_suppressed(&mut ctx, id, hidden);
             }
             self.coverage.invalidate();
             self.inputs.retry_autofocus();
@@ -580,6 +597,10 @@ impl<B: Backend> Runtime<B> {
             Inbound::Image(message) => {
                 let mut ctx = ctx!(self);
                 self.images.on_inbound(&mut ctx, message);
+            }
+            Inbound::Media(message) => {
+                let mut ctx = ctx!(self);
+                self.media.on_inbound(&mut ctx, message);
             }
         }
     }
@@ -788,6 +809,13 @@ impl<B: Backend> Runtime<B> {
                 for timer in due {
                     match timer {
                         Timer::InputDebounce(id) => self.inputs.on_timer(&mut ctx, id),
+                        Timer::MediaProgress(id) | Timer::MediaRelease(id) => {
+                            let position = self.backend.media_position(id);
+                            self.media.on_timer(&mut ctx, timer, position);
+                            for (id, hidden) in self.media.take_poster_changes() {
+                                self.images.set_suppressed(&mut ctx, id, hidden);
+                            }
+                        }
                         Timer::ScrollRest(_) | Timer::ListWindow(_) | Timer::RefreshFallback(_) => self.scrolling.on_timer(&mut ctx, timer),
                         _ => self.interaction.on_timer(&mut ctx, timer),
                     }
@@ -796,6 +824,16 @@ impl<B: Backend> Runtime<B> {
             BackendEvent::ScrollChanged { id, offset } => {
                 let mut ctx = ctx!(self);
                 self.scrolling.on_scroll(&mut ctx, id, offset);
+                // Players that start when scrolled into view follow the offset.
+                self.media.on_scroll();
+                self.media.evaluate(&mut ctx);
+            }
+            BackendEvent::Media { id, event } => {
+                let mut ctx = ctx!(self);
+                self.media.on_event(&mut ctx, id, event);
+                for (id, hidden) in self.media.take_poster_changes() {
+                    self.images.set_suppressed(&mut ctx, id, hidden);
+                }
             }
             BackendEvent::AccessibilityAction { id, name } => {
                 if name == "activate" {

@@ -141,6 +141,9 @@ struct NodeImage {
     /// A freehand canvas: its image is always aspect-fit and its strokes
     /// follow the picture's rectangle.
     sketch: bool,
+    /// A media player: the picture is its poster, hidden once video shows.
+    poster: bool,
+    suppressed: bool,
     dirty: bool,
 }
 
@@ -161,7 +164,7 @@ pub struct Images {
 }
 
 fn is_image(kind: NodeKind) -> bool {
-    matches!(kind, NodeKind::Image | NodeKind::ImageBackground | NodeKind::DrawingCanvas)
+    matches!(kind, NodeKind::Image | NodeKind::ImageBackground | NodeKind::DrawingCanvas | NodeKind::Media)
 }
 
 fn fit(props: Props<'_>) -> ImageFit {
@@ -327,7 +330,7 @@ impl Images {
     pub fn on_change(&mut self, ctx: &mut Ctx<'_>, change: Change) {
         match change {
             Change::Created(id, kind) if is_image(kind) => {
-                self.nodes.insert(id, NodeImage { fade: 1.0, dirty: true, sketch: kind == NodeKind::DrawingCanvas, ..NodeImage::default() });
+                self.nodes.insert(id, NodeImage { fade: 1.0, dirty: true, sketch: kind == NodeKind::DrawingCanvas, poster: kind == NodeKind::Media, ..NodeImage::default() });
                 self.dirty = true;
             }
             Change::Removed(id, kind) if is_image(kind) => {
@@ -367,9 +370,17 @@ impl Images {
         let props = scene_node.props();
         let size = scene_node.frame.size();
         let scale = ctx.scene.environment.scale.max(0.1);
-        let authored = props.text_or_empty(PropKey::Source);
+        let (poster, suppressed) = self.nodes.get(&id).map_or((false, false), |node| (node.poster, node.suppressed));
+        let authored = if suppressed {
+            ""
+        } else if poster {
+            props.text_or_empty(PropKey::MediaThumbnailSource)
+        } else {
+            props.text_or_empty(PropKey::Source)
+        };
         let source = props
             .text(PropKey::ImageSourceSet)
+            .filter(|_| !poster)
             .and_then(|set| pick_from_source_set(set, scale, size.width))
             .unwrap_or(authored)
             .trim()
@@ -695,6 +706,17 @@ impl Images {
                 _ => {}
             }
             self.present(ctx, id);
+        }
+    }
+
+    /// Hides the poster of a media node while its video shows, and brings it
+    /// back when the player goes away.
+    pub fn set_suppressed(&mut self, ctx: &mut Ctx<'_>, id: NodeId, suppressed: bool) {
+        if let Some(node) = self.nodes.get_mut(&id) {
+            if node.suppressed != suppressed {
+                node.suppressed = suppressed;
+                self.sync(ctx, id);
+            }
         }
     }
 

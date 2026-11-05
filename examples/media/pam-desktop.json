@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.media",
+    "name": "PAM Desktop media",
+    "entry": "index.php",
+    "window": {
+        "width": 760,
+        "height": 620
+    }
+}

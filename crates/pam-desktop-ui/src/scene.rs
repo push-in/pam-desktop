@@ -313,6 +313,8 @@ pub fn view_class(kind: NodeKind, props: Props<'_>) -> ViewClass {
             }
         }
         NodeKind::Canvas | NodeKind::DrawingCanvas => ViewClass::Surface,
+        NodeKind::Media => ViewClass::Media,
+        NodeKind::WebView => ViewClass::WebView,
         _ => ViewClass::Box,
     }
 }
@@ -917,6 +919,32 @@ impl Scene {
             }
             current = node.parent;
         }
+    }
+
+    /// How much of a node is on screen, 0..1: its box clipped by every
+    /// scrolling or clipping ancestor and by the window. Zero when hidden.
+    #[must_use]
+    pub fn visible_fraction(&self, id: NodeId, viewport: Size) -> f32 {
+        let Some(node) = self.nodes.get(&id) else { return 0.0 };
+        let area = node.frame.width * node.frame.height;
+        if area <= 0.0 || !self.is_effectively_visible(id) {
+            return 0.0;
+        }
+        let origin = self.window_origin(id);
+        let (mut left, mut top) = (origin.x.max(0.0), origin.y.max(0.0));
+        let (mut right, mut bottom) = ((origin.x + node.frame.width).min(viewport.width), (origin.y + node.frame.height).min(viewport.height));
+        let mut current = node.parent;
+        while let Some(ancestor) = self.nodes.get(&current) {
+            if ancestor.class == ViewClass::Scroll || ancestor.decoration.clip {
+                let origin = self.window_origin(current);
+                left = left.max(origin.x);
+                top = top.max(origin.y);
+                right = right.min(origin.x + ancestor.frame.width);
+                bottom = bottom.min(origin.y + ancestor.frame.height);
+            }
+            current = ancestor.parent;
+        }
+        ((right - left).max(0.0) * (bottom - top).max(0.0) / area).clamp(0.0, 1.0)
     }
 
     /// Deepest node under `point` (window coordinates), front to back. A

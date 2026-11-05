@@ -16,6 +16,7 @@ pub mod geometry;
 pub mod images;
 pub mod input_format;
 pub mod inputs;
+pub mod media;
 pub mod interaction;
 pub mod modules;
 pub mod motion;

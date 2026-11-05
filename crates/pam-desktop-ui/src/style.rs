@@ -314,7 +314,7 @@ impl Decoration {
             border,
             border_gradient,
             shadows,
-            clip: props.integer(PropKey::Overflow) == Some(2) || (kind == NodeKind::Image && !radii.is_zero()),
+            clip: props.integer(PropKey::Overflow) == Some(2) || (matches!(kind, NodeKind::Image | NodeKind::Media | NodeKind::WebView) && !radii.is_zero()),
             blur: props.number_or(PropKey::BlurRadius, 0.0).max(0.0),
             color_matrix: parse_color_matrix(props.text_or_empty(PropKey::FilterColorMatrix)),
             backdrop_blur: props.number_or(PropKey::BackdropBlurRadius, 0.0).max(0.0),

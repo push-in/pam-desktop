@@ -49,7 +49,17 @@ pub mod event_kind {
     pub const TOUCH_END: u16 = 41;
     pub const BOTTOM_SHEET_CHANGE: u16 = 46;
     pub const BOTTOM_SHEET_DISMISS: u16 = 47;
+    pub const MEDIA_READY: u16 = 51;
+    pub const MEDIA_PROGRESS: u16 = 52;
+    pub const MEDIA_END: u16 = 53;
+    pub const MEDIA_ERROR: u16 = 54;
     pub const MENU_ACTION: u16 = 58;
+    pub const MEDIA_CACHE_HIT: u16 = 61;
+    pub const MEDIA_CACHE_MISS: u16 = 62;
+    pub const MEDIA_CACHE_PROGRESS: u16 = 63;
+    pub const MEDIA_CACHE_READY: u16 = 64;
+    pub const MEDIA_BUFFERING: u16 = 68;
+    pub const MEDIA_LOAD_START: u16 = 69;
     pub const ANIMATION_COMPLETE: u16 = 60;
     pub const ACCESSIBILITY_ACTION: u16 = 65;
     pub const SPAN_PRESS: u16 = 66;
@@ -96,6 +106,7 @@ pub enum HostCommand {
     ReleaseImage(crate::backend::ImageKey),
     SetImage { id: NodeId, content: Option<crate::backend::ImageContent> },
     SetDrawing { id: NodeId, commands: Vec<crate::backend::DrawCommand> },
+    SetMedia { id: NodeId, state: Box<crate::backend::MediaState> },
 }
 
 pub struct Ctx<'a> {

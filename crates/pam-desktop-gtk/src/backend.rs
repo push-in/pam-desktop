@@ -33,6 +33,8 @@ struct ViewEntry {
     class: ViewClass,
     /// The native text control of input classes.
     input: Option<InputHost>,
+    /// The player of a media view.
+    media: Option<crate::media::MediaHost>,
     /// What assistive technology was told, when it is more than the defaults.
     accessibility: Option<Box<pam_desktop_ui::accessibility::Accessibility>>,
     /// The text the view shows and the accessible name last applied.
@@ -379,13 +381,17 @@ impl Backend for GtkBackend {
             ViewClass::TextArea => Some(InputHost::new(id, true, &container, &self.events)),
             _ => None,
         };
-        self.views.insert(id, ViewEntry { widget, container, class, input, accessibility: None, plain_text: None, announced: String::new() });
+        let media = (class == ViewClass::Media).then(|| crate::media::MediaHost::new(id, &container, &self.events));
+        self.views.insert(id, ViewEntry { widget, container, class, input, media, accessibility: None, plain_text: None, announced: String::new() });
     }
 
     fn destroy_view(&mut self, id: NodeId) {
-        if let Some(entry) = self.views.remove(&id) {
+        if let Some(mut entry) = self.views.remove(&id) {
             if let Some(input) = &entry.input {
                 input.destroy();
+            }
+            if let Some(media) = &mut entry.media {
+                media.destroy();
             }
             if entry.widget.parent().is_some() {
                 entry.widget.unparent();
@@ -561,6 +567,16 @@ impl Backend for GtkBackend {
             Some(ImageState { content: *content, texture })
         });
         entry.container.set_image(state);
+    }
+
+    fn set_media(&mut self, id: NodeId, state: &pam_desktop_ui::backend::MediaState) {
+        if let Some(media) = self.views.get_mut(&id).and_then(|entry| entry.media.as_mut()) {
+            media.apply(state);
+        }
+    }
+
+    fn media_position(&self, id: NodeId) -> Option<(f64, f64)> {
+        self.views.get(&id)?.media.as_ref()?.position()
     }
 
     fn set_drawing(&mut self, id: NodeId, commands: &[pam_desktop_ui::backend::DrawCommand]) {

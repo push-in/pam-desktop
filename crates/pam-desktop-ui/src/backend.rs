@@ -30,6 +30,10 @@ pub enum ViewClass {
     TextArea,
     /// Pixels painted by the core (canvas, drawing surface).
     Surface,
+    /// A video or audio player; the box may also show a poster image.
+    Media,
+    /// An embedded web page.
+    WebView,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -131,6 +135,7 @@ pub enum BackendEvent {
     /// The deadline asked with `schedule_wake` passed.
     Wake,
     ScrollChanged { id: NodeId, offset: Point },
+    Media { id: NodeId, event: MediaEvent },
     /// Assistive technology ran an action on a view: `activate` (the default
     /// press) or the name of one of its custom actions.
     AccessibilityAction { id: NodeId, name: String },
@@ -263,6 +268,54 @@ pub enum ImageFit {
     Center,
     /// Natural size, tiled from the top-left corner.
     Repeat,
+}
+
+/// What a media view plays.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MediaSource {
+    /// An `http://` or `https://` stream.
+    Url(String),
+    File(std::path::PathBuf),
+}
+
+/// Everything a media view should be doing. The backend compares it with
+/// the previous state: a new `source` replaces the player (`None` releases
+/// it and its decoder), a new `seek` serial seeks to that position (and is
+/// the start position of a new source), the rest applies live.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MediaState {
+    pub source: Option<MediaSource>,
+    /// Play when prepared; pause otherwise. Never resets the position.
+    pub playing: bool,
+    /// Serial of the last seek request and its position in seconds.
+    pub seek: (u32, f64),
+    /// Show the platform's transport controls.
+    pub controls: bool,
+    pub looping: bool,
+    pub muted: bool,
+    /// 0..1.
+    pub volume: f32,
+    /// 0.25..4; backends without rate control play at normal speed.
+    pub rate: f32,
+    /// How the video fills the view (`Repeat` never appears).
+    pub fit: ImageFit,
+}
+
+/// What a platform player reports.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MediaEvent {
+    /// The media is prepared: video size in pixels (0 for audio) and
+    /// duration in seconds (0 when unknown).
+    Ready { width: u32, height: u32, duration: f64 },
+    /// The first video frame is on screen.
+    Rendered,
+    /// Playback stalled waiting for data, or resumed.
+    Buffering(bool),
+    /// Playback reached the end (not reported while looping).
+    Ended,
+    Failed(String),
+    /// The player started or paused by itself (native controls).
+    Playing(bool),
 }
 
 /// One primitive of a drawing surface, in the view's logical coordinates.
@@ -421,6 +474,10 @@ pub trait Backend {
     /// Drops a decoded image no view shows any more.
     fn release_image(&mut self, key: ImageKey);
     fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>);
+    /// Brings the player of a `Media` view to `state`.
+    fn set_media(&mut self, id: NodeId, state: &MediaState);
+    /// Current position and duration of a prepared player, in seconds.
+    fn media_position(&self, id: NodeId) -> Option<(f64, f64)>;
     /// Replaces what a view draws above its image and below its children.
     /// The view is clipped to its bounds; an empty list draws nothing.
     fn set_drawing(&mut self, id: NodeId, commands: &[DrawCommand]);

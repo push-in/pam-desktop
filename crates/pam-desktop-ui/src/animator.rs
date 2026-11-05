@@ -410,6 +410,10 @@ pub enum Timer {
     ScrollRest(NodeId),
     /// The refresh indicator falls back to its controlled state.
     RefreshFallback(NodeId),
+    /// A playing media node reports its position.
+    MediaProgress(NodeId),
+    /// A hidden or ungranted media node gives its decoder back.
+    MediaRelease(NodeId),
 }
 
 #[derive(Default)]
