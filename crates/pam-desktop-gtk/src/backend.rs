@@ -70,6 +70,10 @@ pub struct GtkBackend {
     /// Set when the pending wake already ran (its source id is then stale).
     wake_fired: Rc<Cell<bool>>,
     shell: Shell,
+    /// Reports the desktop's appearance, text size and motion changes.
+    _system: crate::system::Watch,
+    /// The application overrides the appearance of the desktop.
+    forced_appearance: bool,
     /// The last button press, needed to start a window move.
     last_press: Rc<RefCell<Option<Press>>>,
     #[cfg(feature = "tray")]
@@ -82,6 +86,7 @@ impl GtkBackend {
     #[must_use]
     pub fn new(application: gtk::Application, events: Rc<EventQueue>) -> Self {
         let shell = Shell::new(application.clone(), Rc::clone(&events));
+        let system = crate::system::Watch::new(&events);
         Self {
             application,
             events,
@@ -93,27 +98,14 @@ impl GtkBackend {
             wake_source: None,
             wake_fired: Rc::new(Cell::new(false)),
             shell,
+            _system: system,
+            forced_appearance: false,
             last_press: Rc::new(RefCell::new(None)),
             #[cfg(feature = "tray")]
             tray: None,
             #[cfg(feature = "hotkeys")]
             hotkeys: None,
         }
-    }
-
-    fn settings_font_scale() -> f32 {
-        // GNOME's text scaling factor is published through the Xft DPI.
-        gtk::Settings::default()
-            .map(|settings| settings.gtk_xft_dpi())
-            .filter(|dpi| *dpi > 0)
-            .map_or(1.0, |dpi| (dpi as f32 / 1024.0 / 96.0).clamp(0.5, 4.0))
-    }
-
-    fn prefers_dark() -> bool {
-        gtk::Settings::default().is_some_and(|settings| {
-            settings.is_gtk_application_prefer_dark_theme()
-                || settings.gtk_theme_name().is_some_and(|name| name.to_lowercase().contains("dark"))
-        })
     }
 
     fn modifiers(state: gdk::ModifierType) -> Modifiers {
@@ -436,10 +428,10 @@ impl Backend for GtkBackend {
         WindowMetrics {
             size: entry.size.get(),
             scale: entry.window.scale_factor() as f32,
-            font_scale: Self::settings_font_scale(),
-            dark: Self::prefers_dark(),
+            font_scale: crate::system::font_scale(),
+            dark: crate::system::prefers_dark(self.forced_appearance),
             refresh_rate,
-            reduced_motion: gtk::Settings::default().is_some_and(|settings| !settings.is_gtk_enable_animations()),
+            reduced_motion: crate::system::reduced_motion(),
         }
     }
 
@@ -908,6 +900,7 @@ impl Backend for GtkBackend {
 
     fn set_appearance(&mut self, dark: Option<bool>) {
         let Some(settings) = gtk::Settings::default() else { return };
+        self.forced_appearance = dark.is_some();
         match dark {
             Some(dark) => settings.set_gtk_application_prefer_dark_theme(dark),
             None => settings.reset_property("gtk-application-prefer-dark-theme"),

@@ -1011,6 +1011,18 @@ impl<B: Backend> Runtime<B> {
                 self.apply_appearance();
             }
             BackendEvent::OpenUrl(url) => self.linking.deliver(&url),
+            BackendEvent::MetricsChanged => {
+                let system = self.backend.window_metrics(MAIN_WINDOW);
+                let motion_changed = self.metrics.reduced_motion != system.reduced_motion;
+                self.metrics.reduced_motion = system.reduced_motion;
+                self.system_font_scale = system.font_scale;
+                let before = self.metrics.font_scale;
+                // Tells PHP about the new metrics when the scale changed.
+                self.apply_text_scale();
+                if motion_changed && (self.metrics.font_scale - before).abs() < f32::EPSILON {
+                    self.send_dimensions();
+                }
+            }
             BackendEvent::Frame { .. } => self.tick(),
             BackendEvent::Wake => {
                 self.armed_wake = None;

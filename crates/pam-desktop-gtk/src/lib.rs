@@ -16,6 +16,7 @@ mod input;
 mod media;
 mod paint;
 mod shell;
+mod system;
 mod text;
 #[cfg(feature = "tray")]
 mod tray;

@@ -130,6 +130,9 @@ pub enum BackendEvent {
     WindowCloseRequested { window: WindowId },
     WindowFocusChanged { window: WindowId, focused: bool },
     AppearanceChanged { dark: bool },
+    /// The text scale or the reduced motion setting of the system changed:
+    /// the core reads `Backend::window_metrics` again.
+    MetricsChanged,
     /// The application was asked to open a link: a registered URL scheme was
     /// activated, or a second launch handed its URL to this instance.
     OpenUrl(String),
