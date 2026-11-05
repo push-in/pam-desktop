@@ -163,3 +163,93 @@ pub fn paint_border(snapshot: &gtk::Snapshot, size: Size, decoration: &Decoratio
     let color = border.colors.iter().copied().find(|color| !color.is_transparent()).unwrap_or(Color::TRANSPARENT);
     snapshot.append_stroke(&path, &stroke, &rgba(color));
 }
+
+/// Rasterises a drawing surface with Cairo. `hairline` is the width of one
+/// device pixel in logical units.
+pub fn paint_drawing(context: &gtk::cairo::Context, commands: &[pam_desktop_ui::backend::DrawCommand], hairline: f64) {
+    use gtk::cairo::{LineCap, LineJoin, Operator};
+    use pam_desktop_ui::backend::DrawCommand;
+    use std::f64::consts::{FRAC_PI_2, PI, TAU};
+
+    let source = |color: pam_desktop_ui::color::Color| {
+        let [red, green, blue, alpha] = color.to_f32();
+        context.set_source_rgba(f64::from(red), f64::from(green), f64::from(blue), f64::from(alpha));
+    };
+    let mut groups = 0_u32;
+    for command in commands {
+        // Cairo keeps going after an error; a failed command just draws nothing.
+        match command {
+            DrawCommand::Rect { rect, radius, color } => {
+                let (x, y, width, height) = (f64::from(rect.x), f64::from(rect.y), f64::from(rect.width), f64::from(rect.height));
+                let radius = f64::from(*radius).min(width / 2.0).min(height / 2.0);
+                source(*color);
+                if radius > 0.0 {
+                    context.new_sub_path();
+                    context.arc(x + width - radius, y + radius, radius, -FRAC_PI_2, 0.0);
+                    context.arc(x + width - radius, y + height - radius, radius, 0.0, FRAC_PI_2);
+                    context.arc(x + radius, y + height - radius, radius, FRAC_PI_2, PI);
+                    context.arc(x + radius, y + radius, radius, PI, PI + FRAC_PI_2);
+                    context.close_path();
+                } else {
+                    context.rectangle(x, y, width, height);
+                }
+                let _ = context.fill();
+            }
+            DrawCommand::Circle { center, radius, color } => {
+                source(*color);
+                context.new_sub_path();
+                context.arc(f64::from(center.x), f64::from(center.y), f64::from(*radius), 0.0, TAU);
+                let _ = context.fill();
+            }
+            DrawCommand::Line { from, to, width, color } => {
+                source(*color);
+                context.set_line_cap(LineCap::Round);
+                context.set_line_width(if *width > 0.0 { f64::from(*width) } else { hairline });
+                context.move_to(f64::from(from.x), f64::from(from.y));
+                context.line_to(f64::from(to.x), f64::from(to.y));
+                let _ = context.stroke();
+            }
+            DrawCommand::Stroke { points, width, color, erase } => {
+                let Some(first) = points.first() else { continue };
+                source(*color);
+                context.set_operator(if *erase { Operator::Clear } else { Operator::Over });
+                if points.len() == 1 {
+                    context.new_sub_path();
+                    context.arc(f64::from(first.x), f64::from(first.y), f64::from(*width) / 2.0, 0.0, TAU);
+                    let _ = context.fill();
+                } else {
+                    context.set_line_cap(LineCap::Round);
+                    context.set_line_join(LineJoin::Round);
+                    context.set_line_width(f64::from(*width));
+                    context.move_to(f64::from(first.x), f64::from(first.y));
+                    for point in &points[1..] {
+                        context.line_to(f64::from(point.x), f64::from(point.y));
+                    }
+                    let _ = context.stroke();
+                }
+                context.set_operator(Operator::Over);
+            }
+            DrawCommand::PushGroup { clip } => {
+                let _ = context.save();
+                context.rectangle(f64::from(clip.x), f64::from(clip.y), f64::from(clip.width), f64::from(clip.height));
+                context.clip();
+                context.push_group();
+                groups += 1;
+            }
+            DrawCommand::PopGroup => {
+                if groups > 0 {
+                    groups -= 1;
+                    let _ = context.pop_group_to_source();
+                    let _ = context.paint();
+                    let _ = context.restore();
+                }
+            }
+        }
+    }
+    // An unbalanced list must not leave groups open on the shared context.
+    for _ in 0..groups {
+        let _ = context.pop_group_to_source();
+        let _ = context.paint();
+        let _ = context.restore();
+    }
+}

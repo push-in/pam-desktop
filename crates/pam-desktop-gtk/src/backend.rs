@@ -543,6 +543,12 @@ impl Backend for GtkBackend {
         entry.container.set_image(state);
     }
 
+    fn set_drawing(&mut self, id: NodeId, commands: &[pam_desktop_ui::backend::DrawCommand]) {
+        if let Some(entry) = self.views.get(&id) {
+            entry.container.set_drawing(commands);
+        }
+    }
+
     fn set_scroll_content(&mut self, id: NodeId, size: Size) {
         if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() {
             eprintln!("scroll content {id} {size:?}");

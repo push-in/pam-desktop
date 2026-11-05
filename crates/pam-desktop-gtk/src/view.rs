@@ -11,7 +11,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gdk, graphene, gsk, pango};
-use pam_desktop_ui::backend::{ImageContent, ImageFit, TextContent, VerticalAlign};
+use pam_desktop_ui::backend::{DrawCommand, ImageContent, ImageFit, TextContent, VerticalAlign};
 use pam_desktop_ui::geometry::{Affine, Insets, Rect, Size};
 use pam_desktop_ui::style::Decoration;
 
@@ -67,6 +67,8 @@ pub struct ImageState {
 #[derive(Default)]
 pub struct ViewState {
     pub image: Option<ImageState>,
+    /// Painted above the image and below the text and the children.
+    pub drawing: Vec<DrawCommand>,
     /// Exact logical size from the engine (allocations are whole pixels).
     pub size: Size,
     pub decoration: Decoration,
@@ -188,6 +190,11 @@ mod imp {
             }
             if let Some(image) = &state.image {
                 paint_image(snapshot, size, &state.decoration, image);
+            }
+            if !state.drawing.is_empty() && !size.is_empty() {
+                // Cairo clips the drawing to the bounds given here.
+                let context = snapshot.append_cairo(&graphene::Rect::new(0.0, 0.0, size.width, size.height));
+                paint::paint_drawing(&context, &state.drawing, 1.0 / f64::from(widget.scale_factor().max(1)));
             }
             if let Some(text_state) = state.text.as_mut() {
                 let insets = text_state.content.insets;
@@ -348,6 +355,14 @@ impl PamView {
 
     pub fn set_image(&self, image: Option<ImageState>) {
         self.with_state(|state| state.image = image);
+        self.queue_draw();
+    }
+
+    pub fn set_drawing(&self, commands: &[DrawCommand]) {
+        self.with_state(|state| {
+            state.drawing.clear();
+            state.drawing.extend_from_slice(commands);
+        });
         self.queue_draw();
     }
 

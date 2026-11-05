@@ -250,6 +250,7 @@ pub struct Runtime<B: Backend> {
     pub(crate) controls: Controls,
     scrolling: Scrolling,
     images: crate::images::Images,
+    drawings: crate::drawing::Drawings,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
     pub(crate) shell: Shell,
@@ -384,6 +385,7 @@ impl<B: Backend> Runtime<B> {
             controls: Controls::new(metrics.dark),
             scrolling: Scrolling::default(),
             images,
+            drawings: crate::drawing::Drawings::default(),
             modules,
             directories,
             shell: Shell::default(),
@@ -464,6 +466,7 @@ impl<B: Backend> Runtime<B> {
                 HostCommand::LoadImage { key, source, max_dimension } => self.backend.load_image(key, source, max_dimension),
                 HostCommand::ReleaseImage(key) => self.backend.release_image(key),
                 HostCommand::SetImage { id, content } => self.backend.set_image(id, content.as_ref()),
+                HostCommand::SetDrawing { id, commands } => self.backend.set_drawing(id, &commands),
             }
         }
         if let Some(worker) = &mut self.worker {
@@ -519,6 +522,7 @@ impl<B: Backend> Runtime<B> {
                 self.controls.on_change(&mut ctx, change);
                 self.scrolling.on_change(&mut ctx, change);
                 self.images.on_change(&mut ctx, change);
+                self.drawings.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             self.tabs.after_commit(&mut ctx);
@@ -528,6 +532,10 @@ impl<B: Backend> Runtime<B> {
             self.controls.after_commit(&mut ctx);
             self.scrolling.after_commit(&mut ctx);
             self.images.after_commit(&mut ctx);
+            self.drawings.after_commit(&mut ctx);
+            for (id, size) in self.images.take_natural_sizes() {
+                self.drawings.set_natural_size(&mut ctx, id, size);
+            }
             self.coverage.invalidate();
             self.inputs.retry_autofocus();
         }
@@ -689,6 +697,13 @@ impl<B: Backend> Runtime<B> {
                 if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() && pointer.phase != crate::backend::PointerPhase::Move {
                     eprintln!("pointer {:?} at {:?} hit {:?}", pointer.phase, pointer.position, self.scene.hit_test(pointer.position));
                 }
+                {
+                    // A freehand canvas owns the pointer while a stroke is drawn.
+                    let mut ctx = ctx!(self);
+                    if self.drawings.on_pointer(&mut ctx, pointer) {
+                        return;
+                    }
+                }
                 let action = {
                     let mut ctx = ctx!(self);
                     if pointer.phase == crate::backend::PointerPhase::Up {
@@ -785,10 +800,16 @@ impl<B: Backend> Runtime<B> {
             BackendEvent::ImageLoaded { key, size } => {
                 let mut ctx = ctx!(self);
                 self.images.loaded(&mut ctx, key, size);
+                for (id, size) in self.images.take_natural_sizes() {
+                    self.drawings.set_natural_size(&mut ctx, id, size);
+                }
             }
             BackendEvent::ImageFailed { key, message } => {
                 let mut ctx = ctx!(self);
                 self.images.failed(&mut ctx, key, &message);
+                for (id, size) in self.images.take_natural_sizes() {
+                    self.drawings.set_natural_size(&mut ctx, id, size);
+                }
             }
         }
     }
@@ -871,6 +892,9 @@ impl<B: Backend> Runtime<B> {
             }
             if key.key == "Escape" {
                 let mut ctx = ctx!(self);
+                if self.drawings.cancel(&mut ctx) {
+                    return;
+                }
                 if self.modals.request_close_top(&mut ctx) {
                     return;
                 }

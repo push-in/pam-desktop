@@ -33,6 +33,7 @@ pub enum Command {
     LoadImage(ImageKey),
     ReleaseImage(ImageKey),
     Image(NodeId, Option<ImageContent>),
+    Drawing(NodeId, Vec<crate::backend::DrawCommand>),
     ScrollContent(NodeId, Size),
     ScrollConfig(NodeId, ScrollConfig),
     ScrollTo(NodeId, Point, bool),
@@ -207,6 +208,10 @@ impl Backend for RecordingBackend {
 
     fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>) {
         self.commands.push(Command::Image(id, image.copied()));
+    }
+
+    fn set_drawing(&mut self, id: NodeId, commands: &[crate::backend::DrawCommand]) {
+        self.commands.push(Command::Drawing(id, commands.to_vec()));
     }
 
     fn set_scroll_content(&mut self, id: NodeId, size: Size) {

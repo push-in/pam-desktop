@@ -95,6 +95,7 @@ pub enum HostCommand {
     LoadImage { key: crate::backend::ImageKey, source: crate::backend::ImageSource, max_dimension: Option<u32> },
     ReleaseImage(crate::backend::ImageKey),
     SetImage { id: NodeId, content: Option<crate::backend::ImageContent> },
+    SetDrawing { id: NodeId, commands: Vec<crate::backend::DrawCommand> },
 }
 
 pub struct Ctx<'a> {

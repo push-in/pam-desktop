@@ -138,6 +138,9 @@ struct NodeImage {
     /// Opacity of the main image while it fades in.
     fade: f32,
     pushed: Option<ImageContent>,
+    /// A freehand canvas: its image is always aspect-fit and its strokes
+    /// follow the picture's rectangle.
+    sketch: bool,
     dirty: bool,
 }
 
@@ -152,11 +155,13 @@ pub struct Images {
     pool: WorkerPool,
     /// Sources that failed before any request was made.
     rejected: Vec<(ImageKey, String)>,
+    /// Sketch nodes whose picture changed size since the last drain.
+    natural_sizes: Vec<(NodeId, Option<Size>)>,
     dirty: bool,
 }
 
 fn is_image(kind: NodeKind) -> bool {
-    matches!(kind, NodeKind::Image | NodeKind::ImageBackground)
+    matches!(kind, NodeKind::Image | NodeKind::ImageBackground | NodeKind::DrawingCanvas)
 }
 
 fn fit(props: Props<'_>) -> ImageFit {
@@ -279,6 +284,7 @@ impl Images {
             next_key: 1,
             pool: WorkerPool::new("pam-image", 4),
             rejected: Vec::new(),
+            natural_sizes: Vec::new(),
             dirty: false,
         }
     }
@@ -321,7 +327,7 @@ impl Images {
     pub fn on_change(&mut self, ctx: &mut Ctx<'_>, change: Change) {
         match change {
             Change::Created(id, kind) if is_image(kind) => {
-                self.nodes.insert(id, NodeImage { fade: 1.0, dirty: true, ..NodeImage::default() });
+                self.nodes.insert(id, NodeImage { fade: 1.0, dirty: true, sketch: kind == NodeKind::DrawingCanvas, ..NodeImage::default() });
                 self.dirty = true;
             }
             Change::Removed(id, kind) if is_image(kind) => {
@@ -692,6 +698,11 @@ impl Images {
         }
     }
 
+    /// Natural sizes of the pictures under freehand canvases that changed.
+    pub fn take_natural_sizes(&mut self) -> Vec<(NodeId, Option<Size>)> {
+        std::mem::take(&mut self.natural_sizes)
+    }
+
     pub fn on_sample(&mut self, ctx: &mut Ctx<'_>, id: NodeId, value: f32) {
         if let Some(node) = self.nodes.get_mut(&id) {
             node.fade = value.clamp(0.0, 1.0);
@@ -709,13 +720,25 @@ impl Images {
             (None, Some(key), _) | (None, None, Some(key)) => (Some(key), 1.0),
             (None, None, None) => (None, 1.0),
         };
+        let sketch = node.sketch;
         let content = key.and_then(|key| {
             let scene_node = ctx.scene.node(id)?;
             let props = scene_node.props();
+            if sketch {
+                // Strokes are normalised to the aspect-fit rectangle of the whole view.
+                return Some(ImageContent { key, fit: ImageFit::Contain, tint: None, overlay: None, insets: Insets::ZERO, opacity });
+            }
             let [left, top, right, bottom] = scene_node.decoration.border.widths;
             Some(ImageContent { key, fit: fit(props), tint: props.color(PropKey::TintColor), overlay: None, insets: Insets::new(left, top, right, bottom), opacity })
         });
         if content != node.pushed {
+            if sketch {
+                let natural = key.and_then(|key| match self.entries.get(&key).map(|entry| &entry.state) {
+                    Some(EntryState::Ready(size)) => Some(*size),
+                    _ => None,
+                });
+                self.natural_sizes.push((id, natural));
+            }
             ctx.commands.push(HostCommand::SetImage { id, content });
             if let Some(node) = self.nodes.get_mut(&id) {
                 node.pushed = content;

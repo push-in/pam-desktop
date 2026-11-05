@@ -262,6 +262,25 @@ pub enum ImageFit {
     Repeat,
 }
 
+/// One primitive of a drawing surface, in the view's logical coordinates.
+/// Commands paint in order, each over the previous ones, anti-aliased.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DrawCommand {
+    /// A filled rectangle; `radius` rounds every corner with a circular arc.
+    Rect { rect: Rect, radius: f32, color: Color },
+    Circle { center: Point, radius: f32, color: Color },
+    /// A segment with round caps. A zero width is one device pixel.
+    Line { from: Point, to: Point, width: f32, color: Color },
+    /// A polyline with round caps and joins; a single point is a dot.
+    /// `erase` clears what the current group holds instead of painting.
+    Stroke { points: Vec<Point>, width: f32, color: Color, erase: bool },
+    /// Opens an offscreen group clipped to `clip`: erasing strokes only
+    /// reach what the group holds, never what is under the view.
+    PushGroup { clip: Rect },
+    /// Composites the group opened by `PushGroup`.
+    PopGroup,
+}
+
 /// An image painted inside a box, above its background and below its text.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ImageContent {
@@ -396,6 +415,9 @@ pub trait Backend {
     /// Drops a decoded image no view shows any more.
     fn release_image(&mut self, key: ImageKey);
     fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>);
+    /// Replaces what a view draws above its image and below its children.
+    /// The view is clipped to its bounds; an empty list draws nothing.
+    fn set_drawing(&mut self, id: NodeId, commands: &[DrawCommand]);
 
     // ---- scrolling -----------------------------------------------------
 
