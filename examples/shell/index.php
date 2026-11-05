@@ -110,6 +110,8 @@ final class Shell extends Component
                 MenuItem::separator(),
                 MenuItem::make('Maximize', Window::maximize(...)),
                 MenuItem::make('Restore', Window::restore(...)),
+                MenuItem::make('Show progress', fn () => Window::progress(0.4), 'CmdOrCtrl+Shift+P'),
+                MenuItem::make('Clear progress', fn () => Window::progress(null)),
                 MenuItem::role(MenuRole::ToggleFullScreen),
             ),
             Menu::make(

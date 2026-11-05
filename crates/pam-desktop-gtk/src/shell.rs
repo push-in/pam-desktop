@@ -346,10 +346,25 @@ pub fn window_command(window: &gtk::ApplicationWindow, host: &PamView, command: 
         WindowCommand::Focus | WindowCommand::Show => window.present(),
         WindowCommand::Hide => window.set_visible(false),
         WindowCommand::Close => window.destroy(),
-        // Wayland gives applications no say on placement, stacking or
-        // taskbar progress; GTK exposes none of them.
-        WindowCommand::Center | WindowCommand::SetAlwaysOnTop(_) | WindowCommand::SetProgress(_) => {}
+        WindowCommand::SetProgress(progress) => launcher_progress(window, *progress),
+        // Wayland gives applications no say on placement or stacking, and
+        // GTK exposes neither.
+        WindowCommand::Center | WindowCommand::SetAlwaysOnTop(_) => {}
     }
+}
+
+/// Progress on the launcher icon, through the entry API that the Ubuntu
+/// Dock, Dash to Dock and the Plasma task manager listen to. It reaches an
+/// installed application, whose desktop entry is named after its id.
+fn launcher_progress(window: &gtk::ApplicationWindow, progress: Option<f32>) {
+    let Some(application) = window.application() else { return };
+    let (Some(connection), Some(id)) = (application.dbus_connection(), application.application_id()) else { return };
+    let properties = glib::VariantDict::new(None);
+    properties.insert("progress", f64::from(progress.unwrap_or(0.0).clamp(0.0, 1.0)));
+    properties.insert("progress-visible", progress.is_some());
+    let entry = format!("application://{id}.desktop");
+    let path = format!("/com/canonical/unity/launcherentry/{}", id.bytes().fold(5381_u32, |hash, byte| hash.wrapping_mul(33) ^ u32::from(byte)));
+    let _ = connection.emit_signal(None, &path, "com.canonical.Unity.LauncherEntry", "Update", Some(&glib::Variant::tuple_from_iter([entry.to_variant(), properties.end()])));
 }
 
 pub fn window_state(window: &gtk::ApplicationWindow) -> WindowState {
