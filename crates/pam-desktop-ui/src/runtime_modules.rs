@@ -93,9 +93,14 @@ impl<B: Backend> Runtime<B> {
             "appearance" => self.appearance_module(method, payload, reply),
             "accessibility" => self.accessibility_module(method, payload, reply),
             "window" => match method {
-                // Excluding a window from capture is a per-platform call; no
-                // backend offers it yet, so it reports as unsupported.
-                "secure" | "isSecure" => reply.map(&WireMap::new().with("enabled", false).with("supported", false)),
+                "secure" => {
+                    let wanted = request_map(payload).ok().and_then(|request| request.boolean("enabled")).unwrap_or(true);
+                    // Supported where the system can keep windows out of captures.
+                    let supported = self.backend.set_content_protection(wanted);
+                    self.secure = (wanted && supported, supported);
+                    reply.map(&WireMap::new().with("enabled", self.secure.0).with("supported", supported));
+                }
+                "isSecure" => reply.map(&WireMap::new().with("enabled", self.secure.0).with("supported", self.secure.1)),
                 other => reply.failure(format!("Unknown window method {other}")),
             },
             "view-ref" => self.view_ref_module(method, payload, reply),
@@ -246,7 +251,7 @@ impl<B: Backend> Runtime<B> {
             .with("height", metrics.size.height)
             .with("density", metrics.scale)
             .with("appearance", if metrics.dark { 2_i64 } else { 1_i64 })
-            .with("appState", if self.active { 1_i64 } else { 2_i64 })
+            .with("appState", i64::from(self.app_state()))
             .with("safeAreaTop", 0.0_f64)
             .with("safeAreaRight", 0.0_f64)
             .with("safeAreaBottom", 0.0_f64)
@@ -380,7 +385,11 @@ impl<B: Backend> Runtime<B> {
                 Some(_) => reply.failure("Announcement text is invalid"),
                 None => reply.failure("Announcement text is required"),
             },
-            "status" => reply.map(&WireMap::new().with("enabled", self.backend.screen_reader_active()).with("touchExploration", false)),
+            "status" => {
+                // Desktop screen readers explore with the keyboard and the pointer alike.
+                let enabled = self.backend.screen_reader_active();
+                reply.map(&WireMap::new().with("enabled", enabled).with("touchExploration", enabled));
+            }
             "textScale" => reply.map(&self.text_scale_snapshot()),
             "setTextScale" => {
                 let Some(multiplier) = request.number("multiplier") else { return reply.failure("Text scale multiplier is required") };

@@ -573,6 +573,12 @@ pub trait Backend {
     fn announce(&mut self, _message: &str, _assertive: bool) -> bool {
         false
     }
+    /// Keeps every window of the application, current and future, out of
+    /// screenshots and screen recordings (or stops doing so). Answers
+    /// whether the system enforces it.
+    fn set_content_protection(&mut self, _enabled: bool) -> bool {
+        false
+    }
     /// Whether a screen reader is running.
     fn screen_reader_active(&self) -> bool {
         false

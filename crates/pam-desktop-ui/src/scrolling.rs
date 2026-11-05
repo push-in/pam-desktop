@@ -64,6 +64,8 @@ struct Scroll {
 #[derive(Debug, Default)]
 struct Refresh {
     indicator: Option<NodeId>,
+    /// The disc behind the spinner, when the host asks for a background.
+    backdrop: Option<NodeId>,
     /// The user asked for a refresh PHP has not acknowledged yet.
     requested: bool,
     sync: bool,
@@ -764,6 +766,8 @@ impl Scrolling {
         // The tint, else the first of the refresh colours, else a neutral grey.
         let first_color = props.text_or_empty(PropKey::RefreshColors).split(',').next().and_then(|color| color.trim().parse::<i64>().ok());
         let color = props.integer(PropKey::TintColor).or(first_color).unwrap_or(0xFF8E_8E93);
+        let background = props.integer(PropKey::RefreshProgressBackgroundColor);
+        let large = props.integer(PropKey::RefreshIndicatorSize) == Some(2);
         let Some(refresh) = self.refreshes.get_mut(&id) else { return };
         refresh.sync = false;
         if refreshing {
@@ -771,25 +775,45 @@ impl Scrolling {
             ctx.timers.cancel(Timer::RefreshFallback(id));
         }
         let shown = refreshing || refresh.requested;
-        match (shown, refresh.indicator) {
-            (true, existing) => {
-                let size = 28.0;
-                let indicator_frame = Rect::new(frame.x + (frame.width - size) / 2.0, frame.y + 12.0 + offset, size, size);
-                let indicator = existing.unwrap_or_else(|| {
-                    let mut spinner = PropMap::new();
-                    spinner.insert(PropKey::ProgressColor, PropValue::Integer(color));
-                    spinner.insert(PropKey::PointerEvents, PropValue::Integer(2));
-                    ctx.scene.add_synthetic(id, NodeKind::ActivityIndicator, spinner, indicator_frame, 0, None)
-                });
-                ctx.scene.set_synthetic_frame(indicator, indicator_frame);
-                refresh.indicator = Some(indicator);
+        if !shown {
+            for node in [refresh.indicator.take(), refresh.backdrop.take()].into_iter().flatten() {
+                ctx.scene.remove_synthetic(node);
             }
-            (false, Some(indicator)) => {
-                ctx.scene.remove_synthetic(indicator);
-                refresh.indicator = None;
-            }
-            (false, None) => {}
+            return;
         }
+        let size = if large { 36.0 } else { 28.0 };
+        let padding = if background.is_some() { 6.0 } else { 0.0 };
+        let disc = Rect::new(frame.x + (frame.width - size) / 2.0 - padding, frame.y + 12.0 + offset, size + padding * 2.0, size + padding * 2.0);
+        match (background, refresh.backdrop) {
+            (Some(background), existing) => {
+                let backdrop = existing.unwrap_or_else(|| {
+                    let mut props = PropMap::new();
+                    props.insert(PropKey::PointerEvents, PropValue::Integer(2));
+                    // A hairline keeps a disc of the list's own colour visible.
+                    props.insert(PropKey::BorderWidth, PropValue::Float(1.0));
+                    props.insert(PropKey::BorderColor, PropValue::Integer(0x1F00_0000));
+                    ctx.scene.add_synthetic(id, NodeKind::View, props, disc, 0, None)
+                });
+                ctx.scene.set_prop(backdrop, PropKey::BackgroundColor, Some(PropValue::Integer(background)));
+                ctx.scene.set_prop(backdrop, PropKey::BorderRadius, Some(PropValue::Float(f64::from(disc.width / 2.0))));
+                ctx.scene.set_synthetic_frame(backdrop, disc);
+                refresh.backdrop = Some(backdrop);
+            }
+            (None, Some(backdrop)) => {
+                ctx.scene.remove_synthetic(backdrop);
+                refresh.backdrop = None;
+            }
+            (None, None) => {}
+        }
+        let indicator_frame = Rect::new(disc.x + padding, disc.y + padding, size, size);
+        let indicator = refresh.indicator.unwrap_or_else(|| {
+            let mut spinner = PropMap::new();
+            spinner.insert(PropKey::PointerEvents, PropValue::Integer(2));
+            ctx.scene.add_synthetic(id, NodeKind::ActivityIndicator, spinner, indicator_frame, 1, None)
+        });
+        ctx.scene.set_prop(indicator, PropKey::ProgressColor, Some(PropValue::Integer(color)));
+        ctx.scene.set_synthetic_frame(indicator, indicator_frame);
+        refresh.indicator = Some(indicator);
     }
 
     /// F5 or Ctrl/Cmd+R refreshes the visible refresh host: desktops have no
@@ -803,7 +827,7 @@ impl Scrolling {
         }
         let target = self.refreshes.keys().copied().find(|id| {
             ctx.scene.is_effectively_visible(*id)
-                && ctx.scene.node(*id).is_some_and(|node| node.handles(PropKey::OnRefresh) && node.props().flag_or(PropKey::Enabled, true))
+                && ctx.scene.node(*id).is_some_and(|node| node.handles(PropKey::OnRefresh) && node.props().flag_or(PropKey::Enabled, true) && node.props().flag_or(PropKey::RefreshEnabled, true))
         });
         let Some(id) = target else { return false };
         let Some(refresh) = self.refreshes.get_mut(&id) else { return false };

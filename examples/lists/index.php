@@ -8,6 +8,7 @@ use Pam\Desktop\Attributes\State;
 use Pam\Desktop\Component;
 use Pam\Desktop\PropKey;
 use Pam\Desktop\Style;
+use Pam\Desktop\System\Timers;
 use Pam\Desktop\UI\Button;
 use Pam\Desktop\UI\Column;
 use Pam\Desktop\UI\Row;
@@ -36,13 +37,19 @@ final class Lists extends Component
     #[State]
     public float $target = 0.0;
 
+    #[State]
+    public bool $refreshing = false;
+
+    #[State]
+    public int $refreshed = 0;
+
     public function render(): Column
     {
         $label = new Style(fontSize: 13, textColor: 0xFF6B7280);
 
         return Column::make(
             Text::make('Lists')->style(new Style(fontSize: 26, fontWeight: 700, textColor: 0xFF111827)),
-            Text::make(sprintf('%d rows · offset %d · end reached %d×', self::ROWS, (int) $this->offset, $this->endReached))->style($label),
+            Text::make(sprintf('%d rows · offset %d · end reached %d× · refreshed %d× (F5)', self::ROWS, (int) $this->offset, $this->endReached, $this->refreshed))->style($label),
             Row::make(
                 Button::make('Top')->onPress(function (): void {
                     $this->target = 0.0;
@@ -84,6 +91,18 @@ final class Lists extends Component
                 })
                 ->onEndReached(function (): void {
                     $this->endReached++;
+                })
+                // F5 or Ctrl+R refreshes: desktops have no pull gesture.
+                ->refreshing($this->refreshing)
+                ->refreshColors(0xFF2563EB)
+                ->refreshProgressBackgroundColor(0xFFFFFFFF)
+                ->refreshIndicatorSize(\Pam\Desktop\RefreshIndicatorSize::Large)
+                ->onRefresh(function (): void {
+                    $this->refreshing = true;
+                    Timers::after(1500, function (): void {
+                        $this->refreshing = false;
+                        $this->refreshed++;
+                    });
                 })
                 ->style(new Style(flexGrow: 1, borderRadius: 14, backgroundColor: 0xFFFFFFFF, borderWidth: 1, borderColor: 0xFFE5E7EB, overflow: \Pam\Desktop\Overflow::Hidden)),
         )->style(new Style(padding: 24, gap: 12, flexGrow: 1, backgroundColor: 0xFFF3F4F6));

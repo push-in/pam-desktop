@@ -247,7 +247,14 @@ impl<B: Backend> Runtime<B> {
             }
             other => return reply.failure(format!("Unknown window command {other}")),
         };
+        // A hidden window puts the application in the background.
+        match command {
+            WindowCommand::Hide => self.hidden = true,
+            WindowCommand::Show | WindowCommand::Focus => self.hidden = false,
+            _ => {}
+        }
         self.backend.window_command(MAIN_WINDOW, &command);
+        self.report_app_state();
         reply.done();
     }
 
@@ -289,23 +296,32 @@ impl<B: Backend> Runtime<B> {
 
     /// A secondary click: opens the node's context menu, if it has one.
     pub(crate) fn open_context_menu(&mut self, window: crate::backend::WindowId, position: Point) {
-        let Some(hit) = self.scene.hit_test(position) else { return };
-        // The nearest node at or above the click that declares a menu.
-        let mut current = hit;
+        if let Some(hit) = self.scene.hit_test(position) {
+            self.open_context_menu_of(window, hit, Some(position));
+        }
+    }
+
+    /// Opens the menu declared by `from` or its nearest ancestor, at
+    /// `position` or else in the middle of the element. Answers whether a
+    /// menu opened.
+    pub(crate) fn open_context_menu_of(&mut self, window: crate::backend::WindowId, from: NodeId, position: Option<Point>) -> bool {
+        let mut current = from;
         let target = loop {
-            let Some(node) = self.scene.node(current) else { return };
+            let Some(node) = self.scene.node(current) else { return false };
             if node.props().bytes(PropKey::ContextMenuItems).is_some() {
                 break current;
             }
             if node.parent == 0 {
-                return;
+                return false;
             }
             current = node.parent;
         };
-        let Some(menu) = self.scene.node(target).and_then(|node| node.props().bytes(PropKey::ContextMenuItems)).and_then(context_menu) else { return };
-        if menu.is_empty() {
-            return;
-        }
+        let Some(node) = self.scene.node(target) else { return false };
+        let Some(menu) = node.props().bytes(PropKey::ContextMenuItems).and_then(context_menu).filter(|menu| !menu.is_empty()) else { return false };
+        let position = position.unwrap_or_else(|| {
+            let origin = self.scene.window_origin(target);
+            Point::new(origin.x + node.frame.width / 2.0, origin.y + node.frame.height / 2.0)
+        });
         let inbox = std::sync::Arc::clone(&self.inbox);
         self.backend.popup_menu(
             window,
@@ -317,6 +333,7 @@ impl<B: Backend> Runtime<B> {
                 }
             }),
         );
+        true
     }
 
     pub(crate) fn context_menu_chosen(&mut self, node: NodeId, id: &str) {

@@ -284,6 +284,14 @@ pub struct Runtime<B: Backend> {
     pub(crate) build_number: String,
     /// Whether the main window has keyboard focus (the app is "active").
     pub(crate) active: bool,
+    /// The main window is minimized.
+    pub(crate) concealed: bool,
+    /// The main window was hidden by the application (it lives in the tray).
+    pub(crate) hidden: bool,
+    /// The application state last reported to PHP (1 active, 2 inactive, 3 background).
+    reported_app_state: u8,
+    /// Capture protection: (in force, supported by the system).
+    pub(crate) secure: (bool, bool),
     /// Events for PHP produced while handling the current work.
     pub(crate) outbox: Vec<OutEvent>,
     pub(crate) commands: Vec<HostCommand>,
@@ -436,6 +444,10 @@ impl<B: Backend> Runtime<B> {
             app_version: config.app_version,
             build_number: config.build_number,
             active: true,
+            concealed: false,
+            hidden: false,
+            reported_app_state: 1,
+            secure: (false, false),
             outbox: Vec::new(),
             commands: Vec::new(),
             started: Instant::now(),
@@ -979,14 +991,19 @@ impl<B: Backend> Runtime<B> {
             }
             BackendEvent::WindowStateChanged { window, state } => {
                 if window == MAIN_WINDOW {
+                    self.concealed = state.minimized;
+                    self.report_app_state();
                     self.window_state_changed(state);
                 }
             }
             BackendEvent::WindowFocusChanged { window, focused } => {
                 if window == MAIN_WINDOW {
                     self.active = focused;
-                    let state = if focused { b"1" } else { b"2" };
-                    self.send_event(0, event_kind::APP_STATE, state);
+                    if focused {
+                        self.concealed = false;
+                        self.hidden = false;
+                    }
+                    self.report_app_state();
                 }
             }
             BackendEvent::AppearanceChanged { dark } => {
@@ -1299,6 +1316,26 @@ impl<B: Backend> Runtime<B> {
         }
     }
 
+    /// 1 active (focused), 2 inactive (visible, not focused), 3 background
+    /// (minimized or hidden).
+    pub(crate) fn app_state(&self) -> u8 {
+        if self.concealed || self.hidden {
+            3
+        } else if self.active {
+            1
+        } else {
+            2
+        }
+    }
+
+    /// Tells PHP when the application state changed.
+    pub(crate) fn report_app_state(&mut self) {
+        let state = self.app_state();
+        if std::mem::replace(&mut self.reported_app_state, state) != state {
+            self.send_event(0, event_kind::APP_STATE, &[b'0' + state]);
+        }
+    }
+
     fn handle_key(&mut self, key: &KeyEvent) {
         if key.window != MAIN_WINDOW && self.windows.root_of(key.window).is_none() {
             return;
@@ -1326,6 +1363,13 @@ impl<B: Backend> Runtime<B> {
             }
             if let Some(id) = self.shell.shortcut_for(&key.key, key.modifiers) {
                 return self.shell.emit("shortcut", &id, "{}");
+            }
+            // The menu key and Shift+F10 open the menu of the focused element.
+            if (key.key == "ContextMenu" || (key.key == "F10" && key.modifiers.shift))
+                && let Some(focused) = self.interaction.focused()
+                && self.open_context_menu_of(key.window, focused, None)
+            {
+                return;
             }
             {
                 let mut ctx = ctx!(self);
