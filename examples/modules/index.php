@@ -14,6 +14,7 @@ use Pam\Desktop\System\Alert;
 use Pam\Desktop\System\AlertButton;
 use Pam\Desktop\System\Clipboard;
 use Pam\Desktop\System\DeviceInfo;
+use Pam\Desktop\System\Share;
 use Pam\Desktop\System\Timers;
 use Pam\Desktop\UI\Button;
 use Pam\Desktop\UI\Column;
@@ -42,6 +43,9 @@ final class Modules extends Component
 
     #[State]
     public string $device = 'Loading device…';
+
+    #[State]
+    public string $share = 'Not shared yet';
 
     #[State]
     public bool $dark = false;
@@ -77,6 +81,8 @@ final class Modules extends Component
             Text::make($this->answer)->style($value),
             Text::make('Clipboard')->style($label),
             Text::make($this->clipboard === '' ? '—' : $this->clipboard)->style($value),
+            Text::make('Share')->style($label),
+            Text::make($this->share)->style($value),
             Row::make(
                 Button::make('Ask')->onPress(function (): void {
                     Alert::choose(
@@ -94,6 +100,19 @@ final class Modules extends Component
                             $this->clipboard = (string) $text;
                         });
                     });
+                })->style(new Style(flexGrow: 1)),
+                // The share sheet of macOS and Windows; Linux has none and says so.
+                Button::make('Share')->onPress(function (): void {
+                    Share::text(
+                        "Timer at {$this->seconds} s",
+                        'PAM Desktop',
+                        function (): void {
+                            $this->share = 'Share sheet opened';
+                        },
+                        function (string $message): void {
+                            $this->share = $message;
+                        },
+                    );
                 })->style(new Style(flexGrow: 1)),
                 Button::make($this->dark ? 'Light' : 'Dark')->onPress(function (): void {
                     $this->dark = !$this->dark;
