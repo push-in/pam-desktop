@@ -210,7 +210,7 @@ fn decode_hex<const N: usize>(value: &str, label: &str) -> Result<[u8; N], Strin
         _ => None,
     };
     let mut decoded = [0_u8; N];
-    for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let (Some(high), Some(low)) = (nibble(pair[0]), nibble(pair[1])) else {
             return Err(format!("The {label} is not lowercase hexadecimal."));
         };

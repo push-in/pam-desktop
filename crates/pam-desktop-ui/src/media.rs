@@ -465,12 +465,11 @@ impl Media {
                     }
                 });
                 // A file that is not the one the application expects is not kept.
-                if let (Ok((path, _)), false) = (&result, checksum.is_empty()) {
-                    if file_sha256(path).as_deref() != Some(checksum.as_str()) {
+                if let (Ok((path, _)), false) = (&result, checksum.is_empty())
+                    && file_sha256(path).as_deref() != Some(checksum.as_str()) {
                         let _ = std::fs::remove_file(path);
                         result = Err(String::from("Media checksum verification failed."));
                     }
-                }
                 if let Ok((path, _)) = &result {
                     if pin {
                         let _ = std::fs::write(path.with_extension("pin"), b"");

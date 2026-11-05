@@ -34,11 +34,10 @@ impl TextLayouts {
             Change::Removed(id, _) => {
                 self.listeners.remove(&id);
             }
-            Change::Updated(id, _) | Change::Frame(id) => {
-                if self.listeners.contains_key(&id) {
+            Change::Updated(id, _) | Change::Frame(id)
+                if self.listeners.contains_key(&id) => {
                     self.dirty = true;
                 }
-            }
             _ => {}
         }
     }

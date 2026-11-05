@@ -289,10 +289,13 @@ fn parse_step(text: &str) -> Option<Step> {
     }
 }
 
+/// What a motion program declares: its id, its iterations and its tracks.
+type ParsedProgram = (i64, i64, Vec<(u32, Track, Vec<Step>)>);
+
 /// `pam-motion 1 id=<int> iterations=<int>` followed by
 /// `<phase> <property> <step> <step> …` lines. Any malformed line rejects
 /// the whole program.
-fn parse_program(text: &str) -> Option<(i64, i64, Vec<(u32, Track, Vec<Step>)>)> {
+fn parse_program(text: &str) -> Option<ParsedProgram> {
     let mut lines = text.lines();
     let header = lines.next()?;
     let mut tokens = header.split(' ');

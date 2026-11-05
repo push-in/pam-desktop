@@ -41,11 +41,10 @@ fn tagged(scene: &Scene, route: NodeId) -> Vec<(String, NodeId)> {
     let mut stack = vec![route];
     while let Some(current) = stack.pop() {
         let Some(node) = scene.node(current) else { continue };
-        if let Some(tag) = node.props().text(PropKey::SharedTransitionTag).filter(|tag| !tag.is_empty()) {
-            if matches!(node.kind, NodeKind::Image | NodeKind::ImageBackground) {
+        if let Some(tag) = node.props().text(PropKey::SharedTransitionTag).filter(|tag| !tag.is_empty())
+            && matches!(node.kind, NodeKind::Image | NodeKind::ImageBackground) {
                 found.push((tag.to_owned(), current));
             }
-        }
         stack.extend(node.children.iter().rev());
     }
     found

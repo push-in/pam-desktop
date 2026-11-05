@@ -4938,7 +4938,8 @@ mod tests {
         let card = vec![f(PropKey::Width, 248.0), i(PropKey::Overflow, 1)];
         let map = vec![f(PropKey::WidthPercent, 100.0), f(PropKey::AspectRatio, 248.0 / 140.0)];
         let footer = vec![f(PropKey::Height, 56.0)];
-        let parents: Vec<(&str, Vec<(PropKey, PropValue)>, Vec<(PropKey, PropValue)>)> = vec![
+        type Props = Vec<(PropKey, PropValue)>;
+        let parents: Vec<(&str, Props, Props)> = vec![
             ("stretch column", vec![], vec![]),
             ("start column", vec![i(PropKey::AlignItems, 1)], vec![]),
             ("row", vec![i(PropKey::FlexDirection, 2)], vec![]),

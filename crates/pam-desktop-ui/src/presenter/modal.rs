@@ -77,7 +77,7 @@ fn snap_points(bytes: Option<&[u8]>) -> Vec<f32> {
     let Some(bytes) = bytes.filter(|bytes| bytes.len() >= 2) else { return vec![0.5, 0.9] };
     let count = usize::from(u16::from_le_bytes([bytes[0], bytes[1]])).min(16);
     let snaps: Vec<f32> = bytes[2..]
-        .chunks_exact(8)
+        .as_chunks::<8>().0.iter()
         .take(count)
         .map(|chunk| f64::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7]]) as f32)
         .filter(|snap| snap.is_finite() && *snap > 0.0 && *snap <= 1.0)

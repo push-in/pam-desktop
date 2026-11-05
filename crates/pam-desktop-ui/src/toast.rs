@@ -118,7 +118,7 @@ impl Toasts {
 
         let left = padding_x + accent_width;
         let chrome = left + icon_space + padding_x;
-        let mut width = (window_width - 32.0).min(340.0).max(120.0);
+        let mut width = (window_width - 32.0).clamp(120.0, 340.0);
         if request.boolean("fitContent") == Some(true) {
             let content = builder.text_width(title, &title_style).max(if message.is_empty() { 0.0 } else { builder.text_width(message, &message_style) });
             width = (content.ceil() + chrome).min((window_width - 32.0).max(120.0));

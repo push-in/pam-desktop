@@ -123,7 +123,7 @@ mod macos {
             .unwrap_or_default()
     }
 
-    /// `pmset -g batt`: ` -InternalBattery-0 (id=…)	85%; charging; 1:02 remaining`.
+    /// `pmset -g batt`: ` -InternalBattery-0 (id=…) 85%; charging; 1:02 remaining`.
     pub(super) fn parse_battery(text: &str) -> (f64, bool) {
         for line in text.lines().filter(|line| line.contains("InternalBattery")) {
             let Some(end) = line.find('%') else { continue };

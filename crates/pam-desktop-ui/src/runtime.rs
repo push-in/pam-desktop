@@ -1191,7 +1191,6 @@ impl<B: Backend> Runtime<B> {
                 }
             }
             Action::Chrome { command } => {
-                drop(ctx);
                 match self.error_overlay.run(command) {
                     crate::error_overlay::Effect::Reload => return self.reload(),
                     crate::error_overlay::Effect::Copy(text) => self.backend.clipboard_set_text(&text),
@@ -1200,7 +1199,6 @@ impl<B: Backend> Runtime<B> {
                 self.refresh_error_overlay();
             }
             Action::NavigationBack { .. } => {
-                drop(ctx);
                 self.go_back();
             }
         }

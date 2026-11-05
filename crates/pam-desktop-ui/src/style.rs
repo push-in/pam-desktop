@@ -424,8 +424,8 @@ fn parse_gradient(layer: &serde_json::Value) -> Option<Gradient> {
         }
         let from = positions[start].unwrap_or(0.0);
         let to = positions[end].unwrap_or(1.0);
-        for step in index..end {
-            positions[step] = Some(from + (to - from) * (step - start) as f32 / (end - start) as f32);
+        for (step, position) in positions.iter_mut().enumerate().take(end).skip(index) {
+            *position = Some(from + (to - from) * (step - start) as f32 / (end - start) as f32);
         }
         index = end;
     }

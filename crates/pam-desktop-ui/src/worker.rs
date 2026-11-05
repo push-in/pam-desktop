@@ -143,14 +143,10 @@ impl Worker {
 
         thread::Builder::new().name("pam-worker-read".into()).spawn(move || {
             let mut reader = BufReader::with_capacity(64 * 1024, stdout);
-            loop {
-                match read_message(&mut reader) {
-                    Ok(Some((kind, payload))) => {
-                        if let Some(message) = decode(kind, payload) {
-                            sink(message);
-                        }
-                    }
-                    Ok(None) | Err(_) => break,
+            // Until the worker closes its output or sends something unreadable.
+            while let Ok(Some((kind, payload))) = read_message(&mut reader) {
+                if let Some(message) = decode(kind, payload) {
+                    sink(message);
                 }
             }
             sink(WorkerMessage::Exited(None));

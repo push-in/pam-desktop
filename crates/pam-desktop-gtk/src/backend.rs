@@ -55,6 +55,9 @@ struct WindowEntry {
     overlays: Vec<NodeId>,
 }
 
+/// A button press: device, button, position and time.
+type Press = (gdk::Device, i32, f64, f64, u32);
+
 pub struct GtkBackend {
     application: gtk::Application,
     events: Rc<EventQueue>,
@@ -68,7 +71,7 @@ pub struct GtkBackend {
     wake_fired: Rc<Cell<bool>>,
     shell: Shell,
     /// The last button press, needed to start a window move.
-    last_press: Rc<RefCell<Option<(gdk::Device, i32, f64, f64, u32)>>>,
+    last_press: Rc<RefCell<Option<Press>>>,
     #[cfg(feature = "tray")]
     tray: Option<crate::tray::TrayHost>,
     #[cfg(feature = "hotkeys")]

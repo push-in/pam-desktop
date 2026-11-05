@@ -357,6 +357,9 @@ impl Backend for RecordingBackend {
     }
 }
 
+/// A node of a test tree: id, parent, kind, properties and frame.
+pub type TreeNode<'a> = (NodeId, NodeId, pam_desktop_wire::NodeKind, &'a [(pam_desktop_wire::PropKey, pam_desktop_wire::PropValue)], Rect);
+
 /// Everything a controller needs besides a backend, for tests that drive
 /// controllers directly: build a tree, hand out a [`Ctx`], inspect what the
 /// controller emitted and asked the host to do.
@@ -374,7 +377,7 @@ impl Harness {
     /// A scene holding `nodes`: `(id, parent, kind, properties, frame)` in
     /// creation order; the first one is the root.
     #[must_use]
-    pub fn with_tree(nodes: &[(NodeId, NodeId, pam_desktop_wire::NodeKind, &[(pam_desktop_wire::PropKey, pam_desktop_wire::PropValue)], Rect)]) -> Self {
+    pub fn with_tree(nodes: &[TreeNode<'_>]) -> Self {
         use pam_desktop_wire::{Layout, Mutation, Node};
         let mut mutations = Vec::new();
         if let Some((root, ..)) = nodes.first() {
