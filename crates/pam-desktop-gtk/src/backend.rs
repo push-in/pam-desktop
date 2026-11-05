@@ -33,6 +33,8 @@ struct ViewEntry {
     class: ViewClass,
     /// The native text control of input classes.
     input: Option<InputHost>,
+    /// An offset asked for before the content was laid out that far.
+    pending_scroll: Rc<Cell<Option<Point>>>,
     /// The player of a media view.
     media: Option<crate::media::MediaHost>,
     #[cfg(feature = "webview")]
@@ -444,9 +446,33 @@ impl Backend for GtkBackend {
             focus.connect_leave(move |_| events.push(BackendEvent::FocusChanged { id, focused: false }));
             container.add_controller(focus);
         }
+        let pending_scroll: Rc<Cell<Option<Point>>> = Rc::new(Cell::new(None));
         let widget: gtk::Widget = match class {
             ViewClass::Scroll => {
                 let scrolled = gtk::ScrolledWindow::new();
+                // An offset beyond what is laid out lands when the content grows.
+                for adjustment in [scrolled.hadjustment(), scrolled.vadjustment()] {
+                    let (pending, weak) = (Rc::clone(&pending_scroll), scrolled.downgrade());
+                    adjustment.connect_changed(move |_| {
+                        if pending.get().is_none() {
+                            return;
+                        }
+                        // GTK is still configuring the adjustment here and
+                        // would overwrite a value set now: apply it right after.
+                        let (pending, weak) = (Rc::clone(&pending), weak.clone());
+                        glib::idle_add_local_full(glib::Priority::HIGH, move || {
+                            let (Some(target), Some(scrolled)) = (pending.get(), weak.upgrade()) else { return glib::ControlFlow::Break };
+                            let reach = |adjustment: &gtk::Adjustment| (adjustment.upper() - adjustment.page_size()).max(0.0);
+                            let (horizontal, vertical) = (scrolled.hadjustment(), scrolled.vadjustment());
+                            if f64::from(target.x) <= reach(&horizontal) + 0.5 && f64::from(target.y) <= reach(&vertical) + 0.5 {
+                                pending.set(None);
+                                horizontal.set_value(f64::from(target.x));
+                                vertical.set_value(f64::from(target.y));
+                            }
+                            glib::ControlFlow::Break
+                        });
+                    });
+                }
                 // The engine sizes the viewport; content never dictates it.
                 scrolled.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
                 scrolled.set_propagate_natural_width(false);
@@ -484,6 +510,7 @@ impl Backend for GtkBackend {
                 container,
                 class,
                 input,
+                pending_scroll,
                 media,
                 #[cfg(feature = "webview")]
                 web,
@@ -783,11 +810,16 @@ impl Backend for GtkBackend {
     }
 
     fn scroll_to(&mut self, id: NodeId, offset: Point, _animated: bool) {
-        let Some(scrolled) = self.views.get(&id).and_then(|entry| entry.widget.downcast_ref::<gtk::ScrolledWindow>()) else {
-            return;
-        };
-        scrolled.hadjustment().set_value(f64::from(offset.x));
-        scrolled.vadjustment().set_value(f64::from(offset.y));
+        let Some(entry) = self.views.get(&id) else { return };
+        let Some(scrolled) = entry.widget.downcast_ref::<gtk::ScrolledWindow>() else { return };
+        let reach = |adjustment: &gtk::Adjustment| (adjustment.upper() - adjustment.page_size()).max(0.0);
+        let (horizontal, vertical) = (scrolled.hadjustment(), scrolled.vadjustment());
+        // Content that is not laid out yet cannot be scrolled to: remember
+        // the offset and apply it when the adjustments grow.
+        let reachable = f64::from(offset.x) <= reach(&horizontal) + 0.5 && f64::from(offset.y) <= reach(&vertical) + 0.5;
+        entry.pending_scroll.set((!reachable).then_some(offset));
+        horizontal.set_value(f64::from(offset.x));
+        vertical.set_value(f64::from(offset.y));
     }
 
     fn measure_text(&mut self, block: &TextBlock, max_width: f32) -> TextMetrics {

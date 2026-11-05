@@ -581,6 +581,8 @@ pub trait Backend {
     fn set_scroll_content(&mut self, id: NodeId, size: Size);
     fn set_scroll_config(&mut self, id: NodeId, config: &ScrollConfig);
     /// Moves the viewport of a scroll view to `offset` (content coordinates).
+    /// An offset beyond the content laid out so far must land as soon as
+    /// the content reaches it (a list opened at its end).
     fn scroll_to(&mut self, id: NodeId, offset: Point, animated: bool);
 
     // ---- text ----------------------------------------------------------

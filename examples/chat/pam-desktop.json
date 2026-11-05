@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.chat",
+    "name": "PAM Desktop inverted list",
+    "entry": "index.php",
+    "window": {
+        "width": 440,
+        "height": 600
+    }
+}

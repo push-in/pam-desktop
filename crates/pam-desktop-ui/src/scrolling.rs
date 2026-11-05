@@ -24,6 +24,11 @@ const STRING_ROW_HEIGHT: f32 = 48.0;
 #[derive(Debug, Default)]
 struct Scroll {
     horizontal: bool,
+    /// `ListInverted`: row 0 rests at the visual end. `offset` stays
+    /// logical (0 = row 0 at that edge); the native offset is mirrored.
+    inverted: bool,
+    /// The native offset matches the logical one at least once.
+    inverted_placed: bool,
     offset: Point,
     /// Largest reachable offset on the scroll axis at the last sync.
     max: f32,
@@ -95,12 +100,27 @@ fn nearest_scroll(scene: &Scene, id: NodeId) -> Option<NodeId> {
     None
 }
 
+fn node_children_of(scene: &Scene, id: NodeId) -> Vec<NodeId> {
+    scene.node(id).map(|node| node.children.clone()).unwrap_or_default()
+}
+
 /// Viewport length, content length and largest offset on the scroll axis.
 fn extents(scene: &Scene, id: NodeId, horizontal: bool) -> (f32, f32, f32) {
     let Some(node) = scene.node(id) else { return (0.0, 0.0, 0.0) };
     let content = scene.content_size(id);
     let (viewport, content) = if horizontal { (node.frame.width, content.width) } else { (node.frame.height, content.height) };
     (viewport, content, (content - viewport).max(0.0))
+}
+
+/// Whether a list shows its rows from the visual end.
+fn is_inverted(scene: &Scene, id: NodeId) -> bool {
+    scene.node(id).is_some_and(|node| node.props().flag_or(PropKey::ListInverted, false))
+}
+
+/// Converts between the logical offset of an inverted list and the native
+/// one (the mapping is its own inverse).
+fn mirrored(scene: &Scene, id: NodeId, horizontal: bool, offset: f32) -> f32 {
+    if is_inverted(scene, id) { (extents(scene, id, horizontal).2 - offset).max(0.0) } else { offset }
 }
 
 impl Scrolling {
@@ -230,7 +250,7 @@ impl Scrolling {
     }
 
     fn scroll_to(ctx: &mut Ctx<'_>, id: NodeId, horizontal: bool, target: f32, animated: bool, duration: u32, easing: Easing) {
-        let current = axis(ctx.scene.scroll_offset(id), horizontal);
+        let current = mirrored(ctx.scene, id, horizontal, axis(ctx.scene.scroll_offset(id), horizontal));
         if animated && !ctx.reduced_motion && (current - target).abs() > 0.5 {
             ctx.animator.start(Owner::Scroll(id), current, target, Curve::timing(duration.max(1), easing), 0, ctx.now_ms);
         } else {
@@ -240,6 +260,7 @@ impl Scrolling {
     }
 
     fn jump(ctx: &mut Ctx<'_>, id: NodeId, horizontal: bool, target: f32) {
+        let target = mirrored(ctx.scene, id, horizontal, target);
         let offset = if horizontal { Point::new(target, 0.0) } else { Point::new(0.0, target) };
         ctx.commands.push(HostCommand::ScrollTo { id, offset, animated: false });
     }
@@ -272,10 +293,18 @@ impl Scrolling {
         let glide_ms = props.integer_or(PropKey::ScrollOffsetAnimationMs, 0).clamp(0, 2000) as u32;
         let active_section = props.text_or_empty(PropKey::ListActiveSection).to_owned();
         let frame = node.frame;
+        let inverted = props.flag_or(PropKey::ListInverted, false) && kind != NodeKind::Scroll;
+        let rows: Vec<NodeId> = if inverted { node.children.clone() } else { Vec::new() };
 
         let Some(scroll) = self.scrolls.get_mut(&id) else { return };
         scroll.sync = false;
         scroll.horizontal = horizontal;
+        if scroll.inverted && !inverted {
+            for row in &node_children_of(ctx.scene, id) {
+                ctx.scene.set_layer_override(*row, LayerSlot::Presenter, LayerOverride::NONE);
+            }
+        }
+        scroll.inverted = inverted;
         if std::mem::take(&mut scroll.items_changed) && matches!(kind, NodeKind::List | NodeKind::SectionList) {
             Self::build_string_rows(ctx, id, scroll);
             scroll.end_armed = true;
@@ -290,8 +319,30 @@ impl Scrolling {
         scroll.max = max;
         let mut target: Option<(f32, bool, u32, Easing)> = None;
 
+        if inverted {
+            // Rows are laid out from the start by the engine and shown from
+            // the end: each one moves to its mirrored place.
+            let extent = content.max(viewport);
+            for row in rows {
+                let Some(child) = ctx.scene.node(row) else { continue };
+                let shift = if horizontal {
+                    Affine::translation(extent - 2.0 * (child.frame.x - frame.x) - child.frame.width, 0.0)
+                } else {
+                    Affine::translation(0.0, extent - 2.0 * (child.frame.y - frame.y) - child.frame.height)
+                };
+                ctx.scene.set_layer_override(row, LayerSlot::Presenter, LayerOverride { transform: shift, ..LayerOverride::NONE });
+            }
+            // The logical offset holds while content is added at the far end.
+            if (max != previous_max || !scroll.inverted_placed) && scroll.gesture.is_none() {
+                scroll.inverted_placed = true;
+                Self::jump(ctx, id, horizontal, offset_before.min(max));
+            }
+        }
+
         // 1. Where the view stays when its content grows or shrinks.
-        if kind == NodeKind::Scroll {
+        if inverted {
+            // Anchoring and following the end are not for inverted lists.
+        } else if kind == NodeKind::Scroll {
             let distance = (previous_max - offset_before).max(0.0);
             if anchor_to_end && !scroll.anchored_to_end {
                 scroll.anchored_to_end = true;
@@ -489,6 +540,13 @@ impl Scrolling {
     pub fn on_scroll(&mut self, ctx: &mut Ctx<'_>, id: NodeId, offset: Point) {
         ctx.scene.set_scroll_offset(id, offset);
         let Some(scroll) = self.scrolls.get_mut(&id) else { return };
+        // An inverted list reports and reasons in logical offsets.
+        let offset = if scroll.inverted {
+            let logical = (scroll.max - axis(offset, scroll.horizontal)).max(0.0);
+            if scroll.horizontal { Point::new(logical, 0.0) } else { Point::new(0.0, logical) }
+        } else {
+            offset
+        };
         let position = axis(offset, scroll.horizontal);
         let previous = axis(scroll.offset, scroll.horizontal);
         scroll.offset = offset;
