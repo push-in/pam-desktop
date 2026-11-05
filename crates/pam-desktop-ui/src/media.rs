@@ -393,6 +393,7 @@ impl Media {
         let streaming = props.flag_or(PropKey::MediaCacheStreaming, false) || props.flag_or(PropKey::MediaCacheDownloadWhilePlaying, false);
         let max_bytes = u64::try_from(props.integer_or(PropKey::MediaCacheMaxBytes, 0)).unwrap_or(0);
         let pin = props.flag_or(PropKey::MediaCachePinOffline, false);
+        let checksum = props.text_or_empty(PropKey::MediaCacheChecksum).to_ascii_lowercase();
         let Some(player) = self.players.get_mut(&id) else { return };
         let source = player.source.clone();
         let lower = source.to_ascii_lowercase();
@@ -458,11 +459,18 @@ impl Media {
             let (ticket, cancel, inbox, root) = (player.ticket, Arc::clone(&player.cancel), Arc::clone(&self.environment.inbox), self.environment.cache_root.clone());
             let wants_progress = ctx.scene.node(id).is_some_and(|node| node.handles(PropKey::OnMediaCacheProgress));
             self.pool.run(move || {
-                let result = download(client.as_ref(), &root, &source, &file, limit, &cancel, |loaded, total| {
+                let mut result = download(client.as_ref(), &root, &source, &file, limit, &cancel, |loaded, total| {
                     if wants_progress {
                         inbox.post(Inbound::Media(MediaInbound::Progress { node: id, ticket, loaded, total }));
                     }
                 });
+                // A file that is not the one the application expects is not kept.
+                if let (Ok((path, _)), false) = (&result, checksum.is_empty()) {
+                    if file_sha256(path).as_deref() != Some(checksum.as_str()) {
+                        let _ = std::fs::remove_file(path);
+                        result = Err(String::from("Media checksum verification failed."));
+                    }
+                }
                 if let Ok((path, _)) = &result {
                     if pin {
                         let _ = std::fs::write(path.with_extension("pin"), b"");
@@ -825,6 +833,23 @@ impl Media {
     }
 }
 
+/// Lower-case hexadecimal SHA-256 of a file, read in chunks.
+fn file_sha256(path: &Path) -> Option<String> {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer).ok()?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Some(crate::modules::support::hex(&hasher.finalize()))
+}
+
 /// Downloads `url` to `target` through a temporary file in `root`.
 fn download(client: &dyn HttpClient, root: &Path, url: &str, target: &Path, limit: u64, cancel: &AtomicBool, mut progress: impl FnMut(u64, u64)) -> Result<(PathBuf, u64), String> {
     let request = HttpRequest {
@@ -882,6 +907,15 @@ mod tests {
         assert_eq!(format_clock(3725.0), "1:02:05");
         assert_eq!(format_clock(f64::NAN), "0:00");
         assert_eq!(format_clock(-3.0), "0:00");
+    }
+
+    #[test]
+    fn files_are_hashed_in_chunks() {
+        let path = std::env::temp_dir().join(format!("pam-media-hash-{}", uuid()));
+        std::fs::write(&path, b"abc").unwrap_or_default();
+        assert_eq!(file_sha256(&path).as_deref(), Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(file_sha256(&path), None);
     }
 
     #[test]
