@@ -53,6 +53,7 @@ final class Media extends Component
                 ->loop($this->loop)
                 ->currentTime($this->seek)
                 ->fit(ImageFit::Contain)
+                ->nativeRef('clip')
                 ->onReady(function (MediaReadyEvent $event): void {
                     $this->status = sprintf('Ready · %d×%d · %.1f s', $event->naturalWidth, $event->naturalHeight, $event->duration);
                 })
@@ -67,6 +68,13 @@ final class Media extends Component
                     $this->status = 'Error: '.$message;
                 })
                 ->style(new Style(height: 380, borderRadius: 18, backgroundColor: 0xFF12161C)),
+            // Bound to the player by the host: no PHP runs while it plays.
+            Row::make(
+                Text::make('0:00')->mediaClock('clip', \Pam\Desktop\MediaClockFormat::ElapsedAndDuration)->style(new Style(fontSize: 13, fontWeight: 600, textColor: 0xFF12161C, width: 96)),
+                Column::make(
+                    Column::make()->mediaProgress('clip')->style(new Style(height: 6, borderRadius: 3, backgroundColor: 0xFF2F6BFF)),
+                )->style(new Style(flexGrow: 1, height: 6, borderRadius: 3, backgroundColor: 0xFFE4E7EC, overflow: \Pam\Desktop\Overflow::Hidden)),
+            )->style(new Style(gap: 12, alignItems: \Pam\Desktop\Align::Center)),
             Row::make(
                 Text::make($this->status)->style(new Style(fontSize: 13, textColor: 0xFF5B6472, flexGrow: 1)),
                 Text::make($this->clock)->style($label),

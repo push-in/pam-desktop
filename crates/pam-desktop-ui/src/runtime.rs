@@ -1048,6 +1048,7 @@ impl<B: Backend> Runtime<B> {
                 Owner::Control(id) => self.controls.on_sample(&mut ctx, id, sample.value, sample.finished),
                 Owner::Scroll(id) => self.scrolling.on_sample(&mut ctx, id, sample.value),
                 Owner::Image(id) => self.images.on_sample(&mut ctx, id, sample.value),
+                Owner::MediaBar(id) => self.media.on_bar_sample(&mut ctx, id, sample.value),
                 Owner::Gesture(id) => self.gestures.on_sample(&mut ctx, id, sample.value, sample.finished),
                 Owner::GesturePose(id) => self.gestures.on_pose_sample(&mut ctx, id, sample.value, sample.finished),
                 Owner::Toast => toast_changed |= self.toasts.on_sample(&mut ctx, sample.value, sample.finished),

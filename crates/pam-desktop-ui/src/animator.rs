@@ -301,6 +301,8 @@ pub enum Owner {
     Image(NodeId),
     /// The toast sliding in or out.
     Toast,
+    /// A bar bound to a media player gliding to the new position.
+    MediaBar(NodeId),
     /// A drag target settling on a snap point.
     Gesture(NodeId),
     /// The content of a native-transform detector returning to rest.
@@ -320,6 +322,7 @@ impl Owner {
             | Self::Control(id)
             | Self::Scroll(id)
             | Self::Gesture(id)
+            | Self::MediaBar(id)
             | Self::GesturePose(id)
             | Self::Image(id) => *id,
             // Host chrome belongs to no node of the application.

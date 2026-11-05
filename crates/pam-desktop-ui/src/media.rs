@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use pam_desktop_wire::{NodeKind, PropKey};
+use pam_desktop_wire::{NodeKind, PropKey, PropValue};
 
 use crate::animator::Timer;
 use crate::backend::{ImageFit, MediaEvent, MediaSource, MediaState, NodeId};
@@ -22,7 +22,9 @@ use crate::modules::support::{copy_bounded, sha256_hex, uuid, CopyError, WorkerP
 use crate::modules::files;
 use crate::props::Props;
 use crate::runtime::{Inbound, Inbox};
-use crate::scene::{Change, IdMap};
+use crate::animator::{Curve, Easing, MotionProperty, Owner};
+use crate::props::PropMap;
+use crate::scene::{Change, IdMap, StyleLayer};
 use crate::wiremap::WireMap;
 
 const PROGRESS_INTERVAL_MS: u64 = 250;
@@ -171,9 +173,32 @@ impl Player {
     }
 }
 
+/// A node that shows the position of a player named by `NativeRef`: a text
+/// label formatted as a clock, or a bar scaled from its leading edge.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Binding {
+    clock: Option<(String, i64)>,
+    progress: Option<String>,
+    /// The fraction the bar shows, to animate small steps.
+    fraction: f32,
+}
+
+/// The text of a bound clock for a position and a duration in seconds.
+fn clock_text(format: i64, position: f64, duration: f64) -> String {
+    let remaining = (duration - position - 1e-6).ceil().max(0.0);
+    match format {
+        2 => format_clock(remaining),
+        3 => format!("{} / {}", format_clock(position), format_clock(duration)),
+        4 => format_clock(duration),
+        5 => format!("{}", remaining as u64),
+        _ => format_clock(position),
+    }
+}
+
 pub struct Media {
     environment: MediaEnvironment,
     players: IdMap<Player>,
+    bindings: IdMap<Binding>,
     pool: WorkerPool,
     next_ticket: u64,
     /// Positions of sources released by visible autoplay, most recent last.
@@ -205,6 +230,7 @@ impl Media {
         Self {
             environment,
             players: IdMap::default(),
+            bindings: IdMap::default(),
             pool: WorkerPool::new("pam-media-cache", 2),
             next_ticket: 1,
             remembered: Vec::new(),
@@ -231,6 +257,26 @@ impl Media {
                     ctx.timers.cancel(Timer::MediaProgress(id));
                     ctx.timers.cancel(Timer::MediaRelease(id));
                 }
+            }
+            Change::Removed(id, _) => {
+                self.bindings.remove(&id);
+            }
+            Change::Created(id, _) | Change::Updated(id, PropKey::MediaClock | PropKey::MediaClockFormat | PropKey::MediaProgress) => {
+                let Some(node) = ctx.scene.node(id) else { return };
+                let props = node.props();
+                let clock = props.text(PropKey::MediaClock).filter(|reference| !reference.is_empty()).map(|reference| (reference.to_owned(), props.integer_or(PropKey::MediaClockFormat, 1)));
+                let progress = props.text(PropKey::MediaProgress).filter(|reference| !reference.is_empty()).map(str::to_owned);
+                if clock.is_none() && progress.is_none() {
+                    if self.bindings.remove(&id).is_some() {
+                        // The node owns its text and scale again.
+                        ctx.scene.set_style_overlay(id, StyleLayer::Presenter, None);
+                        let mut values = ctx.scene.motion(id);
+                        values.set(MotionProperty::ScaleX, None);
+                        ctx.scene.set_motion(id, values);
+                    }
+                    return;
+                }
+                self.bindings.insert(id, Binding { clock, progress, fraction: 0.0 });
             }
             Change::Updated(id, _) | Change::Frame(id) => {
                 if let Some(player) = self.players.get_mut(&id) {
@@ -593,6 +639,7 @@ impl Media {
                     player.position = current;
                     let payload = WireMap::new().with("currentTime", current).with("duration", duration).encode();
                     ctx.emit_if(id, PropKey::OnMediaProgress, event_kind::MEDIA_PROGRESS, payload);
+                    self.update_bindings(ctx, id, current, duration);
                 }
                 self.arm_progress(ctx, id);
             }
@@ -626,6 +673,52 @@ impl Media {
         }
     }
 
+    /// Refreshes the clocks and bars bound to the player `id`.
+    fn update_bindings(&mut self, ctx: &mut Ctx<'_>, id: NodeId, position: f64, duration: f64) {
+        if self.bindings.is_empty() {
+            return;
+        }
+        let Some(name) = ctx.scene.node(id).and_then(|node| node.props().text(PropKey::NativeRef)).map(str::to_owned) else { return };
+        let (position, duration) = (if position.is_finite() { position.max(0.0) } else { 0.0 }, if duration.is_finite() { duration.max(0.0) } else { 0.0 });
+        let fraction = if duration > 0.0 { (position / duration).clamp(0.0, 1.0) as f32 } else { 0.0 };
+        for (node, binding) in &mut self.bindings {
+            if let Some((_, format)) = binding.clock.as_ref().filter(|(reference, _)| *reference == name) {
+                let text = clock_text(*format, position, duration);
+                if ctx.scene.plain_text(*node).as_deref() != Some(text.as_str()) {
+                    let mut overlay = PropMap::new();
+                    overlay.insert(PropKey::Text, PropValue::String(text));
+                    ctx.scene.set_style_overlay(*node, StyleLayer::Presenter, Some(overlay));
+                }
+            }
+            if binding.progress.as_deref() == Some(name.as_str()) {
+                let rtl = ctx.scene.node(*node).is_some_and(|node| node.props().integer(PropKey::LayoutDirection) == Some(2));
+                // The bar grows from its leading edge.
+                let mut overlay = PropMap::new();
+                overlay.insert(PropKey::TransformOriginX, PropValue::Float(if rtl { 100.0 } else { 0.0 }));
+                ctx.scene.set_style_overlay(*node, StyleLayer::Interaction, Some(overlay));
+                let step = fraction - binding.fraction;
+                if step > 0.0 && step < 0.25 && !ctx.reduced_motion {
+                    ctx.animator.start(Owner::MediaBar(*node), binding.fraction, fraction, Curve::timing(PROGRESS_INTERVAL_MS as u32, Easing::Linear), 0, ctx.now_ms);
+                } else {
+                    ctx.animator.cancel(Owner::MediaBar(*node), ctx.now_ms);
+                    let mut values = ctx.scene.motion(*node);
+                    values.set(MotionProperty::ScaleX, Some(fraction));
+                    ctx.scene.set_motion(*node, values);
+                }
+                binding.fraction = fraction;
+            }
+        }
+    }
+
+    /// A frame of a bound progress bar gliding to its new fraction.
+    pub fn on_bar_sample(&mut self, ctx: &mut Ctx<'_>, node: NodeId, value: f32) {
+        if self.bindings.contains_key(&node) {
+            let mut values = ctx.scene.motion(node);
+            values.set(MotionProperty::ScaleX, Some(value.clamp(0.0, 1.0)));
+            ctx.scene.set_motion(node, values);
+        }
+    }
+
     fn arm_progress(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
         if let Some(player) = self.players.get_mut(&id) {
             if !player.progress_armed {
@@ -642,8 +735,10 @@ impl Media {
         match event {
             MediaEvent::Ready { width, height, duration } => {
                 player.ready = Some(duration);
+                let position = player.seek.1;
                 let payload = WireMap::new().with("naturalWidth", i64::from(width)).with("naturalHeight", i64::from(height)).with("duration", duration).encode();
                 ctx.emit_if(id, PropKey::OnMediaReady, event_kind::MEDIA_READY, payload);
+                self.update_bindings(ctx, id, position, duration);
             }
             MediaEvent::Rendered => {
                 if !player.rendered {
@@ -661,6 +756,7 @@ impl Media {
                         player.position = 0.0;
                         let payload = WireMap::new().with("currentTime", duration).with("duration", duration).encode();
                         ctx.emit_if(id, PropKey::OnMediaProgress, event_kind::MEDIA_PROGRESS, payload);
+                        self.update_bindings(ctx, id, duration, duration);
                     }
                     ctx.emit_if(id, PropKey::OnMediaEnd, event_kind::MEDIA_END, Vec::new());
                     self.push(ctx, id);
