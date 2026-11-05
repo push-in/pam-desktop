@@ -1,0 +1,21 @@
+[package]
+name = "pam-desktop-host"
+description = "The PAM Desktop native host: runs PHP applications with real platform widgets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "pam-desktop"
+path = "src/main.rs"
+
+[dependencies]
+pam-desktop-ui.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+pam-desktop-gtk.workspace = true
+
+[lints]
+workspace = true

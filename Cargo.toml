@@ -2,6 +2,9 @@
 members = [
     "crates/pam-desktop-wire",
     "crates/pam-desktop-engine",
+    "crates/pam-desktop-ui",
+    "crates/pam-desktop-gtk",
+    "crates/pam-desktop-host",
 ]
 exclude = ["legacy"]
 resolver = "2"
@@ -9,7 +12,7 @@ resolver = "2"
 [workspace.package]
 version = "2.0.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.92"
 authors = ["Pushin <engineering@pushin.com.br>"]
 license = "MIT"
 repository = "https://github.com/push-in/pam-desktop"
@@ -17,6 +20,9 @@ repository = "https://github.com/push-in/pam-desktop"
 [workspace.dependencies]
 pam-desktop-wire = { path = "crates/pam-desktop-wire" }
 pam-desktop-engine = { path = "crates/pam-desktop-engine" }
+pam-desktop-ui = { path = "crates/pam-desktop-ui" }
+pam-desktop-gtk = { path = "crates/pam-desktop-gtk" }
+serde_json = "1"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

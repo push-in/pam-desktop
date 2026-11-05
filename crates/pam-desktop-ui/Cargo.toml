@@ -1,0 +1,16 @@
+[package]
+name = "pam-desktop-ui"
+description = "Platform-neutral render core of PAM Desktop: scene, styles, input and the backend contract."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+pam-desktop-wire.workspace = true
+pam-desktop-engine.workspace = true
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

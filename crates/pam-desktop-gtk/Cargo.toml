@@ -1,0 +1,15 @@
+[package]
+name = "pam-desktop-gtk"
+description = "GTK 4 backend of PAM Desktop (Linux)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+pam-desktop-ui.workspace = true
+gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
+
+[lints]
+workspace = true

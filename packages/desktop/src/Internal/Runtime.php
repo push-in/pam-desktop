@@ -1027,6 +1027,26 @@ final class Runtime
         }
     }
 
+    /**
+     * The desktop host applies frames asynchronously; when it rejects one it
+     * asks for a complete tree instead of the next patch.
+     *
+     * @internal
+     */
+    public static function resynchronize(): void
+    {
+        if (self::$root === null) {
+            return;
+        }
+        self::$encoder?->forceFullFrame();
+        self::$lastRoot = null;
+        self::$lastThemed = null;
+        self::$pending = true;
+        if (!self::$deferred) {
+            self::flush();
+        }
+    }
+
     public static function lastFrame(): ?string
     {
         return self::$lastFrame;

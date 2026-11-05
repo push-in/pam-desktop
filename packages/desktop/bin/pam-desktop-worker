@@ -1,0 +1,26 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * Worker bootstrap started by the native PAM Desktop host:
+ *
+ *     php pam-desktop-worker /path/to/app/index.php
+ *
+ * stdin/stdout carry the binary host channel; the application's own autoloader
+ * is loaded by its entry script.
+ */
+
+if ($argc < 2 || !is_file($argv[1])) {
+    fwrite(STDERR, "usage: pam-desktop-worker <entry.php>\n");
+    exit(64);
+}
+
+require_once __DIR__.'/../src/Host/Channel.php';
+require_once __DIR__.'/../src/Host/Worker.php';
+
+$entry = (string) realpath($argv[1]);
+chdir(dirname($entry));
+
+exit(Pam\Desktop\Host\Worker::run($entry));
