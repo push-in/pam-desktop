@@ -5,6 +5,7 @@
 //! reply is tagged with the worker generation that asked, so results of a
 //! worker that was hot-reloaded away are dropped.
 
+pub mod fetch;
 pub mod storage;
 pub mod system;
 pub mod timers;
@@ -17,21 +18,44 @@ use std::thread;
 use crate::runtime::{Inbound, Inbox, MODULE_FAILURE, MODULE_SUCCESS};
 use crate::wiremap::WireMap;
 
+enum Sink {
+    /// The runtime's queue: the result reaches the PHP worker.
+    Inbox { inbox: Arc<Inbox>, generation: u64, request: u64 },
+    /// A plain channel (tests of modules without a runtime).
+    Channel(Sender<ModuleResult>),
+}
+
+/// What a module answered: the status (`MODULE_SUCCESS` or `MODULE_FAILURE`)
+/// and the payload bytes.
+pub type ModuleResult = (u8, Vec<u8>);
+
 /// The pending answer of one module request.
 pub struct Reply {
-    inbox: Arc<Inbox>,
-    generation: u64,
-    request: u64,
+    sink: Sink,
 }
 
 impl Reply {
     #[must_use]
     pub fn new(inbox: Arc<Inbox>, generation: u64, request: u64) -> Self {
-        Self { inbox, generation, request }
+        Self { sink: Sink::Inbox { inbox, generation, request } }
+    }
+
+    /// A reply whose answer can be read from the returned receiver.
+    #[must_use]
+    pub fn channel() -> (Self, mpsc::Receiver<ModuleResult>) {
+        let (sender, receiver) = mpsc::channel();
+        (Self { sink: Sink::Channel(sender) }, receiver)
     }
 
     fn send(self, status: u8, payload: Vec<u8>) {
-        self.inbox.post(Inbound::ModuleResult { generation: self.generation, request: self.request, status, payload });
+        match self.sink {
+            Sink::Inbox { inbox, generation, request } => {
+                inbox.post(Inbound::ModuleResult { generation, request, status, payload });
+            }
+            Sink::Channel(sender) => {
+                let _ = sender.send((status, payload));
+            }
+        }
     }
 
     /// Success with a raw payload.

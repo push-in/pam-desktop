@@ -170,6 +170,7 @@ fn run(target: &Path, development: bool) -> ExitCode {
         build_number: manifest_text(&project, "build").unwrap_or_default(),
         launch_url: std::env::var("PAM_DESKTOP_LAUNCH_URL").ok().filter(|url| !url.is_empty()),
         modules: Vec::new(),
+        http_client: None,
     };
 
     #[cfg(target_os = "linux")]

@@ -138,6 +138,8 @@ pub struct RuntimeConfig {
     pub launch_url: Option<String>,
     /// Modules provided by the host binary (network, database, files…).
     pub modules: Vec<(String, Box<dyn crate::modules::Module>)>,
+    /// The HTTP stack of the host binary; without one, network features fail.
+    pub http_client: Option<Arc<dyn crate::modules::fetch::HttpClient>>,
 }
 
 /// Where the application keeps its files.
