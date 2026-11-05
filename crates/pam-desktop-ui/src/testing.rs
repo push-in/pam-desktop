@@ -37,6 +37,8 @@ pub enum Command {
     Drawing(NodeId, Vec<crate::backend::DrawCommand>),
     Media(NodeId, crate::backend::MediaState),
     WebView(NodeId, crate::backend::WebViewState),
+    TextSelection(NodeId, Option<(u32, u32)>),
+    TextDrag(WindowId, NodeId, String),
     ScrollContent(NodeId, Size),
     ScrollConfig(NodeId, ScrollConfig),
     ScrollTo(NodeId, Point, bool),
@@ -223,6 +225,18 @@ impl Backend for RecordingBackend {
 
     fn media_position(&self, _id: NodeId) -> Option<(f64, f64)> {
         None
+    }
+
+    fn text_index_at(&self, _id: NodeId, _point: Point) -> Option<u32> {
+        None
+    }
+
+    fn set_text_selection(&mut self, id: NodeId, range: Option<(u32, u32)>) {
+        self.commands.push(Command::TextSelection(id, range));
+    }
+
+    fn begin_text_drag(&mut self, window: WindowId, source: NodeId, text: &str) {
+        self.commands.push(Command::TextDrag(window, source, text.to_owned()));
     }
 
     fn set_web_view(&mut self, id: NodeId, state: &crate::backend::WebViewState) {

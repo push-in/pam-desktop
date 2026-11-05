@@ -591,6 +591,14 @@ impl Backend for GtkBackend {
         entry.container.set_image(state);
     }
 
+    fn text_index_at(&self, _id: NodeId, _point: Point) -> Option<u32> {
+        None
+    }
+
+    fn set_text_selection(&mut self, _id: NodeId, _range: Option<(u32, u32)>) {}
+
+    fn begin_text_drag(&mut self, _window: WindowId, _source: NodeId, _text: &str) {}
+
     fn set_media(&mut self, id: NodeId, state: &pam_desktop_ui::backend::MediaState) {
         if let Some(media) = self.views.get_mut(&id).and_then(|entry| entry.media.as_mut()) {
             media.apply(state);

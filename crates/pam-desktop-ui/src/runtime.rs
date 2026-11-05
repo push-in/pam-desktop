@@ -834,6 +834,9 @@ impl<B: Backend> Runtime<B> {
                 self.media.on_scroll();
                 self.media.evaluate(&mut ctx);
             }
+            // Gestures, text selection and drag and drop are wired below as
+            // their controllers land.
+            BackendEvent::Wheel { .. } | BackendEvent::Magnify { .. } | BackendEvent::Rotate { .. } | BackendEvent::TextDropped { .. } | BackendEvent::DragFinished { .. } => {}
             BackendEvent::WebView { id, event } => {
                 let mut ctx = ctx!(self);
                 self.web_views.on_event(&mut ctx, id, event);

@@ -135,6 +135,19 @@ pub enum BackendEvent {
     /// The deadline asked with `schedule_wake` passed.
     Wake,
     ScrollChanged { id: NodeId, offset: Point },
+    /// Wheel or two-finger scrolling that no scrolling view consumed, in
+    /// logical units (positive `y` scrolls the content up).
+    Wheel { window: WindowId, position: Point, delta: Point, modifiers: Modifiers },
+    /// A pinch: `scale` is relative to the start of the gesture (1 = none).
+    Magnify { window: WindowId, position: Point, phase: GesturePhase, scale: f32 },
+    /// A two-finger rotation, in radians since the start of the gesture
+    /// (positive is clockwise).
+    Rotate { window: WindowId, position: Point, phase: GesturePhase, radians: f32 },
+    /// Plain text was dropped on a window (from this or another application).
+    TextDropped { window: WindowId, position: Point, text: String },
+    /// The drag started with `begin_text_drag` ended; `dropped` tells
+    /// whether a target accepted it.
+    DragFinished { source: NodeId, dropped: bool },
     Media { id: NodeId, event: MediaEvent },
     WebView { id: NodeId, event: WebViewEvent },
     /// Assistive technology ran an action on a view: `activate` (the default
@@ -445,12 +458,28 @@ pub struct WindowConfig {
     pub size: Size,
     pub min_size: Option<Size>,
     pub resizable: bool,
+    /// The system title bar and borders. Without them the application
+    /// draws its own and moves the window through `begin_window_drag`.
+    pub decorated: bool,
+    /// The window this one belongs to: it stays above it and closes with it.
+    pub parent: Option<WindowId>,
+    /// Blocks input to `parent` while open (a dialog).
+    pub modal: bool,
 }
 
 impl Default for WindowConfig {
     fn default() -> Self {
-        Self { title: String::from("PAM Desktop"), size: Size::new(960.0, 640.0), min_size: None, resizable: true }
+        Self { title: String::from("PAM Desktop"), size: Size::new(960.0, 640.0), min_size: None, resizable: true, decorated: true, parent: None, modal: false }
     }
+}
+
+/// Phase of a continuous trackpad or touch gesture.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GesturePhase {
+    Begin,
+    Update,
+    End,
+    Cancel,
 }
 
 /// Display and accessibility environment of a window.
@@ -523,6 +552,17 @@ pub trait Backend {
     /// Drops a decoded image no view shows any more.
     fn release_image(&mut self, key: ImageKey);
     fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>);
+    /// The UTF-16 offset of the character boundary nearest to `point` (in
+    /// the view's own coordinates) in the text the view shows; `None` when
+    /// it shows no text.
+    fn text_index_at(&self, id: NodeId, point: Point) -> Option<u32>;
+    /// Paints a range of the view's text as selected (UTF-16 offsets,
+    /// `start <= end`, with the platform's selection colors); `None` clears it.
+    fn set_text_selection(&mut self, id: NodeId, range: Option<(u32, u32)>);
+    /// Starts a system drag of plain text from the pointer press being
+    /// handled in `window`, with a snapshot of the `source` view under the
+    /// pointer. Reports `DragFinished` when the drag ends.
+    fn begin_text_drag(&mut self, window: WindowId, source: NodeId, text: &str);
     /// Brings the player of a `Media` view to `state`.
     fn set_media(&mut self, id: NodeId, state: &MediaState);
     /// Current position and duration of a prepared player, in seconds.
