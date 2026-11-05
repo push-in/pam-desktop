@@ -1,5 +1,124 @@
 # Changelog
 
+## 2.0.0 - Unreleased
+
+PAM Desktop 2.0 is a rewrite with a different rendering model. The interface is
+no longer a web page in a Servo web view: applications are written in PHP with
+the reactive component syntax of PAM Native, and a Rust host lays the tree out,
+diffs it and drives real platform views (GTK 4 on Linux, AppKit on macOS,
+Win32 with Direct2D and DirectWrite on Windows). PHP runs in a worker process
+that exchanges binary frames with the host over stdin and stdout.
+
+The PHP component core, the wire protocol and the layout and diff engine
+started as a copy of PAM Native 1.46.34 (see `NOTICE`) and are maintained here
+independently.
+
+### Breaking
+
+Applications built for 1.x do not run on 2.0. The web interface, the Servo
+host, the typed command gateway, capabilities, the protocol 6 manifest declared
+in PHP and the plugin contracts are gone, and there is no compatibility layer.
+The 1.x sources are kept under `legacy/`, `packages/desktop/legacy-src` and
+`packages/desktop/legacy-tests` for reference only. See
+`docs/migrating-from-1.x.md`.
+
+### Rendering and layout
+
+- Native views for every element: no web view in the rendering path.
+- Flexbox layout, absolute positioning, percentages, aspect ratio, grids and
+  wrapping computed by the engine; text measured by the platform's own shaper,
+  so a box is sized by exactly the paragraph that is painted.
+- Tree frames for the first render and patch frames afterwards; the engine
+  turns both into mutation batches and the core pushes only what changed.
+- Backgrounds, per-side borders, per-corner radii, shadows, opacity, transforms,
+  clipping and z-order.
+- Light and dark appearance (system or chosen by the application, persisted)
+  and a text scale applied live.
+
+### Interaction and input
+
+- Press, long press, double tap, hit slop and press retention implemented once
+  in the core, identical on every backend.
+- Hover, pressed and focus state styles, pointer cursors and tooltips.
+- Native text fields and editors with input methods, selection, masks
+  (patterns and currency), secure entry and submit handling.
+- Host-drawn switch and activity indicator.
+- Keyboard focus traversal, key events for the focused element and
+  application shortcuts.
+- Selectable text with drag, double and triple click, copy and select all.
+
+### Lists and scrolling
+
+- Native scroll views with scroll events, programmatic scrolling and sticky
+  headers.
+- Virtualized lists that build rows on demand, with columns, sections,
+  inverted lists, end-reached reports and refresh.
+
+### Animation and gestures
+
+- Implicit transitions, motion presets, keyframes, animation programs
+  (timing, spring, sequence, repeat) and shimmer, all sampled by the host's
+  frame clock.
+- Gesture detectors: tap, pan, swipe and long press with the pointer; pinch
+  and rotation with the trackpad or Control + wheel.
+- Drag contracts with bounds, snap points and driven properties, swipeable
+  rows, and native pan, zoom and rotate transforms.
+- Stack navigation transitions, modal and bottom sheet presentation.
+
+### Images, media, web and canvas
+
+- Images from HTTPS, bundled assets, sandbox files, absolute paths and data
+  URIs, with a disk cache, cache policies, placeholders, tinting and load
+  events.
+- A media player with play intent, seeking, a disk cache, visible autoplay,
+  and clock and progress views bound to the player by the host.
+- An embedded web view with a message bridge, an allowed-host policy and an
+  injected script.
+- A vector canvas and a freehand drawing canvas.
+
+### Desktop shell
+
+- Main window control and state, secondary windows described as elements.
+- Application menu bar with platform roles, context menus and a tray icon.
+- Application and global shortcuts, native file dialogs and notifications.
+- Drag and drop of text between elements and applications, files dropped from
+  the system, window dragging from custom title bars.
+- Clipboard, alerts and toasts.
+
+### Modules
+
+- Key/value storage, a private file sandbox with pickers and downloads, HTTP
+  requests and transfers, SQLite databases, secure storage in the system
+  keychain, timers, device information and links.
+- Capabilities that only exist on phones in PAM Native (location, contacts,
+  sensors, biometrics, SMS and others) are not included; their class names
+  throw a `PluginException` naming the optional package.
+
+### Development experience
+
+- `pam-desktop dev` restarts the PHP worker when sources change and restores
+  `#[State]` values; `pam-desktop run` starts the application for production.
+- An error overlay drawn by the host: a toast for errors in handlers and a
+  full report with source and call stack for fatal ones; in production the
+  application reloads by itself and falls back to a retry screen.
+- One runnable example per feature under `examples/` and `scripts/shot.sh` to
+  capture them on a virtual display.
+
+### Accessibility
+
+- Roles, labels, hints, values, states, live regions and custom actions
+  resolved in the core and mapped to AT-SPI (through GTK), NSAccessibility and
+  UI Automation.
+
+### Platforms
+
+- Linux (GTK 4) is the reference backend and the only one exercised so far.
+- The macOS (AppKit) and Windows (Win32, Direct2D) backends are written
+  against the same `Backend` contract and type-check by cross compilation, but
+  have not been run on real machines yet.
+- Not verified on Linux: the accessibility tree with a real screen reader, and
+  global shortcuts through the Wayland portal (X11 grabs were verified).
+
 ## 1.3.4 - 2026-08-31
 
 - Certify the Linux graphical clean-room with the EGL loader and Mesa software
