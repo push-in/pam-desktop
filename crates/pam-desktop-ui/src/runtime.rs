@@ -112,6 +112,10 @@ impl EventQueue {
     fn pop(&self) -> Option<BackendEvent> {
         self.events.borrow_mut().pop_front()
     }
+
+    fn is_empty(&self) -> bool {
+        self.events.borrow().is_empty()
+    }
 }
 
 thread_local! {
@@ -468,6 +472,23 @@ impl<B: Backend> Runtime<B> {
             return;
         }
         self.draining = true;
+        // Backends report from inside the calls of a pass (a scroll that
+        // lands, a focus that moves): those events get a pass of their own.
+        for _ in 0..8 {
+            self.drain_pass();
+            if self.events.is_empty() {
+                break;
+            }
+        }
+        self.draining = false;
+        if self.finished && !self.quit_requested {
+            self.quit_requested = true;
+            self.worker = None;
+            self.backend.quit();
+        }
+    }
+
+    fn drain_pass(&mut self) {
         loop {
             let mut progressed = false;
             while let Some(event) = self.events.pop() {
@@ -541,12 +562,6 @@ impl<B: Backend> Runtime<B> {
                 let delay = deadline.saturating_sub(self.now_ms()).min(u64::from(u32::MAX)) as u32;
                 self.backend.schedule_wake(delay);
             }
-        }
-        self.draining = false;
-        if self.finished && !self.quit_requested {
-            self.quit_requested = true;
-            self.worker = None;
-            self.backend.quit();
         }
     }
 

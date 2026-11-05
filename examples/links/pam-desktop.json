@@ -1,0 +1,11 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.links",
+    "name": "PAM Desktop links",
+    "entry": "index.php",
+    "urlSchemes": ["pamlinks"],
+    "window": {
+        "width": 560,
+        "height": 420
+    }
+}

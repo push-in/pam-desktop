@@ -1080,10 +1080,9 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
     let flags = if config.single_instance { gio::ApplicationFlags::HANDLES_OPEN } else { gio::ApplicationFlags::NON_UNIQUE };
     let application = gtk::Application::new(Some(application_id), flags);
     if config.single_instance && application.register(gio::Cancellable::NONE).is_ok() && application.is_remote() {
-        match &config.launch_url {
-            Some(url) => application.open(&[gio::File::for_uri(url)], ""),
-            None => application.activate(),
-        }
+        // Running a remote application forwards its arguments and returns.
+        let arguments: Vec<&str> = std::iter::once("pam-desktop").chain(config.launch_url.as_deref()).collect();
+        application.run_with_args(&arguments);
         return ExitCode::SUCCESS;
     }
     let queue: Rc<RefCell<Option<Rc<EventQueue>>>> = Rc::new(RefCell::new(None));
