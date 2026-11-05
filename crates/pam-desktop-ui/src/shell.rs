@@ -330,6 +330,17 @@ pub enum WindowCommand {
     SetProgress(Option<f32>),
 }
 
+/// What the application hands to the share sheet of the system.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ShareRequest {
+    /// Text shared on its own or beside the files; may be empty.
+    pub text: String,
+    /// A title for the sheet, where the system shows one; may be empty.
+    pub title: String,
+    /// Absolute paths of the files to share.
+    pub files: Vec<std::path::PathBuf>,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct WindowState {
     pub maximized: bool,

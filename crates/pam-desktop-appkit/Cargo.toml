@@ -95,6 +95,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSTrackingArea",
     "NSView",
     "NSWindow",
+    "NSSharingService",
     "NSWorkspace",
     "block2",
     "objc2-core-foundation",

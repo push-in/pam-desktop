@@ -103,6 +103,10 @@ impl<B: Backend> Runtime<B> {
         if module == "toast" && method == "show" {
             return self.show_toast(payload, reply);
         }
+        // Sharing files needs the share sheet of the backend.
+        if module == "files" && method == "share" {
+            return self.share_files(payload, reply);
+        }
         let Some(reply) = self.modules.call(module, method, payload, reply) else {
             return;
         };
@@ -231,6 +235,48 @@ impl<B: Backend> Runtime<B> {
         );
     }
 
+    /// `files.share`: files of the sandbox, with an optional text beside them.
+    fn share_files(&mut self, payload: &[u8], reply: Reply) {
+        use crate::modules::files;
+        let map = match request_map(payload) {
+            Ok(map) => map,
+            Err(error) => return reply.failure(error),
+        };
+        let paths: Vec<String> = map
+            .text("paths")
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+        if paths.is_empty() || paths.len() > 50 {
+            return reply.failure("Share between 1 and 50 private files");
+        }
+        let root = files::sandbox_root(&self.directories.data);
+        let mut shared = Vec::with_capacity(paths.len());
+        for path in &paths {
+            match files::resolve(&root, path) {
+                Ok(file) if file.is_file() => shared.push(file),
+                Ok(_) => return reply.failure(format!("{path} is not a file")),
+                Err(error) => return reply.failure(error),
+            }
+        }
+        let request = crate::shell::ShareRequest {
+            text: map.text("text").unwrap_or_default().to_owned(),
+            title: map.text("title").unwrap_or_default().to_owned(),
+            files: shared,
+        };
+        self.share(&request, reply);
+    }
+
+    fn share(&mut self, request: &crate::shell::ShareRequest, reply: Reply) {
+        if request.text.is_empty() && request.files.is_empty() {
+            return reply.failure("Nothing to share");
+        }
+        if self.backend.share(MAIN_WINDOW, request) {
+            reply.done();
+        } else {
+            reply.failure("Sharing is not available on this platform");
+        }
+    }
+
     pub(crate) fn call_typed(&mut self, request: u64, operation: u16, payload: &[u8]) {
         let reply = self.reply(request);
         let map = match request_map(payload) {
@@ -248,7 +294,14 @@ impl<B: Backend> Runtime<B> {
             3 => route(self, "storage", "set", reply),
             4 => self.alert(&map, reply),
             5 => self.show_toast(payload, reply),
-            6 => reply.failure("Sharing is not available on this platform"),
+            6 => {
+                let request = crate::shell::ShareRequest {
+                    text: map.text("text").unwrap_or_default().to_owned(),
+                    title: map.text("title").unwrap_or_default().to_owned(),
+                    files: Vec::new(),
+                };
+                self.share(&request, reply);
+            }
             7 => match map.text("url") {
                 Some(url) => match open_url(url) {
                     Ok(()) => reply.done(),

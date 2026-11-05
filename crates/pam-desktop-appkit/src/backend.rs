@@ -578,6 +578,17 @@ impl Backend for AppKitBackend {
         accessibility::screen_reader_active()
     }
 
+    fn share(&mut self, window: WindowId, request: &pam_desktop_ui::shell::ShareRequest) -> bool {
+        let Some(entry) = self
+            .windows
+            .get(&window)
+            .or_else(|| self.windows.get(&MAIN_WINDOW))
+        else {
+            return false;
+        };
+        shell::share(self.mtm, &entry.host, request)
+    }
+
     fn set_content_protection(&mut self, enabled: bool) -> bool {
         self.content_protected = enabled;
         let sharing = if enabled {

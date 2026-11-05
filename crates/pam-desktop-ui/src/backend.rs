@@ -708,6 +708,12 @@ pub trait Backend {
     fn announce(&mut self, _message: &str, _assertive: bool) -> bool {
         false
     }
+    /// Opens the share sheet of the system for `request`, anchored to
+    /// `window`. Answers whether a sheet opened: `false` on a system
+    /// without one.
+    fn share(&mut self, _window: WindowId, _request: &crate::shell::ShareRequest) -> bool {
+        false
+    }
     /// Keeps every window of the application, current and future, out of
     /// screenshots and screen recordings (or stops doing so). Answers
     /// whether the system enforces it.

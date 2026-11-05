@@ -18,11 +18,11 @@ use objc2_app_kit::{
     NSAppearanceNameDarkAqua, NSApplication, NSCursor, NSEvent, NSEventMask, NSEventModifierFlags,
     NSFloatingWindowLevel, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSMenuItemValidation,
     NSModalResponse, NSModalResponseOK, NSNormalWindowLevel, NSOpenPanel, NSPasteboard,
-    NSPasteboardTypeString, NSSavePanel, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
-    NSView, NSWindow, NSWindowStyleMask, NSWorkspace,
+    NSPasteboardTypeString, NSSavePanel, NSSharingServicePicker, NSStatusBar, NSStatusItem,
+    NSVariableStatusItemLength, NSView, NSWindow, NSWindowStyleMask, NSWorkspace,
     NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
 };
-use objc2_core_foundation::CGSize;
+use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{
     NSArray, NSBundle, NSCopying, NSError, NSNotification, NSOperationQueue, NSProcessInfo, NSURL,
     NSUUID,
@@ -135,6 +135,55 @@ pub fn unwatch_display_options(registration: &Registration) {
     let center = NSWorkspace::sharedWorkspace().notificationCenter();
     // SAFETY: the object is a registration this center returned.
     unsafe { center.removeObserver(AsRef::<AnyObject>::as_ref(&**registration)) };
+}
+
+/// Opens the share picker of the system over `view`, at the pointer when
+/// it is inside the view and in the middle of the view otherwise.
+pub fn share(
+    mtm: MainThreadMarker,
+    view: &NSView,
+    request: &pam_desktop_ui::shell::ShareRequest,
+) -> bool {
+    let text = (!request.text.is_empty()).then(|| ns_string(&request.text));
+    let files: Vec<Retained<NSURL>> = request
+        .files
+        .iter()
+        .map(|file| NSURL::fileURLWithPath(&ns_string(&file.to_string_lossy())))
+        .collect();
+    let mut items: Vec<&AnyObject> = Vec::with_capacity(files.len() + 1);
+    if let Some(text) = &text {
+        items.push(text.as_ref());
+    }
+    items.extend(files.iter().map(|file| -> &AnyObject { file.as_ref() }));
+    if items.is_empty() {
+        return false;
+    }
+    let items = NSArray::from_slice(&items);
+    // SAFETY: strings and file URLs write themselves to a pasteboard,
+    // which is what the picker requires of its items.
+    let picker = unsafe { NSSharingServicePicker::initWithItems(mtm.alloc(), &items) };
+    let bounds = view.bounds();
+    let pointer = view
+        .window()
+        .map(|window| view.convertPoint_fromView(window.mouseLocationOutsideOfEventStream(), None));
+    let inside = |point: &CGPoint| {
+        point.x >= bounds.origin.x
+            && point.y >= bounds.origin.y
+            && point.x <= bounds.origin.x + bounds.size.width
+            && point.y <= bounds.origin.y + bounds.size.height
+    };
+    let anchor = pointer.filter(inside).unwrap_or_else(|| {
+        CGPoint::new(
+            bounds.origin.x + bounds.size.width / 2.0,
+            bounds.origin.y + bounds.size.height / 2.0,
+        )
+    });
+    picker.showRelativeToRect_ofView_preferredEdge(
+        CGRect::new(anchor, CGSize::new(1.0, 1.0)),
+        view,
+        objc2_foundation::NSRectEdge::MinY,
+    );
+    true
 }
 
 pub fn application_name() -> String {
