@@ -301,6 +301,10 @@ pub enum Owner {
     Image(NodeId),
     /// The toast sliding in or out.
     Toast,
+    /// A drag target settling on a snap point.
+    Gesture(NodeId),
+    /// The content of a native-transform detector returning to rest.
+    GesturePose(NodeId),
 }
 
 impl Owner {
@@ -315,6 +319,8 @@ impl Owner {
             | Self::Motion(id, _)
             | Self::Control(id)
             | Self::Scroll(id)
+            | Self::Gesture(id)
+            | Self::GesturePose(id)
             | Self::Image(id) => *id,
             // Host chrome belongs to no node of the application.
             Self::Toast => 0,
@@ -424,6 +430,10 @@ pub enum Timer {
     ErrorRecovery,
     /// The toast on screen has been shown long enough.
     ToastDismiss,
+    /// The pointer was held long enough for a long-press detector.
+    GestureHold,
+    /// The wheel driving a pinch stopped.
+    GestureIdle,
 }
 
 #[derive(Default)]

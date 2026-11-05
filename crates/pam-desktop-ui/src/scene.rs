@@ -948,6 +948,23 @@ impl Scene {
         }
     }
 
+    /// The node named `reference` (its `NativeRef`): inside `scope` first,
+    /// then anywhere.
+    #[must_use]
+    pub fn find_native_ref(&self, scope: NodeId, reference: &str) -> Option<NodeId> {
+        let named = |id: &NodeId| self.nodes.get(id).is_some_and(|node| node.props().text(PropKey::NativeRef) == Some(reference));
+        let mut stack = vec![scope];
+        while let Some(current) = stack.pop() {
+            if named(&current) {
+                return Some(current);
+            }
+            if let Some(node) = self.nodes.get(&current) {
+                stack.extend(node.children.iter().rev());
+            }
+        }
+        self.nodes.keys().copied().find(|id| named(id))
+    }
+
     /// The text a node shows, without styling.
     #[must_use]
     pub fn plain_text(&self, id: NodeId) -> Option<String> {

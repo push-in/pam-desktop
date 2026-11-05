@@ -112,6 +112,74 @@ impl GtkBackend {
         }
     }
 
+    /// Wheel input no scrolling view took, and the touchpad's pinch and
+    /// rotation gestures.
+    fn install_gesture_events(&self, window: WindowId, host: &PamView) {
+        use pam_desktop_ui::backend::GesturePhase;
+        // One notch of a wheel in logical units.
+        const NOTCH: f32 = 100.0;
+        let pointer = Rc::new(Cell::new(Point::ZERO));
+        {
+            let motion = gtk::EventControllerMotion::new();
+            motion.set_propagation_phase(gtk::PropagationPhase::Capture);
+            let pointer = Rc::clone(&pointer);
+            motion.connect_motion(move |_, x, y| pointer.set(Point::new(x as f32, y as f32)));
+            host.add_controller(motion);
+        }
+        for phase in [gtk::PropagationPhase::Capture, gtk::PropagationPhase::Bubble] {
+            let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+            scroll.set_propagation_phase(phase);
+            let (events, pointer) = (Rc::clone(&self.events), Rc::clone(&pointer));
+            scroll.connect_scroll(move |controller, dx, dy| {
+                let modifiers = GtkBackend::modifiers(controller.current_event_state());
+                // Control + wheel zooms and never scrolls: it is taken before
+                // any scrolling view sees it. Plain wheel input is only
+                // reported when it bubbled up unused.
+                if (phase == gtk::PropagationPhase::Capture) != modifiers.control {
+                    return glib::Propagation::Proceed;
+                }
+                let scale = if controller.unit() == gdk::ScrollUnit::Wheel { NOTCH } else { 1.0 };
+                let delta = Point::new(dx as f32 * scale, dy as f32 * scale);
+                events.push(BackendEvent::Wheel { window, position: pointer.get(), delta, modifiers });
+                if modifiers.control { glib::Propagation::Stop } else { glib::Propagation::Proceed }
+            });
+            host.add_controller(scroll);
+        }
+        let center = |gesture: &gtk::Gesture, fallback: Point| gesture.bounding_box_center().map_or(fallback, |(x, y)| Point::new(x as f32, y as f32));
+        {
+            let zoom = gtk::GestureZoom::new();
+            let (events, tracked) = (Rc::clone(&self.events), Rc::clone(&pointer));
+            zoom.connect_begin(move |gesture, _| {
+                events.push(BackendEvent::Magnify { window, position: center(gesture.upcast_ref(), tracked.get()), phase: GesturePhase::Begin, scale: 1.0 });
+            });
+            let (events, tracked) = (Rc::clone(&self.events), Rc::clone(&pointer));
+            zoom.connect_scale_changed(move |gesture, scale| {
+                events.push(BackendEvent::Magnify { window, position: center(gesture.upcast_ref(), tracked.get()), phase: GesturePhase::Update, scale: scale as f32 });
+            });
+            let (events, tracked) = (Rc::clone(&self.events), Rc::clone(&pointer));
+            zoom.connect_end(move |gesture, _| {
+                events.push(BackendEvent::Magnify { window, position: center(gesture.upcast_ref(), tracked.get()), phase: GesturePhase::End, scale: 1.0 });
+            });
+            host.add_controller(zoom);
+        }
+        {
+            let rotate = gtk::GestureRotate::new();
+            let (events, tracked) = (Rc::clone(&self.events), Rc::clone(&pointer));
+            rotate.connect_begin(move |gesture, _| {
+                events.push(BackendEvent::Rotate { window, position: center(gesture.upcast_ref(), tracked.get()), phase: GesturePhase::Begin, radians: 0.0 });
+            });
+            let (events, tracked) = (Rc::clone(&self.events), Rc::clone(&pointer));
+            rotate.connect_angle_changed(move |gesture, _, delta| {
+                events.push(BackendEvent::Rotate { window, position: center(gesture.upcast_ref(), tracked.get()), phase: GesturePhase::Update, radians: delta as f32 });
+            });
+            let (events, tracked) = (Rc::clone(&self.events), Rc::clone(&pointer));
+            rotate.connect_end(move |gesture, _| {
+                events.push(BackendEvent::Rotate { window, position: center(gesture.upcast_ref(), tracked.get()), phase: GesturePhase::End, radians: 0.0 });
+            });
+            host.add_controller(rotate);
+        }
+    }
+
     /// Keys nobody consumed (bubble phase), as W3C `key` values.
     fn install_key_events(&self, window: WindowId, native: &gtk::ApplicationWindow) {
         let controller = gtk::EventControllerKey::new();
@@ -294,6 +362,7 @@ impl Backend for GtkBackend {
         }
         native.set_child(Some(&host));
         self.install_pointer_events(window, &host);
+        self.install_gesture_events(window, &host);
         self.install_key_events(window, &native);
         shell::accept_file_drops(&host, window, &self.events);
         shell::accept_text_drops(&host, window, &self.events);

@@ -259,6 +259,8 @@ pub struct Runtime<B: Backend> {
     drag_drop: crate::dragdrop::DragDrop,
     pub(crate) error_overlay: crate::error_overlay::ErrorOverlay,
     pub(crate) toasts: crate::toast::Toasts,
+    observers: crate::observers::Observers,
+    gestures: crate::gestures::Gestures,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
     pub(crate) shell: Shell,
@@ -407,6 +409,8 @@ impl<B: Backend> Runtime<B> {
             drag_drop: crate::dragdrop::DragDrop::default(),
             error_overlay: crate::error_overlay::ErrorOverlay::new(config.development, &crate::modules::system::locale_tag()),
             toasts: crate::toast::Toasts::default(),
+            observers: crate::observers::Observers::default(),
+            gestures: crate::gestures::Gestures::default(),
             modules,
             directories,
             shell: Shell::default(),
@@ -473,6 +477,7 @@ impl<B: Backend> Runtime<B> {
         {
             let mut ctx = ctx!(self);
             self.interaction.flush(&mut ctx);
+            self.gestures.flush(&mut ctx);
             self.scrolling.flush(&mut ctx);
         }
         self.scene.flush(&mut self.backend, MAIN_WINDOW);
@@ -551,6 +556,8 @@ impl<B: Backend> Runtime<B> {
                 self.media.on_change(&mut ctx, change);
                 self.web_views.on_change(&mut ctx, change);
                 self.selection.on_change(&mut ctx, change);
+                self.observers.on_change(&mut ctx, change);
+                self.gestures.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             self.tabs.after_commit(&mut ctx);
@@ -564,16 +571,19 @@ impl<B: Backend> Runtime<B> {
             for (id, size) in self.images.take_natural_sizes() {
                 self.drawings.set_natural_size(&mut ctx, id, size);
             }
+            self.gestures.after_commit(&mut ctx);
             self.web_views.after_commit(&mut ctx);
             self.media.after_commit(&mut ctx);
             for (id, hidden) in self.media.take_poster_changes() {
                 self.images.set_suppressed(&mut ctx, id, hidden);
             }
             self.coverage.invalidate();
+            self.observers.invalidate();
             self.inputs.retry_autofocus();
         }
         let mut ctx = ctx!(self);
         self.coverage.evaluate(&mut ctx);
+        self.observers.evaluate(&mut ctx);
     }
 
     fn handle_inbound(&mut self, item: Inbound) {
@@ -779,6 +789,19 @@ impl<B: Backend> Runtime<B> {
                     }
                 }
                 {
+                    let mut ctx = ctx!(self);
+                    match self.gestures.on_pointer(&mut ctx, pointer) {
+                        crate::gestures::Outcome::Ignored => {}
+                        crate::gestures::Outcome::Recognised => {
+                            // The gesture took the pointer: no press completes.
+                            let cancel = crate::backend::PointerEvent { phase: crate::backend::PointerPhase::Cancel, ..pointer };
+                            self.interaction.on_pointer(&mut ctx, cancel);
+                            return;
+                        }
+                        crate::gestures::Outcome::Consumed => return,
+                    }
+                }
+                {
                     // A freehand canvas owns the pointer while a stroke is drawn.
                     let mut ctx = ctx!(self);
                     if self.drawings.on_pointer(&mut ctx, pointer) {
@@ -877,6 +900,22 @@ impl<B: Backend> Runtime<B> {
                         Timer::WebViewTimeout(id) => self.web_views.on_timer(&mut ctx, id),
                         Timer::ErrorRecovery => recover = true,
                         Timer::ToastDismiss => toast_changed |= self.toasts.dismiss(&mut ctx),
+                        Timer::GestureIdle => self.gestures.on_idle(&mut ctx),
+                        Timer::GestureHold => {
+                            if self.gestures.on_hold(&mut ctx) {
+                                // The long press recognised: the press under it is over.
+                                let cancel = crate::backend::PointerEvent {
+                                    window: MAIN_WINDOW,
+                                    phase: crate::backend::PointerPhase::Cancel,
+                                    position: crate::geometry::Point::ZERO,
+                                    button: crate::backend::PointerButton::Primary,
+                                    modifiers: crate::backend::Modifiers::default(),
+                                    click_count: 1,
+                                    time_ms: ctx.now_ms,
+                                };
+                                self.interaction.on_pointer(&mut ctx, cancel);
+                            }
+                        }
                         Timer::MediaProgress(id) | Timer::MediaRelease(id) => {
                             let position = self.backend.media_position(id);
                             self.media.on_timer(&mut ctx, timer, position);
@@ -901,10 +940,30 @@ impl<B: Backend> Runtime<B> {
                 // Players that start when scrolled into view follow the offset.
                 self.media.on_scroll();
                 self.media.evaluate(&mut ctx);
+                self.observers.invalidate();
+                self.observers.evaluate(&mut ctx);
             }
             // Gestures, text selection and drag and drop are wired below as
             // their controllers land.
-            BackendEvent::Wheel { .. } | BackendEvent::Magnify { .. } | BackendEvent::Rotate { .. } => {}
+            BackendEvent::Wheel { window, position, delta, modifiers } => {
+                // Control + wheel is the desktop pinch.
+                if window == MAIN_WINDOW && modifiers.control {
+                    let mut ctx = ctx!(self);
+                    self.gestures.on_wheel_zoom(&mut ctx, position, delta.y);
+                }
+            }
+            BackendEvent::Magnify { window, position, phase, scale } => {
+                if window == MAIN_WINDOW {
+                    let mut ctx = ctx!(self);
+                    self.gestures.on_magnify(&mut ctx, position, phase, scale);
+                }
+            }
+            BackendEvent::Rotate { window, position, phase, radians } => {
+                if window == MAIN_WINDOW {
+                    let mut ctx = ctx!(self);
+                    self.gestures.on_rotate(&mut ctx, position, phase, radians);
+                }
+            }
             BackendEvent::TextDropped { window, position, text } => {
                 if window == MAIN_WINDOW {
                     let mut ctx = ctx!(self);
@@ -978,6 +1037,8 @@ impl<B: Backend> Runtime<B> {
                 Owner::Control(id) => self.controls.on_sample(&mut ctx, id, sample.value, sample.finished),
                 Owner::Scroll(id) => self.scrolling.on_sample(&mut ctx, id, sample.value),
                 Owner::Image(id) => self.images.on_sample(&mut ctx, id, sample.value),
+                Owner::Gesture(id) => self.gestures.on_sample(&mut ctx, id, sample.value, sample.finished),
+                Owner::GesturePose(id) => self.gestures.on_pose_sample(&mut ctx, id, sample.value, sample.finished),
                 Owner::Toast => toast_changed |= self.toasts.on_sample(&mut ctx, sample.value, sample.finished),
                 Owner::Transition(..) | Owner::Motion(..) => self.motion.on_sample(&mut ctx, sample.owner, sample.value, sample.finished),
             }

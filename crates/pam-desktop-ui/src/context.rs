@@ -43,10 +43,15 @@ pub mod event_kind {
     pub const MODAL_DISMISS: u16 = 33;
     pub const CLICK_OUTSIDE: u16 = 35;
     pub const INTERSECT: u16 = 36;
+    pub const MUTATE: u16 = 37;
     pub const RESIZE: u16 = 38;
     pub const TOUCH_START: u16 = 39;
     pub const TOUCH_MOVE: u16 = 40;
     pub const TOUCH_END: u16 = 41;
+    pub const GESTURE_BEGIN: u16 = 42;
+    pub const GESTURE_UPDATE: u16 = 43;
+    pub const GESTURE_END: u16 = 44;
+    pub const GESTURE_CANCEL: u16 = 45;
     pub const BOTTOM_SHEET_CHANGE: u16 = 46;
     pub const BOTTOM_SHEET_DISMISS: u16 = 47;
     pub const WEBVIEW_LOAD: u16 = 48;
@@ -71,6 +76,7 @@ pub mod event_kind {
     pub const SPAN_PRESS: u16 = 66;
     pub const LAYOUT: u16 = 67;
     pub const DOUBLE_TAP: u16 = 70;
+    pub const GESTURE_SETTLE: u16 = 71;
     pub const SCROLL_BEGIN_DRAG: u16 = 72;
     pub const SCROLL_END_DRAG: u16 = 73;
     pub const MOMENTUM_SCROLL_END: u16 = 74;

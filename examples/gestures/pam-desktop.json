@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.gestures",
+    "name": "PAM Desktop gestures",
+    "entry": "index.php",
+    "window": {
+        "width": 860,
+        "height": 560
+    }
+}
