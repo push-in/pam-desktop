@@ -152,11 +152,10 @@ impl ScrollContext<'_> {
         self.events.push(BackendEvent::ScrollChanged { id, offset: snapped });
         self.reveal_bars(id);
         self.scene.damage_view(id);
-        if !self.scene.natives.is_empty() {
-            if let Some(entry) = self.scene.window_of(id).and_then(|window| self.scene.windows.get_mut(&window)) {
+        if !self.scene.natives.is_empty()
+            && let Some(entry) = self.scene.window_of(id).and_then(|window| self.scene.windows.get_mut(&window)) {
                 entry.natives_dirty = true;
             }
-        }
         true
     }
 
@@ -392,11 +391,10 @@ impl ScrollContext<'_> {
         }
         let active = self.scene.active_scrolls.clone();
         for id in active {
-            if Some(id) != hovered {
-                if let Some(scroll) = self.scene.views.get_mut(&id).and_then(|view| view.scroll.as_mut()) {
+            if Some(id) != hovered
+                && let Some(scroll) = self.scene.views.get_mut(&id).and_then(|view| view.scroll.as_mut()) {
                     scroll.bar_held = false;
                 }
-            }
         }
         if let Some(id) = hovered {
             self.reveal_bars(id);

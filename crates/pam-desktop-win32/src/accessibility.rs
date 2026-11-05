@@ -711,27 +711,23 @@ pub fn state_changed(app: &Rc<App>, id: NodeId, previous: Option<&Accessibility>
     let plain = Accessibility::default();
     let (before, now) = (previous.unwrap_or(&plain), current.as_ref().unwrap_or(&plain));
     let mut changes: Vec<(UIA_PROPERTY_ID, VARIANT, VARIANT)> = Vec::new();
-    if before.checked != now.checked {
-        if let (Some(old), Some(new)) = (before.checked, now.checked) {
+    if before.checked != now.checked
+        && let (Some(old), Some(new)) = (before.checked, now.checked) {
             changes.push((UIA_ToggleToggleStatePropertyId, VARIANT::from(toggle_state(old).0), VARIANT::from(toggle_state(new).0)));
         }
-    }
-    if selection_of(before) != selection_of(now) {
-        if let (Some(old), Some(new)) = (selection_of(before), selection_of(now)) {
+    if selection_of(before) != selection_of(now)
+        && let (Some(old), Some(new)) = (selection_of(before), selection_of(now)) {
             changes.push((UIA_SelectionItemIsSelectedPropertyId, VARIANT::from(old), VARIANT::from(new)));
         }
-    }
-    if before.expanded != now.expanded {
-        if let (Some(old), Some(new)) = (before.expanded, now.expanded) {
+    if before.expanded != now.expanded
+        && let (Some(old), Some(new)) = (before.expanded, now.expanded) {
             let state = |expanded: bool| if expanded { ExpandCollapseState_Expanded.0 } else { ExpandCollapseState_Collapsed.0 };
             changes.push((UIA_ExpandCollapseExpandCollapseStatePropertyId, VARIANT::from(state(old)), VARIANT::from(state(new))));
         }
-    }
-    if before.range != now.range {
-        if let (Some((_, _, old)), Some((_, _, new))) = (before.range, now.range) {
+    if before.range != now.range
+        && let (Some((_, _, old)), Some((_, _, new))) = (before.range, now.range) {
             changes.push((UIA_RangeValueValuePropertyId, VARIANT::from(f64::from(old)), VARIANT::from(f64::from(new))));
         }
-    }
     if before.disabled != now.disabled {
         changes.push((UIA_IsEnabledPropertyId, VARIANT::from(!before.disabled), VARIANT::from(!now.disabled)));
     }

@@ -169,11 +169,10 @@ impl Scene {
             parent.children.retain(|child| *child != id);
         }
         for child in &view.children {
-            if let Some(child) = self.views.get_mut(child) {
-                if child.parent == Some(id) {
+            if let Some(child) = self.views.get_mut(child)
+                && child.parent == Some(id) {
                     child.parent = None;
                 }
-            }
         }
         for window in self.windows.values_mut() {
             if window.root == Some(id) {
@@ -197,13 +196,11 @@ impl Scene {
         let Some(view) = self.views.get_mut(&parent) else { return };
         let previous = std::mem::take(&mut view.children);
         for child in &previous {
-            if !children.contains(child) {
-                if let Some(child) = self.views.get_mut(child) {
-                    if child.parent == Some(parent) {
+            if !children.contains(child)
+                && let Some(child) = self.views.get_mut(child)
+                    && child.parent == Some(parent) {
                         child.parent = None;
                     }
-                }
-            }
         }
         let mut kept = previous;
         kept.clear();
@@ -244,13 +241,11 @@ impl Scene {
         }
         let layers: Vec<NodeId> = entry.root.iter().chain(entry.overlays.iter()).copied().collect();
         for id in released {
-            if !layers.contains(&id) {
-                if let Some(view) = self.views.get_mut(&id) {
-                    if view.layer_of == Some(window) {
+            if !layers.contains(&id)
+                && let Some(view) = self.views.get_mut(&id)
+                    && view.layer_of == Some(window) {
                         view.layer_of = None;
                     }
-                }
-            }
         }
         for id in layers {
             if let Some(view) = self.views.get_mut(&id) {
@@ -495,15 +490,14 @@ impl Scene {
         let mut ancestor = view.parent;
         while let Some(current_id) = ancestor {
             let Some(current) = self.views.get(&current_id) else { break };
-            if current.clips() {
-                if let Some((_, world)) = self.world_transform(current_id) {
+            if current.clips()
+                && let Some((_, world)) = self.world_transform(current_id) {
                     let bounds = world.bounds(current.bounds());
                     clip = Some(match clip {
                         Some(existing) => existing.intersect(bounds).unwrap_or(Rect::ZERO),
                         None => bounds,
                     });
                 }
-            }
             layer = current_id;
             ancestor = current.parent;
         }
@@ -521,13 +515,11 @@ impl Scene {
                 above = true;
                 continue;
             }
-            if above {
-                if let Some(cover) = self.views.get(other) {
-                    if cover.layer.visible && cover.frame.intersects(rect) {
+            if above
+                && let Some(cover) = self.views.get(other)
+                    && cover.layer.visible && cover.frame.intersects(rect) {
                         visible = false;
                     }
-                }
-            }
         }
         Some(Placement { window, rect, clip, visible, scale: entry.scale() })
     }

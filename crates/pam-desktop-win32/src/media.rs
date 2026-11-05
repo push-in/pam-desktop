@@ -114,14 +114,12 @@ impl MediaShared {
                 if let Some(device) = graphics.device.as_ref().filter(|device| device.video) {
                     let mut token = 0_u32;
                     let mut manager = None;
-                    if MFCreateDXGIDeviceManager(&mut token, &mut manager).is_ok() {
-                        if let Some(manager) = manager {
-                            if manager.ResetDevice(&device.d3d, token).is_ok() {
+                    if MFCreateDXGIDeviceManager(&mut token, &mut manager).is_ok()
+                        && let Some(manager) = manager
+                            && manager.ResetDevice(&device.d3d, token).is_ok() {
                                 self.manager = Some(manager);
                                 self.manager_generation = graphics.generation;
                             }
-                        }
-                    }
                 }
             }
         }
@@ -385,8 +383,8 @@ impl MediaPlayer {
             let center = layout.play.center();
             if paused {
                 // A triangle pointing right.
-                if let Ok(path) = graphics.factory.CreatePathGeometry() {
-                    if let Ok(sink) = path.Open() {
+                if let Ok(path) = graphics.factory.CreatePathGeometry()
+                    && let Ok(sink) = path.Open() {
                         sink.BeginFigure(vec2(center.x - 5.0, center.y - 7.0), D2D1_FIGURE_BEGIN_FILLED);
                         sink.AddLine(vec2(center.x + 7.0, center.y));
                         sink.AddLine(vec2(center.x - 5.0, center.y + 7.0));
@@ -395,7 +393,6 @@ impl MediaPlayer {
                             context.FillGeometry(&path, device.solid(white), None::<&ID2D1Brush>);
                         }
                     }
-                }
             } else {
                 context.FillRectangle(&rect_f(Rect::new(center.x - 6.0, center.y - 7.0, 4.0, 14.0)), device.solid(white));
                 context.FillRectangle(&rect_f(Rect::new(center.x + 2.0, center.y - 7.0, 4.0, 14.0)), device.solid(white));
@@ -431,8 +428,8 @@ impl MediaPlayer {
             // Speaker: a box and a cone, crossed out when muted.
             let speaker = layout.mute.center();
             context.FillRectangle(&rect_f(Rect::new(speaker.x - 7.0, speaker.y - 3.0, 4.0, 6.0)), device.solid(white));
-            if let Ok(path) = graphics.factory.CreatePathGeometry() {
-                if let Ok(sink) = path.Open() {
+            if let Ok(path) = graphics.factory.CreatePathGeometry()
+                && let Ok(sink) = path.Open() {
                     sink.BeginFigure(vec2(speaker.x - 3.0, speaker.y - 3.0), D2D1_FIGURE_BEGIN_FILLED);
                     sink.AddLine(vec2(speaker.x + 3.0, speaker.y - 7.0));
                     sink.AddLine(vec2(speaker.x + 3.0, speaker.y + 7.0));
@@ -442,7 +439,6 @@ impl MediaPlayer {
                         context.FillGeometry(&path, device.solid(white), None::<&ID2D1Brush>);
                     }
                 }
-            }
             if muted {
                 let (from, to) = (Point::new(speaker.x - 8.0, speaker.y - 8.0), Point::new(speaker.x + 8.0, speaker.y + 8.0));
                 context.DrawLine(point_vec(from), point_vec(to), device.solid(Color::rgba(255, 90, 90, 255)), 2.0, &graphics.round_stroke);
@@ -510,11 +506,10 @@ pub fn apply(app: &Rc<App>, id: NodeId, wanted: &MediaState) {
             // Whatever was to be resumed after a device loss belonged to the old source.
             player.resume = None;
             player.start_at = wanted.seek.1.max(0.0);
-            if let Some(source) = &wanted.source {
-                if let Err(message) = player.open(shared, graphics, &mailbox, source) {
+            if let Some(source) = &wanted.source
+                && let Err(message) = player.open(shared, graphics, &mailbox, source) {
                     failure = Some(message);
                 }
-            }
         }
         player.play_when_ready = wanted.playing;
         player.fit = wanted.fit;
@@ -571,6 +566,8 @@ pub fn position(app: &App, id: NodeId) -> Option<(f64, f64)> {
 }
 
 /// Releases the player of a destroyed view.
+// The scene owns it boxed and hands the box back.
+#[allow(clippy::boxed_local)]
 pub fn release(_app: &Rc<App>, mut player: Box<MediaPlayer>) {
     if let Some(engine) = player.detach() {
         shut_down(engine);

@@ -825,11 +825,10 @@ fn run_file_dialog(owner: Option<HWND>, config: &FileDialogConfig) -> windows::c
         if !config.default_name.is_empty() {
             let _ = dialog.SetFileName(&HSTRING::from(config.default_name.as_str()));
         }
-        if let Some(directory) = &config.directory {
-            if let Ok(folder) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(directory.as_os_str()), None) {
+        if let Some(directory) = &config.directory
+            && let Ok(folder) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(directory.as_os_str()), None) {
                 let _ = dialog.SetFolder(&folder);
             }
-        }
         if !config.filters.is_empty() && config.kind != FileDialogKind::SelectFolder {
             let names: Vec<Vec<u16>> = config.filters.iter().map(|filter| wide(&filter.name)).collect();
             let patterns: Vec<Vec<u16>> = config

@@ -479,7 +479,7 @@ impl ShadowCache {
         let frame = self.frame;
         if self.entries.len() > SHADOW_CACHE_LIMIT {
             self.entries.retain(|_, entry| frame - entry.last_used < 2);
-        } else if frame % 60 == 0 {
+        } else if frame.is_multiple_of(60) {
             self.entries.retain(|_, entry| frame - entry.last_used < SHADOW_IDLE_FRAMES);
         }
     }
@@ -674,11 +674,10 @@ fn paint_inset_shadow(context: &ID2D1DeviceContext, env: &mut PaintEnv<'_>, size
                 .ok()
                 .and_then(|geometry| geometry.cast().ok());
             let outer: Option<ID2D1Geometry> = factory.CreateRectangleGeometry(&rect_f(frame)).ok().and_then(|geometry| geometry.cast().ok());
-            if let (Some(placed), Some(outer)) = (placed, outer) {
-                if let Ok(group) = factory.CreateGeometryGroup(D2D1_FILL_MODE_ALTERNATE, &[Some(outer), Some(placed)]) {
+            if let (Some(placed), Some(outer)) = (placed, outer)
+                && let Ok(group) = factory.CreateGeometryGroup(D2D1_FILL_MODE_ALTERNATE, &[Some(outer), Some(placed)]) {
                     recorder.FillGeometry(&group, device.solid(Color::BLACK), None::<&ID2D1Brush>);
                 }
-            }
         }
     });
     let Some(image) = image else { return };
@@ -702,8 +701,8 @@ pub fn paint_decoration(context: &ID2D1DeviceContext, env: &mut PaintEnv<'_>, ca
         // needs the mask that guarantees it.
         let covered = decoration.background.is_opaque();
         let mut masked = false;
-        if !covered {
-            if let Some(inner) = outline.geometry(&factory) {
+        if !covered
+            && let Some(inner) = outline.geometry(&factory) {
                 let reach = decoration.overflow_bounds(Rect::from_size(size)).outset(4.0);
                 // SAFETY: COM calls on the live factory with live geometries.
                 let outside: Option<ID2D1Geometry> = unsafe {
@@ -716,7 +715,6 @@ pub fn paint_decoration(context: &ID2D1DeviceContext, env: &mut PaintEnv<'_>, ca
                     masked = true;
                 }
             }
-        }
         for shadow in decoration.shadows.iter().filter(|shadow| !shadow.inset && !shadow.color.is_transparent()) {
             paint_outer_shadow(context, env, size, decoration.radii, shadow);
         }
@@ -843,8 +841,8 @@ pub fn paint_image(context: &ID2D1DeviceContext, device: &Device, factory: &ID2D
             let brush_properties = D2D1_BRUSH_PROPERTIES { opacity, transform };
             let bitmap_properties =
                 D2D1_BITMAP_BRUSH_PROPERTIES1 { extendModeX: D2D1_EXTEND_MODE_CLAMP, extendModeY: D2D1_EXTEND_MODE_CLAMP, interpolationMode: interpolation };
-            if let Ok(brush) = context.CreateBitmapBrush(bitmap, Some(&bitmap_properties), Some(&brush_properties)) {
-                if let Ok(brush) = brush.cast::<ID2D1Brush>() {
+            if let Ok(brush) = context.CreateBitmapBrush(bitmap, Some(&bitmap_properties), Some(&brush_properties))
+                && let Ok(brush) = brush.cast::<ID2D1Brush>() {
                     clip_shape.fill(context, &brush);
                     if let Some(overlay) = content.overlay {
                         // The overlay fades in with the image.
@@ -855,7 +853,6 @@ pub fn paint_image(context: &ID2D1DeviceContext, device: &Device, factory: &ID2D
                     }
                     return;
                 }
-            }
         }
         let clip = push_clip(context, factory, &clip_shape);
         match (content.tint, content.fit) {

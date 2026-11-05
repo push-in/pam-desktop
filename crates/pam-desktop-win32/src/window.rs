@@ -621,14 +621,13 @@ pub fn command(app: &Rc<App>, window: WindowId, command: &WindowCommand) {
             }
             WindowCommand::Center => {
                 let mut rect = RECT::default();
-                if GetWindowRect(hwnd, &mut rect).is_ok() {
-                    if let Some((_, work)) = monitor_rects(hwnd) {
+                if GetWindowRect(hwnd, &mut rect).is_ok()
+                    && let Some((_, work)) = monitor_rects(hwnd) {
                         let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
                         let x = work.left + ((work.right - work.left) - width) / 2;
                         let y = work.top + ((work.bottom - work.top) - height) / 2;
                         let _ = SetWindowPos(hwnd, None, x, y.max(work.top), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
                     }
-                }
             }
             WindowCommand::SetAlwaysOnTop(enabled) => {
                 let after = if *enabled { HWND_TOPMOST } else { HWND_NOTOPMOST };
@@ -1420,11 +1419,10 @@ fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPA
                 }
                 Some(entry.tooltip)
             });
-            if !active {
-                if let Some(Some(tooltip)) = tooltip {
+            if !active
+                && let Some(Some(tooltip)) = tooltip {
                     update_tooltip(tooltip, hwnd, None);
                 }
-            }
             app.emit(BackendEvent::WindowFocusChanged { window, focused: active });
             None
         }

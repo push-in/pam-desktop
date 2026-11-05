@@ -212,20 +212,18 @@ impl TextEngine {
                 }
                 if !run.font.features.is_empty() {
                     let features = parse_features(&run.font.features);
-                    if !features.is_empty() {
-                        if let Ok(typography) = dwrite.CreateTypography() {
+                    if !features.is_empty()
+                        && let Ok(typography) = dwrite.CreateTypography() {
                             for feature in features {
                                 let _ = typography.AddFontFeature(feature);
                             }
                             let _ = layout.SetTypography(&typography, *range);
                         }
-                    }
                 }
-                if run.letter_spacing != 0.0 {
-                    if let Some(spaced) = &spaced {
+                if run.letter_spacing != 0.0
+                    && let Some(spaced) = &spaced {
                         let _ = spaced.SetCharacterSpacing(0.0, run.letter_spacing, 0.0, *range);
                     }
-                }
                 if run.underline {
                     let _ = layout.SetUnderline(true, *range);
                 }
@@ -344,11 +342,10 @@ impl Layout {
             }
             if let Some(((start, end), color)) = selection {
                 let end = end.min(self.utf16_length);
-                if start < end {
-                    if let Some(brush) = brush_for(color) {
+                if start < end
+                    && let Some(brush) = brush_for(color) {
                         let _ = self.layout.SetDrawingEffect(&brush, DWRITE_TEXT_RANGE { startPosition: start, length: end - start });
                     }
-                }
             }
         }
     }

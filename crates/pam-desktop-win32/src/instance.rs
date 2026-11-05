@@ -81,8 +81,8 @@ pub fn acquire(application_id: &str, launch_url: Option<&str>) -> Launch {
         // SAFETY: the class name is NUL-terminated; the copy structure and
         // the bytes it points to outlive the synchronous send.
         unsafe {
-            if let Ok(target) = FindWindowExW(Some(HWND_MESSAGE), None, PCWSTR(class.as_ptr()), PCWSTR::null()) {
-                if !target.is_invalid() {
+            if let Ok(target) = FindWindowExW(Some(HWND_MESSAGE), None, PCWSTR(class.as_ptr()), PCWSTR::null())
+                && !target.is_invalid() {
                     // This launch has the right to take the foreground;
                     // the running application gets it.
                     let mut process = 0_u32;
@@ -92,7 +92,6 @@ pub fn acquire(application_id: &str, launch_url: Option<&str>) -> Launch {
                     SendMessageTimeoutW(target, WM_COPYDATA, WPARAM(0), LPARAM(std::ptr::from_ref(&data) as isize), SMTO_ABORTIFHUNG, 5000, None);
                     return Launch::Handed;
                 }
-            }
         }
         // The first launch holds the mutex but is still starting.
         std::thread::sleep(std::time::Duration::from_millis(100));

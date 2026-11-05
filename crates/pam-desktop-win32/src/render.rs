@@ -138,11 +138,10 @@ impl Painter<'_> {
             None
         };
 
-        if let (Some(content), Some(device)) = (view.image.as_ref(), self.graphics.device.as_ref()) {
-            if let Some(bitmap) = self.images.bitmap(content.key) {
+        if let (Some(content), Some(device)) = (view.image.as_ref(), self.graphics.device.as_ref())
+            && let Some(bitmap) = self.images.bitmap(content.key) {
                 paint::paint_image(context, device, &factory, size, &view.decoration, content, bitmap);
             }
-        }
         if let (Some(player), Some(device)) = (view.media.as_ref(), self.graphics.device.as_ref()) {
             // A player on screen pulls frames; one that is not painted does not.
             self.wants_tick |= player.paint_video(context, device, size);
@@ -240,22 +239,20 @@ impl Painter<'_> {
         }
 
         self.paint_scrollbars(context, id, size);
-        if let (Some(view), Some(device)) = (self.scene.views.get(&id), self.graphics.device.as_ref()) {
-            if let Some(player) = view.media.as_ref() {
+        if let (Some(view), Some(device)) = (self.scene.views.get(&id), self.graphics.device.as_ref())
+            && let Some(player) = view.media.as_ref() {
                 player.paint_controls(context, device, self.graphics, self.text, size);
             }
-        }
         if let Some(clip) = clip {
             paint::pop_clip(context, clip);
         }
 
         // Keyboard focus ring, outside the box.
-        if self.scene.focus == Some(id) && self.scene.focus_visible && class == ViewClass::Box {
-            if let (Some(view), Some(device)) = (self.scene.views.get(&id), self.graphics.device.as_ref()) {
+        if self.scene.focus == Some(id) && self.scene.focus_visible && class == ViewClass::Box
+            && let (Some(view), Some(device)) = (self.scene.views.get(&id), self.graphics.device.as_ref()) {
                 let ring = paint::rounded(&factory, size, view.decoration.radii, Insets::all(-3.0));
                 ring.stroke(context, device.solid(self.theme.accent), 2.0, None);
             }
-        }
     }
 
     fn paint_text(&mut self, context: &ID2D1DeviceContext, id: NodeId, size: Size) {

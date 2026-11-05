@@ -536,12 +536,11 @@ pub fn configure(app: &Rc<App>, id: NodeId, config: &InputConfig) {
             // Font, insets or alignment may move or rebuild the control.
             host.placement = None;
             let (hwnd, multiline) = (host.hwnd, host.multiline);
-            if let Some(window) = state.scene.window_of(id) {
-                if let Some(entry) = state.scene.windows.get_mut(&window) {
+            if let Some(window) = state.scene.window_of(id)
+                && let Some(entry) = state.scene.windows.get_mut(&window) {
                     entry.natives_dirty = true;
                     entry.damage(None);
                 }
-            }
             Some((hwnd, multiline))
         })
         .flatten();

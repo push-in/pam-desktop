@@ -72,6 +72,8 @@ mod disabled {
         }
     }
 
+    // The scene owns it boxed and hands the box back.
+    #[allow(clippy::boxed_local)]
     pub fn release(_app: &Rc<App>, _host: Box<WebHost>) {}
 }
 

@@ -193,11 +193,10 @@ impl Backend for Win32Backend {
     }
 
     fn set_focusable(&mut self, id: NodeId, focusable: bool) {
-        if let Some(mut state) = self.app.state() {
-            if let Some(view) = state.scene.views.get_mut(&id) {
+        if let Some(mut state) = self.app.state()
+            && let Some(view) = state.scene.views.get_mut(&id) {
                 view.focusable = focusable;
             }
-        }
     }
 
     fn set_accessibility(&mut self, id: NodeId, accessibility: Option<&Accessibility>) {
@@ -426,11 +425,10 @@ impl Backend for Win32Backend {
     }
 
     fn set_cursor(&mut self, id: NodeId, cursor: Cursor) {
-        if let Some(mut state) = self.app.state() {
-            if let Some(view) = state.scene.views.get_mut(&id) {
+        if let Some(mut state) = self.app.state()
+            && let Some(view) = state.scene.views.get_mut(&id) {
                 view.cursor = cursor;
             }
-        }
     }
 
     fn set_tooltip(&mut self, id: NodeId, text: Option<&str>) {
