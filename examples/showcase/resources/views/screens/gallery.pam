@@ -34,7 +34,7 @@
                     <Text height="72" textColor="#FFB7C5D8" fontSize="15" lineHeight="22">Open each experience and interact with it. Every control below is native and reconciled in Rust.</Text>
                     <Row height="64" gap="8">
                         <Column flexGrow="1" padding="10" borderRadius="14" backgroundColor="#FF163149">
-                            <Text height="25" textColor="#FFFFFFFF" fontSize="19" fontWeight="700">10.5 MB</Text>
+                            <Text height="25" textColor="#FFFFFFFF" fontSize="19" fontWeight="700">11 MB</Text>
                             <Text height="20" textColor="#FF8FA8C0" fontSize="12">Linux host binary</Text>
                         </Column>
                         <Column flexGrow="1" padding="10" borderRadius="14" backgroundColor="#FF163149">
