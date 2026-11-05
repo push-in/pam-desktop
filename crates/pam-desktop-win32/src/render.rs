@@ -457,7 +457,11 @@ impl Painter<'_> {
                 }
             }
             if let Some((start, end)) = state.selection {
-                layout.range_rects(start, end, &mut self.rects);
+                layout.range_rects(
+                    layout.visible_index(start),
+                    layout.visible_index(end),
+                    &mut self.rects,
+                );
                 for rect in &self.rects {
                     context.FillRectangle(
                         &rect_f(rect.translate(origin.x, origin.y)),

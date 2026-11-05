@@ -103,12 +103,13 @@ System:
 12. **Single instance**: the second launch finds the first through a message-only window and hands the link with `WM_COPYDATA`.
 13. **Console**: a release host is a windowed program. `pam-desktop build` from a terminal must still print (the host attaches to the parent console), and no console window may open beside an application or its PHP worker.
 14. **Share** (`examples/modules`, the Share button): files are resolved before the dialog shows, waiting up to 3 seconds on the UI thread; if that wait never completes, every share with files fails. Check text only, files only (a path with spaces and non-ASCII), both, two shares in a row, and closing the application with the dialog open.
+15. **Head and middle ellipsis** (`ellipsize()` with `numberOfLines(1)`): DirectWrite only trims the end of a line, so the backend shortens the text itself, measuring candidates until one fits. Check a one-line text narrower than its content in both modes: one ellipsis, at the start or in the middle, and the text reaching the right edge without being clipped. Then resize the window slowly (the cut must move without flicker and the ellipsis must go away when the text fits), try runs of different styles (the ellipsis takes the style of the run next to it), emoji and combining marks next to the cut (no broken glyph), and a pressable span or a selection after the cut (they must answer for the characters shown).
 
 ### Known differences from the GTK backend
 
 Text and inputs:
 
-- `Head` and `Middle` ellipsis become an ellipsis at the end.
+- `Head` and `Middle` ellipsis apply to a text limited to one line. With more lines the ellipsis is at the end.
 - Inputs are `EDIT` controls, also the multi-line one. `letterSpacing`, `selectionColor`, `caretColor`, `spellcheck` and `capitalization` have no equivalent; undo has one level.
 - The background of an input is the nearest opaque color behind it. A gradient or translucency behind the text does not show.
 - Child windows are always above the scene: an input is hidden while an overlay covers it, so its text disappears under a translucent modal.
