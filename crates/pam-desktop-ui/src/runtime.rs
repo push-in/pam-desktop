@@ -840,6 +840,19 @@ impl<B: Backend> Runtime<B> {
                     }
                 }
                 {
+                    // A bottom sheet dragged by its top edge.
+                    let mut ctx = ctx!(self);
+                    match self.modals.on_pointer(&mut ctx, pointer) {
+                        Some(true) => {
+                            let cancel = crate::backend::PointerEvent { phase: crate::backend::PointerPhase::Cancel, ..pointer };
+                            self.interaction.on_pointer(&mut ctx, cancel);
+                            return;
+                        }
+                        Some(false) => return,
+                        None => {}
+                    }
+                }
+                {
                     let mut ctx = ctx!(self);
                     match self.gestures.on_pointer(&mut ctx, pointer) {
                         crate::gestures::Outcome::Ignored => {}
@@ -1094,6 +1107,7 @@ impl<B: Backend> Runtime<B> {
                 Owner::Control(id) => self.controls.on_sample(&mut ctx, id, sample.value, sample.finished),
                 Owner::Scroll(id) => self.scrolling.on_sample(&mut ctx, id, sample.value),
                 Owner::Image(id) => self.images.on_sample(&mut ctx, id, sample.value),
+                Owner::SheetDrag(id) => self.modals.on_sheet_sample(&mut ctx, id, sample.value),
                 Owner::MediaBar(id) => self.media.on_bar_sample(&mut ctx, id, sample.value),
                 Owner::Gesture(id) => self.gestures.on_sample(&mut ctx, id, sample.value, sample.finished),
                 Owner::GesturePose(id) => self.gestures.on_pose_sample(&mut ctx, id, sample.value, sample.finished),

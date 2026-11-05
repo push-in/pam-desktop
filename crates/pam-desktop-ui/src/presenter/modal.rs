@@ -7,7 +7,7 @@
 use pam_desktop_wire::{NodeKind, PropKey, PropValue};
 
 use crate::animator::{Curve, Easing, Owner};
-use crate::backend::NodeId;
+use crate::backend::{NodeId, PointerButton, PointerEvent, PointerPhase};
 use crate::context::{event_kind, Ctx};
 use crate::geometry::{Affine, Rect};
 use crate::props::PropMap;
@@ -46,12 +46,43 @@ struct Modal {
     sheet: bool,
 }
 
+/// A bottom sheet being dragged by its top edge.
+struct SheetDrag {
+    modal: NodeId,
+    start_y: f32,
+    last_y: f32,
+    last_ms: u64,
+    /// Smoothed vertical speed, logical units per second.
+    velocity: f32,
+    /// The drag passed the threshold and owns the pointer.
+    moving: bool,
+}
+
 #[derive(Default)]
 pub struct Modals {
     modals: IdMap<Modal>,
     /// Presented modals, oldest first (the last one is on top).
     stack: Vec<NodeId>,
+    drag: Option<SheetDrag>,
     dirty: bool,
+}
+
+/// The grab area at the top of a sheet.
+const SHEET_GRIP: f32 = 48.0;
+const SHEET_DRAG_SLOP: f32 = 4.0;
+const SHEET_SETTLE_MS: u32 = 180;
+
+/// `BottomSheetSnapPoints`: a count and that many fractions of the surface.
+fn snap_points(bytes: Option<&[u8]>) -> Vec<f32> {
+    let Some(bytes) = bytes.filter(|bytes| bytes.len() >= 2) else { return vec![0.5, 0.9] };
+    let count = usize::from(u16::from_le_bytes([bytes[0], bytes[1]])).min(16);
+    let snaps: Vec<f32> = bytes[2..]
+        .chunks_exact(8)
+        .take(count)
+        .map(|chunk| f64::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7]]) as f32)
+        .filter(|snap| snap.is_finite() && *snap > 0.0 && *snap <= 1.0)
+        .collect();
+    snaps
 }
 
 fn content_of(ctx: &Ctx<'_>, modal: NodeId) -> Option<NodeId> {
@@ -334,6 +365,102 @@ impl Modals {
         ctx.scene.set_layer_override(content, LayerSlot::Presenter, layer);
         if let Some(handle) = modal.handle {
             ctx.scene.set_layer_override(handle, LayerSlot::Presenter, LayerOverride { transform: layer.transform, ..LayerOverride::NONE });
+        }
+    }
+
+    /// Moves the content of a sheet by `offset` (0 = resting at its snap).
+    fn apply_sheet_offset(&self, ctx: &mut Ctx<'_>, id: NodeId, offset: f32) {
+        let value = if offset == 0.0 { LayerOverride::NONE } else { LayerOverride { transform: Affine::translation(0.0, offset), ..LayerOverride::NONE } };
+        // The grabber is chrome of the modal: it travels with the sheet.
+        let handle = self.modals.get(&id).and_then(|modal| modal.handle);
+        for node in [content_of(ctx, id), handle].into_iter().flatten() {
+            ctx.scene.set_layer_override(node, LayerSlot::Presenter, value);
+        }
+    }
+
+    /// A frame of a released sheet returning to its snap.
+    pub fn on_sheet_sample(&mut self, ctx: &mut Ctx<'_>, id: NodeId, offset: f32) {
+        if self.modals.get(&id).is_some_and(|modal| modal.phase == Phase::Shown) {
+            self.apply_sheet_offset(ctx, id, offset);
+        }
+    }
+
+    /// Dragging a bottom sheet by its top edge moves it between its snap
+    /// points, or dismisses it. `Some(true)` means the drag just took the
+    /// pointer (the press under it must be cancelled), `Some(false)` that
+    /// it keeps it, `None` that the event is not for a sheet.
+    pub fn on_pointer(&mut self, ctx: &mut Ctx<'_>, pointer: PointerEvent) -> Option<bool> {
+        match pointer.phase {
+            PointerPhase::Down if pointer.button == PointerButton::Primary => {
+                self.drag = None;
+                let id = self.top()?;
+                let node = ctx.scene.node(id)?;
+                let modal = self.modals.get(&id)?;
+                if !modal.sheet || modal.phase != Phase::Shown || !node.props().flag_or(PropKey::BottomSheetDragEnabled, true) {
+                    return None;
+                }
+                let frame = ctx.scene.node(content_of(ctx, id)?)?.frame;
+                let inside = pointer.position.x >= frame.x && pointer.position.x <= frame.right() && pointer.position.y >= frame.y && pointer.position.y <= frame.y + SHEET_GRIP;
+                if inside {
+                    ctx.animator.cancel(Owner::SheetDrag(id), ctx.now_ms);
+                    self.drag = Some(SheetDrag { modal: id, start_y: pointer.position.y, last_y: pointer.position.y, last_ms: ctx.now_ms, velocity: 0.0, moving: false });
+                }
+                None
+            }
+            PointerPhase::Move => {
+                let drag = self.drag.as_mut()?;
+                let elapsed = ctx.now_ms.saturating_sub(drag.last_ms);
+                if elapsed > 0 {
+                    let instant = (pointer.position.y - drag.last_y) * 1000.0 / elapsed as f32;
+                    drag.velocity = drag.velocity * 0.4 + instant * 0.6;
+                    drag.last_ms = ctx.now_ms;
+                }
+                drag.last_y = pointer.position.y;
+                let travel = pointer.position.y - drag.start_y;
+                let started = !drag.moving && travel.abs() >= SHEET_DRAG_SLOP;
+                if !drag.moving && !started {
+                    return None;
+                }
+                drag.moving = true;
+                let id = drag.modal;
+                // The sheet cannot grow while it is held: upward travel only hints.
+                self.apply_sheet_offset(ctx, id, if travel > 0.0 { travel } else { travel * 0.25 });
+                Some(started)
+            }
+            PointerPhase::Up | PointerPhase::Cancel => {
+                let drag = self.drag.take().filter(|drag| drag.moving)?;
+                let id = drag.modal;
+                let travel = pointer.position.y - drag.start_y;
+                let offset = if travel > 0.0 { travel } else { travel * 0.25 };
+                let node = ctx.scene.node(id)?;
+                let props = node.props();
+                let surface = node.frame.height.max(1.0);
+                let snaps = snap_points(props.bytes(PropKey::BottomSheetSnapPoints));
+                let index = usize::try_from(props.integer_or(PropKey::BottomSheetIndex, 0)).unwrap_or(0).min(snaps.len().saturating_sub(1));
+                let dismissible = props.flag_or(PropKey::BottomSheetDismissible, true);
+                let current = snaps.get(index).copied().unwrap_or(1.0);
+                let projected = current - (travel + drag.velocity * 0.12) / surface;
+                let cancelled = pointer.phase == PointerPhase::Cancel;
+                if !cancelled && dismissible && index == 0 && projected < current * 0.55 {
+                    ctx.emit_if(id, PropKey::OnBottomSheetDismiss, event_kind::BOTTOM_SHEET_DISMISS, Vec::new());
+                    // The exit starts from where the sheet was released.
+                    self.apply_sheet_offset(ctx, id, 0.0);
+                    self.request_close(ctx, id, false);
+                    return Some(false);
+                }
+                if !cancelled && !snaps.is_empty() {
+                    let nearest = snaps.iter().enumerate().min_by(|a, b| (a.1 - projected).abs().total_cmp(&(b.1 - projected).abs())).map_or(index, |(nearest, _)| nearest);
+                    let payload = WireMap::new().with("index", nearest as i64).with("position", snaps[nearest]).encode();
+                    ctx.emit_if(id, PropKey::OnBottomSheetChange, event_kind::BOTTOM_SHEET_CHANGE, payload);
+                }
+                if ctx.reduced_motion {
+                    self.apply_sheet_offset(ctx, id, 0.0);
+                } else {
+                    ctx.animator.start(Owner::SheetDrag(id), offset, 0.0, Curve::timing(SHEET_SETTLE_MS, Easing::EASE_OUT), 0, ctx.now_ms);
+                }
+                Some(false)
+            }
+            _ => None,
         }
     }
 

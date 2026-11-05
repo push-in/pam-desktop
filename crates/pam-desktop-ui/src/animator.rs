@@ -301,6 +301,8 @@ pub enum Owner {
     Image(NodeId),
     /// The toast sliding in or out.
     Toast,
+    /// A released bottom sheet returning to its snap point.
+    SheetDrag(NodeId),
     /// A bar bound to a media player gliding to the new position.
     MediaBar(NodeId),
     /// A drag target settling on a snap point.
@@ -323,6 +325,7 @@ impl Owner {
             | Self::Scroll(id)
             | Self::Gesture(id)
             | Self::MediaBar(id)
+            | Self::SheetDrag(id)
             | Self::GesturePose(id)
             | Self::Image(id) => *id,
             // Host chrome belongs to no node of the application.
