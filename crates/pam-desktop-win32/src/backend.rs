@@ -190,6 +190,9 @@ impl Backend for Win32Backend {
         view.decoration.clone_from(decoration);
         if let Some(cache) = &mut view.cache {
             cache.invalidate();
+            if decoration.backdrop_blur <= 0.0 {
+                cache.forget_backdrop();
+            }
         }
         if recolored {
             // Text controls paint their own background to match the box behind them.

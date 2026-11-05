@@ -9,17 +9,18 @@ use pam_desktop_ui::color::Color;
 use pam_desktop_ui::geometry::{Insets, Point, Rect, Size};
 use pam_desktop_ui::style::{BorderStyle, Decoration, Gradient, GradientShape, Radii, Shadow};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_RECT_F, D2D_SIZE_F, D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D1_FIGURE_BEGIN_FILLED,
-    D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_CLOSED, D2D1_FIGURE_END_OPEN,
-    D2D1_FILL_MODE_ALTERNATE, D2D1_GRADIENT_STOP,
+    D2D_RECT_F, D2D_RECT_U, D2D_SIZE_F, D2D_SIZE_U, D2D1_COMPOSITE_MODE_SOURCE_OVER,
+    D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_CLOSED,
+    D2D1_FIGURE_END_OPEN, D2D1_FILL_MODE_ALTERNATE, D2D1_GRADIENT_STOP,
 };
 use windows::Win32::Graphics::Direct2D::{
     CLSID_D2D1ColorMatrix, CLSID_D2D1GaussianBlur, CLSID_D2D1Shadow, D2D1_ANTIALIAS_MODE_ALIASED,
     D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_SMALL,
-    D2D1_BITMAP_BRUSH_PROPERTIES1, D2D1_BRUSH_PROPERTIES, D2D1_BUFFER_PRECISION_8BPC_UNORM,
-    D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_ROUND, D2D1_COLOR_INTERPOLATION_MODE_PREMULTIPLIED,
-    D2D1_COLOR_SPACE_SRGB, D2D1_COLORMATRIX_PROP_COLOR_MATRIX, D2D1_COMBINE_MODE_INTERSECT,
-    D2D1_DASH_STYLE_CUSTOM, D2D1_ELLIPSE, D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_WRAP,
+    D2D1_BITMAP_BRUSH_PROPERTIES1, D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_PROPERTIES1,
+    D2D1_BRUSH_PROPERTIES, D2D1_BUFFER_PRECISION_8BPC_UNORM, D2D1_CAP_STYLE_FLAT,
+    D2D1_CAP_STYLE_ROUND, D2D1_COLOR_INTERPOLATION_MODE_PREMULTIPLIED, D2D1_COLOR_SPACE_SRGB,
+    D2D1_COLORMATRIX_PROP_COLOR_MATRIX, D2D1_COMBINE_MODE_INTERSECT, D2D1_DASH_STYLE_CUSTOM,
+    D2D1_ELLIPSE, D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_WRAP,
     D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
     D2D1_INTERPOLATION_MODE_LINEAR, D2D1_LAYER_OPTIONS1_NONE, D2D1_LAYER_PARAMETERS1,
     D2D1_LINE_JOIN_MITER, D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_PRIMITIVE_BLEND_COPY,
@@ -279,6 +280,9 @@ pub struct PaintCache {
     /// A drawing list that needed its own surface (it erases), rasterized,
     /// with the size, scale and device generation it was made for.
     pub drawing: Option<(ID2D1Bitmap1, Size, f32, u64)>,
+    /// The copy of what is behind a view with `backdropBlur`, with the
+    /// pixel size, DPI and device generation it was made for.
+    backdrop: Option<(ID2D1Bitmap1, (u32, u32), f32, u64)>,
 }
 
 impl PaintCache {
@@ -289,6 +293,11 @@ impl PaintCache {
 
     pub fn invalidate_drawing(&mut self) {
         self.drawing = None;
+    }
+
+    /// The view no longer blurs what is behind it.
+    pub fn forget_backdrop(&mut self) {
+        self.backdrop = None;
     }
 
     fn prepare(
@@ -1559,6 +1568,109 @@ pub fn filter_image(
         }
     }
     Some(current)
+}
+
+/// What `context` has painted so far under a box of `size` (placed by the
+/// current transform), blurred: the image, and where its top left corner
+/// goes on the target in logical units. The caller has flushed `context`,
+/// so what it drew is on the target. `None` when the target is not a
+/// bitmap (a recording), when the box is off the target or when Direct2D
+/// refuses a step; the caller then paints the view without a backdrop.
+pub fn backdrop_image(
+    context: &ID2D1DeviceContext,
+    device: &mut Device,
+    cache: &mut PaintCache,
+    generation: u64,
+    size: Size,
+    sigma: f32,
+) -> Option<(ID2D1Image, Point)> {
+    // SAFETY: COM calls on live objects inside the context's BeginDraw;
+    // every pointer passed refers to a local that outlives the call, and
+    // the copied rectangle lies inside the target (clamped below).
+    unsafe {
+        let target: ID2D1Bitmap1 = context.GetTarget().ok()?.cast().ok()?;
+        let mut transform = Matrix3x2::identity();
+        context.GetTransform(&mut transform);
+        let (mut dpi, mut dpi_y) = (96.0_f32, 96.0_f32);
+        context.GetDpi(&mut dpi, &mut dpi_y);
+        let scale = dpi / 96.0;
+        // The pixels the box covers: the bounds of its four corners.
+        let (mut left, mut top) = (f32::MAX, f32::MAX);
+        let (mut right, mut bottom) = (f32::MIN, f32::MIN);
+        for (x, y) in [
+            (0.0, 0.0),
+            (size.width, 0.0),
+            (0.0, size.height),
+            (size.width, size.height),
+        ] {
+            let on_target = (
+                (x * transform.M11 + y * transform.M21 + transform.M31) * scale,
+                (x * transform.M12 + y * transform.M22 + transform.M32) * scale,
+            );
+            left = left.min(on_target.0);
+            top = top.min(on_target.1);
+            right = right.max(on_target.0);
+            bottom = bottom.max(on_target.1);
+        }
+        let pixels = target.GetPixelSize();
+        let (left, top) = (left.floor().max(0.0), top.floor().max(0.0));
+        let right = right.ceil().min(pixels.width as f32);
+        let bottom = bottom.ceil().min(pixels.height as f32);
+        // Also false for a transform that is not a number.
+        if !(right > left && bottom > top) {
+            return None;
+        }
+        let extent = ((right - left) as u32, (bottom - top) as u32);
+        let fresh =
+            cache
+                .backdrop
+                .as_ref()
+                .is_some_and(|(_, made_for, made_dpi, made_generation)| {
+                    *made_for == extent && *made_dpi == dpi && *made_generation == generation
+                });
+        if !fresh {
+            cache.backdrop = None;
+            // The target's own format, so the copy is a plain copy.
+            let properties = D2D1_BITMAP_PROPERTIES1 {
+                pixelFormat: target.GetPixelFormat(),
+                dpiX: dpi,
+                dpiY: dpi,
+                bitmapOptions: D2D1_BITMAP_OPTIONS_NONE,
+                colorContext: ManuallyDrop::new(None),
+            };
+            let bitmap = context
+                .CreateBitmap(
+                    D2D_SIZE_U {
+                        width: extent.0,
+                        height: extent.1,
+                    },
+                    None,
+                    0,
+                    &properties,
+                )
+                .ok()?;
+            cache.backdrop = Some((bitmap, extent, dpi, generation));
+        }
+        let (bitmap, ..) = cache.backdrop.as_ref()?;
+        let source = D2D_RECT_U {
+            left: left as u32,
+            top: top as u32,
+            right: right as u32,
+            bottom: bottom as u32,
+        };
+        bitmap
+            .CopyFromBitmap(None, &target, Some(std::ptr::from_ref(&source)))
+            .ok()?;
+        let effect = device.backdrop_blur()?;
+        effect.SetInput(0, bitmap, true);
+        set_float(
+            effect,
+            D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION.0,
+            sigma.max(0.0),
+        );
+        let image = effect.GetOutput().ok()?;
+        Some((image, Point::new(left / scale, top / scale)))
+    }
 }
 
 /// The blurred silhouette of a text layout, for text shadows.

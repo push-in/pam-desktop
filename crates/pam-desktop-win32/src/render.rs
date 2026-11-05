@@ -41,6 +41,14 @@ struct Painter<'a> {
     rects: Vec<Rect>,
     /// Something painted needs the next vertical blank (a playing video).
     wants_tick: bool,
+    /// Layers open on the window's context: what is painted inside one is
+    /// not on the target until the layer is popped.
+    layers: usize,
+    /// A backdrop was blurred in this frame.
+    blurred: bool,
+    /// Flushing the frame before a backdrop was copied failed: the frame
+    /// is lost, as if `EndDraw` had failed with this error.
+    failed: Option<windows::core::Error>,
 }
 
 impl Painter<'_> {
@@ -61,19 +69,25 @@ impl Painter<'_> {
         }
         let opacity = view.layer.opacity.min(1.0);
         let filtered = view.decoration.blur > 0.0 || view.decoration.color_matrix.is_some();
+        let frosted = view.decoration.backdrop_blur > 0.0;
         let placed = view.to_parent();
         // The visible area in the view's own coordinates (unknown when the
         // transform cannot be inverted: then nothing is culled below).
         let visible =
             visible.and_then(|visible| placed.invert().map(|inverse| inverse.bounds(visible)));
         let saved = paint::concat_transform(context, &placed);
+        if frosted && !filtered {
+            self.paint_backdrop(context, id, opacity);
+        }
         if filtered {
             self.paint_filtered(context, id, level, opacity);
         } else if opacity < 0.999 {
             // The layer only needs to cover what the subtree can paint.
             let bounds = self.scene.subtree_bounds(id, 0, true).outset(8.0);
             paint::push_layer(context, rect_f(bounds), None, opacity);
+            self.layers += 1;
             self.paint_content(context, id, level, visible);
+            self.layers -= 1;
             // SAFETY: pops the layer pushed above.
             unsafe { context.PopLayer() };
         } else {
@@ -81,6 +95,80 @@ impl Painter<'_> {
         }
         // SAFETY: restores the transform saved above.
         unsafe { context.SetTransform(&saved) };
+    }
+
+    /// `backdropBlur`: what is already painted behind the view is copied,
+    /// blurred and drawn back inside the view's outline, before the view
+    /// paints itself. The copy needs the pixels painted so far: only the
+    /// window's own target has them, and not those still inside an open
+    /// layer. Anywhere else, and when Direct2D refuses a step, the view is
+    /// painted without the blur.
+    fn paint_backdrop(&mut self, context: &ID2D1DeviceContext, id: NodeId, opacity: f32) {
+        if self.depth != 0
+            || self.layers != 0
+            || self.graphics.backdrop_failed
+            || !backdrop_blur_enabled()
+        {
+            return;
+        }
+        let factory = self.graphics.factory.clone();
+        let generation = self.graphics.generation;
+        let Some(view) = self.scene.views.get_mut(&id) else {
+            return;
+        };
+        let size = view.frame.size();
+        // An opaque background would cover the blur.
+        if size.is_empty() || view.decoration.background.is_opaque() {
+            return;
+        }
+        let Some(device) = self.graphics.device.as_mut() else {
+            return;
+        };
+        let cache = view
+            .cache
+            .get_or_insert_with(|| Box::new(PaintCache::default()));
+        // Direct2D batches: what was drawn so far must reach the target
+        // before it is copied.
+        // SAFETY: plain call inside the context's BeginDraw.
+        if let Err(error) = unsafe { context.Flush(None, None) } {
+            self.failed.get_or_insert(error);
+            return;
+        }
+        // The radius means what it means for `blur`: twice the deviation.
+        let sigma = view.decoration.backdrop_blur / 2.0;
+        let Some((image, origin)) =
+            paint::backdrop_image(context, device, cache, generation, size, sigma)
+        else {
+            return;
+        };
+        let outline = paint::rounded(&factory, size, view.decoration.radii, Insets::ZERO);
+        let clip = paint::push_clip(context, &factory, &outline);
+        if opacity < 0.999 {
+            paint::push_layer(context, rect_f(Rect::from_size(size)), None, opacity);
+        }
+        let offset = vec2(origin.x, origin.y);
+        // SAFETY: COM calls with live objects inside the context's
+        // BeginDraw; the transform is restored and the layer pushed above
+        // is popped.
+        unsafe {
+            let mut transform = Matrix3x2::identity();
+            context.GetTransform(&mut transform);
+            // The image is in the target's own coordinates.
+            context.SetTransform(&Matrix3x2::identity());
+            context.DrawImage(
+                &image,
+                Some(std::ptr::from_ref(&offset)),
+                None,
+                D2D1_INTERPOLATION_MODE_LINEAR,
+                D2D1_COMPOSITE_MODE_SOURCE_OVER,
+            );
+            context.SetTransform(&transform);
+            if opacity < 0.999 {
+                context.PopLayer();
+            }
+        }
+        paint::pop_clip(context, clip);
+        self.blurred = true;
     }
 
     /// Blur and color matrix apply to the view with its children: the
@@ -197,6 +285,10 @@ impl Painter<'_> {
         } else {
             None
         };
+        let layered = clip == Some(paint::Clip::Layer);
+        if layered {
+            self.layers += 1;
+        }
 
         if let (Some(content), Some(device)) = (view.image.as_ref(), self.graphics.device.as_ref())
             && let Some(bitmap) = self.images.bitmap(content.key)
@@ -376,6 +468,9 @@ impl Painter<'_> {
         }
         if let Some(clip) = clip {
             paint::pop_clip(context, clip);
+        }
+        if layered {
+            self.layers -= 1;
         }
 
         // Keyboard focus ring, outside the box.
@@ -649,7 +744,7 @@ pub fn render_window(state: &mut State, window: WindowId) -> Outcome {
 
     // SAFETY: COM calls on live objects; BeginDraw/EndDraw are paired and
     // the target is detached before presenting.
-    let (drawn, wants_tick) = unsafe {
+    let (drawn, wants_tick, blurred) = unsafe {
         context.SetTarget(&target);
         context.SetDpi(dpi, dpi);
         context.BeginDraw();
@@ -666,18 +761,25 @@ pub fn render_window(state: &mut State, window: WindowId) -> Outcome {
             depth: 0,
             rects: Vec::new(),
             wants_tick: false,
+            layers: 0,
+            blurred: false,
+            failed: None,
         };
         let everything = Rect::from_size(size);
         for layer in root.iter().chain(overlays.iter()) {
             painter.paint_view(&context, *layer, 0, Some(everything));
         }
-        let wants_tick = painter.wants_tick;
+        let (wants_tick, blurred) = (painter.wants_tick, painter.blurred);
+        let failed = painter.failed.take();
         let drawn = context.EndDraw(None, None);
         context.SetTarget(None::<&ID2D1Image>);
-        (drawn, wants_tick)
+        (failed.map_or(drawn, Err), wants_tick, blurred)
     };
     if wants_tick {
         state.request_tick();
+    }
+    if blurred && let Some(device) = state.graphics.device.as_ref() {
+        device.release_backdrop();
     }
     drop(target);
     if let Err(error) = drawn {
@@ -689,7 +791,13 @@ pub fn render_window(state: &mut State, window: WindowId) -> Outcome {
         // change draws everything again.
         if let Some(entry) = state.scene.windows.get_mut(&window) {
             entry.dirty = Damage::All;
+            if blurred && !state.graphics.backdrop_failed {
+                // A frame without the blur is better than no frame: this
+                // one is drawn again without it, and so are the next ones.
+                entry.damage(None);
+            }
         }
+        state.graphics.backdrop_failed |= blurred;
         return Outcome::Skipped;
     }
 
@@ -706,7 +814,8 @@ pub fn render_window(state: &mut State, window: WindowId) -> Outcome {
         bottom: height as i32,
     };
     let region = match damage {
-        Damage::Region(region) if surface.presented && partial_present_enabled() => {
+        // A blur spreads a change behind it beyond the changed region.
+        Damage::Region(region) if surface.presented && partial_present_enabled() && !blurred => {
             let rect = pixel_rect(region, scale);
             let clipped = RECT {
                 left: rect.left.max(0),
@@ -750,6 +859,15 @@ pub fn render_window(state: &mut State, window: WindowId) -> Outcome {
 fn partial_present_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var_os("PAM_DESKTOP_FULL_PRESENT").is_none())
+}
+
+/// `PAM_DESKTOP_BACKDROP_BLUR=0` paints `backdropBlur` views without the
+/// blur (diagnostics).
+fn backdrop_blur_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("PAM_DESKTOP_BACKDROP_BLUR").is_none_or(|value| value != "0")
+    })
 }
 
 /// Largest side of a view snapshot, in pixels.
@@ -796,6 +914,9 @@ pub fn snapshot_view(state: &mut State, id: NodeId) -> Option<(Vec<u8>, u32, u32
             depth: 1,
             rects: Vec::new(),
             wants_tick: false,
+            layers: 0,
+            blurred: false,
+            failed: None,
         };
         painter.paint_content(&context, id, 0, None);
         let drawn = context.EndDraw(None, None);

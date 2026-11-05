@@ -242,6 +242,7 @@ The script writes `pam-desktop-<version>-<target>.tar.gz` and its `.sha256` in t
 | `PAM_DESKTOP_STRICT=1` | Makes `BuildConfiguration::strict()` true in development. |
 | `PAM_DESKTOP_FRAME_GC=0` | Leaves PHP's cycle collector on its own schedule. |
 | `PAM_DESKTOP_FULL_PRESENT=1` | Windows backend: presents every frame whole instead of the changed regions. |
+| `PAM_DESKTOP_BACKDROP_BLUR=0` | Windows backend: paints views with `backdropBlur` without the blur. |
 | `GTK_USE_PORTAL=0` | Linux: dark mode is read from the GTK settings instead of the desktop portal. |
 | `PAM_DESKTOP_HOST=/path/to/pam-desktop` | `vendor/bin/pam-desktop` runs that host instead of the downloaded one. |
 

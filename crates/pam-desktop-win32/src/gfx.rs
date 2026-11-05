@@ -8,15 +8,17 @@
 use pam_desktop_ui::color::Color;
 use windows::Win32::Foundation::{HMODULE, HWND};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_SIZE_U, D2D1_ALPHA_MODE_IGNORE, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT,
+    D2D_SIZE_U, D2D1_ALPHA_MODE_IGNORE, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BORDER_MODE_HARD,
+    D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
-    D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID, D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
-    D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1_LINE_JOIN_ROUND, D2D1_STROKE_STYLE_PROPERTIES,
-    D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE, D2D1_UNIT_MODE_DIPS, D2D1CreateFactory, ID2D1Bitmap1,
-    ID2D1Device, ID2D1DeviceContext, ID2D1Factory, ID2D1Factory1, ID2D1SolidColorBrush,
-    ID2D1StrokeStyle,
+    CLSID_D2D1GaussianBlur, D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET,
+    D2D1_BITMAP_PROPERTIES1, D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID,
+    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_MULTI_THREADED,
+    D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_LINE_JOIN_ROUND, D2D1_PROPERTY_TYPE_UNKNOWN,
+    D2D1_STROKE_STYLE_PROPERTIES, D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE, D2D1_UNIT_MODE_DIPS,
+    D2D1CreateFactory, ID2D1Bitmap1, ID2D1Device, ID2D1DeviceContext, ID2D1Effect, ID2D1Factory,
+    ID2D1Factory1, ID2D1Image, ID2D1SolidColorBrush, ID2D1StrokeStyle,
 };
 use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL_10_0,
@@ -54,6 +56,8 @@ pub struct Device {
     offscreen: Vec<ID2D1DeviceContext>,
     /// A solid brush recolored before each use.
     pub brush: ID2D1SolidColorBrush,
+    /// The blur of `backdropBlur`, made the first time a view needs it.
+    backdrop: Option<ID2D1Effect>,
     /// Whether the device can decode video for Media Foundation.
     pub video: bool,
 }
@@ -66,6 +70,8 @@ pub struct Graphics {
     pub device: Option<Device>,
     /// Bumped whenever the device is rebuilt: caches keyed by it expire.
     pub generation: u64,
+    /// A frame that blurred a backdrop could not be drawn: no more of them.
+    pub backdrop_failed: bool,
 }
 
 /// The swap chain of one window and the Direct2D bitmap over its back buffer.
@@ -174,6 +180,7 @@ impl Device {
                 context,
                 offscreen: Vec::new(),
                 brush,
+                backdrop: None,
                 video,
             })
         }
@@ -198,6 +205,38 @@ impl Device {
             self.offscreen.push(context);
         }
         Ok(self.offscreen[depth].clone())
+    }
+
+    /// The Gaussian blur that frosts what is behind a view. Its border is
+    /// hard: the rim of the blurred area repeats its edge pixels instead
+    /// of fading to nothing.
+    pub fn backdrop_blur(&mut self) -> Option<&ID2D1Effect> {
+        if self.backdrop.is_none() {
+            // SAFETY: COM calls on the live window context; the bytes are
+            // the 32-bit value of the enumeration, passed untyped as the
+            // C++ `SetValue` helper does.
+            unsafe {
+                let effect = self.context.CreateEffect(&CLSID_D2D1GaussianBlur).ok()?;
+                effect
+                    .SetValue(
+                        D2D1_GAUSSIANBLUR_PROP_BORDER_MODE.0 as u32,
+                        D2D1_PROPERTY_TYPE_UNKNOWN,
+                        &(D2D1_BORDER_MODE_HARD.0 as u32).to_ne_bytes(),
+                    )
+                    .ok()?;
+                self.backdrop = Some(effect);
+            }
+        }
+        self.backdrop.as_ref()
+    }
+
+    /// Lets go of the last bitmap the backdrop blur was given, once the
+    /// frame that used it is drawn.
+    pub fn release_backdrop(&self) {
+        if let Some(effect) = &self.backdrop {
+            // SAFETY: plain call on the live effect.
+            unsafe { effect.SetInput(0, None::<&ID2D1Image>, true) };
+        }
     }
 
     /// The shared solid brush, set to `color`.
@@ -305,6 +344,7 @@ impl Graphics {
             round_stroke,
             device,
             generation: 1,
+            backdrop_failed: false,
         })
     }
 
