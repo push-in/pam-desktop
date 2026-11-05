@@ -23,6 +23,7 @@ use crate::geometry::Size;
 use crate::inputs::Inputs;
 use crate::interaction::Interaction;
 use crate::modules::Registry;
+use crate::motion::Motion;
 use crate::runtime_modules::Settings;
 use crate::presenter::coverage::Coverage;
 use crate::presenter::modal::Modals;
@@ -234,6 +235,7 @@ pub struct Runtime<B: Backend> {
     coverage: Coverage,
     pub(crate) interaction: Interaction,
     pub(crate) inputs: Inputs,
+    motion: Motion,
     pub(crate) modules: Registry,
     pub(crate) settings: Settings,
     /// What the operating system reports, before the app's own preference.
@@ -343,6 +345,7 @@ impl<B: Backend> Runtime<B> {
             coverage: Coverage::default(),
             interaction: Interaction::new(metrics.dark),
             inputs: Inputs::default(),
+            motion: Motion::default(),
             modules,
             settings,
             system_dark: system.dark,
@@ -463,11 +466,13 @@ impl<B: Backend> Runtime<B> {
                 self.coverage.on_change(&mut ctx, change);
                 self.interaction.on_change(&mut ctx, change);
                 self.inputs.on_change(&mut ctx, change);
+                self.motion.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             self.tabs.after_commit(&mut ctx);
             self.modals.after_commit(&mut ctx);
             self.inputs.after_commit(&mut ctx);
+            self.motion.after_commit(&mut ctx);
             self.coverage.invalidate();
             self.inputs.retry_autofocus();
         }
@@ -723,7 +728,7 @@ impl<B: Backend> Runtime<B> {
                     self.modals.on_sample(&mut ctx, sample.owner, sample.value, sample.finished);
                 }
                 Owner::Press(id) => self.interaction.on_press_sample(&mut ctx, id, sample.value),
-                Owner::Transition(..) | Owner::Motion(..) => {}
+                Owner::Transition(..) | Owner::Motion(..) => self.motion.on_sample(&mut ctx, sample.owner, sample.value, sample.finished),
             }
         }
     }

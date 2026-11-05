@@ -14,6 +14,7 @@ pub mod input_format;
 pub mod inputs;
 pub mod interaction;
 pub mod modules;
+pub mod motion;
 pub mod presenter;
 pub mod props;
 pub mod runtime;

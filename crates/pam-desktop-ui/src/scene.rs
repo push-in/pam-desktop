@@ -8,11 +8,12 @@ use std::hash::{BuildHasherDefault, Hasher};
 
 use pam_desktop_wire::{Mutation, Node, NodeKind, PropKey, PropValue};
 
+use crate::animator::MotionProperty;
 use crate::backend::{Backend, NodeId, ScrollConfig, TextContent, VerticalAlign, ViewClass, WindowId, MAIN_WINDOW};
 use crate::color::Color;
 use crate::geometry::{Affine, Insets, Point, Rect, Size};
 use crate::props::{PropMap, Props};
-use crate::style::{resolve_transform, Decoration, LayerState};
+use crate::style::{compose_transform, resolve_transform, transform_origin, Decoration, LayerState};
 use crate::text::{Ellipsize, TextAlign, TextBlock, TextShadow, TextSource};
 
 /// Node ids are already well distributed 64-bit values: hashing them again
@@ -125,11 +126,9 @@ pub enum LayerSlot {
     Presenter = 0,
     /// Press and hover feedback.
     Interaction = 1,
-    /// Declarative animations.
-    Motion = 2,
 }
 
-const LAYER_SLOTS: usize = 3;
+const LAYER_SLOTS: usize = 2;
 
 /// Who owns a style overlay (properties layered over the node's own).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -142,6 +141,83 @@ pub enum StyleLayer {
 
 const STYLE_LAYERS: usize = 2;
 
+/// Presentation values an animation writes over a node's own properties:
+/// absolute opacity, translation (logical units), scale factors and rotation
+/// (degrees). `None` leaves the property to the node.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MotionValues {
+    pub opacity: Option<f32>,
+    pub translate_x: Option<f32>,
+    pub translate_y: Option<f32>,
+    pub scale_x: Option<f32>,
+    pub scale_y: Option<f32>,
+    pub rotate: Option<f32>,
+}
+
+impl MotionValues {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    #[must_use]
+    pub fn get(&self, property: MotionProperty) -> Option<f32> {
+        match property {
+            MotionProperty::Opacity => self.opacity,
+            MotionProperty::TranslateX => self.translate_x,
+            MotionProperty::TranslateY => self.translate_y,
+            MotionProperty::ScaleX => self.scale_x,
+            MotionProperty::ScaleY => self.scale_y,
+            MotionProperty::Rotate => self.rotate,
+        }
+    }
+
+    pub fn set(&mut self, property: MotionProperty, value: Option<f32>) {
+        match property {
+            MotionProperty::Opacity => self.opacity = value,
+            MotionProperty::TranslateX => self.translate_x = value,
+            MotionProperty::TranslateY => self.translate_y = value,
+            MotionProperty::ScaleX => self.scale_x = value,
+            MotionProperty::ScaleY => self.scale_y = value,
+            MotionProperty::Rotate => self.rotate = value,
+        }
+    }
+}
+
+/// The wire property behind each presentation property.
+#[must_use]
+pub fn motion_prop_key(property: MotionProperty) -> PropKey {
+    match property {
+        MotionProperty::Opacity => PropKey::Opacity,
+        MotionProperty::TranslateX => PropKey::TranslationX,
+        MotionProperty::TranslateY => PropKey::TranslationY,
+        MotionProperty::ScaleX => PropKey::ScaleX,
+        MotionProperty::ScaleY => PropKey::ScaleY,
+        MotionProperty::Rotate => PropKey::Rotation,
+    }
+}
+
+fn motion_property(key: PropKey) -> Option<MotionProperty> {
+    match key {
+        PropKey::Opacity => Some(MotionProperty::Opacity),
+        PropKey::TranslationX => Some(MotionProperty::TranslateX),
+        PropKey::TranslationY => Some(MotionProperty::TranslateY),
+        PropKey::ScaleX => Some(MotionProperty::ScaleX),
+        PropKey::ScaleY => Some(MotionProperty::ScaleY),
+        PropKey::Rotation => Some(MotionProperty::Rotate),
+        _ => None,
+    }
+}
+
+/// The value a presentation property has when the node does not set it.
+#[must_use]
+pub fn motion_default(property: MotionProperty) -> f32 {
+    match property {
+        MotionProperty::Opacity | MotionProperty::ScaleX | MotionProperty::ScaleY => 1.0,
+        MotionProperty::TranslateX | MotionProperty::TranslateY | MotionProperty::Rotate => 0.0,
+    }
+}
+
 /// What changed in the scene during `apply`, for the controllers that react
 /// to it (navigation, tabs, modals, lists, inputs, images…).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -149,6 +225,9 @@ pub enum Change {
     Created(NodeId, NodeKind),
     Removed(NodeId, NodeKind),
     Updated(NodeId, PropKey),
+    /// A presentation property changed; `previous` is the value the node had
+    /// (`None` when it was unset). Reported in addition to `Updated`.
+    Motion { id: NodeId, property: MotionProperty, previous: Option<f32> },
     /// The node gained, lost or reordered children.
     Children(NodeId),
     Frame(NodeId),
@@ -341,6 +420,7 @@ pub struct Scene {
     removed: Vec<NodeId>,
     changes: Vec<Change>,
     layer_overrides: IdMap<[LayerOverride; LAYER_SLOTS]>,
+    motion: IdMap<MotionValues>,
     /// Properties that win over the node's own while resolving paint state.
     style_overlays: IdMap<[Option<PropMap>; STYLE_LAYERS]>,
     scroll_offsets: IdMap<Point>,
@@ -433,6 +513,7 @@ impl Scene {
         self.touched.clear();
         self.removed.clear();
         self.layer_overrides.clear();
+        self.motion.clear();
         self.style_overlays.clear();
         self.scroll_offsets.clear();
         self.overlays.clear();
@@ -547,6 +628,7 @@ impl Scene {
                 self.changes.push(Change::Removed(removed, node.kind));
             }
             self.layer_overrides.remove(&removed);
+            self.motion.remove(&removed);
             self.style_overlays.remove(&removed);
             self.scroll_offsets.remove(&removed);
             if let Some(position) = self.overlays.iter().position(|overlay| *overlay == removed) {
@@ -563,6 +645,7 @@ impl Scene {
 
     fn update(&mut self, id: NodeId, key: PropKey, value: Option<PropValue>) {
         let Some(node) = self.nodes.get_mut(&id) else { return };
+        let previous = node.props.get(&key).and_then(PropValue::as_number);
         match value {
             Some(value) => {
                 if node.props.get(&key) == Some(&value) {
@@ -577,6 +660,9 @@ impl Scene {
             }
         }
         self.changes.push(Change::Updated(id, key));
+        if let Some(property) = motion_property(key) {
+            self.changes.push(Change::Motion { id, property, previous });
+        }
         let dirty = dirty_for(key);
         let parent = node.parent;
         if dirty.contains(Dirty::CHILD_TEXT) {
@@ -671,6 +757,38 @@ impl Scene {
     #[must_use]
     pub fn layer_override(&self, id: NodeId, slot: LayerSlot) -> LayerOverride {
         self.layer_overrides.get(&id).map_or(LayerOverride::NONE, |slots| slots[slot as usize])
+    }
+
+    /// Presentation values written by animations; an empty set removes them.
+    pub fn set_motion(&mut self, id: NodeId, values: MotionValues) {
+        if !self.nodes.contains_key(&id) {
+            return;
+        }
+        if values.is_empty() {
+            if self.motion.remove(&id).is_none() {
+                return;
+            }
+        } else if self.motion.insert(id, values) == Some(values) {
+            return;
+        }
+        self.touch(id, Dirty::LAYER);
+    }
+
+    #[must_use]
+    pub fn motion(&self, id: NodeId) -> MotionValues {
+        self.motion.get(&id).copied().unwrap_or_default()
+    }
+
+    /// What a presentation property currently shows: the animated value, or
+    /// the node's own.
+    #[must_use]
+    pub fn displayed(&self, id: NodeId, property: MotionProperty) -> f32 {
+        if let Some(value) = self.motion.get(&id).and_then(|values| values.get(property)) {
+            return value;
+        }
+        self.effective_props(id)
+            .and_then(|props| props.number(motion_prop_key(property)))
+            .unwrap_or_else(|| motion_default(property))
     }
 
     /// Replaces the properties one layer puts over a node's own (state
@@ -950,10 +1068,32 @@ impl Scene {
     }
 
     fn resolve_layer(&self, node: &SceneNode, props: Props<'_>) -> LayerState {
-        let mut layer = LayerState {
-            opacity: props.number_or(PropKey::Opacity, 1.0).clamp(0.0, 1.0),
-            transform: resolve_transform(props, node.frame.size()),
-            visible: props.flag_or(PropKey::Visible, true),
+        let size = node.frame.size();
+        let mut layer = match self.motion.get(&node.id) {
+            None => LayerState {
+                opacity: props.number_or(PropKey::Opacity, 1.0).clamp(0.0, 1.0),
+                transform: resolve_transform(props, size),
+                visible: props.flag_or(PropKey::Visible, true),
+            },
+            // Animated values replace the node's own, component by component.
+            Some(motion) => {
+                let translate_x = motion.translate_x.unwrap_or_else(|| props.number_or(PropKey::TranslationX, 0.0))
+                    + props.number_or(PropKey::TranslationXPercent, 0.0) / 100.0 * size.width;
+                let translate_y = motion.translate_y.unwrap_or_else(|| props.number_or(PropKey::TranslationY, 0.0))
+                    + props.number_or(PropKey::TranslationYPercent, 0.0) / 100.0 * size.height;
+                LayerState {
+                    opacity: motion.opacity.unwrap_or_else(|| props.number_or(PropKey::Opacity, 1.0)).clamp(0.0, 1.0),
+                    transform: compose_transform(
+                        translate_x,
+                        translate_y,
+                        motion.scale_x.unwrap_or_else(|| props.number_or(PropKey::ScaleX, 1.0)),
+                        motion.scale_y.unwrap_or_else(|| props.number_or(PropKey::ScaleY, 1.0)),
+                        motion.rotate.unwrap_or_else(|| props.number_or(PropKey::Rotation, 0.0)),
+                        transform_origin(props, size),
+                    ),
+                    visible: props.flag_or(PropKey::Visible, true),
+                }
+            }
         };
         if let Some(slots) = self.layer_overrides.get(&node.id) {
             for slot in slots {
@@ -1403,6 +1543,28 @@ mod tests {
         scene.set_style_overlay(1, StyleLayer::Interaction, None);
         scene.flush(&mut backend, MAIN_WINDOW);
         assert_eq!(scene.node(1).unwrap().decoration.background, Color::WHITE);
+    }
+
+    #[test]
+    fn motion_values_replace_properties_and_report_previous_values() {
+        let (mut scene, mut backend) = mounted();
+        scene.take_changes();
+        scene.apply(vec![Mutation::Update { id: 2, key: PropKey::Opacity, value: Some(PropValue::Float(0.4)) }]);
+        assert!(scene.take_changes().contains(&Change::Motion { id: 2, property: MotionProperty::Opacity, previous: None }));
+        scene.apply(vec![Mutation::Update { id: 2, key: PropKey::Opacity, value: Some(PropValue::Float(0.8)) }]);
+        assert!(scene.take_changes().contains(&Change::Motion { id: 2, property: MotionProperty::Opacity, previous: Some(0.4) }));
+        assert_eq!(scene.displayed(2, MotionProperty::Opacity), 0.8);
+        assert_eq!(scene.displayed(2, MotionProperty::ScaleX), 1.0);
+
+        scene.set_motion(2, MotionValues { opacity: Some(0.1), translate_x: Some(30.0), ..MotionValues::default() });
+        scene.flush(&mut backend, MAIN_WINDOW);
+        let layer = scene.node(2).unwrap().layer;
+        assert_eq!(layer.opacity, 0.1);
+        assert_eq!(layer.transform, Affine::translation(30.0, 0.0));
+        assert_eq!(scene.displayed(2, MotionProperty::Opacity), 0.1);
+        scene.set_motion(2, MotionValues::default());
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(scene.node(2).unwrap().layer.opacity, 0.8);
     }
 
     #[test]
