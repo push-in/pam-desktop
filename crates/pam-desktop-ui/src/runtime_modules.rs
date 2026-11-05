@@ -92,6 +92,7 @@ impl<B: Backend> Runtime<B> {
                 other => reply.failure(format!("Unknown window method {other}")),
             },
             "view-ref" => self.view_ref_module(method, payload, reply),
+            "desktop" => self.desktop_module(method, payload, reply),
             // Unknown modules fail fast so application callbacks never hang.
             other => reply.failure(format!("Unknown native module {other}")),
         }

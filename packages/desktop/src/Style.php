@@ -123,6 +123,7 @@ final readonly class Style
         public ?int $gridSpan2xl = null,
         public ?int $gridOffset2xl = null,
         public ?int $gridOrder2xl = null,
+        public ?string $cursor = null,
     ) {
     }
 
@@ -201,6 +202,7 @@ final readonly class Style
         'maxWidthPercent' => PropKey::MaxWidthPercent->value,
         'maxHeightPercent' => PropKey::MaxHeightPercent->value,
         'pointerEvents' => PropKey::PointerEvents->value,
+        'cursor' => PropKey::Cursor->value,
         'numberOfLines' => PropKey::NumberOfLines->value,
         'tintColor' => PropKey::TintColor->value,
         'placeholderColor' => PropKey::PlaceholderColor->value,

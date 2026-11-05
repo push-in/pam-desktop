@@ -7,6 +7,7 @@
 
 use crate::color::Color;
 use crate::geometry::{Insets, Point, Rect, Size};
+use crate::shell::{Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand, WindowState};
 use crate::style::{Decoration, LayerState};
 use crate::text::{TextBlock, TextMetrics};
 
@@ -55,7 +56,7 @@ pub enum PointerButton {
     Middle,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Modifiers {
     pub shift: bool,
     pub control: bool,
@@ -111,6 +112,16 @@ pub enum BackendEvent {
     /// Keyboard focus entered or left a focusable view.
     FocusChanged { id: NodeId, focused: bool },
     Input { id: NodeId, event: InputEvent },
+    /// A menu bar or tray menu item was chosen.
+    MenuAction { id: String },
+    /// A registered shortcut fired.
+    Shortcut { id: String },
+    /// The tray icon itself was activated.
+    TrayActivated,
+    NotificationActivated { id: String },
+    /// Files were dropped on a window.
+    FilesDropped { window: WindowId, position: Point, paths: Vec<std::path::PathBuf> },
+    WindowStateChanged { window: WindowId, state: WindowState },
     WindowResized { window: WindowId, size: Size, scale: f32 },
     WindowCloseRequested { window: WindowId },
     WindowFocusChanged { window: WindowId, focused: bool },
@@ -418,6 +429,29 @@ pub trait Backend {
     /// Forces light (`Some(false)`) or dark (`Some(true)`) native chrome, or
     /// follows the system (`None`).
     fn set_appearance(&mut self, dark: Option<bool>);
+
+    // ---- desktop shell -------------------------------------------------
+
+    /// Replaces the application menu bar (empty removes it).
+    fn set_menu_bar(&mut self, menu: &[MenuNode]);
+    /// Opens a context menu at `position` (window coordinates). `done`
+    /// receives the id of the chosen item, or `None` when dismissed.
+    fn popup_menu(&mut self, window: WindowId, position: Point, menu: &[MenuNode], done: Box<dyn FnOnce(Option<String>)>);
+    /// Shows, updates or removes (`None`) the status area icon.
+    fn set_tray(&mut self, tray: Option<&TrayConfig>);
+    /// Opens a native file dialog; `done` receives the chosen paths (empty
+    /// when cancelled).
+    fn pick_files(&mut self, window: WindowId, config: &FileDialogConfig, done: Box<dyn FnOnce(Vec<std::path::PathBuf>)>);
+    fn notify(&mut self, notification: &NotificationConfig);
+    fn window_command(&mut self, window: WindowId, command: &WindowCommand);
+    fn window_state(&self, window: WindowId) -> WindowState;
+    /// Replaces the registered shortcuts; each one reports `Shortcut` events.
+    fn set_shortcuts(&mut self, shortcuts: &[Shortcut]);
+    fn set_cursor(&mut self, id: NodeId, cursor: Cursor);
+    fn set_tooltip(&mut self, id: NodeId, text: Option<&str>);
+    /// Starts moving the window with the pointer (the press that is being
+    /// handled grabbed a drag region).
+    fn begin_window_drag(&mut self, window: WindowId);
 
     // ---- application ---------------------------------------------------
 

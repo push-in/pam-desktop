@@ -415,15 +415,20 @@ impl Interaction {
             return;
         }
         let previous = std::mem::replace(&mut self.hovered, chain);
+        let position = position.unwrap_or(Point::ZERO);
         for id in previous.iter().filter(|id| !self.hovered.contains(id)).copied().collect::<Vec<_>>() {
             if self.styles.contains_key(&id) || ctx.scene.node(id).is_some_and(|node| node.kind == NodeKind::Button) {
                 self.restyle(ctx, id);
             }
+            let payload = pointer_payload(ctx, id, position);
+            ctx.emit_if(id, PropKey::OnHoverOut, event_kind::HOVER_OUT, payload);
         }
         for id in self.hovered.iter().filter(|id| !previous.contains(id)).copied().collect::<Vec<_>>() {
             if self.styles.contains_key(&id) || ctx.scene.node(id).is_some_and(|node| node.kind == NodeKind::Button) {
                 self.restyle(ctx, id);
             }
+            let payload = pointer_payload(ctx, id, position);
+            ctx.emit_if(id, PropKey::OnHoverIn, event_kind::HOVER_IN, payload);
         }
     }
 
@@ -470,7 +475,16 @@ impl Interaction {
             let payload = pointer_payload(ctx, target, position);
             ctx.emit(target, event_kind::TOUCH_START, payload);
         }
-        let Some(node) = Self::press_target(ctx, hit) else { return };
+        let Some(node) = Self::press_target(ctx, hit) else {
+            // Nothing pressable: a drag region moves the window.
+            let drags = Self::nearest_with(ctx, hit, PropKey::WindowDrag)
+                .and_then(|region| ctx.scene.node(region))
+                .is_some_and(|region| region.props().flag_or(PropKey::WindowDrag, false));
+            if drags && !ctx.scene.node(hit).is_some_and(|node| matches!(node.class, ViewClass::Input | ViewClass::TextArea)) {
+                ctx.commands.push(HostCommand::BeginWindowDrag);
+            }
+            return;
+        };
         let Some(scene_node) = ctx.scene.node(node) else { return };
         let props = scene_node.props();
         let delay_in = props.integer_or(PropKey::PressDelayInMs, 0).clamp(0, 60_000) as u64;
@@ -705,6 +719,35 @@ impl Interaction {
         let payload = pointer_payload(ctx, focused, center);
         ctx.emit_if(focused, PropKey::OnPress, event_kind::PRESS, payload);
         None
+    }
+
+    /// `KeyDown` / `KeyUp` for the focused element's nearest listener, or for
+    /// every visible listener when nothing has focus (screen level handlers).
+    pub fn report_key(&mut self, ctx: &mut Ctx<'_>, key: &KeyEvent) {
+        let (marker, kind) = if key.pressed { (PropKey::OnKeyDown, event_kind::KEY_DOWN) } else { (PropKey::OnKeyUp, event_kind::KEY_UP) };
+        let payload = WireMap::new()
+            .with("key", key.key.as_str())
+            .with("shift", key.modifiers.shift)
+            .with("control", key.modifiers.control)
+            .with("alt", key.modifiers.alt)
+            .with("meta", key.modifiers.meta)
+            .with("repeat", key.repeat)
+            .encode();
+        match self.focused.and_then(|focused| Self::nearest_with(ctx, focused, marker)) {
+            Some(target) => ctx.emit(target, kind, payload),
+            None => {
+                let listeners: Vec<NodeId> = ctx
+                    .scene
+                    .nodes()
+                    .filter(|node| node.handles(marker))
+                    .map(|node| node.id)
+                    .filter(|id| ctx.scene.is_effectively_visible(*id))
+                    .collect();
+                for listener in listeners {
+                    ctx.emit(listener, kind, payload.clone());
+                }
+            }
+        }
     }
 
     /// Drops keyboard focus (a route change, a modal opening).

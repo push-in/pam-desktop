@@ -94,7 +94,9 @@ $assert(
 $assert($css('filter: blur(4px);') === ['blurRadius' => '4', 'filterColorMatrix' => ''], 'filter: blur() must compile.');
 require __DIR__.'/css_effects.php';
 $assert($css('pointer-events: none;') === ['pointerEvents' => 'none'], 'pointer-events must compile.');
-$assert($css('cursor: pointer; -webkit-tap-highlight-color: transparent; will-change: transform;') === [], 'Browser-only properties are documented no-ops.');
+$assert($css('-webkit-tap-highlight-color: transparent; will-change: transform;') === [], 'Browser-only properties are documented no-ops.');
+$assert($css('cursor: pointer;') === ['cursor' => 'pointer'], 'cursor must compile to the desktop pointer cursor.');
+$assert($css('cursor: url(hand.cur), grab;') === ['cursor' => 'grab'], 'cursor keeps the keyword after url() fallbacks.');
 $assert($css('user-select: none;') === ['selectable' => false], 'user-select must map to text selection.');
 $assert($css('caret-color: #00FF00;') === ['cursorColor' => 0xFF00FF00], 'caret-color must map to the input cursor.');
 

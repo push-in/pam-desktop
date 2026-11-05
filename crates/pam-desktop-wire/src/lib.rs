@@ -27,6 +27,11 @@ pub const MAX_VALUE_BYTES: usize = 1024 * 1024;
 pub const CORE_PROPERTY_LIMIT: u16 = 543;
 pub const CORE_EVENT_LIMIT: u16 = 80;
 pub const EXTENSION_BASE: u16 = 1001;
+/// Identifiers that exist only in PAM Desktop start here.
+pub const DESKTOP_BASE: u16 = 2001;
+/// Highest property and event identifiers of the desktop table.
+pub const DESKTOP_PROPERTY_CEILING: u16 = 2009;
+pub const DESKTOP_EVENT_CEILING: u16 = 2005;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -741,6 +746,16 @@ pub enum PropKey {
     KeyboardProgress = 1009,
     ModalNavigationBarColor = 1010,
     ListStackFromEnd = 1011,
+    // Desktop table (not in PAM Native): starts at `DESKTOP_BASE`.
+    Cursor = 2001,
+    Tooltip = 2002,
+    WindowTitle = 2003,
+    WindowDrag = 2004,
+    OnHoverIn = 2005,
+    OnHoverOut = 2006,
+    OnKeyDown = 2007,
+    OnKeyUp = 2008,
+    OnFilesDrop = 2009,
 }
 
 impl TryFrom<u16> for PropKey {
@@ -1302,6 +1317,15 @@ impl TryFrom<u16> for PropKey {
             1009 => Ok(Self::KeyboardProgress),
             1010 => Ok(Self::ModalNavigationBarColor),
             1011 => Ok(Self::ListStackFromEnd),
+            2001 => Ok(Self::Cursor),
+            2002 => Ok(Self::Tooltip),
+            2003 => Ok(Self::WindowTitle),
+            2004 => Ok(Self::WindowDrag),
+            2005 => Ok(Self::OnHoverIn),
+            2006 => Ok(Self::OnHoverOut),
+            2007 => Ok(Self::OnKeyDown),
+            2008 => Ok(Self::OnKeyUp),
+            2009 => Ok(Self::OnFilesDrop),
             other => Err(ProtocolError::UnknownProperty(other)),
         }
     }

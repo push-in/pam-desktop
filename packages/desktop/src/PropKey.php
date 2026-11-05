@@ -563,4 +563,16 @@ enum PropKey: int
     case KeyboardProgress = 1009;
     case ModalNavigationBarColor = 1010;
     case ListStackFromEnd = 1011;
+
+    // Desktop table (Protocol::DESKTOP_BASE and up): pointer devices,
+    // keyboards and windows.
+    case Cursor = 2001;
+    case Tooltip = 2002;
+    case WindowTitle = 2003;
+    case WindowDrag = 2004;
+    case OnHoverIn = 2005;
+    case OnHoverOut = 2006;
+    case OnKeyDown = 2007;
+    case OnKeyUp = 2008;
+    case OnFilesDrop = 2009;
 }

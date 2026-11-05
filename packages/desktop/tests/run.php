@@ -929,12 +929,15 @@ $assert(
     'PAM formatter must remove empty scoped style blocks.',
 );
 
-// Two append-only tables: the closed core (1..543 / 1..80) and the
-// extension table from Protocol::EXTENSION_BASE, each sequential.
+// Three append-only tables: the closed core (1..543 / 1..80), the
+// extension table from Protocol::EXTENSION_BASE and the desktop table from
+// Protocol::DESKTOP_BASE, each sequential.
 $assertProtocolTables = static function (array $cases, int $coreLimit, string $label) use ($assert): void {
     $expected = 1;
     foreach ($cases as $case) {
-        if ($case->value >= Protocol::EXTENSION_BASE && $expected <= Protocol::EXTENSION_BASE) {
+        if ($case->value >= Protocol::DESKTOP_BASE && $expected <= Protocol::DESKTOP_BASE) {
+            $expected = Protocol::DESKTOP_BASE;
+        } elseif ($case->value >= Protocol::EXTENSION_BASE && $expected <= Protocol::EXTENSION_BASE) {
             $expected = Protocol::EXTENSION_BASE;
         }
         $assert($case->value === $expected, "{$label} must remain sequential protocol integers.");
@@ -6877,7 +6880,7 @@ $assert(
 $interaction = InteractionRegion::make(Text::make('Card'))
     ->draggable('card:42')
     ->acceptsDrop()
-    ->contextMenu([
+    ->menuItems([
         new NativeMenuItem('inspect', 'Inspect'),
         new NativeMenuItem('delete', 'Delete', destructive: true),
     ]);
@@ -7583,6 +7586,7 @@ require __DIR__.'/list_native_scroll.php';
 require __DIR__.'/launch_url.php';
 require __DIR__.'/handler_purity.php';
 require __DIR__.'/protocol_extension.php';
+require __DIR__.'/desktop_shell.php';
 require __DIR__.'/memory_bounds.php';
 // Heap measurements need an isolated process, without prior tests' retained fixtures.
 passthru(escapeshellarg(PHP_BINARY).' '.escapeshellarg(__DIR__.'/navigation_memory.php'), $navigationMemoryStatus);

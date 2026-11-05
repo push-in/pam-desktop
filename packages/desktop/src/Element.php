@@ -395,7 +395,147 @@ abstract class Element implements Renderable
 
     final public function on(EventKind $kind, Closure $handler): static
     {
-        return $this->withEvent($kind, $handler);
+        // Desktop events reach their handlers decoded (KeyEvent, paths).
+        return match ($kind) {
+            EventKind::KeyDown => $this->onKeyDown($handler),
+            EventKind::KeyUp => $this->onKeyUp($handler),
+            EventKind::FilesDrop => $this->onFilesDrop($handler),
+            default => $this->withEvent($kind, $handler),
+        };
+    }
+
+    /**
+     * The pointer shape over this element: a CSS `cursor` keyword such as
+     * `pointer`, `text`, `grab`, `not-allowed` or `ew-resize`.
+     */
+    final public function cursor(string $cursor): static
+    {
+        return $this->withProperty(PropKey::Cursor, $cursor);
+    }
+
+    /** A native tooltip shown when the pointer rests on the element. */
+    final public function tooltip(string $text): static
+    {
+        return $this->withProperty(PropKey::Tooltip, $text);
+    }
+
+    /**
+     * Dragging this element moves the window, like a title bar. Controls
+     * inside it keep working.
+     */
+    final public function windowDrag(bool $enabled = true): static
+    {
+        return $this->withProperty(PropKey::WindowDrag, $enabled);
+    }
+
+    /**
+     * The menu opened by a secondary click (right button, Control-click or
+     * the menu key) on the element. Each item runs its own handler.
+     *
+     * ```php
+     * Row::make(...)->contextMenu(
+     *     MenuItem::make('Rename', $this->rename(...)),
+     *     MenuItem::separator(),
+     *     MenuItem::make('Delete', $this->delete(...), destructive: true),
+     * );
+     * ```
+     */
+    final public function contextMenu(MenuItem ...$items): static
+    {
+        $handlers = [];
+        $encode = static function (array $items) use (&$encode, &$handlers): array {
+            $entries = [];
+            foreach ($items as $item) {
+                if ($item->separator) {
+                    $entries[] = ['separator' => true];
+                    continue;
+                }
+                $entry = ['title' => $item->label];
+                if (!$item->enabled) {
+                    $entry['disabled'] = true;
+                }
+                if ($item->children !== []) {
+                    $entries[] = $entry + ['children' => $encode($item->children)];
+                    continue;
+                }
+                $id = $item->id ?? 'i'.count($handlers);
+                $handlers[$id] = $item->handler;
+                $entry['id'] = $id;
+                if ($item->destructive) {
+                    $entry['destructive'] = true;
+                }
+                if ($item->checked !== null) {
+                    $entry['checked'] = $item->checked;
+                }
+                $entries[] = $entry;
+            }
+
+            return $entries;
+        };
+        $encoded = json_encode($encode(array_values($items)), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+
+        return $this
+            ->withProperty(PropKey::ContextMenuItems, new \Pam\Desktop\Internal\BinaryValue($encoded))
+            ->withEvent(
+                EventKind::MenuAction,
+                static function (string $payload) use ($handlers): mixed {
+                    $id = \Pam\Desktop\Internal\Wire::decodeMap($payload)['id'] ?? '';
+                    $handler = is_string($id) ? ($handlers[$id] ?? null) : null;
+
+                    return $handler?->__invoke();
+                },
+            );
+    }
+
+    /** The pointer entered the element. The handler receives a PressEvent payload. */
+    final public function onHoverIn(Closure $handler): static
+    {
+        return $this->withEvent(EventKind::HoverIn, $handler);
+    }
+
+    /** The pointer left the element. */
+    final public function onHoverOut(Closure $handler): static
+    {
+        return $this->withEvent(EventKind::HoverOut, $handler);
+    }
+
+    /**
+     * A key went down while this element (or something inside it) had
+     * keyboard focus and no text control consumed it. The handler receives a
+     * {@see \Pam\Desktop\KeyEvent}.
+     */
+    final public function onKeyDown(Closure $handler): static
+    {
+        return $this->withEvent(
+            EventKind::KeyDown,
+            static fn (string $payload): mixed => $handler(\Pam\Desktop\KeyEvent::fromPayload($payload)),
+        );
+    }
+
+    final public function onKeyUp(Closure $handler): static
+    {
+        return $this->withEvent(
+            EventKind::KeyUp,
+            static fn (string $payload): mixed => $handler(\Pam\Desktop\KeyEvent::fromPayload($payload)),
+        );
+    }
+
+    /**
+     * Files were dropped on the element from the file manager. The handler
+     * receives the absolute paths.
+     *
+     * @param Closure(list<string>): mixed $handler
+     */
+    final public function onFilesDrop(Closure $handler): static
+    {
+        return $this->withEvent(
+            EventKind::FilesDrop,
+            static function (string $payload) use ($handler): mixed {
+                $paths = json_decode(\Pam\Desktop\Internal\Wire::decodeMap($payload)['paths'] ?? '[]', true);
+
+                return $handler(is_array($paths) ? array_values(array_filter($paths, 'is_string')) : []);
+            },
+        );
     }
 
     /**
@@ -1061,6 +1201,11 @@ abstract class Element implements Renderable
             EventKind::PageChange => PropKey::OnPageChange,
             EventKind::RouteCovered => PropKey::OnRouteCovered,
             EventKind::RouteFocused => PropKey::OnRouteFocused,
+            EventKind::HoverIn => PropKey::OnHoverIn,
+            EventKind::HoverOut => PropKey::OnHoverOut,
+            EventKind::KeyDown => PropKey::OnKeyDown,
+            EventKind::KeyUp => PropKey::OnKeyUp,
+            EventKind::FilesDrop => PropKey::OnFilesDrop,
             EventKind::Back,
             EventKind::ModuleResult,
             EventKind::AppState,

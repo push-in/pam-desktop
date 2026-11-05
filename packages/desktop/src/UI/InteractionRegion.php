@@ -37,8 +37,13 @@ final class InteractionRegion extends Element
         return $this->withProperty(PropKey::DropEnabled, $enabled);
     }
 
-    /** @param list<NativeMenuItem> $items */
-    public function contextMenu(array $items): self
+    /**
+     * Identified menu items reported through onMenuAction(). Prefer
+     * Element::contextMenu(), which gives every item its own handler.
+     *
+     * @param list<NativeMenuItem> $items
+     */
+    public function menuItems(array $items): self
     {
         try {
             $encoded = json_encode(

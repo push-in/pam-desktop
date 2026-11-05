@@ -8,6 +8,7 @@ use crate::backend::{
     WindowConfig, WindowId, WindowMetrics,
 };
 use crate::geometry::{Point, Rect, Size};
+use crate::shell::{Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand, WindowState};
 use crate::style::{Decoration, LayerState};
 use crate::text::{TextBlock, TextMetrics};
 
@@ -38,6 +39,16 @@ pub enum Command {
     ClipboardSet(String),
     Alert(AlertConfig),
     Appearance(Option<bool>),
+    MenuBar(Vec<MenuNode>),
+    PopupMenu(Point, Vec<MenuNode>),
+    Tray(Option<TrayConfig>),
+    PickFiles(FileDialogConfig),
+    Notify(NotificationConfig),
+    Window(WindowId, WindowCommand),
+    Shortcuts(Vec<Shortcut>),
+    Cursor(NodeId, Cursor),
+    Tooltip(NodeId, Option<String>),
+    BeginWindowDrag(WindowId),
     RequestFrame,
     ScheduleWake(u32),
     Quit,
@@ -57,6 +68,11 @@ pub struct RecordingBackend {
     pub clipboard: Option<String>,
     /// What `show_alert` answers.
     pub alert_choice: Option<usize>,
+    /// What `popup_menu` answers.
+    pub menu_choice: Option<String>,
+    /// What `pick_files` answers.
+    pub picked_files: Vec<std::path::PathBuf>,
+    pub window_state: WindowState,
     pub metrics: WindowMetrics,
     /// Width of one character used by the fake text measurer.
     pub character_width: f32,
@@ -244,6 +260,54 @@ impl Backend for RecordingBackend {
 
     fn set_appearance(&mut self, dark: Option<bool>) {
         self.commands.push(Command::Appearance(dark));
+    }
+
+    fn set_menu_bar(&mut self, menu: &[MenuNode]) {
+        self.commands.push(Command::MenuBar(menu.to_vec()));
+    }
+
+    /// Answers with `menu_choice` right away.
+    fn popup_menu(&mut self, _window: WindowId, position: Point, menu: &[MenuNode], done: Box<dyn FnOnce(Option<String>)>) {
+        self.commands.push(Command::PopupMenu(position, menu.to_vec()));
+        done(self.menu_choice.clone());
+    }
+
+    fn set_tray(&mut self, tray: Option<&TrayConfig>) {
+        self.commands.push(Command::Tray(tray.cloned()));
+    }
+
+    /// Answers with `picked_files` right away.
+    fn pick_files(&mut self, _window: WindowId, config: &FileDialogConfig, done: Box<dyn FnOnce(Vec<std::path::PathBuf>)>) {
+        self.commands.push(Command::PickFiles(config.clone()));
+        done(self.picked_files.clone());
+    }
+
+    fn notify(&mut self, notification: &NotificationConfig) {
+        self.commands.push(Command::Notify(notification.clone()));
+    }
+
+    fn window_command(&mut self, window: WindowId, command: &WindowCommand) {
+        self.commands.push(Command::Window(window, command.clone()));
+    }
+
+    fn window_state(&self, _window: WindowId) -> WindowState {
+        self.window_state
+    }
+
+    fn set_shortcuts(&mut self, shortcuts: &[Shortcut]) {
+        self.commands.push(Command::Shortcuts(shortcuts.to_vec()));
+    }
+
+    fn set_cursor(&mut self, id: NodeId, cursor: Cursor) {
+        self.commands.push(Command::Cursor(id, cursor));
+    }
+
+    fn set_tooltip(&mut self, id: NodeId, text: Option<&str>) {
+        self.commands.push(Command::Tooltip(id, text.map(str::to_owned)));
+    }
+
+    fn begin_window_drag(&mut self, window: WindowId) {
+        self.commands.push(Command::BeginWindowDrag(window));
     }
 
     fn schedule_wake(&mut self, delay_ms: u32) {

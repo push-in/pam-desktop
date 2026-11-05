@@ -1002,6 +1002,8 @@ final class Runtime
         \Pam\Desktop\Composables\Sources::reset();
         Appearance::resetRuntime();
         \Pam\Desktop\System\Keyboard::resetRuntime();
+        ShellEvents::reset();
+        \Pam\Desktop\Shortcut::resetRuntime();
         PortalRegistry::reset();
         self::$windowMetrics = self::bootMetrics();
         ComponentLifecycle::shutdown();

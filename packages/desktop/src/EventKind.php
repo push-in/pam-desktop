@@ -86,4 +86,11 @@ enum EventKind: int
     case RouteCovered = 78;
     case RouteFocused = 79;
     case ListWindow = 80;
+
+    // Desktop table (Protocol::DESKTOP_BASE and up).
+    case HoverIn = 2001;
+    case HoverOut = 2002;
+    case KeyDown = 2003;
+    case KeyUp = 2004;
+    case FilesDrop = 2005;
 }

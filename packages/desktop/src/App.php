@@ -277,6 +277,26 @@ final class App
         ErrorReporter::unsubscribe($subscription);
     }
 
+    /**
+     * Sets the application menu bar. On macOS it is the system menu bar; on
+     * Windows and Linux it sits at the top of the main window. Calling it
+     * again replaces the menu; calling it with no menus removes it.
+     */
+    public static function menu(Menu ...$menus): void
+    {
+        $items = [];
+        foreach ($menus as $menu) {
+            $items[] = MenuItem::submenu($menu->label, ...$menu->items);
+        }
+        Internal\ShellEvents::send('menu', ['items' => Internal\ShellEvents::menu('bar', $items)]);
+    }
+
+    /** Ends the application. */
+    public static function quit(): void
+    {
+        Internal\ShellEvents::send('quit');
+    }
+
     public static function onBack(Closure $handler): void
     {
         Runtime::onBack($handler);

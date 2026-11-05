@@ -162,6 +162,7 @@ final class StylePropertyCatalog
             ['rotate', 'rotation', StyleRenderCost::Composite],
             ['filter', 'blurRadius', StyleRenderCost::Composite],
             ['pointer-events', 'pointerEvents', StyleRenderCost::Paint],
+            ['cursor', 'cursor', StyleRenderCost::Paint],
             ['user-select', 'selectable', StyleRenderCost::Paint, ['-webkit-user-select']],
             ['caret-color', 'cursorColor', StyleRenderCost::Paint],
             ['transition', 'animate', StyleRenderCost::Composite, ['transition-duration', 'transition-timing-function', 'transition-property', 'transition-delay']],

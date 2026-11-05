@@ -124,6 +124,13 @@ mod imp {
             }
             let mut child = widget.first_child();
             while let Some(current) = child {
+                // Popovers (context menus) are their own surfaces: they are
+                // presented, not allocated inside this view.
+                if let Some(popover) = current.downcast_ref::<gtk::Popover>() {
+                    popover.present();
+                    child = current.next_sibling();
+                    continue;
+                }
                 match layout_of(&current) {
                     Some(layout) => {
                         let frame = layout.frame;

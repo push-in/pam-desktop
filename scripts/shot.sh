@@ -20,6 +20,9 @@ if ! xdpyinfo -display "$display" >/dev/null 2>&1; then
     sleep 1
 fi
 export DISPLAY=$display
+# File dialogs and settings must not go through the desktop portal of the
+# real session: everything stays on the virtual display.
+export GDK_DEBUG=no-portals GTK_USE_PORTAL=0
 log=$(mktemp)
 # Every capture starts from a clean application state.
 state=$(mktemp -d)

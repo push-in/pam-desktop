@@ -16,10 +16,12 @@ use pam_desktop_ui::backend::{
 use pam_desktop_ui::geometry::{Point, Rect, Size};
 use pam_desktop_ui::runtime::{self, EventQueue, Inbox, Runtime, RuntimeConfig, Shared};
 use pam_desktop_ui::scene::IdMap;
+use pam_desktop_ui::shell::{Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand, WindowState};
 use pam_desktop_ui::style::{Decoration, LayerState};
 use pam_desktop_ui::text::{TextBlock, TextMetrics};
 
 use crate::input::InputHost;
+use crate::shell::{self, Shell};
 use crate::text;
 use crate::view::{self, ImageState, PamView};
 
@@ -53,11 +55,15 @@ pub struct GtkBackend {
     wake_source: Option<glib::SourceId>,
     /// Set when the pending wake already ran (its source id is then stale).
     wake_fired: Rc<Cell<bool>>,
+    shell: Shell,
+    /// The last button press, needed to start a window move.
+    last_press: Rc<RefCell<Option<(gdk::Device, i32, f64, f64, u32)>>>,
 }
 
 impl GtkBackend {
     #[must_use]
     pub fn new(application: gtk::Application, events: Rc<EventQueue>) -> Self {
+        let shell = Shell::new(application.clone(), Rc::clone(&events));
         Self {
             application,
             events,
@@ -68,6 +74,8 @@ impl GtkBackend {
             textures: Rc::new(RefCell::new(HashMap::new())),
             wake_source: None,
             wake_fired: Rc::new(Cell::new(false)),
+            shell,
+            last_press: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -160,6 +168,7 @@ impl GtkBackend {
         controller.set_propagation_phase(gtk::PropagationPhase::Capture);
         let events = Rc::clone(&self.events);
         let target = host.downgrade();
+        let last_press = Rc::clone(&self.last_press);
         controller.connect_event(move |_, event| {
             let Some(host) = target.upgrade() else { return glib::Propagation::Proceed };
             let phase = match event.event_type() {
@@ -193,6 +202,11 @@ impl GtkBackend {
                 Some(button) if button > 3 => return glib::Propagation::Proceed,
                 _ => PointerButton::Primary,
             };
+            if phase == PointerPhase::Down {
+                if let (Some(device), Some((x, y)), Some(press)) = (event.device(), event.position(), event.downcast_ref::<gdk::ButtonEvent>()) {
+                    *last_press.borrow_mut() = Some((device, press.button() as i32, x, y, event.time()));
+                }
+            }
             let state = event.modifier_state();
             events.push(BackendEvent::Pointer(PointerEvent {
                 window,
@@ -251,6 +265,8 @@ impl Backend for GtkBackend {
         native.set_child(Some(&host));
         self.install_pointer_events(window, &host);
         self.install_key_events(window, &native);
+        shell::accept_file_drops(&host, window, &self.events);
+        shell::watch_window_state(&native, window, &self.events);
 
         let events = Rc::clone(&self.events);
         native.connect_close_request(move |_| {
@@ -621,6 +637,64 @@ impl Backend for GtkBackend {
         match dark {
             Some(dark) => settings.set_gtk_application_prefer_dark_theme(dark),
             None => settings.reset_property("gtk-application-prefer-dark-theme"),
+        }
+    }
+
+    fn set_menu_bar(&mut self, menu: &[MenuNode]) {
+        let window = self.windows.get(&pam_desktop_ui::backend::MAIN_WINDOW).map(|entry| entry.window.clone());
+        self.shell.set_menu_bar(menu, window.as_ref(), pam_desktop_ui::backend::MAIN_WINDOW);
+    }
+
+    fn popup_menu(&mut self, window: WindowId, position: Point, menu: &[MenuNode], done: Box<dyn FnOnce(Option<String>)>) {
+        match self.windows.get(&window) {
+            Some(entry) => self.shell.popup_menu(&entry.host, position, menu, done),
+            None => done(None),
+        }
+    }
+
+    /// GTK 4 has no status icon; the tray needs a StatusNotifierItem service.
+    fn set_tray(&mut self, _tray: Option<&TrayConfig>) {}
+
+    fn pick_files(&mut self, window: WindowId, config: &FileDialogConfig, done: Box<dyn FnOnce(Vec<std::path::PathBuf>)>) {
+        let parent = self.windows.get(&window).map(|entry| entry.window.clone());
+        self.shell.pick_files(parent.as_ref(), config, done);
+    }
+
+    fn notify(&mut self, notification: &NotificationConfig) {
+        self.shell.notify(notification);
+    }
+
+    fn window_command(&mut self, window: WindowId, command: &WindowCommand) {
+        if let Some(entry) = self.windows.get(&window) {
+            shell::window_command(&entry.window, &entry.host, command);
+        }
+    }
+
+    fn window_state(&self, window: WindowId) -> WindowState {
+        self.windows.get(&window).map(|entry| shell::window_state(&entry.window)).unwrap_or_default()
+    }
+
+    /// Shortcuts of the focused window are matched by the core; global ones
+    /// need the desktop portal and are not registered here.
+    fn set_shortcuts(&mut self, _shortcuts: &[Shortcut]) {}
+
+    fn set_cursor(&mut self, id: NodeId, cursor: Cursor) {
+        if let Some(entry) = self.views.get(&id) {
+            entry.widget.set_cursor_from_name(shell::cursor_name(cursor));
+        }
+    }
+
+    fn set_tooltip(&mut self, id: NodeId, text: Option<&str>) {
+        if let Some(entry) = self.views.get(&id) {
+            entry.widget.set_tooltip_text(text);
+        }
+    }
+
+    fn begin_window_drag(&mut self, window: WindowId) {
+        let Some(entry) = self.windows.get(&window) else { return };
+        let Some((device, button, x, y, time)) = self.last_press.borrow().clone() else { return };
+        if let Some(toplevel) = entry.window.surface().and_then(|surface| surface.downcast::<gdk::Toplevel>().ok()) {
+            toplevel.begin_move(&device, button, x, y, time);
         }
     }
 

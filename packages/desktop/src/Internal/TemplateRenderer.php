@@ -605,6 +605,9 @@ final class TemplateRenderer
         'maxWidthPercent' => PropKey::MaxWidthPercent,
         'maxHeightPercent' => PropKey::MaxHeightPercent,
         'pointerEvents' => PropKey::PointerEvents,
+        'cursor' => PropKey::Cursor,
+        'tooltip' => PropKey::Tooltip,
+        'windowDrag' => PropKey::WindowDrag,
         'safeAreaBottom' => PropKey::SafeAreaBottom,
         'blurRadius' => PropKey::BlurRadius,
         'fontFamily' => PropKey::FontFamily,
@@ -772,6 +775,11 @@ final class TemplateRenderer
         'on:pageChange' => EventKind::PageChange,
         'on:routeCovered' => EventKind::RouteCovered,
         'on:routeFocused' => EventKind::RouteFocused,
+        'on:hoverIn' => EventKind::HoverIn,
+        'on:hoverOut' => EventKind::HoverOut,
+        'on:keyDown' => EventKind::KeyDown,
+        'on:keyUp' => EventKind::KeyUp,
+        'on:filesDrop' => EventKind::FilesDrop,
         'on:textLayout' => EventKind::TextLayout,
         'on:cacheHit' => EventKind::MediaCacheHit,
         'on:cacheMiss' => EventKind::MediaCacheMiss,
@@ -2169,7 +2177,7 @@ final class TemplateRenderer
                     $values['dropEnabled'] ?? false,
                     'Interaction dropEnabled',
                 ))
-                ->contextMenu(self::nativeMenuItems($values['menuItems'] ?? [])),
+                ->menuItems(self::nativeMenuItems($values['menuItems'] ?? [])),
             'Animated' => (($values['animationProgram'] ?? null) instanceof Animation
                 ? Animated::program(self::singleChild($children, $tag), $values['animationProgram'])
                 : Animated::make(

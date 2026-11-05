@@ -63,6 +63,12 @@ pub mod event_kind {
     pub const ROUTE_COVERED: u16 = 78;
     pub const ROUTE_FOCUSED: u16 = 79;
     pub const LIST_WINDOW: u16 = 80;
+    // Desktop table.
+    pub const HOVER_IN: u16 = 2001;
+    pub const HOVER_OUT: u16 = 2002;
+    pub const KEY_DOWN: u16 = 2003;
+    pub const KEY_UP: u16 = 2004;
+    pub const FILES_DROP: u16 = 2005;
 }
 
 /// An event on its way to the PHP worker.
@@ -83,6 +89,8 @@ pub enum HostCommand {
     InputConfig { id: NodeId, config: Box<crate::backend::InputConfig> },
     InputText { id: NodeId, text: String, selection: Option<(u32, u32)> },
     InputSelection { id: NodeId, start: u32, end: u32 },
+    /// The press being handled grabbed a window drag region.
+    BeginWindowDrag,
 }
 
 pub struct Ctx<'a> {

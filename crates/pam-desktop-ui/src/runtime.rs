@@ -26,6 +26,7 @@ use crate::interaction::Interaction;
 use crate::modules::Registry;
 use crate::motion::Motion;
 use crate::runtime_modules::Settings;
+use crate::runtime_shell::Shell;
 use crate::presenter::coverage::Coverage;
 use crate::presenter::modal::Modals;
 use crate::presenter::navigation::Navigation;
@@ -47,6 +48,10 @@ pub enum Inbound {
     ModuleResult { generation: u64, request: u64, status: u8, payload: Vec<u8> },
     /// Development: application sources changed, restart the worker.
     Reload,
+    /// An item of a node's context menu was chosen.
+    ContextMenuAction { node: NodeId, id: String },
+    /// A link arrived while the application runs (a second launch).
+    OpenUrl(String),
 }
 
 /// Thread-safe queue into the UI thread.
@@ -241,6 +246,8 @@ pub struct Runtime<B: Backend> {
     pub(crate) controls: Controls,
     scrolling: Scrolling,
     pub(crate) modules: Registry,
+    pub(crate) shell: Shell,
+    linking: crate::modules::system::Linking,
     pub(crate) settings: Settings,
     /// What the operating system reports, before the app's own preference.
     pub(crate) system_dark: bool,
@@ -304,7 +311,8 @@ impl<B: Backend> Runtime<B> {
         modules.register("storage", crate::modules::storage::Storage::new(&config.directories.data));
         modules.register("device", crate::modules::system::Device::default());
         modules.register("permissions", crate::modules::system::Permissions);
-        modules.register("linking", crate::modules::system::Linking::new(config.launch_url.clone()));
+        let linking = crate::modules::system::Linking::new(config.launch_url.clone());
+        modules.register("linking", linking.clone());
         modules.register("cache", crate::modules::system::Cache::new(&config.directories.cache));
         modules.register("background", crate::modules::system::Background::default());
         modules.register("toast", crate::modules::system::Toast);
@@ -353,6 +361,8 @@ impl<B: Backend> Runtime<B> {
             controls: Controls::new(metrics.dark),
             scrolling: Scrolling::default(),
             modules,
+            shell: Shell::default(),
+            linking,
             settings,
             system_dark: system.dark,
             system_font_scale: system.font_scale,
@@ -425,6 +435,7 @@ impl<B: Backend> Runtime<B> {
                 HostCommand::InputConfig { id, config } => self.backend.set_input_config(id, &config),
                 HostCommand::InputText { id, text, selection } => self.backend.set_input_text(id, &text, selection),
                 HostCommand::InputSelection { id, start, end } => self.backend.set_input_selection(id, start, end),
+                HostCommand::BeginWindowDrag => self.backend.begin_window_drag(MAIN_WINDOW),
             }
         }
         if let Some(worker) = &mut self.worker {
@@ -526,6 +537,8 @@ impl<B: Backend> Runtime<B> {
                 }
             }
             Inbound::Reload => self.reload(),
+            Inbound::ContextMenuAction { node, id } => self.context_menu_chosen(node, &id),
+            Inbound::OpenUrl(url) => self.linking.deliver(&url),
         }
     }
 
@@ -540,6 +553,7 @@ impl<B: Backend> Runtime<B> {
         self.generation += 1;
         self.outbox.clear();
         self.modules.reset();
+        self.shell.reset();
         match spawn_worker(&self.worker_command, &self.metrics, self.system_dark, self.settings.appearance_mode, &self.inbox, self.generation) {
             Ok(worker) => self.worker = Some(worker),
             Err(error) => eprintln!("[pam-desktop] could not restart the PHP worker: {error}"),
@@ -651,6 +665,9 @@ impl<B: Backend> Runtime<B> {
                 if let Some(action) = action {
                     self.run_action(action);
                 }
+                if pointer.phase == crate::backend::PointerPhase::Up && pointer.button == crate::backend::PointerButton::Secondary {
+                    self.open_context_menu(pointer.position);
+                }
             }
             BackendEvent::Key(key) => self.handle_key(&key),
             BackendEvent::BackRequested { window } => {
@@ -686,10 +703,21 @@ impl<B: Backend> Runtime<B> {
             BackendEvent::WindowResized { .. } => {}
             BackendEvent::WindowCloseRequested { window } => {
                 if window == MAIN_WINDOW {
-                    if let Some(worker) = &mut self.worker {
-                        worker.shutdown();
-                    }
-                    self.finished = true;
+                    self.close_requested();
+                }
+            }
+            BackendEvent::MenuAction { id } => self.shell.emit("menu", &id, "{}"),
+            BackendEvent::Shortcut { id } => self.shell.emit("shortcut", &id, "{}"),
+            BackendEvent::TrayActivated => self.shell.emit("tray", "activate", "{}"),
+            BackendEvent::NotificationActivated { id } => self.shell.emit("notification", &id, "{}"),
+            BackendEvent::FilesDropped { window, position, paths } => {
+                if window == MAIN_WINDOW {
+                    self.files_dropped(position, &paths);
+                }
+            }
+            BackendEvent::WindowStateChanged { window, state } => {
+                if window == MAIN_WINDOW {
+                    self.window_state_changed(state);
                 }
             }
             BackendEvent::WindowFocusChanged { window, focused } => {
@@ -790,6 +818,9 @@ impl<B: Backend> Runtime<B> {
             if back {
                 return self.go_back();
             }
+            if let Some(id) = self.shell.shortcut_for(&key.key, key.modifiers) {
+                return self.shell.emit("shortcut", &id, "{}");
+            }
             {
                 let mut ctx = ctx!(self);
                 if self.scrolling.on_key(&mut ctx, key) {
@@ -805,6 +836,7 @@ impl<B: Backend> Runtime<B> {
         }
         let action = {
             let mut ctx = ctx!(self);
+            self.interaction.report_key(&mut ctx, key);
             self.interaction.on_key(&mut ctx, key)
         };
         if let Some(action) = action {
@@ -908,9 +940,9 @@ fn renderer_contract_json() -> String {
     )
 }
 
-/// Highest extension identifiers implemented (see `PropKey` / `EventKind`).
-const EXTENSION_PROPERTY_CEILING: u16 = 1011;
-const EXTENSION_EVENT_CEILING: u16 = 1000;
+/// Highest extension identifiers implemented (the desktop table included).
+const EXTENSION_PROPERTY_CEILING: u16 = pam_desktop_wire::DESKTOP_PROPERTY_CEILING;
+const EXTENSION_EVENT_CEILING: u16 = pam_desktop_wire::DESKTOP_EVENT_CEILING;
 
 /// A runtime shared with native callbacks on the UI thread.
 pub struct Shared<B: Backend> {

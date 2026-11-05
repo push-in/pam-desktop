@@ -665,14 +665,13 @@ final class ScopedStyleCompiler
     }
 
     /**
-     * Properties with no native rendering meaning (pointer cursors, browser
+     * Properties with no native rendering meaning (browser
      * chrome, compositor hints). They are accepted so shared web/native CSS
      * compiles, and documented as no-ops in docs/css.md.
      *
      * @var array<string, true>
      */
     private const IGNORED_PROPERTIES = [
-        'cursor' => true,
         '-webkit-tap-highlight-color' => true,
         'touch-action' => true,
         'will-change' => true,
@@ -1359,6 +1358,12 @@ final class ScopedStyleCompiler
                     "Unsupported visibility value {$value} in {$name}.",
                 ),
             };
+            return;
+        }
+        if ($property === 'cursor') {
+            // The last entry is the keyword; url() fallbacks are skipped.
+            $parts = array_map(trim(...), explode(',', $lower));
+            $output['cursor'] = (string) end($parts);
             return;
         }
         if ($property === 'pointer-events') {

@@ -26,6 +26,8 @@ final class Protocol
     public const int CORE_EVENT_LIMIT = 80;
     public const int EXTENSION_BASE = 1001;
     public const int EXTENSION_LIMIT = 65_535;
+    /** Identifiers that exist only in PAM Desktop start here, clear of the shared extension table. */
+    public const int DESKTOP_BASE = 2001;
 
     /** @var list<string> */
     public const array CAPABILITIES = [

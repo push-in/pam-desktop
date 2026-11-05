@@ -11,6 +11,7 @@
 mod backend;
 mod input;
 mod paint;
+mod shell;
 mod text;
 mod view;
 

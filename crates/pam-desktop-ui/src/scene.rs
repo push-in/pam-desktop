@@ -13,6 +13,7 @@ use crate::backend::{Backend, NodeId, ScrollConfig, TextContent, VerticalAlign, 
 use crate::color::Color;
 use crate::geometry::{Affine, Insets, Point, Rect, Size};
 use crate::props::{PropMap, Props};
+use crate::shell::Cursor;
 use crate::style::{compose_transform, resolve_transform, transform_origin, Decoration, LayerState};
 use crate::text::{Ellipsize, TextAlign, TextBlock, TextShadow, TextSource};
 
@@ -258,6 +259,8 @@ pub struct SceneNode {
     pushed_content: Option<Size>,
     pushed_scroll: Option<ScrollConfig>,
     pushed_focusable: bool,
+    pushed_cursor: Cursor,
+    has_tooltip: bool,
 }
 
 impl SceneNode {
@@ -592,6 +595,8 @@ impl Scene {
                 pushed_content: None,
                 pushed_scroll: None,
                 pushed_focusable: false,
+                pushed_cursor: Cursor::Default,
+                has_tooltip: false,
             },
         );
         self.touch(id, Dirty::ALL);
@@ -1174,6 +1179,28 @@ impl Scene {
                     commands += 1;
                     if let Some(node) = self.nodes.get_mut(id) {
                         node.layer = layer;
+                    }
+                }
+            }
+            let Some(node) = self.nodes.get(id) else { continue };
+            if dirty.contains(Dirty::CONFIG) {
+                let props = node.props();
+                let cursor = props.text(PropKey::Cursor).map_or(Cursor::Default, Cursor::parse);
+                let tooltip = props.text(PropKey::Tooltip).filter(|text| !text.is_empty());
+                let (cursor_changed, tooltip_changed) = (cursor != node.pushed_cursor, tooltip.is_some() || node.has_tooltip);
+                if cursor_changed {
+                    backend.set_cursor(*id, cursor);
+                    commands += 1;
+                }
+                if tooltip_changed {
+                    backend.set_tooltip(*id, tooltip);
+                    commands += 1;
+                }
+                let has_tooltip = tooltip.is_some();
+                if cursor_changed || tooltip_changed {
+                    if let Some(node) = self.nodes.get_mut(id) {
+                        node.pushed_cursor = cursor;
+                        node.has_tooltip = has_tooltip;
                     }
                 }
             }
