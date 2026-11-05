@@ -39,7 +39,6 @@ struct ViewEntry {
     pending_scroll: Rc<Cell<Option<Point>>>,
     /// The player of a media view.
     media: Option<crate::media::MediaHost>,
-    #[cfg(feature = "webview")]
     web: Option<crate::webview::WebHost>,
     /// What assistive technology was told, when it is more than the defaults.
     accessibility: Option<Box<pam_desktop_ui::accessibility::Accessibility>>,
@@ -641,9 +640,9 @@ impl Backend for GtkBackend {
         };
         let media = (class == ViewClass::Media)
             .then(|| crate::media::MediaHost::new(id, &container, &self.events));
-        #[cfg(feature = "webview")]
         let web = (class == ViewClass::WebView)
-            .then(|| crate::webview::WebHost::new(id, &container, &self.events));
+            .then(|| crate::webview::WebHost::new(id, &container, &self.events))
+            .flatten();
         self.views.insert(
             id,
             ViewEntry {
@@ -653,7 +652,6 @@ impl Backend for GtkBackend {
                 input,
                 pending_scroll,
                 media,
-                #[cfg(feature = "webview")]
                 web,
                 accessibility: None,
                 plain_text: None,
@@ -670,7 +668,6 @@ impl Backend for GtkBackend {
             if let Some(media) = &mut entry.media {
                 media.destroy();
             }
-            #[cfg(feature = "webview")]
             if let Some(web) = &mut entry.web {
                 web.destroy();
             }
@@ -1005,20 +1002,17 @@ impl Backend for GtkBackend {
         }
     }
 
-    #[cfg(feature = "webview")]
     fn set_web_view(&mut self, id: NodeId, state: &pam_desktop_ui::backend::WebViewState) {
-        if let Some(web) = self.views.get_mut(&id).and_then(|entry| entry.web.as_mut()) {
-            web.apply(state);
-        }
-    }
-
-    #[cfg(not(feature = "webview"))]
-    fn set_web_view(&mut self, id: NodeId, state: &pam_desktop_ui::backend::WebViewState) {
-        if state.source != pam_desktop_ui::backend::WebSource::None {
-            let event = pam_desktop_ui::backend::WebViewEvent::Failed(
-                "WebView is not available in this build".into(),
-            );
-            self.events.push(BackendEvent::WebView { id, event });
+        match self.views.get_mut(&id).and_then(|entry| entry.web.as_mut()) {
+            Some(web) => web.apply(state),
+            // WebKitGTK is not installed.
+            None if state.source != pam_desktop_ui::backend::WebSource::None => {
+                let event = pam_desktop_ui::backend::WebViewEvent::Failed(
+                    crate::webview::UNAVAILABLE.into(),
+                );
+                self.events.push(BackendEvent::WebView { id, event });
+            }
+            None => {}
         }
     }
 

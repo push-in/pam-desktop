@@ -36,7 +36,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libgtk-4-dev libwebkitgtk-6.0-dev gstreamer1.0-plugins-good xvfb xdotool
+            libgtk-4-dev libwebkitgtk-6.0-4 gstreamer1.0-plugins-good xvfb xdotool
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace

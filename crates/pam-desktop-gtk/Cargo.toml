@@ -10,19 +10,17 @@ repository.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 pam-desktop-ui.workspace = true
 gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
-webkit = { package = "webkit6", version = "0.6", optional = true }
+libc = "0.2"
 ksni = { version = "0.3", default-features = false, features = ["async-io", "blocking"], optional = true }
 async-channel = "2"
 x11rb = { version = "0.14", optional = true }
 
 [features]
-default = ["webview", "tray", "hotkeys"]
+default = ["tray", "hotkeys"]
 # The tray icon, as a StatusNotifierItem on the session bus.
 tray = ["dep:ksni"]
 # Global shortcuts: X11 key grabs, or the desktop portal on Wayland.
 hotkeys = ["dep:x11rb"]
-# Embedded web pages through WebKitGTK 6 (libwebkitgtk-6.0).
-webview = ["dep:webkit"]
 
 [lints]
 workspace = true

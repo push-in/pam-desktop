@@ -221,7 +221,7 @@ WebView::make('https://example.com/')
 
 The source is an `https`, `http` or `file` URL, or inline HTML (a string that starts with `<`), up to one mebibyte. Inline HTML is loaded with an `about:blank` origin.
 
-On Linux and Windows the element needs the `webview` cargo feature of the host, which is on by default. A host built without it reports an error through `onError` for any source.
+On Linux the host loads WebKitGTK 6 (`libwebkitgtk-6.0.so.4`) the first time a `WebView` is shown, so applications without one neither need it installed nor pay for it in memory. When the library is missing, the element reports an error through `onError`. On Windows the element needs the `webview` cargo feature of the host, which is on by default; a host built without it reports an error through `onError` for any source.
 
 ### Bridge
 

@@ -72,11 +72,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
-      - name: Install GTK 4 and WebKitGTK 6
+      - name: Install GTK 4
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev
       - name: Build the host
         run: cargo build --locked --release -p pam-desktop-host --target ${{ matrix.target }}
       - name: Pack the host

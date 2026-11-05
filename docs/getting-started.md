@@ -5,8 +5,8 @@ This page takes you from an empty directory to a running application, then expla
 ## Requirements
 
 - PHP 8.5 and Composer.
-- On Linux, to run a released host: glibc 2.39 or newer, GTK 4.14 or newer, WebKitGTK 6 (`libwebkitgtk-6.0-4`) and the GStreamer plugins for media. The released host is built on Ubuntu 24.04.
-- To build the host from a checkout instead: a Rust toolchain, 1.92 or newer (`rust-toolchain.toml` selects the stable channel) and, on Linux, `libgtk-4-dev` and `libwebkitgtk-6.0-dev`.
+- On Linux, to run a released host: glibc 2.39 or newer, GTK 4.14 or newer and the GStreamer plugins for media; WebKitGTK 6 (`libwebkitgtk-6.0-4`) only for applications that show a `WebView`. The released host is built on Ubuntu 24.04.
+- To build the host from a checkout instead: a Rust toolchain, 1.92 or newer (`rust-toolchain.toml` selects the stable channel) and, on Linux, `libgtk-4-dev`.
 
 [Platforms](platforms.md) has the details for each system.
 

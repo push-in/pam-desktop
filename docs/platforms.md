@@ -24,7 +24,6 @@ What this means in practice:
 | Package (Debian and Ubuntu names) | Needed for |
 | --- | --- |
 | `libgtk-4-dev` | The backend. GTK 4.14 or newer. |
-| `libwebkitgtk-6.0-dev` | The `webview` feature. |
 
 At run time the application uses what GTK uses: Pango for text, gdk-pixbuf for image decoding (the formats are those of the installed loaders) and GStreamer, through `GtkMediaFile`, for media.
 
@@ -36,7 +35,7 @@ The host that `vendor/bin/pam-desktop` downloads is built on Ubuntu 24.04, for x
 | --- | --- |
 | glibc 2.39 or newer | `libc6` |
 | GTK 4.14 or newer | `libgtk-4-1` |
-| WebKitGTK 6 | `libwebkitgtk-6.0-4` |
+| WebKitGTK 6, only for applications that show a `WebView` | `libwebkitgtk-6.0-4` |
 | GStreamer plugins, for media | `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good` |
 
 A host built from a checkout needs what the machine that built it had.
@@ -47,12 +46,12 @@ The host crate (`crates/pam-desktop-host/Cargo.toml`) has four cargo features, a
 
 | Feature | Provides | Extra system library |
 | --- | --- | --- |
-| `webview` | The `WebView` element: WebKitGTK 6 on Linux, WebView2 on Windows. | Linux: `libwebkitgtk-6.0` |
+| `webview` | Windows: the `WebView` element, through WebView2. | none |
 | `tray` | Linux: the tray icon, as a StatusNotifierItem on the session bus. | none |
 | `hotkeys` | Linux: global shortcuts, as X11 key grabs or through the desktop portal on Wayland. | none |
 | `sqlite` | The [SQLite module](modules.md#sqlite). SQLite is compiled from C. | none |
 
-Without `webview`, a `WebView` element reports an error through `onError`. Without `tray`, `Tray::show()` does nothing. Without `hotkeys`, shortcuts registered with `global: true` are not bound; local shortcuts and menu shortcuts are handled by the core and keep working.
+On Linux the `WebView` element is always built: WebKitGTK 6 is loaded from the system the first time one is shown, and a missing library is an error reported through `onError`. On Windows, without `webview`, a `WebView` element reports an error through `onError`. Without `tray`, `Tray::show()` does nothing. Without `hotkeys`, shortcuts registered with `global: true` are not bound; local shortcuts and menu shortcuts are handled by the core and keep working.
 
 A leaner host is built by naming the features to keep:
 

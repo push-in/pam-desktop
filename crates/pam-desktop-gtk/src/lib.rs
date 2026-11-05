@@ -21,7 +21,6 @@ mod text;
 #[cfg(feature = "tray")]
 mod tray;
 mod view;
-#[cfg(feature = "webview")]
 mod webview;
 
 pub use backend::{GtkBackend, run};

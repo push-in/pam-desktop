@@ -158,8 +158,9 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
 
 - The host starts the backend of the system it was built for.
 - Linux (GTK 4) is the reference backend and the only one exercised so far.
-  The released Linux host is built on Ubuntu 24.04: it needs glibc 2.39,
-  GTK 4.14 and WebKitGTK 6 or newer.
+  The released Linux host is built on Ubuntu 24.04: it needs glibc 2.39
+  and GTK 4.14 or newer. WebKitGTK 6 is loaded the first time a `WebView`
+  is shown, so only applications with one need it installed.
 - The macOS (AppKit) and Windows (Win32, Direct2D) backends are written
   against the same `Backend` contract and type-check by cross compilation, but
   have not been run on real machines yet. `docs/first-run-macos-windows.md`

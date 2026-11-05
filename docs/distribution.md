@@ -173,12 +173,14 @@ application: started from `bin` of a bundle under a name other than
 `pam-desktop`, the host runs the bundle.
 
 **The system provides the desktop platform.** On Linux the host uses the GTK 4
-of the machine it runs on, with WebKitGTK 6 and GStreamer when it was built
-with them, so that themes, portals and GPU drivers match. These libraries and
+of the machine it runs on, with its GStreamer, and WebKitGTK 6 for the
+`WebView` element, so that themes, portals and GPU drivers match. These libraries and
 everything they depend on are not bundled; `.deb` and `.rpm` packages declare
-them as dependencies (`libgtk-4-1`, `libwebkitgtk-6.0-4`,
-`gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good`; `gtk4`,
-`webkitgtk6.0`, `gstreamer1-plugins-base`, `gstreamer1-plugins-good`). The
+them as dependencies (`libgtk-4-1`, `gstreamer1.0-plugins-base`,
+`gstreamer1.0-plugins-good`; `gtk4`, `gstreamer1-plugins-base`,
+`gstreamer1-plugins-good`). WebKitGTK (`libwebkitgtk-6.0-4`; `webkitgtk6.0`)
+is declared only when a `.php` or `.pam` file of the application, outside
+`vendor`, names `WebView`: the host loads it on the first web view. The
 portable archive and the AppImage expect them to be installed. Any other
 library the host links against is copied to `lib/`.
 
@@ -261,8 +263,8 @@ points the launcher at a local binary instead, with no download.
 
 Building from this repository, the optional parts of the backends are Cargo
 features of `pam-desktop-host`, all enabled by default: `webview` (embedded
-web pages through WebKitGTK 6 on Linux and WebView2 on Windows), `tray` (the
+web pages through WebView2 on Windows), `tray` (the
 tray icon on Linux) and `hotkeys` (global shortcuts on Linux), next to
 `sqlite`. A leaner host is built with, for
 example, `cargo build -p pam-desktop-host --no-default-features --features
-tray,sqlite`; its packages then no longer depend on WebKitGTK.
+tray,sqlite`.

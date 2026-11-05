@@ -13,9 +13,10 @@ path = "src/main.rs"
 
 [features]
 default = ["sqlite", "webview", "tray", "hotkeys"]
-# Optional parts of the backends: embedded web pages (WebKitGTK on Linux,
-# WebView2 on Windows), and on Linux the tray icon and global shortcuts.
-webview = ["pam-desktop-gtk/webview", "pam-desktop-win32/webview"]
+# Optional parts of the backends: embedded web pages on Windows (WebView2;
+# on Linux WebKitGTK is loaded at run time), and on Linux the tray icon and
+# global shortcuts.
+webview = ["pam-desktop-win32/webview"]
 tray = ["pam-desktop-gtk/tray"]
 hotkeys = ["pam-desktop-gtk/hotkeys"]
 # The `sqlite` module. SQLite is compiled from C, so a build that only

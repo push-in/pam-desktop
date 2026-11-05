@@ -170,7 +170,7 @@ Two workflows live in `.github/workflows/`. **Neither has run yet**: what follow
 
 Runs on pushes to `main`, on pull requests, by hand, and as a job of the release workflow.
 
-The Linux job (Ubuntu 24.04, PHP 8.5, `libgtk-4-dev`, `libwebkitgtk-6.0-dev`, `gstreamer1.0-plugins-good`, `xvfb`, `xdotool`) runs these checks, which you can run locally in the same order:
+The Linux job (Ubuntu 24.04, PHP 8.5, `libgtk-4-dev`, `libwebkitgtk-6.0-4`, `gstreamer1.0-plugins-good`, `xvfb`, `xdotool`) runs these checks, which you can run locally in the same order:
 
 ```bash
 cargo fmt --all -- --check

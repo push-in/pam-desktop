@@ -981,7 +981,7 @@ fn materialize_bundle(
         copy_libraries(&linux_libraries(php_objects)?, &bundle.join(PHP_LIB))?;
         let host_libraries = linux_libraries([context.host])?;
         let platform = platform_libraries(&host_libraries)?;
-        system = system_dependencies(host_libraries.keys());
+        system = system_dependencies(host_libraries.keys(), uses_web_view(&bundled_project));
         let own: BTreeMap<OsString, PathBuf> = host_libraries
             .into_iter()
             .filter(|(name, _)| !platform.contains(name))
@@ -1555,9 +1555,12 @@ fn platform_libraries(
     Ok(platform)
 }
 
-/// The packages that provide the platform libraries the host links against.
+/// The packages that provide the platform libraries the host links against,
+/// and WebKitGTK when the application shows web pages: the host loads it on
+/// the first `WebView`, so it is not among the linked libraries.
 fn system_dependencies<'a>(
     libraries: impl IntoIterator<Item = &'a OsString>,
+    web_view: bool,
 ) -> SystemDependencies {
     let names: Vec<&str> = libraries
         .into_iter()
@@ -1576,11 +1579,7 @@ fn system_dependencies<'a>(
     };
     add(links("libgtk-4."), &["libgtk-4-1"], &["gtk4"]);
     add(links("libadwaita-1."), &["libadwaita-1-0"], &["libadwaita"]);
-    add(
-        links("libwebkitgtk-6.0."),
-        &["libwebkitgtk-6.0-4"],
-        &["webkitgtk6.0"],
-    );
+    add(web_view, &["libwebkitgtk-6.0-4"], &["webkitgtk6.0"]);
     // GTK plays media through GStreamer, which needs its plugins at run time.
     add(
         links("libgst"),
@@ -1588,6 +1587,46 @@ fn system_dependencies<'a>(
         &["gstreamer1-plugins-base", "gstreamer1-plugins-good"],
     );
     dependencies
+}
+
+/// Whether a source file of the application names the `WebView` element.
+/// Packages installed by Composer are not searched: the PAM Desktop package
+/// itself defines the class.
+fn uses_web_view(project: &Path) -> bool {
+    fn search(directory: &Path, depth: usize) -> bool {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return false;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                let skipped = matches!(
+                    entry.file_name().to_str(),
+                    Some("vendor" | "node_modules" | ".git")
+                );
+                if !skipped && depth < 24 && search(&path, depth + 1) {
+                    return true;
+                }
+            } else if kind.is_file()
+                && matches!(
+                    path.extension().and_then(OsStr::to_str),
+                    Some("php" | "pam")
+                )
+                && fs::read(&path).is_ok_and(|source| {
+                    source
+                        .windows(b"WebView".len())
+                        .any(|window| window == b"WebView")
+                })
+            {
+                return true;
+            }
+        }
+        false
+    }
+    search(project, 0)
 }
 
 /// `value` inside a double-quoted shell word.
@@ -3035,17 +3074,34 @@ mod tests {
     }
 
     #[test]
+    fn web_view_use_is_found_in_application_sources_only() {
+        let project = std::env::temp_dir().join(format!("pam-webview-use-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&project);
+        fs::create_dir_all(project.join("vendor/pushinbr/pam-desktop/src/UI")).unwrap();
+        fs::create_dir_all(project.join("src/Screens")).unwrap();
+        fs::write(
+            project.join("vendor/pushinbr/pam-desktop/src/UI/WebView.php"),
+            "<?php final class WebView {}",
+        )
+        .unwrap();
+        fs::write(project.join("index.php"), "<?php Text::make('hello');").unwrap();
+        assert!(!uses_web_view(&project));
+        fs::write(
+            project.join("src/Screens/Help.php"),
+            "<?php WebView::make('https://example.com');",
+        )
+        .unwrap();
+        assert!(uses_web_view(&project));
+        fs::remove_dir_all(&project).unwrap();
+    }
+
+    #[test]
     fn platform_libraries_become_package_dependencies() {
-        let names: Vec<OsString> = [
-            "libgtk-4.so.1",
-            "libwebkitgtk-6.0.so.4",
-            "libgstplay-1.0.so.0",
-            "libz.so.1",
-        ]
-        .into_iter()
-        .map(OsString::from)
-        .collect();
-        let dependencies = system_dependencies(&names);
+        let names: Vec<OsString> = ["libgtk-4.so.1", "libgstplay-1.0.so.0", "libz.so.1"]
+            .into_iter()
+            .map(OsString::from)
+            .collect();
+        let dependencies = system_dependencies(&names, true);
         assert_eq!(
             dependencies.debian,
             [
@@ -3066,8 +3122,13 @@ mod tests {
                 "gstreamer1-plugins-good"
             ]
         );
+        assert!(
+            !system_dependencies(&names, false)
+                .debian
+                .contains(&"libwebkitgtk-6.0-4")
+        );
         assert_eq!(
-            system_dependencies(&[]),
+            system_dependencies(&[], false),
             SystemDependencies {
                 debian: vec!["libc6"],
                 rpm: vec!["glibc"]
