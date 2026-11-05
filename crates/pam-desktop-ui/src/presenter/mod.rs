@@ -6,4 +6,5 @@ pub mod coverage;
 pub mod header;
 pub mod modal;
 pub mod navigation;
+pub mod shared;
 pub mod tabs;

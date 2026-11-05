@@ -301,6 +301,8 @@ pub enum Owner {
     Image(NodeId),
     /// The toast sliding in or out.
     Toast,
+    /// Shared elements flying between two routes.
+    SharedFlight,
     /// A released bottom sheet returning to its snap point.
     SheetDrag(NodeId),
     /// A bar bound to a media player gliding to the new position.
@@ -329,7 +331,7 @@ impl Owner {
             | Self::GesturePose(id)
             | Self::Image(id) => *id,
             // Host chrome belongs to no node of the application.
-            Self::Toast => 0,
+            Self::Toast | Self::SharedFlight => 0,
         }
     }
 }

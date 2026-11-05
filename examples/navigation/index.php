@@ -13,6 +13,8 @@ use Pam\Desktop\Renderable;
 use Pam\Desktop\Style;
 use Pam\Desktop\UI\Button;
 use Pam\Desktop\UI\Column;
+use Pam\Desktop\UI\Image;
+use Pam\Desktop\UI\Pressable;
 use Pam\Desktop\UI\Screen;
 use Pam\Desktop\UI\Text;
 
@@ -38,7 +40,15 @@ final class Stack extends Component
                     Button::make('Open a message')->onPress(fn () => $this->navigator->push('message')),
                     Button::make('Search')->onPress(fn () => $this->navigator->push('search')),
                     Button::make('Filters (form sheet)')->onPress(fn () => $this->navigator->push('filters')),
+                    Pressable::make(
+                        Image::make('asset://photo.jpg')->sharedTransition('photo')->style(new Style(width: 96, height: 96, borderRadius: 16)),
+                    )->onPress(fn () => $this->navigator->push('photo')),
                 ]),
+                'photo' => fn (): Renderable => Screen::make(Column::make(
+                    Image::make('asset://photo.jpg')->sharedTransition('photo')->style(new Style(height: 320, borderRadius: 0)),
+                    Text::make('The picture flew here from its thumbnail, and flies back on the way out.')
+                        ->style(new Style(fontSize: 15, lineHeight: 22, textColor: 0xFF2A3140, padding: 20)),
+                )->style(new Style(flexGrow: 1, paddingTop: 56, backgroundColor: 0xFFFFFFFF))),
                 'message' => fn (): Renderable => $this->page('The header shows a back button because there is a route below.', []),
                 'search' => fn (): Renderable => $this->page('Type in the header: the host reports every change to onHeaderSearchChange.', []),
                 'filters' => fn (): Renderable => Screen::make(Column::make(
@@ -54,6 +64,7 @@ final class Stack extends Component
                 'search' => new ScreenOptions(title: 'Search', headerShown: true, headerSearchEnabled: true, headerSearchPlaceholder: 'Search messages', onHeaderSearchChange: function (string $query): void {
                     $this->query = $query;
                 }),
+                'photo' => new ScreenOptions(title: 'Photo', headerShown: true, animationDurationMs: 420),
                 'filters' => new ScreenOptions(presentation: NavigationPresentation::FormSheet, animation: NavigationTransition::SlideFromBottom, sheetAllowedDetents: [0.45, 1.0]),
             ],
         );

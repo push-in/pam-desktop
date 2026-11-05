@@ -264,6 +264,7 @@ pub struct Runtime<B: Backend> {
     headers: crate::presenter::header::Headers,
     windows: crate::windows::Windows,
     text_layouts: crate::textlayout::TextLayouts,
+    shared_elements: crate::presenter::shared::SharedElements,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
     pub(crate) shell: Shell,
@@ -417,6 +418,7 @@ impl<B: Backend> Runtime<B> {
             headers: crate::presenter::header::Headers::default(),
             windows: crate::windows::Windows::default(),
             text_layouts: crate::textlayout::TextLayouts::default(),
+            shared_elements: crate::presenter::shared::SharedElements::default(),
             modules,
             directories,
             shell: Shell::default(),
@@ -548,6 +550,7 @@ impl<B: Backend> Runtime<B> {
     /// Lets every controller react to what changed in the scene, until the
     /// scene is quiet (controllers add chrome and overrides of their own).
     fn settle(&mut self) {
+        let mut flights_changed = false;
         for _ in 0..8 {
             let changes = self.scene.take_changes();
             if changes.is_empty() {
@@ -579,6 +582,9 @@ impl<B: Backend> Runtime<B> {
                 self.text_layouts.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
+            if let Some((outgoing, incoming, pop, duration)) = self.navigation.take_started() {
+                flights_changed |= self.shared_elements.start(&mut ctx, outgoing, incoming, pop, duration);
+            }
             self.headers.after_commit(&mut ctx, self.metrics.dark);
             self.tabs.after_commit(&mut ctx);
             self.modals.after_commit(&mut ctx);
@@ -609,6 +615,9 @@ impl<B: Backend> Runtime<B> {
             self.coverage.evaluate(&mut ctx);
             self.observers.evaluate(&mut ctx);
             self.text_layouts.evaluate(&mut ctx, &mut measure);
+        }
+        if flights_changed {
+            self.update_host_overlays();
         }
         // A window that opened or changed size lays its surface out again.
         if self.windows.has_resized() {
@@ -727,7 +736,7 @@ impl<B: Backend> Runtime<B> {
 
     /// Stacks the host chrome above the application: toasts, then errors.
     pub(crate) fn update_host_overlays(&mut self) {
-        let overlays: Vec<NodeId> = self.toasts.roots().iter().chain(self.error_overlay.roots()).copied().collect();
+        let overlays: Vec<NodeId> = self.shared_elements.roots().iter().chain(self.toasts.roots()).chain(self.error_overlay.roots()).copied().collect();
         self.scene.set_host_overlays(overlays);
     }
 
@@ -1120,6 +1129,7 @@ impl<B: Backend> Runtime<B> {
                 Owner::MediaBar(id) => self.media.on_bar_sample(&mut ctx, id, sample.value),
                 Owner::Gesture(id) => self.gestures.on_sample(&mut ctx, id, sample.value, sample.finished),
                 Owner::GesturePose(id) => self.gestures.on_pose_sample(&mut ctx, id, sample.value, sample.finished),
+                Owner::SharedFlight => toast_changed |= self.shared_elements.on_sample(&mut ctx, sample.value, sample.finished),
                 Owner::Toast => toast_changed |= self.toasts.on_sample(&mut ctx, sample.value, sample.finished),
                 Owner::Transition(..) | Owner::Motion(..) => self.motion.on_sample(&mut ctx, sample.owner, sample.value, sample.finished),
             }

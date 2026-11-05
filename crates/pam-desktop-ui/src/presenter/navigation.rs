@@ -49,6 +49,9 @@ struct Host {
 pub struct Navigation {
     hosts: IdMap<Host>,
     dirty: bool,
+    /// A transition that just started, for the shared elements:
+    /// outgoing route, incoming route, whether it is a pop, and its duration.
+    started: Option<(NodeId, NodeId, bool, u32)>,
 }
 
 /// Where a form sheet rests: pushed down so only its detent shows.
@@ -238,6 +241,9 @@ impl Navigation {
             }
         }
         let instant = transition == TRANSITION_NONE || duration == 0 || ctx.reduced_motion || outgoing.is_none();
+        if let (false, Some(outgoing)) = (instant, outgoing) {
+            self.started = Some((outgoing, incoming, operation == OPERATION_POP, duration));
+        }
         if instant {
             self.finish(ctx, id);
         } else {
@@ -377,6 +383,11 @@ impl Navigation {
             ctx.scene.set_layer_override(outgoing, LayerSlot::Presenter, value);
         }
         ctx.emit_if(id, PropKey::OnAnimationComplete, event_kind::ANIMATION_COMPLETE, Vec::new());
+    }
+
+    /// The transition that started in the commit just applied, once.
+    pub fn take_started(&mut self) -> Option<(NodeId, NodeId, bool, u32)> {
+        self.started.take()
     }
 
     /// True while any route transition runs (tests and diagnostics).
