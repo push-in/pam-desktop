@@ -118,7 +118,7 @@ scripts/visual.sh list
 
 `check` prints one line per scenario with the number of pixels that differ and exits with an error when any scenario has more than it allows. The capture is kept in `target/visual/current` and an image with the differences highlighted in `target/visual/diff`.
 
-The baseline lives in `target/visual/baseline` and is not committed: fonts, the GTK version and the renderer change pixels, so a baseline is only valid on the machine that recorded it. On one machine the captures are reproducible: two runs of the same build differ in no pixel, except in the scenarios that never stop moving (`motion`, `media`, the spinner of `controls`, the seconds counter of `modules` and the sliding line of `text`), which have a tolerance. The scenarios, their sizes and tolerances are the table at the top of the script.
+The baseline lives in `target/visual/baseline` and is not committed: fonts, the GTK version and the renderer change pixels, so a baseline is only valid on the machine that recorded it. On one machine the captures are reproducible: two runs of the same build differ in no pixel, except in the scenarios that never stop moving (`motion`, `media`, the spinner of `controls`, the seconds counter of `modules` and the sliding line of `text`), and in `images`, whose status line names the picture the network delivered last), which have a tolerance. The scenarios, their sizes and tolerances are the table at the top of the script.
 
 ## Tests
 
