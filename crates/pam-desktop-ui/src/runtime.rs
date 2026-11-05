@@ -18,10 +18,12 @@ use pam_desktop_wire::decode_batch;
 
 use crate::animator::{Animator, Owner, Timer, Timers};
 use crate::backend::{Backend, BackendEvent, KeyEvent, NodeId, WindowConfig, WindowMetrics, MAIN_WINDOW};
-use crate::context::{event_kind, Ctx, HostCommand, OutEvent};
+use crate::context::{event_kind, HostCommand, OutEvent};
 use crate::geometry::Size;
 use crate::inputs::Inputs;
 use crate::interaction::Interaction;
+use crate::modules::Registry;
+use crate::runtime_modules::Settings;
 use crate::presenter::coverage::Coverage;
 use crate::presenter::modal::Modals;
 use crate::presenter::navigation::Navigation;
@@ -38,7 +40,8 @@ pub const MODULE_FAILURE: u8 = 2;
 pub enum Inbound {
     /// A message from the worker process of the given generation.
     Worker(u64, WorkerMessage),
-    ModuleResult { request: u64, status: u8, payload: Vec<u8> },
+    /// The answer of a native module to the worker of `generation`.
+    ModuleResult { generation: u64, request: u64, status: u8, payload: Vec<u8> },
     /// Development: application sources changed, restart the worker.
     Reload,
 }
@@ -127,6 +130,22 @@ pub struct RuntimeConfig {
     pub development: bool,
     /// Directories whose changes restart the worker (development only).
     pub watch: Vec<std::path::PathBuf>,
+    pub directories: Directories,
+    /// `version` and `build` of the application manifest.
+    pub app_version: String,
+    pub build_number: String,
+    /// The URL the application was launched with, if any.
+    pub launch_url: Option<String>,
+    /// Modules provided by the host binary (network, database, files…).
+    pub modules: Vec<(String, Box<dyn crate::modules::Module>)>,
+}
+
+/// Where the application keeps its files.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Directories {
+    pub data: std::path::PathBuf,
+    pub cache: std::path::PathBuf,
+    pub state: std::path::PathBuf,
 }
 
 struct MeasureContext<B: Backend> {
@@ -192,31 +211,40 @@ unsafe extern "C" fn measure_trampoline<B: Backend>(
 
 pub struct Runtime<B: Backend> {
     pub backend: B,
-    engine: Engine,
-    scene: Scene,
-    worker: Option<Worker>,
+    pub(crate) engine: Engine,
+    pub(crate) scene: Scene,
+    pub(crate) worker: Option<Worker>,
     worker_command: WorkerCommand,
     /// Bumped on every worker restart; messages of older workers are dropped.
-    generation: u64,
+    pub(crate) generation: u64,
     development: bool,
-    inbox: Arc<Inbox>,
+    pub(crate) inbox: Arc<Inbox>,
     events: Rc<EventQueue>,
     measure: Box<MeasureContext<B>>,
     batch: Vec<u8>,
-    metrics: WindowMetrics,
+    pub(crate) metrics: WindowMetrics,
     platform: &'static str,
-    animator: Animator,
-    timers: Timers,
+    pub(crate) animator: Animator,
+    pub(crate) timers: Timers,
     navigation: Navigation,
     tabs: Tabs,
     modals: Modals,
     coverage: Coverage,
-    interaction: Interaction,
-    inputs: Inputs,
+    pub(crate) interaction: Interaction,
+    pub(crate) inputs: Inputs,
+    pub(crate) modules: Registry,
+    pub(crate) settings: Settings,
+    /// What the operating system reports, before the app's own preference.
+    pub(crate) system_dark: bool,
+    pub(crate) system_font_scale: f32,
+    pub(crate) app_version: String,
+    pub(crate) build_number: String,
+    /// Whether the main window has keyboard focus (the app is "active").
+    pub(crate) active: bool,
     /// Events for PHP produced while handling the current work.
-    outbox: Vec<OutEvent>,
-    commands: Vec<HostCommand>,
-    started: Instant,
+    pub(crate) outbox: Vec<OutEvent>,
+    pub(crate) commands: Vec<HostCommand>,
+    pub(crate) started: Instant,
     draining: bool,
     quit_requested: bool,
     /// The deadline last handed to the backend (avoids re-arming every drain).
@@ -226,9 +254,11 @@ pub struct Runtime<B: Backend> {
 }
 
 /// Borrows the controller context out of a runtime's fields.
+#[macro_export]
+#[doc(hidden)]
 macro_rules! ctx {
     ($runtime:expr) => {
-        Ctx {
+        $crate::context::Ctx {
             scene: &mut $runtime.scene,
             animator: &mut $runtime.animator,
             timers: &mut $runtime.timers,
@@ -244,13 +274,35 @@ macro_rules! ctx {
 impl<B: Backend> Runtime<B> {
     pub fn new(mut backend: B, inbox: Arc<Inbox>, events: Rc<EventQueue>, config: RuntimeConfig) -> std::io::Result<Self> {
         backend.open_window(MAIN_WINDOW, &config.window);
-        let metrics = backend.window_metrics(MAIN_WINDOW);
+        let system = backend.window_metrics(MAIN_WINDOW);
+        let settings = Settings::load(&config.directories.state);
+        backend.set_appearance(settings.forced_dark());
+        // The window as the application sees it: its own appearance and text
+        // scale preferences layered over the system's.
+        let metrics = WindowMetrics {
+            dark: settings.forced_dark().unwrap_or(system.dark),
+            font_scale: settings.effective_font_scale(system.font_scale),
+            ..system
+        };
         let mut measure = Box::new(MeasureContext::<B> { backend: std::ptr::null_mut() });
         let engine = new_engine(&metrics, measure.as_mut());
 
         let mut scene = Scene::new();
         scene.environment.scale = metrics.scale;
         scene.environment.font_scale = metrics.font_scale;
+
+        let mut modules = Registry::default();
+        modules.register("timers", crate::modules::timers::Timers::new());
+        modules.register("storage", crate::modules::storage::Storage::new(&config.directories.data));
+        modules.register("device", crate::modules::system::Device::default());
+        modules.register("permissions", crate::modules::system::Permissions);
+        modules.register("linking", crate::modules::system::Linking::new(config.launch_url.clone()));
+        modules.register("cache", crate::modules::system::Cache::new(&config.directories.cache));
+        modules.register("background", crate::modules::system::Background::default());
+        modules.register("toast", crate::modules::system::Toast);
+        for (name, module) in config.modules {
+            modules.register_boxed(&name, module);
+        }
 
         let mut command = config.worker;
         command.environment.push(("PAM_DESKTOP_PLATFORM".into(), config.platform.into()));
@@ -259,7 +311,10 @@ impl<B: Backend> Runtime<B> {
             "PAM_DESKTOP_MODE".into(),
             if config.development { "development" } else { "production" }.into(),
         ));
-        let worker = spawn_worker(&command, &metrics, &inbox, 1)?;
+        if let Some(url) = &config.launch_url {
+            command.environment.push(("PAM_DESKTOP_LAUNCH_URL".into(), url.clone()));
+        }
+        let worker = spawn_worker(&command, &metrics, system.dark, settings.appearance_mode, &inbox, 1)?;
         if config.development && !config.watch.is_empty() {
             crate::watch::watch(config.watch, Arc::clone(&inbox));
         }
@@ -286,6 +341,13 @@ impl<B: Backend> Runtime<B> {
             coverage: Coverage::default(),
             interaction: Interaction::new(metrics.dark),
             inputs: Inputs::default(),
+            modules,
+            settings,
+            system_dark: system.dark,
+            system_font_scale: system.font_scale,
+            app_version: config.app_version,
+            build_number: config.build_number,
+            active: true,
             outbox: Vec::new(),
             commands: Vec::new(),
             started: Instant::now(),
@@ -312,7 +374,7 @@ impl<B: Backend> Runtime<B> {
         self.metrics
     }
 
-    fn now_ms(&self) -> u64 {
+    pub(crate) fn now_ms(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 
@@ -434,9 +496,12 @@ impl<B: Backend> Runtime<B> {
                     self.finished = true;
                 }
             }
-            Inbound::ModuleResult { request, status, payload } => {
-                if let Some(worker) = &mut self.worker {
-                    worker.send_module_result(request, status, &payload);
+            Inbound::ModuleResult { generation, request, status, payload } => {
+                // Results asked by a worker that was reloaded away are stale.
+                if generation == self.generation {
+                    if let Some(worker) = &mut self.worker {
+                        worker.send_module_result(request, status, &payload);
+                    }
                 }
             }
             Inbound::Reload => self.reload(),
@@ -453,7 +518,8 @@ impl<B: Backend> Runtime<B> {
         }
         self.generation += 1;
         self.outbox.clear();
-        match spawn_worker(&self.worker_command, &self.metrics, &self.inbox, self.generation) {
+        self.modules.reset();
+        match spawn_worker(&self.worker_command, &self.metrics, self.system_dark, self.settings.appearance_mode, &self.inbox, self.generation) {
             Ok(worker) => self.worker = Some(worker),
             Err(error) => eprintln!("[pam-desktop] could not restart the PHP worker: {error}"),
         }
@@ -506,7 +572,7 @@ impl<B: Backend> Runtime<B> {
         }
     }
 
-    fn relayout(&mut self) {
+    pub(crate) fn relayout(&mut self) {
         let (width, height, font_scale) = (self.metrics.size.width, self.metrics.size.height, self.metrics.font_scale);
         let result = self.with_engine(|engine, batch| engine.relayout_with_metrics_into(width, height, font_scale, batch));
         match result {
@@ -517,17 +583,19 @@ impl<B: Backend> Runtime<B> {
         }
     }
 
-    fn send_event(&mut self, node: NodeId, kind: u16, payload: &[u8]) {
+    pub(crate) fn send_event(&mut self, node: NodeId, kind: u16, payload: &[u8]) {
         self.outbox.push(OutEvent { node, kind, payload: payload.to_vec() });
     }
 
-    fn send_dimensions(&mut self) {
+    pub(crate) fn send_dimensions(&mut self) {
         let metrics = self.metrics;
         let payload = WireMap::new()
             .with("width", metrics.size.width)
             .with("height", metrics.size.height)
             .with("density", metrics.scale)
             .with("appearance", if metrics.dark { 2_i64 } else { 1_i64 })
+            .with("appearanceMode", i64::from(self.settings.appearance_mode))
+            .with("systemAppearance", if self.system_dark { 2_i64 } else { 1_i64 })
             .with("fontScale", metrics.font_scale)
             .with("safeAreaTop", 0.0_f64)
             .with("safeAreaRight", 0.0_f64)
@@ -605,18 +673,14 @@ impl<B: Backend> Runtime<B> {
             }
             BackendEvent::WindowFocusChanged { window, focused } => {
                 if window == MAIN_WINDOW {
+                    self.active = focused;
                     let state = if focused { b"1" } else { b"2" };
                     self.send_event(0, event_kind::APP_STATE, state);
                 }
             }
             BackendEvent::AppearanceChanged { dark } => {
-                if self.metrics.dark != dark {
-                    self.metrics.dark = dark;
-                    self.interaction.dark = dark;
-                    let mut ctx = ctx!(self);
-                    self.interaction.refresh_defaults(&mut ctx);
-                    self.send_dimensions();
-                }
+                self.system_dark = dark;
+                self.apply_appearance();
             }
             BackendEvent::Frame { .. } => self.tick(),
             BackendEvent::Wake => {
@@ -719,37 +783,6 @@ impl<B: Backend> Runtime<B> {
         }
     }
 
-    // ---- native modules ------------------------------------------------
-
-    fn reply(&mut self, request: u64, status: u8, payload: &[u8]) {
-        if let Some(worker) = &mut self.worker {
-            worker.send_module_result(request, status, payload);
-        }
-    }
-
-    fn call_module(&mut self, request: u64, module: &str, method: &str, _payload: &[u8]) {
-        // Unknown modules fail fast so application callbacks never hang.
-        let message = format!("Native module {module}.{method} is not available on this platform.");
-        self.reply(request, MODULE_FAILURE, message.as_bytes());
-    }
-
-    fn call_typed(&mut self, request: u64, operation: u16, _payload: &[u8]) {
-        match operation {
-            // CloseApp: PHP has nowhere left to go back to.
-            14 => {
-                self.reply(request, MODULE_SUCCESS, b"");
-                if let Some(worker) = &mut self.worker {
-                    worker.shutdown();
-                }
-                self.finished = true;
-            }
-            _ => {
-                let message = format!("Native operation {operation} is not available on this platform.");
-                self.reply(request, MODULE_FAILURE, message.as_bytes());
-            }
-        }
-    }
-
     /// Milliseconds since the runtime started (diagnostics).
     #[must_use]
     pub fn uptime_ms(&self) -> u64 {
@@ -783,13 +816,16 @@ fn new_engine<B: Backend>(metrics: &WindowMetrics, measure: &mut MeasureContext<
 fn spawn_worker(
     command: &WorkerCommand,
     metrics: &WindowMetrics,
+    system_dark: bool,
+    appearance_mode: u8,
     inbox: &Arc<Inbox>,
     generation: u64,
 ) -> std::io::Result<Worker> {
     let mut command = command.clone();
     command.environment.push(("PAM_BOOT_METRICS".into(), boot_metrics_json(metrics)));
+    command.environment.push(("PAM_APPEARANCE_MODE".into(), appearance_mode.to_string()));
+    command.environment.push(("PAM_SYSTEM_APPEARANCE".into(), if system_dark { "2" } else { "1" }.into()));
     command.environment.push(("PAM_SYSTEM_DARK".into(), if metrics.dark { "1" } else { "0" }.into()));
-    command.environment.push(("PAM_SYSTEM_APPEARANCE".into(), if metrics.dark { "dark" } else { "light" }.into()));
     let inbox = Arc::clone(inbox);
     Worker::spawn(&command, move |message| inbox.post(Inbound::Worker(generation, message)))
 }

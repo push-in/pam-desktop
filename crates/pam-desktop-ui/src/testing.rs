@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 
 use crate::backend::{
-    Backend, ImageContent, ImageKey, ImageSource, InputConfig, NodeId, ScrollConfig, TextContent, ViewClass, WindowConfig,
-    WindowId, WindowMetrics,
+    AlertConfig, Backend, ImageContent, ImageKey, ImageSource, InputConfig, NodeId, ScrollConfig, TextContent, ViewClass,
+    WindowConfig, WindowId, WindowMetrics,
 };
 use crate::geometry::{Point, Rect, Size};
 use crate::style::{Decoration, LayerState};
@@ -35,6 +35,9 @@ pub enum Command {
     ScrollContent(NodeId, Size),
     ScrollConfig(NodeId, ScrollConfig),
     ScrollTo(NodeId, Point, bool),
+    ClipboardSet(String),
+    Alert(AlertConfig),
+    Appearance(Option<bool>),
     RequestFrame,
     ScheduleWake(u32),
     Quit,
@@ -51,6 +54,9 @@ pub struct RecordingBackend {
     pub texts: HashMap<NodeId, TextContent>,
     /// Text last set on each native input.
     pub inputs: HashMap<NodeId, String>,
+    pub clipboard: Option<String>,
+    /// What `show_alert` answers.
+    pub alert_choice: Option<usize>,
     pub metrics: WindowMetrics,
     /// Width of one character used by the fake text measurer.
     pub character_width: f32,
@@ -219,6 +225,25 @@ impl Backend for RecordingBackend {
 
     fn request_frame(&mut self) {
         self.commands.push(Command::RequestFrame);
+    }
+
+    fn clipboard_set_text(&mut self, text: &str) {
+        self.clipboard = Some(text.to_owned());
+        self.commands.push(Command::ClipboardSet(text.to_owned()));
+    }
+
+    fn clipboard_text(&mut self, done: Box<dyn FnOnce(Option<String>)>) {
+        done(self.clipboard.clone());
+    }
+
+    /// Answers with `alert_choice` right away.
+    fn show_alert(&mut self, _window: WindowId, alert: &AlertConfig, done: Box<dyn FnOnce(Option<usize>)>) {
+        self.commands.push(Command::Alert(alert.clone()));
+        done(self.alert_choice);
+    }
+
+    fn set_appearance(&mut self, dark: Option<bool>) {
+        self.commands.push(Command::Appearance(dark));
     }
 
     fn schedule_wake(&mut self, delay_ms: u32) {

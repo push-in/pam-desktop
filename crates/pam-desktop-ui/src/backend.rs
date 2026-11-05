@@ -266,6 +266,29 @@ pub struct ImageContent {
     pub opacity: f32,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AlertButtonStyle {
+    #[default]
+    Default,
+    Cancel,
+    Destructive,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AlertButton {
+    pub label: String,
+    pub style: AlertButtonStyle,
+}
+
+/// A native message dialog with up to three buttons.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AlertConfig {
+    pub title: String,
+    pub message: String,
+    /// Empty means a single "OK" button.
+    pub buttons: Vec<AlertButton>,
+}
+
 /// How a scroll view behaves.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScrollConfig {
@@ -383,6 +406,18 @@ pub trait Backend {
     /// Requests one `BackendEvent::Wake` after `delay_ms` (long press and
     /// debounce deadlines). A newer request replaces a pending one.
     fn schedule_wake(&mut self, delay_ms: u32);
+
+    // ---- system services -----------------------------------------------
+
+    fn clipboard_set_text(&mut self, text: &str);
+    /// Reads the clipboard text; `done` runs on the UI thread, later.
+    fn clipboard_text(&mut self, done: Box<dyn FnOnce(Option<String>)>);
+    /// Shows a native message dialog. `done` receives the index of the
+    /// pressed button, or `None` when it was dismissed another way.
+    fn show_alert(&mut self, window: WindowId, alert: &AlertConfig, done: Box<dyn FnOnce(Option<usize>)>);
+    /// Forces light (`Some(false)`) or dark (`Some(true)`) native chrome, or
+    /// follows the system (`None`).
+    fn set_appearance(&mut self, dark: Option<bool>);
 
     // ---- application ---------------------------------------------------
 

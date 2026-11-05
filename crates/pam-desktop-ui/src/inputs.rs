@@ -394,6 +394,11 @@ impl Inputs {
         }
     }
 
+    #[must_use]
+    pub fn is_focused(&self, id: NodeId) -> bool {
+        self.inputs.get(&id).is_some_and(|input| input.focused)
+    }
+
     /// The text the native control shows (view-ref commands, tests).
     #[must_use]
     pub fn text(&self, id: NodeId) -> Option<&str> {

@@ -8,8 +8,8 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib, graphene, pango};
 use pam_desktop_ui::backend::{
-    Backend, BackendEvent, ImageContent, ImageKey, ImageSource, InputConfig, KeyEvent, Modifiers, NodeId, PointerButton,
-    PointerEvent,
+    AlertButtonStyle, AlertConfig, Backend, BackendEvent, ImageContent, ImageKey, ImageSource, InputConfig, KeyEvent,
+    Modifiers, NodeId, PointerButton, PointerEvent,
     PointerPhase, ScrollConfig, TextContent, ViewClass,
     WindowConfig, WindowId, WindowMetrics,
 };
@@ -585,6 +585,43 @@ impl Backend for GtkBackend {
             events.push(BackendEvent::Frame { time_ms: u64::try_from(clock.frame_time() / 1000).unwrap_or(0) });
             glib::ControlFlow::Break
         });
+    }
+
+    fn clipboard_set_text(&mut self, text: &str) {
+        if let Some(display) = gdk::Display::default() {
+            display.clipboard().set_text(text);
+        }
+    }
+
+    fn clipboard_text(&mut self, done: Box<dyn FnOnce(Option<String>)>) {
+        let Some(display) = gdk::Display::default() else { return done(None) };
+        display.clipboard().read_text_async(gio::Cancellable::NONE, move |result| {
+            done(result.ok().flatten().map(|text| text.to_string()));
+        });
+    }
+
+    fn show_alert(&mut self, window: WindowId, alert: &AlertConfig, done: Box<dyn FnOnce(Option<usize>)>) {
+        let labels: Vec<&str> =
+            if alert.buttons.is_empty() { vec!["OK"] } else { alert.buttons.iter().map(|button| button.label.as_str()).collect() };
+        let dialog = gtk::AlertDialog::builder().modal(true).message(alert.title.as_str()).detail(alert.message.as_str()).buttons(labels).build();
+        if let Some(cancel) = alert.buttons.iter().position(|button| button.style == AlertButtonStyle::Cancel) {
+            dialog.set_cancel_button(cancel as i32);
+        }
+        // The first non-cancel button answers to Enter.
+        let default = alert.buttons.iter().position(|button| button.style != AlertButtonStyle::Cancel).unwrap_or(0);
+        dialog.set_default_button(default as i32);
+        let parent = self.windows.get(&window).map(|entry| entry.window.clone());
+        dialog.choose(parent.as_ref(), gio::Cancellable::NONE, move |result| {
+            done(result.ok().and_then(|index| usize::try_from(index).ok()));
+        });
+    }
+
+    fn set_appearance(&mut self, dark: Option<bool>) {
+        let Some(settings) = gtk::Settings::default() else { return };
+        match dark {
+            Some(dark) => settings.set_gtk_application_prefer_dark_theme(dark),
+            None => settings.reset_property("gtk-application-prefer-dark-theme"),
+        }
     }
 
     fn schedule_wake(&mut self, delay_ms: u32) {

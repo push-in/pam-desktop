@@ -10,7 +10,7 @@ use pam_desktop_ui::backend::WindowConfig;
 
 use crate::paths::AppPaths;
 use pam_desktop_ui::geometry::Size;
-use pam_desktop_ui::runtime::RuntimeConfig;
+use pam_desktop_ui::runtime::{Directories, RuntimeConfig};
 use pam_desktop_ui::worker::WorkerCommand;
 
 fn usage() -> ExitCode {
@@ -56,6 +56,17 @@ fn worker_bootstrap(project: &Path) -> Option<PathBuf> {
         directory = current.parent();
     }
     candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+/// A string (or number) field of `pam-desktop.json`.
+fn manifest_text(project: &Path, key: &str) -> Option<String> {
+    let manifest = std::fs::read_to_string(project.join("pam-desktop.json")).ok()?;
+    let manifest = serde_json::from_str::<serde_json::Value>(&manifest).ok()?;
+    match manifest.get(key)? {
+        serde_json::Value::String(text) => Some(text.clone()),
+        serde_json::Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
 }
 
 /// `applicationId` of `pam-desktop.json`, or one derived from the folder name.
@@ -154,6 +165,11 @@ fn run(target: &Path, development: bool) -> ExitCode {
         platform,
         development,
         watch: if development { vec![project.clone()] } else { Vec::new() },
+        directories: Directories { data: app_paths.data.clone(), cache: app_paths.cache.clone(), state: app_paths.state.clone() },
+        app_version: manifest_text(&project, "version").unwrap_or_default(),
+        build_number: manifest_text(&project, "build").unwrap_or_default(),
+        launch_url: std::env::var("PAM_DESKTOP_LAUNCH_URL").ok().filter(|url| !url.is_empty()),
+        modules: Vec::new(),
     };
 
     #[cfg(target_os = "linux")]

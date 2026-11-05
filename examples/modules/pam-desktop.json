@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.modules",
+    "name": "PAM Desktop modules",
+    "entry": "index.php",
+    "window": {
+        "width": 460,
+        "height": 520
+    }
+}
