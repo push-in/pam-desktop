@@ -12,10 +12,16 @@ pam-desktop-ui.workspace = true
 webview2-com = { version = "0.39", optional = true }
 windows-core = "0.62"
 windows-numerics = "0.3"
+windows-collections = "0.3"
+windows-future = "0.3"
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.62"
 features = [
+    "ApplicationModel_DataTransfer",
+    "Foundation_Collections",
+    "Storage",
+    "Storage_Streams",
     "Data_Xml_Dom",
     "Foundation",
     "Foundation_Numerics",

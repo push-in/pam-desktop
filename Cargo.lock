@@ -1857,7 +1857,9 @@ dependencies = [
  "pam-desktop-ui",
  "webview2-com",
  "windows",
+ "windows-collections",
  "windows-core",
+ "windows-future",
  "windows-numerics",
 ]
 

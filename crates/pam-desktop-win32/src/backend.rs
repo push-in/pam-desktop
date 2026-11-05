@@ -368,6 +368,10 @@ impl Backend for Win32Backend {
         crate::accessibility::announce(&self.app, message, assertive)
     }
 
+    fn share(&mut self, window: WindowId, request: &pam_desktop_ui::shell::ShareRequest) -> bool {
+        crate::share::share(&self.app, window, request)
+    }
+
     fn set_content_protection(&mut self, enabled: bool) -> bool {
         crate::window::set_content_protection(&self.app, enabled)
     }
@@ -688,6 +692,7 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
     crate::shell::shutdown(&app);
     crate::media::shutdown(&app);
     crate::webview::shutdown();
+    crate::share::shutdown();
     app.uninstall();
     drop(app);
     // SAFETY: balances the OleInitialize of `prepare_process`, after every

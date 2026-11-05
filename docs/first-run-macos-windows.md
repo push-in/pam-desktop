@@ -100,6 +100,7 @@ System:
 11. **Tray** (`NIN_SELECT`) and toast notifications without a Start menu shortcut.
 12. **Single instance**: the second launch finds the first through a message-only window and hands the link with `WM_COPYDATA`.
 13. **Console**: a release host is a windowed program. `pam-desktop build` from a terminal must still print (the host attaches to the parent console), and no console window may open beside an application or its PHP worker.
+14. **Share** (`examples/modules`, the Share button): files are resolved before the dialog shows, waiting up to 3 seconds on the UI thread; if that wait never completes, every share with files fails. Check text only, files only (a path with spaces and non-ASCII), both, two shares in a row, and closing the application with the dialog open.
 
 ### Known differences from the GTK backend
 
@@ -128,6 +129,7 @@ Shell:
 - `destructive` menu items look like the others; menus do not follow dark mode.
 - Notifications: the host registers the `applicationId` as the AppUserModelID under `HKCU\Software\Classes\AppUserModelId`; when a toast cannot be shown, a balloon is.
 - Only copy drags; the drag image hides over the own window.
+- `Share::text()` and `Share::files()` open the share dialog of the window; the call reports success when the dialog was asked to open, also when the user cancels it.
 
 ## What was left out
 

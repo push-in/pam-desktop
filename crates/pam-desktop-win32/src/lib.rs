@@ -21,6 +21,7 @@ mod paint;
 mod render;
 mod scene;
 mod scroll;
+mod share;
 mod shell;
 mod text;
 mod util;
