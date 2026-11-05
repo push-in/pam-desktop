@@ -65,8 +65,10 @@ jobs:
               xdotool search --name "PAM Desktop counter" >/dev/null 2>&1 && break
               sleep 0.5
             done
-            xdotool search --name "PAM Desktop counter" >/dev/null
+            status=0
+            xdotool search --name "PAM Desktop counter" >/dev/null || status=1
             kill "$host"
+            exit "$status"
           '
       - name: Host archive is reproducible
         run: |
