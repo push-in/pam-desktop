@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use pam_desktop_ui::backend::WindowConfig;
+use pam_desktop_ui::geometry::Size;
 use pam_desktop_ui::runtime::RuntimeConfig;
 use pam_desktop_ui::worker::WorkerCommand;
 
@@ -46,6 +47,43 @@ fn worker_bootstrap(project: &Path) -> Option<PathBuf> {
     candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
+/// The first window, from `pam-desktop.json` (`window.title`, `width`,
+/// `height`, `minWidth`, `minHeight`, `resizable`) with the app name as the
+/// default title. `PAM_DESKTOP_WINDOW=WIDTHxHEIGHT` overrides the size.
+fn window_config(project: &Path) -> WindowConfig {
+    let mut config = WindowConfig::default();
+    let manifest = std::fs::read_to_string(project.join("pam-desktop.json"))
+        .ok()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok());
+    if let Some(manifest) = &manifest {
+        if let Some(name) = manifest.get("name").and_then(serde_json::Value::as_str) {
+            config.title = name.to_owned();
+        }
+        if let Some(window) = manifest.get("window") {
+            let number = |key: &str| window.get(key).and_then(serde_json::Value::as_f64).map(|value| value as f32);
+            if let Some(title) = window.get("title").and_then(serde_json::Value::as_str) {
+                config.title = title.to_owned();
+            }
+            if let (Some(width), Some(height)) = (number("width"), number("height")) {
+                config.size = Size::new(width.clamp(120.0, 16_384.0), height.clamp(120.0, 16_384.0));
+            }
+            if let (Some(width), Some(height)) = (number("minWidth"), number("minHeight")) {
+                config.min_size = Some(Size::new(width.max(1.0), height.max(1.0)));
+            }
+            if let Some(resizable) = window.get("resizable").and_then(serde_json::Value::as_bool) {
+                config.resizable = resizable;
+            }
+        }
+    }
+    if let Some((width, height)) = std::env::var("PAM_DESKTOP_WINDOW").ok().and_then(|value| {
+        let (width, height) = value.split_once('x')?;
+        Some((width.parse::<f32>().ok()?, height.parse::<f32>().ok()?))
+    }) {
+        config.size = Size::new(width.clamp(120.0, 16_384.0), height.clamp(120.0, 16_384.0));
+    }
+    config
+}
+
 fn run(target: &Path) -> ExitCode {
     let entry = if target.is_dir() { target.join("index.php") } else { target.to_path_buf() };
     let Ok(entry) = entry.canonicalize() else {
@@ -75,7 +113,7 @@ fn run(target: &Path) -> ExitCode {
             working_directory: Some(project.clone()),
             environment: vec![("PAM_DESKTOP_PROJECT_ROOT".into(), project.display().to_string())],
         },
-        window: WindowConfig::default(),
+        window: window_config(&project),
         platform,
     };
 

@@ -12,6 +12,7 @@ pub mod props;
 pub mod runtime;
 pub mod scene;
 pub mod style;
+pub mod testing;
 pub mod text;
 pub mod wiremap;
 pub mod worker;

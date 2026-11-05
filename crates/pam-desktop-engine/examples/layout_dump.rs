@@ -50,6 +50,9 @@ fn main() {
                 frame.map(|f| (f.x, f.y, f.width, f.height)),
                 text
             );
+            if std::env::var_os("DUMP_PROPS").is_some() {
+                println!("{}  {:?}", "  ".repeat(depth), node.properties);
+            }
         }
         for child in children.get(&id).map_or(&[][..], Vec::as_slice) {
             walk(tree, layouts, *child, depth + 1, children);

@@ -8,7 +8,8 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib, graphene, pango};
 use pam_desktop_ui::backend::{
-    Backend, BackendEvent, Modifiers, NodeId, PointerButton, PointerEvent, PointerPhase, TextContent, ViewClass,
+    Backend, BackendEvent, ImageContent, ImageKey, ImageSource, Modifiers, NodeId, PointerButton, PointerEvent,
+    PointerPhase, ScrollConfig, TextContent, ViewClass,
     WindowConfig, WindowId, WindowMetrics,
 };
 use pam_desktop_ui::geometry::{Point, Rect, Size};
@@ -18,7 +19,7 @@ use pam_desktop_ui::style::{Decoration, LayerState};
 use pam_desktop_ui::text::{TextBlock, TextMetrics};
 
 use crate::text;
-use crate::view::{self, PamView};
+use crate::view::{self, ImageState, PamView};
 
 struct ViewEntry {
     /// The widget placed in the parent.
@@ -42,6 +43,7 @@ pub struct GtkBackend {
     windows: HashMap<WindowId, WindowEntry>,
     measure_layout: Option<pango::Layout>,
     frame_requested: Rc<Cell<bool>>,
+    textures: Rc<RefCell<HashMap<ImageKey, gdk::Texture>>>,
 }
 
 impl GtkBackend {
@@ -54,6 +56,7 @@ impl GtkBackend {
             windows: HashMap::new(),
             measure_layout: None,
             frame_requested: Rc::new(Cell::new(false)),
+            textures: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -238,7 +241,24 @@ impl Backend for GtkBackend {
         let widget: gtk::Widget = match class {
             ViewClass::Scroll => {
                 let scrolled = gtk::ScrolledWindow::new();
+                // The engine sizes the viewport; content never dictates it.
+                scrolled.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
+                scrolled.set_propagate_natural_width(false);
+                scrolled.set_propagate_natural_height(false);
                 scrolled.set_child(Some(&container));
+                let report = {
+                    let events = Rc::clone(&self.events);
+                    let weak = scrolled.downgrade();
+                    move || {
+                        if let Some(scrolled) = weak.upgrade() {
+                            let offset = Point::new(scrolled.hadjustment().value() as f32, scrolled.vadjustment().value() as f32);
+                            events.push(BackendEvent::ScrollChanged { id, offset });
+                        }
+                    }
+                };
+                let report_horizontal = report.clone();
+                scrolled.hadjustment().connect_value_changed(move |_| report_horizontal());
+                scrolled.vadjustment().connect_value_changed(move |_| report());
                 scrolled.upcast()
             }
             _ => container.clone().upcast(),
@@ -309,6 +329,85 @@ impl Backend for GtkBackend {
         if let Some(entry) = self.views.get(&id) {
             entry.container.set_text(text);
         }
+    }
+
+    fn load_image(&mut self, key: ImageKey, source: ImageSource) {
+        let events = Rc::clone(&self.events);
+        let textures = Rc::clone(&self.textures);
+        // Decoding runs on a worker thread; the texture is handed back to the UI thread.
+        let (sender, receiver) = std::sync::mpsc::channel::<Result<gdk::Texture, String>>();
+        std::thread::spawn(move || {
+            let decoded = match source {
+                ImageSource::Bytes(bytes) => gdk::Texture::from_bytes(&glib::Bytes::from_owned(bytes.to_vec())),
+                ImageSource::File(path) => gdk::Texture::from_filename(path),
+            };
+            let _ = sender.send(decoded.map_err(|error| error.to_string()));
+            glib::MainContext::default().wakeup();
+        });
+        glib::idle_add_local_full(glib::Priority::DEFAULT, move || match receiver.try_recv() {
+            Ok(Ok(texture)) => {
+                let size = Size::new(texture.width() as f32, texture.height() as f32);
+                textures.borrow_mut().insert(key, texture);
+                events.push(BackendEvent::ImageLoaded { key, size });
+                glib::ControlFlow::Break
+            }
+            Ok(Err(message)) => {
+                events.push(BackendEvent::ImageFailed { key, message });
+                glib::ControlFlow::Break
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                events.push(BackendEvent::ImageFailed { key, message: "image decoder stopped".into() });
+                glib::ControlFlow::Break
+            }
+        });
+    }
+
+    fn release_image(&mut self, key: ImageKey) {
+        self.textures.borrow_mut().remove(&key);
+    }
+
+    fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>) {
+        let Some(entry) = self.views.get(&id) else { return };
+        let state = image.and_then(|content| {
+            let texture = self.textures.borrow().get(&content.key).cloned()?;
+            Some(ImageState { content: *content, texture })
+        });
+        entry.container.set_image(state);
+    }
+
+    fn set_scroll_content(&mut self, id: NodeId, size: Size) {
+        if let Some(entry) = self.views.get(&id) {
+            entry.container.set_content_size(Some(size));
+        }
+    }
+
+    fn set_scroll_config(&mut self, id: NodeId, config: &ScrollConfig) {
+        let Some(scrolled) = self.views.get(&id).and_then(|entry| entry.widget.downcast_ref::<gtk::ScrolledWindow>()) else {
+            return;
+        };
+        let scrolling = if !config.enabled {
+            // Programmatic scrolling still works without a scrollbar.
+            gtk::PolicyType::External
+        } else if config.shows_indicators {
+            gtk::PolicyType::Automatic
+        } else {
+            gtk::PolicyType::External
+        };
+        if config.horizontal {
+            scrolled.set_policy(scrolling, gtk::PolicyType::External);
+        } else {
+            scrolled.set_policy(gtk::PolicyType::External, scrolling);
+        }
+        scrolled.set_kinetic_scrolling(config.enabled);
+    }
+
+    fn scroll_to(&mut self, id: NodeId, offset: Point, _animated: bool) {
+        let Some(scrolled) = self.views.get(&id).and_then(|entry| entry.widget.downcast_ref::<gtk::ScrolledWindow>()) else {
+            return;
+        };
+        scrolled.hadjustment().set_value(f64::from(offset.x));
+        scrolled.vadjustment().set_value(f64::from(offset.y));
     }
 
     fn measure_text(&mut self, block: &TextBlock, max_width: f32) -> TextMetrics {

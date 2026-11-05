@@ -1,33 +1,22 @@
 {
-    "name": "pam/example-native-showcase",
-    "description": "Pam Desktop Android showcase application.",
+    "name": "pam/example-desktop-showcase",
+    "description": "PAM Desktop showcase application.",
     "type": "project",
-    "license": "Apache-2.0",
+    "license": "MIT",
     "require": {
         "php": "^8.5",
-        "pushinbr/pam-desktop": "^1.0",
-        "pam-community/example-plugin": "^0.1"
+        "pushinbr/pam-desktop": "*"
     },
     "repositories": [
         {
             "type": "path",
-            "url": "../../packages/desktop",
+            "url": "../..",
             "options": {
-                "symlink": false,
-                "versions": {
-                    "pushinbr/pam-desktop": "1.0.0"
-                }
+                "symlink": true
             }
         },
         {
-            "type": "path",
-            "url": "../community-plugin",
-            "options": {
-                "symlink": false,
-                "versions": {
-                    "pam-community/example-plugin": "0.1.0"
-                }
-            }
+            "packagist.org": false
         }
     ],
     "autoload": {
@@ -35,6 +24,8 @@
             "App\\": "src/"
         }
     },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
     "config": {
         "platform-check": true,
         "sort-packages": true

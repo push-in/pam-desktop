@@ -7,7 +7,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 
 use pam_desktop_wire::{Mutation, Node, NodeKind, PropKey, PropValue};
 
-use crate::backend::{Backend, NodeId, TextContent, VerticalAlign, ViewClass, WindowId, MAIN_WINDOW};
+use crate::backend::{Backend, NodeId, ScrollConfig, TextContent, VerticalAlign, ViewClass, WindowId, MAIN_WINDOW};
 use crate::color::Color;
 use crate::geometry::{Insets, Point, Rect, Size};
 use crate::props::{PropMap, Props};
@@ -92,6 +92,8 @@ pub struct SceneNode {
     /// Frame last pushed to the backend (parent relative).
     pushed_frame: Option<Rect>,
     has_text: bool,
+    pushed_content: Option<Size>,
+    pushed_scroll: Option<ScrollConfig>,
 }
 
 impl SceneNode {
@@ -383,6 +385,8 @@ impl Scene {
                 dirty: Dirty::NONE,
                 pushed_frame: None,
                 has_text: false,
+                pushed_content: None,
+                pushed_scroll: None,
             },
         );
         self.touch(id, Dirty::ALL);
@@ -568,7 +572,8 @@ impl Scene {
                 padding.right + border[2],
                 padding.bottom + border[3],
             ),
-            vertical: if node.kind == NodeKind::Button { VerticalAlign::Center } else { VerticalAlign::Top },
+            // Like the mobile renderers: a box taller than its text centers it.
+            vertical: VerticalAlign::Center,
         })
     }
 
@@ -671,6 +676,45 @@ impl Scene {
             }
         }
 
+        // 6. Scroll views: behaviour and content extent (after their children moved).
+        let mut scrolls: Vec<NodeId> = Vec::new();
+        for id in &touched {
+            let Some(node) = self.nodes.get(id) else { continue };
+            if node.class == ViewClass::Scroll && !scrolls.contains(id) {
+                scrolls.push(*id);
+            }
+            if node.dirty.contains(Dirty::FRAME) || node.dirty.contains(Dirty::CREATED) {
+                if let Some(parent) = self.nodes.get(&node.parent) {
+                    if parent.class == ViewClass::Scroll && !scrolls.contains(&parent.id) {
+                        scrolls.push(parent.id);
+                    }
+                }
+            }
+        }
+        for id in scrolls {
+            let Some(node) = self.nodes.get(&id) else { continue };
+            let props = node.props();
+            let config = ScrollConfig {
+                horizontal: props.flag_or(PropKey::ScrollHorizontal, false) || props.flag_or(PropKey::ListHorizontal, false),
+                enabled: props.flag_or(PropKey::ScrollEnabled, true),
+                shows_indicators: props.flag_or(PropKey::ShowsScrollIndicator, true),
+            };
+            let content = self.content_size(id);
+            let (pushed_scroll, pushed_content) = (node.pushed_scroll, node.pushed_content);
+            if pushed_scroll != Some(config) {
+                backend.set_scroll_config(id, &config);
+                commands += 1;
+            }
+            if pushed_content != Some(content) {
+                backend.set_scroll_content(id, content);
+                commands += 1;
+            }
+            if let Some(node) = self.nodes.get_mut(&id) {
+                node.pushed_scroll = Some(config);
+                node.pushed_content = Some(content);
+            }
+        }
+
         for id in touched {
             if let Some(node) = self.nodes.get_mut(&id) {
                 node.dirty = Dirty::NONE;
@@ -692,5 +736,157 @@ impl Scene {
             }
         }
         Size::new(size.width + padding.right, size.height + padding.bottom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{Command, RecordingBackend};
+    use pam_desktop_wire::Layout;
+
+    fn node(id: u64, parent: u64, index: u32, kind: NodeKind, properties: &[(PropKey, PropValue)]) -> Mutation {
+        Mutation::Create(Node { id, parent, index, kind, properties: properties.iter().cloned().collect() })
+    }
+
+    fn layout(id: u64, x: f32, y: f32, width: f32, height: f32) -> Mutation {
+        Mutation::Layout { id, frame: Layout { x, y, width, height } }
+    }
+
+    fn mounted() -> (Scene, RecordingBackend) {
+        let mut scene = Scene::new();
+        let mut backend = RecordingBackend::new();
+        scene.apply(vec![
+            Mutation::SetRoot { id: 1 },
+            node(1, 0, 0, NodeKind::Column, &[(PropKey::BackgroundColor, PropValue::Integer(0xFFFF_FFFF))]),
+            node(2, 1, 0, NodeKind::Text, &[(PropKey::Text, PropValue::String("Hello".into()))]),
+            node(3, 1, 1, NodeKind::Button, &[(PropKey::Text, PropValue::String("Go".into()))]),
+            layout(1, 0.0, 0.0, 400.0, 300.0),
+            layout(2, 16.0, 16.0, 368.0, 20.0),
+            layout(3, 16.0, 52.0, 368.0, 48.0),
+        ]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        (scene, backend)
+    }
+
+    #[test]
+    fn mounts_a_tree_with_minimal_commands() {
+        let (scene, backend) = mounted();
+        assert_eq!(scene.len(), 3);
+        assert_eq!(backend.children[&1], vec![2, 3]);
+        assert_eq!(backend.frames[&2], Rect::new(16.0, 16.0, 368.0, 20.0));
+        assert_eq!(backend.frames[&3], Rect::new(16.0, 52.0, 368.0, 48.0));
+        assert_eq!(backend.texts[&2].block.plain_text(), "Hello");
+        // Plain boxes never receive a decoration; the white root does.
+        assert_eq!(backend.count(|command| matches!(command, Command::Decoration(..))), 1);
+        assert!(backend.commands.contains(&Command::SetWindowRoot(MAIN_WINDOW, Some(1))));
+        // Parents are created before their children.
+        let position = |id| backend.commands.iter().position(|command| *command == Command::Create(id, ViewClass::Box));
+        assert!(position(1) < position(2) && position(2) < position(3));
+    }
+
+    #[test]
+    fn a_text_update_touches_only_that_view() {
+        let (mut scene, mut backend) = mounted();
+        backend.take();
+        scene.apply(vec![Mutation::Update { id: 2, key: PropKey::Text, value: Some(PropValue::String("Bye".into())) }]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(backend.take(), vec![Command::Text(2, Some("Bye".into()))]);
+        // Nothing changed: nothing is sent.
+        scene.apply(vec![Mutation::Update { id: 1, key: PropKey::BackgroundColor, value: Some(PropValue::Integer(0xFFFF_FFFF)) }]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert!(backend.take().is_empty());
+    }
+
+    #[test]
+    fn children_frames_are_relative_to_their_parent() {
+        let (mut scene, mut backend) = mounted();
+        backend.take();
+        // The whole column moves: children keep their relative frames.
+        scene.apply(vec![layout(1, 10.0, 20.0, 400.0, 300.0), layout(2, 26.0, 36.0, 368.0, 20.0), layout(3, 26.0, 72.0, 368.0, 48.0)]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(backend.take(), vec![Command::Frame(1, Rect::new(10.0, 20.0, 400.0, 300.0))]);
+        // Only the parent moves: the child is repositioned inside it.
+        scene.apply(vec![layout(1, 0.0, 0.0, 400.0, 300.0)]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        let commands = backend.take();
+        assert!(commands.contains(&Command::Frame(2, Rect::new(26.0, 36.0, 368.0, 20.0))));
+    }
+
+    #[test]
+    fn removes_subtrees_children_first_and_reorders_by_z_index() {
+        let (mut scene, mut backend) = mounted();
+        scene.apply(vec![node(4, 3, 0, NodeKind::View, &[])]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        backend.take();
+        scene.apply(vec![Mutation::Remove { id: 3 }]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(backend.take(), vec![Command::Destroy(4), Command::Destroy(3), Command::Children(1, vec![2])]);
+        assert_eq!(scene.len(), 2);
+
+        scene.apply(vec![
+            node(5, 1, 1, NodeKind::View, &[]),
+            Mutation::Update { id: 2, key: PropKey::ZIndex, value: Some(PropValue::Integer(3)) },
+        ]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(backend.children[&1], vec![5, 2]);
+    }
+
+    #[test]
+    fn moves_a_node_between_parents() {
+        let (mut scene, mut backend) = mounted();
+        scene.apply(vec![node(4, 1, 2, NodeKind::View, &[]), layout(4, 0.0, 100.0, 400.0, 100.0)]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        scene.apply(vec![Mutation::Move { id: 2, parent: 4, index: 0 }]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(backend.children[&4], vec![2]);
+        assert_eq!(backend.children[&1], vec![3, 4]);
+        assert_eq!(backend.frames[&2], Rect::new(16.0, -84.0, 368.0, 20.0));
+    }
+
+    #[test]
+    fn scroll_views_receive_their_content_extent() {
+        let mut scene = Scene::new();
+        let mut backend = RecordingBackend::new();
+        scene.apply(vec![
+            Mutation::SetRoot { id: 1 },
+            node(1, 0, 0, NodeKind::Scroll, &[(PropKey::PaddingBottom, PropValue::Integer(24))]),
+            node(2, 1, 0, NodeKind::Column, &[]),
+            layout(1, 0.0, 0.0, 300.0, 200.0),
+            layout(2, 0.0, 0.0, 300.0, 900.0),
+        ]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert!(backend.commands.contains(&Command::Create(1, ViewClass::Scroll)));
+        assert!(backend.commands.contains(&Command::ScrollContent(1, Size::new(300.0, 924.0))));
+        backend.take();
+        scene.apply(vec![layout(2, 0.0, 0.0, 300.0, 1200.0)]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert!(backend.take().contains(&Command::ScrollContent(1, Size::new(300.0, 1224.0))));
+    }
+
+    #[test]
+    fn unaligned_text_follows_its_flex_parent() {
+        let mut scene = Scene::new();
+        let mut backend = RecordingBackend::new();
+        scene.apply(vec![
+            Mutation::SetRoot { id: 1 },
+            node(1, 0, 0, NodeKind::Column, &[(PropKey::AlignItems, PropValue::Integer(2))]),
+            node(2, 1, 0, NodeKind::Text, &[(PropKey::Text, PropValue::String("Centered".into()))]),
+            node(3, 1, 1, NodeKind::Text, &[(PropKey::Text, PropValue::String("End".into())), (PropKey::TextAlign, PropValue::Integer(3))]),
+        ]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(backend.texts[&2].block.align, TextAlign::Center);
+        assert_eq!(backend.texts[&3].block.align, TextAlign::End);
+        scene.apply(vec![Mutation::Update { id: 1, key: PropKey::AlignItems, value: None }]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert_eq!(backend.texts[&2].block.align, TextAlign::Start);
+    }
+
+    #[test]
+    fn clearing_destroys_every_view() {
+        let (mut scene, mut backend) = mounted();
+        scene.clear(&mut backend);
+        assert!(scene.is_empty());
+        assert!(backend.views.is_empty());
     }
 }

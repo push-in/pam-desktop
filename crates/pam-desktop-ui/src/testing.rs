@@ -1,0 +1,190 @@
+//! A backend that records every command, for tests of the render core and of
+//! anything built on it.
+
+use std::collections::HashMap;
+
+use crate::backend::{
+    Backend, ImageContent, ImageKey, ImageSource, NodeId, ScrollConfig, TextContent, ViewClass, WindowConfig, WindowId,
+    WindowMetrics,
+};
+use crate::geometry::{Point, Rect, Size};
+use crate::style::{Decoration, LayerState};
+use crate::text::{TextBlock, TextMetrics};
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Command {
+    OpenWindow(WindowId),
+    CloseWindow(WindowId),
+    SetWindowRoot(WindowId, Option<NodeId>),
+    Create(NodeId, ViewClass),
+    Destroy(NodeId),
+    Children(NodeId, Vec<NodeId>),
+    Frame(NodeId, Rect),
+    Decoration(NodeId, Decoration),
+    Layer(NodeId, LayerState),
+    Text(NodeId, Option<String>),
+    LoadImage(ImageKey),
+    ReleaseImage(ImageKey),
+    Image(NodeId, Option<ImageContent>),
+    ScrollContent(NodeId, Size),
+    ScrollConfig(NodeId, ScrollConfig),
+    ScrollTo(NodeId, Point, bool),
+    RequestFrame,
+    Quit,
+}
+
+/// Records commands and mirrors the view tree so tests can assert on the
+/// resulting native state as well as on the command stream.
+#[derive(Default)]
+pub struct RecordingBackend {
+    pub commands: Vec<Command>,
+    pub views: HashMap<NodeId, ViewClass>,
+    pub children: HashMap<NodeId, Vec<NodeId>>,
+    pub frames: HashMap<NodeId, Rect>,
+    pub texts: HashMap<NodeId, TextContent>,
+    pub metrics: WindowMetrics,
+    /// Width of one character used by the fake text measurer.
+    pub character_width: f32,
+}
+
+impl RecordingBackend {
+    #[must_use]
+    pub fn new() -> Self {
+        Self { character_width: 8.0, ..Self::default() }
+    }
+
+    /// Returns and clears the commands recorded so far.
+    pub fn take(&mut self) -> Vec<Command> {
+        std::mem::take(&mut self.commands)
+    }
+
+    #[must_use]
+    pub fn count(&self, matches: impl Fn(&Command) -> bool) -> usize {
+        self.commands.iter().filter(|command| matches(command)).count()
+    }
+}
+
+impl Backend for RecordingBackend {
+    fn open_window(&mut self, window: WindowId, config: &WindowConfig) {
+        self.metrics.size = config.size;
+        self.commands.push(Command::OpenWindow(window));
+    }
+
+    fn close_window(&mut self, window: WindowId) {
+        self.commands.push(Command::CloseWindow(window));
+    }
+
+    fn window_metrics(&self, _window: WindowId) -> WindowMetrics {
+        self.metrics
+    }
+
+    fn set_window_root(&mut self, window: WindowId, root: Option<NodeId>) {
+        self.commands.push(Command::SetWindowRoot(window, root));
+    }
+
+    fn create_view(&mut self, id: NodeId, class: ViewClass) {
+        assert!(self.views.insert(id, class).is_none(), "view {id} created twice");
+        self.commands.push(Command::Create(id, class));
+    }
+
+    fn destroy_view(&mut self, id: NodeId) {
+        assert!(self.views.remove(&id).is_some(), "view {id} destroyed but never created");
+        self.children.remove(&id);
+        self.frames.remove(&id);
+        self.texts.remove(&id);
+        for children in self.children.values_mut() {
+            children.retain(|child| *child != id);
+        }
+        self.commands.push(Command::Destroy(id));
+    }
+
+    fn set_children(&mut self, parent: NodeId, children: &[NodeId]) {
+        assert!(self.views.contains_key(&parent), "children set on missing view {parent}");
+        for child in children {
+            assert!(self.views.contains_key(child), "child {child} of {parent} has no view");
+            for (other, siblings) in &mut self.children {
+                if *other != parent {
+                    siblings.retain(|sibling| sibling != child);
+                }
+            }
+        }
+        self.children.insert(parent, children.to_vec());
+        self.commands.push(Command::Children(parent, children.to_vec()));
+    }
+
+    fn set_frame(&mut self, id: NodeId, frame: Rect) {
+        assert!(self.views.contains_key(&id), "frame set on missing view {id}");
+        self.frames.insert(id, frame);
+        self.commands.push(Command::Frame(id, frame));
+    }
+
+    fn set_decoration(&mut self, id: NodeId, decoration: &Decoration) {
+        self.commands.push(Command::Decoration(id, decoration.clone()));
+    }
+
+    fn set_layer(&mut self, id: NodeId, layer: &LayerState) {
+        self.commands.push(Command::Layer(id, *layer));
+    }
+
+    fn set_text(&mut self, id: NodeId, text: Option<&TextContent>) {
+        match text {
+            Some(content) => {
+                self.texts.insert(id, content.clone());
+            }
+            None => {
+                self.texts.remove(&id);
+            }
+        }
+        self.commands.push(Command::Text(id, text.map(|content| content.block.plain_text())));
+    }
+
+    fn load_image(&mut self, key: ImageKey, _source: ImageSource) {
+        self.commands.push(Command::LoadImage(key));
+    }
+
+    fn release_image(&mut self, key: ImageKey) {
+        self.commands.push(Command::ReleaseImage(key));
+    }
+
+    fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>) {
+        self.commands.push(Command::Image(id, image.copied()));
+    }
+
+    fn set_scroll_content(&mut self, id: NodeId, size: Size) {
+        self.commands.push(Command::ScrollContent(id, size));
+    }
+
+    fn set_scroll_config(&mut self, id: NodeId, config: &ScrollConfig) {
+        self.commands.push(Command::ScrollConfig(id, *config));
+    }
+
+    fn scroll_to(&mut self, id: NodeId, offset: Point, animated: bool) {
+        self.commands.push(Command::ScrollTo(id, offset, animated));
+    }
+
+    /// Monospace model: every character is `character_width` wide and lines
+    /// are 1.25 × the first run's font size tall.
+    fn measure_text(&mut self, block: &TextBlock, max_width: f32) -> TextMetrics {
+        let characters: usize = block.runs.iter().map(|run| run.text.chars().count()).sum();
+        let font_size = block.runs.first().map_or(14.0, |run| run.font.size);
+        let line_height = if block.line_height > 0.0 { block.line_height } else { font_size * 1.25 };
+        let natural = characters as f32 * self.character_width;
+        let (width, mut lines) = if max_width.is_finite() && natural > max_width && max_width > 0.0 {
+            (max_width, (natural / max_width).ceil() as u32)
+        } else {
+            (natural, 1)
+        };
+        if block.max_lines > 0 {
+            lines = lines.min(block.max_lines);
+        }
+        TextMetrics { width, height: lines as f32 * line_height, first_baseline: font_size, line_count: lines }
+    }
+
+    fn request_frame(&mut self) {
+        self.commands.push(Command::RequestFrame);
+    }
+
+    fn quit(&mut self) {
+        self.commands.push(Command::Quit);
+    }
+}

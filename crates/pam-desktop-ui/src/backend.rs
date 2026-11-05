@@ -5,6 +5,7 @@
 //! native objects: GTK widgets, AppKit views, or a Direct2D display list with
 //! native child controls. Backends never interpret wire properties.
 
+use crate::color::Color;
 use crate::geometry::{Insets, Point, Rect, Size};
 use crate::style::{Decoration, LayerState};
 use crate::text::{TextBlock, TextMetrics};
@@ -99,6 +100,64 @@ pub enum BackendEvent {
     /// A display frame for running animations (monotonic milliseconds).
     Frame { time_ms: u64 },
     ScrollChanged { id: NodeId, offset: Point },
+    /// An image finished decoding; `size` is in image pixels.
+    ImageLoaded { key: ImageKey, size: Size },
+    ImageFailed { key: ImageKey, message: String },
+}
+
+/// Identifies a decoded image owned by the backend.
+pub type ImageKey = u64;
+
+#[derive(Clone, Debug)]
+pub enum ImageSource {
+    /// Encoded bytes (PNG, JPEG, WebP, GIF, SVG… whatever the platform decodes).
+    Bytes(std::sync::Arc<[u8]>),
+    File(std::path::PathBuf),
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ImageFit {
+    /// Fill the box, cropping the overflow (aspect ratio kept).
+    #[default]
+    Cover,
+    /// Fit inside the box (aspect ratio kept).
+    Contain,
+    /// Stretch to the box.
+    Fill,
+    /// Natural size, centered.
+    Center,
+    /// Natural size, tiled from the top-left corner.
+    Repeat,
+}
+
+/// An image painted inside a box, above its background and below its text.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImageContent {
+    pub key: ImageKey,
+    pub fit: ImageFit,
+    /// Replaces every opaque pixel with this color (template images, icons).
+    pub tint: Option<Color>,
+    /// Painted over the image.
+    pub overlay: Option<Color>,
+    /// Space between the box edges and the image (borders).
+    pub insets: Insets,
+    /// 0..1, used for fade-in.
+    pub opacity: f32,
+}
+
+/// How a scroll view behaves.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrollConfig {
+    pub horizontal: bool,
+    /// User scrolling (wheel, drag, scrollbars) is allowed.
+    pub enabled: bool,
+    pub shows_indicators: bool,
+}
+
+impl Default for ScrollConfig {
+    fn default() -> Self {
+        Self { horizontal: false, enabled: true, shows_indicators: true }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -156,6 +215,23 @@ pub trait Backend {
     fn set_decoration(&mut self, id: NodeId, decoration: &Decoration);
     fn set_layer(&mut self, id: NodeId, layer: &LayerState);
     fn set_text(&mut self, id: NodeId, text: Option<&TextContent>);
+
+    // ---- images --------------------------------------------------------
+
+    /// Decodes an image off the UI thread and reports `ImageLoaded` or
+    /// `ImageFailed` for `key`.
+    fn load_image(&mut self, key: ImageKey, source: ImageSource);
+    /// Drops a decoded image no view shows any more.
+    fn release_image(&mut self, key: ImageKey);
+    fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>);
+
+    // ---- scrolling -----------------------------------------------------
+
+    /// Extent of the scrollable content of a `ViewClass::Scroll` view.
+    fn set_scroll_content(&mut self, id: NodeId, size: Size);
+    fn set_scroll_config(&mut self, id: NodeId, config: &ScrollConfig);
+    /// Moves the viewport of a scroll view to `offset` (content coordinates).
+    fn scroll_to(&mut self, id: NodeId, offset: Point, animated: bool);
 
     // ---- text ----------------------------------------------------------
 

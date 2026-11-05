@@ -482,6 +482,7 @@ impl<B: Backend> Runtime<B> {
             BackendEvent::ScrollChanged { id, offset } => {
                 self.scroll_offsets.insert(id, offset);
             }
+            BackendEvent::ImageLoaded { .. } | BackendEvent::ImageFailed { .. } => {}
         }
     }
 

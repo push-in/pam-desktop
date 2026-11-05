@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use gtk::{graphene, gsk, pango};
-use pam_desktop_ui::backend::{TextContent, VerticalAlign};
+use gtk::{gdk, graphene, gsk, pango};
+use pam_desktop_ui::backend::{ImageContent, ImageFit, TextContent, VerticalAlign};
 use pam_desktop_ui::geometry::{Affine, Insets, Rect, Size};
 use pam_desktop_ui::style::Decoration;
 
@@ -59,8 +59,14 @@ pub struct TextState {
     pub wrapped_to: f32,
 }
 
+pub struct ImageState {
+    pub content: ImageContent,
+    pub texture: gdk::Texture,
+}
+
 #[derive(Default)]
 pub struct ViewState {
+    pub image: Option<ImageState>,
     /// Exact logical size from the engine (allocations are whole pixels).
     pub size: Size,
     pub decoration: Decoration,
@@ -173,6 +179,9 @@ mod imp {
                 let padding_box = paint::rounded(size, state.decoration.radii, Insets::new(left, top, right, bottom));
                 snapshot.push_rounded_clip(&padding_box);
             }
+            if let Some(image) = &state.image {
+                paint_image(snapshot, size, &state.decoration, image);
+            }
             if let Some(text_state) = state.text.as_mut() {
                 let insets = text_state.content.insets;
                 let available = (size.width - insets.horizontal()).max(0.0);
@@ -214,6 +223,69 @@ mod imp {
             }
         }
     }
+}
+
+fn paint_image(snapshot: &gtk::Snapshot, size: Size, decoration: &Decoration, image: &ImageState) {
+    let content = &image.content;
+    let insets = content.insets;
+    let area = Rect::new(
+        insets.left,
+        insets.top,
+        (size.width - insets.horizontal()).max(0.0),
+        (size.height - insets.vertical()).max(0.0),
+    );
+    let natural = Size::new(image.texture.width() as f32, image.texture.height() as f32);
+    if area.is_empty() || natural.is_empty() || content.opacity <= 0.0 {
+        return;
+    }
+    let scale = match content.fit {
+        ImageFit::Cover => (area.width / natural.width).max(area.height / natural.height),
+        ImageFit::Contain => (area.width / natural.width).min(area.height / natural.height),
+        _ => 1.0,
+    };
+    let target = match content.fit {
+        ImageFit::Fill => area,
+        ImageFit::Repeat => Rect::new(area.x, area.y, natural.width, natural.height),
+        _ => {
+            let (width, height) = (natural.width * scale, natural.height * scale);
+            Rect::new(area.x + (area.width - width) / 2.0, area.y + (area.height - height) / 2.0, width, height)
+        }
+    };
+    let bounds = graphene::Rect::new(target.x, target.y, target.width, target.height);
+    let area_rect = graphene::Rect::new(area.x, area.y, area.width, area.height);
+
+    // Images never paint outside their (rounded) box.
+    let clip = paint::rounded(size, decoration.radii, insets);
+    snapshot.push_rounded_clip(&clip);
+    if content.opacity < 1.0 {
+        snapshot.push_opacity(f64::from(content.opacity));
+    }
+    let draw = |snapshot: &gtk::Snapshot| {
+        if content.fit == ImageFit::Repeat {
+            snapshot.push_repeat(&area_rect, Some(&bounds));
+            snapshot.append_scaled_texture(&image.texture, gsk::ScalingFilter::Linear, &bounds);
+            snapshot.pop();
+        } else {
+            snapshot.append_scaled_texture(&image.texture, gsk::ScalingFilter::Trilinear, &bounds);
+        }
+    };
+    match content.tint {
+        Some(tint) => {
+            snapshot.push_mask(gsk::MaskMode::Alpha);
+            draw(snapshot);
+            snapshot.pop();
+            snapshot.append_color(&paint::rgba(tint), &area_rect);
+            snapshot.pop();
+        }
+        None => draw(snapshot),
+    }
+    if let Some(overlay) = content.overlay {
+        snapshot.append_color(&paint::rgba(overlay), &area_rect);
+    }
+    if content.opacity < 1.0 {
+        snapshot.pop();
+    }
+    snapshot.pop();
 }
 
 glib::wrapper! {
@@ -264,6 +336,11 @@ impl PamView {
             TextState { content: content.clone(), layout, wrapped_to: f32::NAN }
         });
         self.with_state(|state| state.text = next);
+        self.queue_draw();
+    }
+
+    pub fn set_image(&self, image: Option<ImageState>) {
+        self.with_state(|state| state.image = image);
         self.queue_draw();
     }
 
