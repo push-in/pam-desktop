@@ -385,7 +385,31 @@ new ScreenOptions(
 
 A route with `presentation: NavigationPresentation::FormSheet` covers part of the route below, which stays visible. `sheetAllowedDetents` lists the heights it may rest at, as fractions of the window.
 
-`examples/navigation` shows the header, the search field and a form sheet.
+### Shared elements
+
+An element with the same `sharedTransition()` tag on two routes flies from one to the other when the navigator moves between them, above both routes:
+
+```php
+// On the list route
+Column::make(Text::make('Invoice 204'))
+    ->sharedTransition('invoice')
+    ->style(new Style(width: 220, padding: 14, borderRadius: 14, backgroundColor: 0xFF2F6BFF));
+
+// On the detail route
+Column::make(Text::make('Invoice 204')->style(new Style(fontSize: 28)))
+    ->sharedTransition('invoice', SharedTransitionStyle::spring())
+    ->style(new Style(height: 180, padding: 24, backgroundColor: 0xFF2F6BFF));
+```
+
+The host does it all: PHP runs no code per frame.
+
+- Between two images, one picture flies and is resized on the way, with its corner radius.
+- Between any other pair, the host copies both elements with what they contain. The copies are stretched to the frame in flight and the one that leaves fades into the one that arrives. `resize()` with `SharedTransitionResizeMode::None` or `Clip` moves them without stretching, and `crossFade(false)` flies only the arriving one.
+- The flight lasts as long as the navigation, or what the `SharedTransitionStyle` of the element on the top route says; `returning()` sets another curve for the way back.
+
+An element only leaves from where it can be seen: one that is mostly scrolled out appears with its route. So does one with more than 96 elements inside. Text fields, players, web pages and scrolling content inside a flying element are drawn as their box during the flight.
+
+`examples/navigation` shows the header, the search field, a form sheet, and a picture and a card that fly to their routes.
 
 ## Tabs
 

@@ -267,8 +267,9 @@ abstract class Element implements Renderable
     /**
      * Preserves the visual identity of this element across a native route
      * transition. Matching tags are measured and animated entirely by the
-     * host; PHP is never involved per frame. On desktop only images fly;
-     * other elements appear with their route.
+     * host; PHP is never involved per frame. An image flies as one picture;
+     * any other element is copied with what it contains, stretched to the
+     * frame in flight and faded into its counterpart.
      */
     final public function sharedTransition(
         string $tag,

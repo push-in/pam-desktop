@@ -68,6 +68,8 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
 - Drag contracts with bounds, snap points and driven properties, swipeable
   rows, and native pan, zoom and rotate transforms.
 - Stack navigation transitions, modal and bottom sheet presentation.
+- Shared element transitions between routes, for images and for any other
+  element.
 
 ### Images, media, web and canvas
 

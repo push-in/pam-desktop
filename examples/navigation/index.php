@@ -43,7 +43,21 @@ final class Stack extends Component
                     Pressable::make(
                         Image::make('asset://photo.jpg')->sharedTransition('photo')->style(new Style(width: 96, height: 96, borderRadius: 16)),
                     )->onPress(fn () => $this->navigator->push('photo')),
+                    Pressable::make(
+                        Column::make(
+                            Text::make('Invoice 204')->style(new Style(fontSize: 15, fontWeight: 700, textColor: 0xFFFFFFFF)),
+                            Text::make('Due in 3 days')->style(new Style(fontSize: 13, textColor: 0xFFDCE6FF)),
+                        )->sharedTransition('invoice')->style(new Style(width: 220, padding: 14, gap: 4, borderRadius: 14, backgroundColor: 0xFF2F6BFF)),
+                    )->onPress(fn () => $this->navigator->push('invoice')),
                 ]),
+                'invoice' => fn (): Renderable => Screen::make(Column::make(
+                    Column::make(
+                        Text::make('Invoice 204')->style(new Style(fontSize: 28, fontWeight: 700, textColor: 0xFFFFFFFF)),
+                        Text::make('Due in 3 days · 1,240.00')->style(new Style(fontSize: 15, textColor: 0xFFDCE6FF)),
+                    )->sharedTransition('invoice')->style(new Style(height: 180, padding: 24, gap: 6, backgroundColor: 0xFF2F6BFF)),
+                    Text::make('The card grew into this banner. Elements that are not images fly too: the host copies both, stretches the copies and fades one into the other.')
+                        ->style(new Style(fontSize: 15, lineHeight: 22, textColor: 0xFF2A3140, padding: 20)),
+                )->style(new Style(flexGrow: 1, paddingTop: 56, backgroundColor: 0xFFFFFFFF))),
                 'photo' => fn (): Renderable => Screen::make(Column::make(
                     Image::make('asset://photo.jpg')->sharedTransition('photo')->style(new Style(height: 320, borderRadius: 0)),
                     Text::make('The picture flew here from its thumbnail, and flies back on the way out.')
@@ -65,6 +79,7 @@ final class Stack extends Component
                     $this->query = $query;
                 }),
                 'photo' => new ScreenOptions(title: 'Photo', headerShown: true, animationDurationMs: 420),
+                'invoice' => new ScreenOptions(title: 'Invoice', headerShown: true, animationDurationMs: 420),
                 'filters' => new ScreenOptions(presentation: NavigationPresentation::FormSheet, animation: NavigationTransition::SlideFromBottom, sheetAllowedDetents: [0.45, 1.0]),
             ],
         );

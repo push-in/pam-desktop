@@ -1,32 +1,203 @@
 //! Shared element transitions: when a navigation moves between two routes
 //! that each hold an element with the same `SharedTransitionTag`, the
-//! picture flies from one to the other above both routes.
+//! element flies from one to the other above both routes.
 //!
-//! The flight is a copy of the image drawn as host chrome, so it is not
-//! affected by the transition of the routes themselves. Both tagged
-//! elements are hidden while it flies. Elements that are not images do not
-//! fly: they appear with their route.
+//! The flight is a copy drawn as host chrome, so it is not affected by the
+//! transition of the routes themselves. Both tagged elements are hidden
+//! while it flies.
+//!
+//! Between two images the copy is one picture, resized as it flies. For any
+//! other pair both elements are copied with what they contain: the copies
+//! are scaled to the frame in flight, and the one that leaves fades out over
+//! the one that arrives.
 
 use pam_desktop_wire::{NodeKind, PropKey, PropValue};
 
 use crate::animator::{Curve, Easing, Owner, Spring};
-use crate::backend::NodeId;
+use crate::backend::{NodeId, ViewClass};
 use crate::context::Ctx;
-use crate::geometry::Rect;
+use crate::geometry::{Affine, Rect};
 use crate::props::PropMap;
 use crate::scene::{LayerOverride, LayerSlot, Scene};
 
 const MAX_FLIGHTS: usize = 16;
+/// The largest element that is copied to fly; a larger one appears with
+/// its route.
+const MAX_COPIED_NODES: usize = 96;
+
+/// What flies.
+enum Copy {
+    /// One picture, resized from the frame it leaves to the one it lands on.
+    Picture {
+        picture: NodeId,
+        from_radius: f32,
+        to_radius: f32,
+    },
+    /// Copies of both elements, laid out as they are at rest.
+    Elements {
+        arriving: NodeId,
+        /// `None` without a cross-fade: only the arriving element flies.
+        leaving: Option<NodeId>,
+        /// Whether the copies stretch to the frame in flight or only move.
+        scale: bool,
+    },
+}
 
 struct Flight {
-    /// The copy that flies.
-    picture: NodeId,
+    copy: Copy,
     source: NodeId,
     destination: NodeId,
     from: Rect,
     to: Rect,
-    from_radius: f32,
-    to_radius: f32,
+}
+
+impl Flight {
+    /// The copies, from the lowest to the topmost.
+    fn roots(&self) -> impl Iterator<Item = NodeId> {
+        let (first, second) = match self.copy {
+            Copy::Picture { picture, .. } => (Some(picture), None),
+            Copy::Elements {
+                arriving, leaving, ..
+            } => (leaving, Some(arriving)),
+        };
+        first.into_iter().chain(second)
+    }
+
+    /// Puts the copies where the flight is at `progress` (0 to 1).
+    fn place(&self, scene: &mut Scene, progress: f32) {
+        let mix = |from: f32, to: f32| from + (to - from) * progress;
+        let frame = Rect::new(
+            mix(self.from.x, self.to.x),
+            mix(self.from.y, self.to.y),
+            mix(self.from.width, self.to.width),
+            mix(self.from.height, self.to.height),
+        );
+        match self.copy {
+            Copy::Picture {
+                picture,
+                from_radius,
+                to_radius,
+            } => {
+                scene.set_synthetic_frame(picture, frame);
+                if from_radius != to_radius {
+                    scene.set_prop(
+                        picture,
+                        PropKey::BorderRadius,
+                        Some(PropValue::Float(f64::from(mix(from_radius, to_radius)))),
+                    );
+                }
+            }
+            Copy::Elements {
+                arriving,
+                leaving,
+                scale,
+            } => {
+                // A copy keeps the layout it has at `rest`; the transform, in
+                // its own coordinates, takes it to the frame in flight.
+                let transform = |rest: Rect| {
+                    let stretch = if scale {
+                        Affine::scaling(frame.width / rest.width, frame.height / rest.height)
+                    } else {
+                        Affine::IDENTITY
+                    };
+                    stretch.then(&Affine::translation(frame.x - rest.x, frame.y - rest.y))
+                };
+                // The arriving copy is opaque by the middle of the flight and
+                // the leaving one only fades after that: faded against each
+                // other, the two would let the routes show through.
+                scene.set_layer_override(
+                    arriving,
+                    LayerSlot::Presenter,
+                    LayerOverride {
+                        opacity: if leaving.is_some() {
+                            (progress * 2.0).min(1.0)
+                        } else {
+                            1.0
+                        },
+                        transform: transform(self.to),
+                        hidden: false,
+                    },
+                );
+                if let Some(leaving) = leaving {
+                    scene.set_layer_override(
+                        leaving,
+                        LayerSlot::Presenter,
+                        LayerOverride {
+                            opacity: (2.0 - progress * 2.0).min(1.0),
+                            transform: transform(self.from),
+                            hidden: false,
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The number of nodes under `id`, itself included, counted up to `limit`.
+fn subtree_size(scene: &Scene, id: NodeId, limit: usize) -> usize {
+    let mut count = 0;
+    let mut stack = vec![id];
+    while let Some(current) = stack.pop() {
+        count += 1;
+        if count > limit {
+            break;
+        }
+        if let Some(node) = scene.node(current) {
+            stack.extend(&node.children);
+        }
+    }
+    count
+}
+
+/// Copies `id` and what it contains as host chrome under `parent`, moved by
+/// `(dx, dy)`. Text fields, players, web pages and scrolling content hold
+/// state of their own that a copy would not have: they fly as their box.
+fn copy_subtree(
+    scene: &mut Scene,
+    id: NodeId,
+    parent: NodeId,
+    order: u32,
+    (dx, dy): (f32, f32),
+) -> Option<NodeId> {
+    let node = scene.node(id)?;
+    let plain = matches!(node.class, ViewClass::Box | ViewClass::Surface);
+    let kind = if plain { node.kind } else { NodeKind::View };
+    let frame = node.frame.translate(dx, dy);
+    let mut props = node.props.clone();
+    props.remove(&PropKey::SharedTransitionTag);
+    props.remove(&PropKey::SharedTransitionConfig);
+    if parent == 0 {
+        // Nothing to press and nothing to read out: the elements are there.
+        props.insert(PropKey::PointerEvents, PropValue::Integer(2));
+        props.insert(PropKey::AccessibilityImportance, PropValue::Integer(4));
+    }
+    let children = if plain {
+        scene.ordered_children(id)
+    } else {
+        Vec::new()
+    };
+    let copy = scene.add_synthetic(parent, kind, props, frame, order, None);
+    for (index, child) in children.into_iter().enumerate() {
+        copy_subtree(scene, child, copy, index as u32, (dx, dy));
+    }
+    Some(copy)
+}
+
+/// `resizeMode` and `crossFade` of a `SharedTransitionConfig`: whether the
+/// copies stretch (the default) and whether the leaving one is shown.
+fn element_style(config: &str) -> (bool, bool) {
+    let value =
+        serde_json::from_str::<serde_json::Value>(config).unwrap_or(serde_json::Value::Null);
+    let scale = value
+        .get("resizeMode")
+        .and_then(serde_json::Value::as_i64)
+        .is_none_or(|mode| mode == 1);
+    let cross_fade = value
+        .get("crossFade")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    (scale, cross_fade)
 }
 
 #[derive(Default)]
@@ -35,7 +206,7 @@ pub struct SharedElements {
     roots: Vec<NodeId>,
 }
 
-/// Every tagged image under `route`: tag and node.
+/// Every tagged element under `route`: tag and node.
 fn tagged(scene: &Scene, route: NodeId) -> Vec<(String, NodeId)> {
     let mut found = Vec::new();
     let mut stack = vec![route];
@@ -47,7 +218,6 @@ fn tagged(scene: &Scene, route: NodeId) -> Vec<(String, NodeId)> {
             .props()
             .text(PropKey::SharedTransitionTag)
             .filter(|tag| !tag.is_empty())
-            && matches!(node.kind, NodeKind::Image | NodeKind::ImageBackground)
         {
             found.push((tag.to_owned(), current));
         }
@@ -181,63 +351,104 @@ impl SharedElements {
             {
                 longest = Some(flight_timing);
             }
-            let (from_radius, to_radius) = (
-                source_node.props().number_or(PropKey::BorderRadius, 0.0),
-                destination_node
-                    .props()
-                    .number_or(PropKey::BorderRadius, 0.0),
-            );
-            // The picture that will be on screen at the end is the one that flies.
-            let mut props = PropMap::new();
-            for key in [
-                PropKey::Source,
-                PropKey::ImageSourceSet,
-                PropKey::ImageFit,
-                PropKey::TintColor,
-                PropKey::ImageRequestHeaders,
-                PropKey::ImageCachePolicy,
-            ] {
-                if let Some(value) = destination_node
-                    .props()
-                    .raw(key)
-                    .or_else(|| source_node.props().raw(key))
-                {
-                    props.insert(key, value.clone());
+            let picture =
+                |kind: NodeKind| matches!(kind, NodeKind::Image | NodeKind::ImageBackground);
+            let copy = if picture(source_node.kind) && picture(destination_node.kind) {
+                let (from_radius, to_radius) = (
+                    source_node.props().number_or(PropKey::BorderRadius, 0.0),
+                    destination_node
+                        .props()
+                        .number_or(PropKey::BorderRadius, 0.0),
+                );
+                // The picture that will be on screen at the end is the one that flies.
+                let mut props = PropMap::new();
+                for key in [
+                    PropKey::Source,
+                    PropKey::ImageSourceSet,
+                    PropKey::ImageFit,
+                    PropKey::TintColor,
+                    PropKey::ImageRequestHeaders,
+                    PropKey::ImageCachePolicy,
+                ] {
+                    if let Some(value) = destination_node
+                        .props()
+                        .raw(key)
+                        .or_else(|| source_node.props().raw(key))
+                    {
+                        props.insert(key, value.clone());
+                    }
                 }
-            }
-            props.insert(PropKey::ImageFadeDurationMs, PropValue::Integer(0));
-            props.insert(
-                PropKey::BorderRadius,
-                PropValue::Float(f64::from(from_radius)),
-            );
-            props.insert(PropKey::Overflow, PropValue::Integer(2));
-            props.insert(PropKey::PointerEvents, PropValue::Integer(2));
-            let picture = ctx.scene.add_synthetic(
-                0,
-                NodeKind::Image,
-                props,
-                from,
-                self.flights.len() as u32,
-                None,
-            );
+                props.insert(PropKey::ImageFadeDurationMs, PropValue::Integer(0));
+                props.insert(
+                    PropKey::BorderRadius,
+                    PropValue::Float(f64::from(from_radius)),
+                );
+                props.insert(PropKey::Overflow, PropValue::Integer(2));
+                props.insert(PropKey::PointerEvents, PropValue::Integer(2));
+                Copy::Picture {
+                    picture: ctx.scene.add_synthetic(
+                        0,
+                        NodeKind::Image,
+                        props,
+                        from,
+                        self.flights.len() as u32 * 2,
+                        None,
+                    ),
+                    from_radius,
+                    to_radius,
+                }
+            } else {
+                if subtree_size(ctx.scene, source, MAX_COPIED_NODES) > MAX_COPIED_NODES
+                    || subtree_size(ctx.scene, destination, MAX_COPIED_NODES) > MAX_COPIED_NODES
+                {
+                    continue;
+                }
+                let (scale, cross_fade) = element_style(config);
+                // Frames are laid out before scrolling: the copies start
+                // from where the elements show.
+                let offset = |node: NodeId, shown: Rect, scene: &Scene| {
+                    let laid_out = scene.node(node).map_or(shown, |node| node.frame);
+                    (shown.x - laid_out.x, shown.y - laid_out.y)
+                };
+                let order = self.flights.len() as u32 * 2;
+                let leaving = if cross_fade {
+                    let moved = offset(source, from, ctx.scene);
+                    copy_subtree(ctx.scene, source, 0, order, moved)
+                } else {
+                    None
+                };
+                let moved = offset(destination, to, ctx.scene);
+                let Some(arriving) = copy_subtree(ctx.scene, destination, 0, order + 1, moved)
+                else {
+                    if let Some(leaving) = leaving {
+                        ctx.scene.remove_synthetic(leaving);
+                    }
+                    continue;
+                };
+                Copy::Elements {
+                    arriving,
+                    leaving,
+                    scale,
+                }
+            };
             for node in [source, destination] {
                 ctx.scene
                     .set_layer_override(node, LayerSlot::Interaction, LayerOverride::HIDDEN);
             }
-            self.flights.push(Flight {
-                picture,
+            let flight = Flight {
+                copy,
                 source,
                 destination,
                 from,
                 to,
-                from_radius,
-                to_radius,
-            });
+            };
+            flight.place(ctx.scene, 0.0);
+            self.flights.push(flight);
         }
         let Some((duration, curve)) = longest else {
             return had_flights;
         };
-        self.roots = self.flights.iter().map(|flight| flight.picture).collect();
+        self.roots = self.flights.iter().flat_map(Flight::roots).collect();
         // Every flight of a transition shares the longest duration and its curve.
         if duration == 0 {
             return self.finish(ctx) || had_flights;
@@ -253,25 +464,8 @@ impl SharedElements {
             return self.finish(ctx);
         }
         let progress = progress.clamp(0.0, 1.0);
-        let mix = |from: f32, to: f32| from + (to - from) * progress;
         for flight in &self.flights {
-            let frame = Rect::new(
-                mix(flight.from.x, flight.to.x),
-                mix(flight.from.y, flight.to.y),
-                mix(flight.from.width, flight.to.width),
-                mix(flight.from.height, flight.to.height),
-            );
-            ctx.scene.set_synthetic_frame(flight.picture, frame);
-            if flight.from_radius != flight.to_radius {
-                ctx.scene.set_prop(
-                    flight.picture,
-                    PropKey::BorderRadius,
-                    Some(PropValue::Float(f64::from(mix(
-                        flight.from_radius,
-                        flight.to_radius,
-                    )))),
-                );
-            }
+            flight.place(ctx.scene, progress);
         }
         false
     }
@@ -283,7 +477,9 @@ impl SharedElements {
         }
         ctx.animator.cancel(Owner::SharedFlight, ctx.now_ms);
         for flight in self.flights.drain(..) {
-            ctx.scene.remove_synthetic(flight.picture);
+            for copy in flight.roots() {
+                ctx.scene.remove_synthetic(copy);
+            }
             for node in [flight.source, flight.destination] {
                 ctx.scene
                     .set_layer_override(node, LayerSlot::Interaction, LayerOverride::NONE);
@@ -318,5 +514,84 @@ mod tests {
             timing(r#"{"easing":3}"#, false, 240).1,
             Curve::Spring { .. }
         ));
+    }
+
+    #[test]
+    fn elements_read_their_resize_mode_and_cross_fade() {
+        assert_eq!(element_style(""), (true, true));
+        assert_eq!(
+            element_style(r#"{"resizeMode":1,"crossFade":true}"#),
+            (true, true)
+        );
+        assert_eq!(
+            element_style(r#"{"resizeMode":3,"crossFade":false}"#),
+            (false, false)
+        );
+        assert_eq!(element_style(r#"{"resizeMode":2}"#), (false, true));
+    }
+
+    #[test]
+    fn copies_follow_the_frame_in_flight() {
+        let mut scene = Scene::new();
+        let add = |scene: &mut Scene, frame: Rect| {
+            scene.add_synthetic(0, NodeKind::View, PropMap::new(), frame, 0, None)
+        };
+        let (from, to) = (
+            Rect::new(10.0, 20.0, 100.0, 50.0),
+            Rect::new(0.0, 100.0, 400.0, 200.0),
+        );
+        let (leaving, arriving) = (add(&mut scene, from), add(&mut scene, to));
+        let flight = Flight {
+            copy: Copy::Elements {
+                arriving,
+                leaving: Some(leaving),
+                scale: true,
+            },
+            source: 0,
+            destination: 0,
+            from,
+            to,
+        };
+        // The frame a copy shows at: its transform works in its own coordinates.
+        let shown = |scene: &Scene, id: NodeId, rest: Rect| {
+            let transform = scene.layer_override(id, LayerSlot::Presenter).transform;
+            transform
+                .bounds(Rect::new(0.0, 0.0, rest.width, rest.height))
+                .translate(rest.x, rest.y)
+        };
+
+        flight.place(&mut scene, 0.0);
+        assert_eq!(shown(&scene, arriving, to), from);
+        assert_eq!(shown(&scene, leaving, from), from);
+        assert_eq!(
+            scene.layer_override(arriving, LayerSlot::Presenter).opacity,
+            0.0
+        );
+        assert_eq!(
+            scene.layer_override(leaving, LayerSlot::Presenter).opacity,
+            1.0
+        );
+
+        flight.place(&mut scene, 0.5);
+        let middle = Rect::new(5.0, 60.0, 250.0, 125.0);
+        assert_eq!(shown(&scene, arriving, to), middle);
+        assert_eq!(shown(&scene, leaving, from), middle);
+        // Never see-through: one of the two is opaque at every point.
+        assert_eq!(
+            scene.layer_override(arriving, LayerSlot::Presenter).opacity,
+            1.0
+        );
+        assert_eq!(
+            scene.layer_override(leaving, LayerSlot::Presenter).opacity,
+            1.0
+        );
+
+        flight.place(&mut scene, 1.0);
+        assert_eq!(shown(&scene, arriving, to), to);
+        assert_eq!(
+            scene.layer_override(leaving, LayerSlot::Presenter).opacity,
+            0.0
+        );
+        assert_eq!(flight.roots().collect::<Vec<_>>(), [leaving, arriving]);
     }
 }

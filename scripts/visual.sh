@@ -31,6 +31,8 @@ lists|lists|960x640|4|0|
 lists-scrolled|lists|960x640|4|0|mousemove 480 320 click 5 click 5 click 5 click 5 click 5 click 5 sleep 1
 chat|chat|960x640|4|0|
 navigation|navigation|960x640|4|0|
+navigation-photo|navigation|960x640|4|0|mousemove 68 334 click 1 sleep 1.5
+navigation-invoice|navigation|960x640|4|0|mousemove 130 430 click 1 sleep 1.5
 motion|motion|960x640|5|60000|
 gestures|gestures|960x640|4|0|
 images|images|960x640|6|0|
