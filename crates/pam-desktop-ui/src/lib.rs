@@ -9,6 +9,7 @@ pub mod animator;
 pub mod backend;
 pub mod color;
 pub mod context;
+pub mod controls;
 pub mod geometry;
 pub mod input_format;
 pub mod inputs;

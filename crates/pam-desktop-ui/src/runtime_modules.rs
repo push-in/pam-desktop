@@ -265,8 +265,10 @@ impl<B: Backend> Runtime<B> {
         if self.metrics.dark != dark {
             self.metrics.dark = dark;
             self.interaction.dark = dark;
+            self.controls.dark = dark;
             let mut ctx = ctx!(self);
             self.interaction.refresh_defaults(&mut ctx);
+            self.controls.refresh(&mut ctx);
         }
         self.send_dimensions();
     }

@@ -139,7 +139,7 @@ fn pointer_payload(ctx: &Ctx<'_>, node: NodeId, position: Point) -> Vec<u8> {
 /// Whether presses on this node show the default dim/scale feedback.
 fn shows_feedback(ctx: &Ctx<'_>, id: NodeId) -> bool {
     ctx.scene.node(id).is_some_and(|node| {
-        let pressable_kind = matches!(node.kind, NodeKind::Button | NodeKind::Pressable);
+        let pressable_kind = matches!(node.kind, NodeKind::Button | NodeKind::Pressable) && node.action.is_none();
         let authored = node.handles(PropKey::PressOpacity) || node.handles(PropKey::PressScale) || node.handles(PropKey::PressBackgroundColor);
         // A surface that also takes a double tap would flash on each tap.
         (pressable_kind || authored) && !node.handles(PropKey::OnDoubleTap)
@@ -554,6 +554,7 @@ impl Interaction {
         let node = ctx.scene.node(press.node)?;
         let (handles_press, handles_double_tap, action) =
             (node.handles(PropKey::OnPress), node.handles(PropKey::OnDoubleTap), node.action);
+        let is_switch = node.kind == NodeKind::Switch;
         let double_tap_delay = node.props().integer_or(PropKey::PressDoubleTapDelayMs, DEFAULT_DOUBLE_TAP_MS).clamp(80, 1000) as u64;
         if !press.inside {
             return None;
@@ -569,6 +570,9 @@ impl Interaction {
         }
         if action.is_some() {
             return action;
+        }
+        if is_switch {
+            return Some(Action::Toggle { id: press.node });
         }
         if handles_double_tap {
             let previous = self.last_tap.take().filter(|tap| {
@@ -692,6 +696,9 @@ impl Interaction {
         }
         if node.action.is_some() {
             return node.action;
+        }
+        if node.kind == NodeKind::Switch {
+            return Some(Action::Toggle { id: focused });
         }
         let origin = ctx.scene.window_origin(focused);
         let center = Point::new(origin.x + node.frame.width / 2.0, origin.y + node.frame.height / 2.0);

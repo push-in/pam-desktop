@@ -293,6 +293,8 @@ pub enum Owner {
     Transition(NodeId, MotionProperty),
     /// A preset, keyframe or program track of a node.
     Motion(NodeId, u32),
+    /// A host-drawn control (switch position, spinner angle).
+    Control(NodeId),
 }
 
 impl Owner {
@@ -304,7 +306,8 @@ impl Owner {
             | Self::ModalContent(id)
             | Self::Press(id)
             | Self::Transition(id, _)
-            | Self::Motion(id, _) => *id,
+            | Self::Motion(id, _)
+            | Self::Control(id) => *id,
         }
     }
 }

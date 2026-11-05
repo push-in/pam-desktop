@@ -90,6 +90,8 @@ pub enum Action {
     TabSelect { host: NodeId, index: u32 },
     ModalBackdrop { modal: NodeId },
     NavigationBack { host: NodeId },
+    /// Flip a switch.
+    Toggle { id: NodeId },
 }
 
 /// Compositing applied on top of what the node's properties say. Several
@@ -283,7 +285,7 @@ impl SceneNode {
     #[must_use]
     pub fn is_pressable(&self) -> bool {
         self.action.is_some()
-            || matches!(self.kind, NodeKind::Button | NodeKind::Pressable)
+            || matches!(self.kind, NodeKind::Button | NodeKind::Pressable | NodeKind::Switch)
             || self.handles(PropKey::OnPress)
             || self.handles(PropKey::OnLongPress)
             || self.handles(PropKey::OnPressIn)

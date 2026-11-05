@@ -42,6 +42,17 @@ fn css_color(color: Color) -> String {
     format!("rgba({},{},{},{:.3})", color.r, color.g, color.b, f32::from(color.a) / 255.0)
 }
 
+/// Reports an input event once GTK finished the signal emission it came
+/// from: the core may answer by replacing the text (masks), which GTK does
+/// not allow in the middle of a user edit.
+fn emit(events: &Rc<EventQueue>, event: BackendEvent) {
+    let events = Rc::clone(events);
+    glib::idle_add_local_full(glib::Priority::HIGH, move || {
+        events.push(event.clone());
+        glib::ControlFlow::Break
+    });
+}
+
 fn key_text(key: gdk::Key, state: gdk::ModifierType) -> Option<String> {
     if state.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK | gdk::ModifierType::META_MASK) {
         return None;
@@ -89,7 +100,7 @@ impl InputHost {
                         return;
                     }
                     let caret = char_to_utf16_offset(&text, buffer.cursor_position().max(0) as u32);
-                    events.push(BackendEvent::Input { id, event: InputEvent::Edited { text, selection: (caret, caret) } });
+                    emit(&events, BackendEvent::Input { id, event: InputEvent::Edited { text, selection: (caret, caret) } });
                 });
             }
             {
@@ -104,7 +115,7 @@ impl InputHost {
                         Some((start, end)) => (start.offset(), end.offset()),
                         None => (buffer.cursor_position(), buffer.cursor_position()),
                     };
-                    events.push(BackendEvent::Input {
+                    emit(&events, BackendEvent::Input {
                         id,
                         event: InputEvent::SelectionChanged {
                             start: char_to_utf16_offset(&text, start.max(0) as u32),
@@ -121,9 +132,9 @@ impl InputHost {
                 keys.connect_key_pressed(move |_, key, _, state| {
                     let Some(text) = key_text(key, state) else { return glib::Propagation::Proceed };
                     let submits = text == "Enter" && config.borrow().submit_on_enter && !state.contains(gdk::ModifierType::SHIFT_MASK);
-                    events.push(BackendEvent::Input { id, event: InputEvent::KeyPressed { key: text } });
+                    emit(&events, BackendEvent::Input { id, event: InputEvent::KeyPressed { key: text } });
                     if submits {
-                        events.push(BackendEvent::Input { id, event: InputEvent::Submitted });
+                        emit(&events, BackendEvent::Input { id, event: InputEvent::Submitted });
                         return glib::Propagation::Stop;
                     }
                     glib::Propagation::Proceed
@@ -148,12 +159,12 @@ impl InputHost {
                     }
                     let value = text.text().to_string();
                     let caret = char_to_utf16_offset(&value, text.position().max(0) as u32);
-                    events.push(BackendEvent::Input { id, event: InputEvent::Edited { text: value, selection: (caret, caret) } });
+                    emit(&events, BackendEvent::Input { id, event: InputEvent::Edited { text: value, selection: (caret, caret) } });
                 });
             }
             {
                 let events = Rc::clone(events);
-                text.connect_activate(move |_| events.push(BackendEvent::Input { id, event: InputEvent::Submitted }));
+                text.connect_activate(move |_| emit(&events, BackendEvent::Input { id, event: InputEvent::Submitted }));
             }
             for property in ["cursor-position", "selection-bound"] {
                 let events = Rc::clone(events);
@@ -164,7 +175,7 @@ impl InputHost {
                     }
                     let value = text.text().to_string();
                     let (start, end) = text.selection_bounds().unwrap_or((text.position(), text.position()));
-                    events.push(BackendEvent::Input {
+                    emit(&events, BackendEvent::Input {
                         id,
                         event: InputEvent::SelectionChanged {
                             start: char_to_utf16_offset(&value, start.max(0) as u32),
@@ -179,7 +190,7 @@ impl InputHost {
                 let events = Rc::clone(events);
                 keys.connect_key_pressed(move |_, key, _, state| {
                     if let Some(key) = key_text(key, state) {
-                        events.push(BackendEvent::Input { id, event: InputEvent::KeyPressed { key } });
+                        emit(&events, BackendEvent::Input { id, event: InputEvent::KeyPressed { key } });
                     }
                     glib::Propagation::Proceed
                 });
@@ -282,8 +293,10 @@ impl InputHost {
         }
         let class = &self.class;
         let mut css = format!(".{class}, .{class} text {{ {rules} }}\n");
-        if let Some(color) = config.placeholder_color {
-            css.push_str(&format!(".{class} > placeholder {{ color: {}; }}\n", css_color(color)));
+        match config.placeholder_color {
+            Some(color) => css.push_str(&format!(".{class} > placeholder {{ color: {}; opacity: 1; }}\n", css_color(color))),
+            // Without an authored colour the hint is a dimmed version of the text.
+            None => css.push_str(&format!(".{class} > placeholder {{ color: alpha(currentColor, 0.45); opacity: 1; }}\n")),
         }
         if let Some(color) = config.selection_color {
             css.push_str(&format!(".{class} selection, .{class} text selection {{ background-color: {}; }}\n", css_color(color)));

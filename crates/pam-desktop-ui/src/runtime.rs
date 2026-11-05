@@ -19,6 +19,7 @@ use pam_desktop_wire::decode_batch;
 use crate::animator::{Animator, Owner, Timer, Timers};
 use crate::backend::{Backend, BackendEvent, KeyEvent, NodeId, WindowConfig, WindowMetrics, MAIN_WINDOW};
 use crate::context::{event_kind, HostCommand, OutEvent};
+use crate::controls::Controls;
 use crate::geometry::Size;
 use crate::inputs::Inputs;
 use crate::interaction::Interaction;
@@ -236,6 +237,7 @@ pub struct Runtime<B: Backend> {
     pub(crate) interaction: Interaction,
     pub(crate) inputs: Inputs,
     motion: Motion,
+    pub(crate) controls: Controls,
     pub(crate) modules: Registry,
     pub(crate) settings: Settings,
     /// What the operating system reports, before the app's own preference.
@@ -346,6 +348,7 @@ impl<B: Backend> Runtime<B> {
             interaction: Interaction::new(metrics.dark),
             inputs: Inputs::default(),
             motion: Motion::default(),
+            controls: Controls::new(metrics.dark),
             modules,
             settings,
             system_dark: system.dark,
@@ -422,6 +425,9 @@ impl<B: Backend> Runtime<B> {
         }
         if let Some(worker) = &mut self.worker {
             for event in self.outbox.drain(..) {
+                if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() {
+                    eprintln!("event node={} kind={} payload={:?}", event.node, event.kind, String::from_utf8_lossy(&event.payload));
+                }
                 worker.send_event(event.node, event.kind, &event.payload);
             }
             worker.flush();
@@ -467,12 +473,14 @@ impl<B: Backend> Runtime<B> {
                 self.interaction.on_change(&mut ctx, change);
                 self.inputs.on_change(&mut ctx, change);
                 self.motion.on_change(&mut ctx, change);
+                self.controls.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             self.tabs.after_commit(&mut ctx);
             self.modals.after_commit(&mut ctx);
             self.inputs.after_commit(&mut ctx);
             self.motion.after_commit(&mut ctx);
+            self.controls.after_commit(&mut ctx);
             self.coverage.invalidate();
             self.inputs.retry_autofocus();
         }
@@ -728,6 +736,7 @@ impl<B: Backend> Runtime<B> {
                     self.modals.on_sample(&mut ctx, sample.owner, sample.value, sample.finished);
                 }
                 Owner::Press(id) => self.interaction.on_press_sample(&mut ctx, id, sample.value),
+                Owner::Control(id) => self.controls.on_sample(&mut ctx, id, sample.value, sample.finished),
                 Owner::Transition(..) | Owner::Motion(..) => self.motion.on_sample(&mut ctx, sample.owner, sample.value, sample.finished),
             }
         }
@@ -741,6 +750,7 @@ impl<B: Backend> Runtime<B> {
                 self.coverage.invalidate();
             }
             Action::ModalBackdrop { modal } => self.modals.backdrop_pressed(&mut ctx, modal),
+            Action::Toggle { id } => self.controls.toggle(&mut ctx, id),
             Action::NavigationBack { .. } => {
                 drop(ctx);
                 self.go_back();
