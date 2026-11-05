@@ -178,6 +178,9 @@ impl GtkBackend {
         let events = Rc::clone(&self.events);
         let target = host.downgrade();
         let last_press = Rc::clone(&self.last_press);
+        // Time, position, button and count of the last press, to tell double
+        // and triple clicks with the system's own thresholds.
+        let clicks = Cell::new((0_u32, Point::ZERO, PointerButton::Primary, 0_u8));
         controller.connect_event(move |_, event| {
             let Some(host) = target.upgrade() else { return glib::Propagation::Proceed };
             let phase = match event.event_type() {
@@ -217,13 +220,31 @@ impl GtkBackend {
                 }
             }
             let state = event.modifier_state();
+            let click_count = match phase {
+                PointerPhase::Down => {
+                    let (time, place, last_button, count) = clicks.get();
+                    let settings = gtk::Settings::default();
+                    let interval = settings.as_ref().map_or(400, |settings| settings.gtk_double_click_time().max(0) as u32);
+                    let distance = settings.as_ref().map_or(5, |settings| settings.gtk_double_click_distance().max(0)) as f32;
+                    let repeated = count > 0
+                        && last_button == button
+                        && event.time().wrapping_sub(time) <= interval
+                        && (position.x - place.x).abs() <= distance
+                        && (position.y - place.y).abs() <= distance;
+                    let count = if repeated { count.saturating_add(1) } else { 1 };
+                    clicks.set((event.time(), position, button, count));
+                    count
+                }
+                PointerPhase::Up => clicks.get().3.max(1),
+                _ => 1,
+            };
             events.push(BackendEvent::Pointer(PointerEvent {
                 window,
                 phase,
                 position,
                 button,
                 modifiers: GtkBackend::modifiers(state),
-                click_count: 1,
+                click_count,
                 time_ms: u64::from(event.time()),
             }));
             glib::Propagation::Proceed
@@ -591,11 +612,15 @@ impl Backend for GtkBackend {
         entry.container.set_image(state);
     }
 
-    fn text_index_at(&self, _id: NodeId, _point: Point) -> Option<u32> {
-        None
+    fn text_index_at(&self, id: NodeId, point: Point) -> Option<u32> {
+        self.views.get(&id)?.container.text_index_at(point.x, point.y)
     }
 
-    fn set_text_selection(&mut self, _id: NodeId, _range: Option<(u32, u32)>) {}
+    fn set_text_selection(&mut self, id: NodeId, range: Option<(u32, u32)>) {
+        if let Some(entry) = self.views.get(&id) {
+            entry.container.set_text_selection(range);
+        }
+    }
 
     fn begin_text_drag(&mut self, _window: WindowId, _source: NodeId, _text: &str) {}
 

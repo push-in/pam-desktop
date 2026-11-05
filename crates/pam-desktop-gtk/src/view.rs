@@ -57,6 +57,29 @@ pub struct TextState {
     pub layout: pango::Layout,
     /// Width the layout was last wrapped to.
     pub wrapped_to: f32,
+    /// Selected range in UTF-16 units.
+    pub selection: Option<(u32, u32)>,
+}
+
+impl TextState {
+    /// Wraps the layout to the view and returns where its top-left corner
+    /// sits inside a view of `size`.
+    fn place(&mut self, size: Size) -> (f32, f32) {
+        let insets = self.content.insets;
+        let available = (size.width - insets.horizontal()).max(0.0);
+        if self.wrapped_to != available {
+            text::set_width(&self.layout, available);
+            self.wrapped_to = available;
+        }
+        let free = size.height - insets.vertical() - text::height(&self.layout);
+        let top = insets.top
+            + match self.content.vertical {
+                VerticalAlign::Top => 0.0,
+                VerticalAlign::Center => (free / 2.0).max(0.0),
+                VerticalAlign::Bottom => free.max(0.0),
+            };
+        (insets.left, top.round())
+    }
 }
 
 pub struct ImageState {
@@ -197,23 +220,10 @@ mod imp {
                 paint::paint_drawing(&context, &state.drawing, 1.0 / f64::from(widget.scale_factor().max(1)));
             }
             if let Some(text_state) = state.text.as_mut() {
-                let insets = text_state.content.insets;
-                let available = (size.width - insets.horizontal()).max(0.0);
-                if text_state.wrapped_to != available {
-                    text::set_width(&text_state.layout, available);
-                    text_state.wrapped_to = available;
-                }
-                let text_height = text::height(&text_state.layout);
-                let free = size.height - insets.vertical() - text_height;
-                let top = insets.top
-                    + match text_state.content.vertical {
-                        VerticalAlign::Top => 0.0,
-                        VerticalAlign::Center => (free / 2.0).max(0.0),
-                        VerticalAlign::Bottom => free.max(0.0),
-                    };
+                let (left, top) = text_state.place(size);
                 let color = widget.color();
                 snapshot.save();
-                snapshot.translate(&graphene::Point::new(insets.left, top.round()));
+                snapshot.translate(&graphene::Point::new(left, top));
                 if let Some(shadow) = text_state.content.block.shadow {
                     snapshot.push_shadow(&[gsk::Shadow::new(paint::rgba(shadow.color), shadow.offset.x, shadow.offset.y, shadow.radius)]);
                     snapshot.append_layout(&text_state.layout, &color);
@@ -347,10 +357,36 @@ impl PamView {
         let next = content.map(|content| {
             let layout = self.create_pango_layout(None);
             text::configure(&layout, &content.block);
-            TextState { content: content.clone(), layout, wrapped_to: f32::NAN }
+            TextState { content: content.clone(), layout, wrapped_to: f32::NAN, selection: None }
         });
         self.with_state(|state| state.text = next);
         self.queue_draw();
+    }
+
+    /// Paints a UTF-16 range of the text as selected.
+    pub fn set_text_selection(&self, range: Option<(u32, u32)>) {
+        let changed = self.with_state(|state| match state.text.as_mut() {
+            Some(text) if text.selection != range => {
+                text.selection = range;
+                text::set_selection(&text.layout, &text.content.block, range);
+                true
+            }
+            _ => false,
+        });
+        if changed {
+            self.queue_draw();
+        }
+    }
+
+    /// UTF-16 offset of the character boundary nearest to a point of the view.
+    pub fn text_index_at(&self, x: f32, y: f32) -> Option<u32> {
+        let fallback = Size::new(self.width() as f32, self.height() as f32);
+        self.with_state(|state| {
+            let size = if state.size.is_empty() { fallback } else { state.size };
+            let text = state.text.as_mut()?;
+            let (left, top) = text.place(size);
+            Some(text::index_at(&text.layout, x - left, y - top))
+        })
     }
 
     pub fn set_image(&self, image: Option<ImageState>) {

@@ -921,6 +921,13 @@ impl Scene {
         }
     }
 
+    /// The text a node shows, without styling.
+    #[must_use]
+    pub fn plain_text(&self, id: NodeId) -> Option<String> {
+        let node = self.nodes.get(&id)?;
+        self.text_content(node, self.overlaid(node)).map(|content| content.block.plain_text())
+    }
+
     /// How much of a node is on screen, 0..1: its box clipped by every
     /// scrolling or clipping ancestor and by the window. Zero when hidden.
     #[must_use]
@@ -1286,7 +1293,9 @@ impl Scene {
             let Some(node) = self.nodes.get(id) else { continue };
             if dirty.contains(Dirty::CONFIG) {
                 let props = node.props();
-                let cursor = props.text(PropKey::Cursor).map_or(Cursor::Default, Cursor::parse);
+                // Selectable text shows the text cursor unless styled otherwise.
+                let selectable = node.is_text_bearing() && props.flag_or(PropKey::TextSelectable, false);
+                let cursor = props.text(PropKey::Cursor).map_or(if selectable { Cursor::Text } else { Cursor::Default }, Cursor::parse);
                 let tooltip = props.text(PropKey::Tooltip).filter(|text| !text.is_empty());
                 let (cursor_changed, tooltip_changed) = (cursor != node.pushed_cursor, tooltip.is_some() || node.has_tooltip);
                 if cursor_changed {

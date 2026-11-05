@@ -132,3 +132,47 @@ pub fn height(layout: &pango::Layout) -> f32 {
     let (_, logical) = layout.extents();
     logical.height() as f32 / SCALE
 }
+
+/// Byte offset of a UTF-16 offset in `text`, clamped to its end.
+fn byte_offset(text: &str, utf16: u32) -> usize {
+    let mut units = 0_u32;
+    for (index, character) in text.char_indices() {
+        if units >= utf16 {
+            return index;
+        }
+        units += character.len_utf16() as u32;
+    }
+    text.len()
+}
+
+/// Paints a UTF-16 range of an already configured layout as selected, or
+/// restores the paragraph's own attributes with `None`.
+pub fn set_selection(layout: &pango::Layout, block: &TextBlock, range: Option<(u32, u32)>) {
+    configure(layout, block);
+    let Some((start, end)) = range.filter(|(start, end)| start < end) else { return };
+    let text = layout.text();
+    let (start, end) = (byte_offset(&text, start) as u32, byte_offset(&text, end) as u32);
+    let Some(attributes) = layout.attributes() else { return };
+    // The accent blue every GTK theme uses for selections.
+    let mut background: pango::Attribute = pango::AttrColor::new_background(0x3535, 0x8484, 0xE4E4).into();
+    let mut foreground: pango::Attribute = pango::AttrColor::new_foreground(0xFFFF, 0xFFFF, 0xFFFF).into();
+    for attribute in [&mut background, &mut foreground] {
+        attribute.set_start_index(start);
+        attribute.set_end_index(end);
+    }
+    attributes.insert(background);
+    attributes.insert(foreground);
+    layout.set_attributes(Some(&attributes));
+}
+
+/// UTF-16 offset of the character boundary nearest to a point of the layout.
+pub fn index_at(layout: &pango::Layout, x: f32, y: f32) -> u32 {
+    let (_, byte, trailing) = layout.xy_to_index(units(x), units(y));
+    let text = layout.text();
+    let byte = usize::try_from(byte).unwrap_or(0).min(text.len());
+    let before = text.get(..byte).map_or(0, |prefix| prefix.encode_utf16().count());
+    // `trailing` counts the characters to step over when the point is past
+    // the middle of the glyph.
+    let after: usize = text.get(byte..).map_or(0, |rest| rest.chars().take(usize::try_from(trailing).unwrap_or(0)).map(char::len_utf16).sum());
+    (before + after) as u32
+}

@@ -27,6 +27,7 @@ mod runtime_modules;
 mod runtime_shell;
 pub mod scene;
 pub mod scrolling;
+pub mod selection;
 pub mod shell;
 pub mod style;
 pub mod testing;

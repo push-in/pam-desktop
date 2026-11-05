@@ -109,6 +109,7 @@ pub enum HostCommand {
     ReleaseImage(crate::backend::ImageKey),
     SetImage { id: NodeId, content: Option<crate::backend::ImageContent> },
     SetDrawing { id: NodeId, commands: Vec<crate::backend::DrawCommand> },
+    SetTextSelection { id: NodeId, range: Option<(u32, u32)> },
     SetMedia { id: NodeId, state: Box<crate::backend::MediaState> },
     SetWebView { id: NodeId, state: Box<crate::backend::WebViewState> },
 }

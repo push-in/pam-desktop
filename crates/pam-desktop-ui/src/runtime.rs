@@ -255,6 +255,7 @@ pub struct Runtime<B: Backend> {
     drawings: crate::drawing::Drawings,
     media: crate::media::Media,
     web_views: crate::webview::WebViews,
+    pub(crate) selection: crate::selection::TextSelection,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
     pub(crate) shell: Shell,
@@ -399,6 +400,7 @@ impl<B: Backend> Runtime<B> {
             drawings: crate::drawing::Drawings::default(),
             media,
             web_views: crate::webview::WebViews::default(),
+            selection: crate::selection::TextSelection::default(),
             modules,
             directories,
             shell: Shell::default(),
@@ -480,6 +482,7 @@ impl<B: Backend> Runtime<B> {
                 HostCommand::ReleaseImage(key) => self.backend.release_image(key),
                 HostCommand::SetImage { id, content } => self.backend.set_image(id, content.as_ref()),
                 HostCommand::SetDrawing { id, commands } => self.backend.set_drawing(id, &commands),
+                HostCommand::SetTextSelection { id, range } => self.backend.set_text_selection(id, range),
                 HostCommand::SetMedia { id, state } => self.backend.set_media(id, &state),
                 HostCommand::SetWebView { id, state } => self.backend.set_web_view(id, &state),
             }
@@ -540,6 +543,7 @@ impl<B: Backend> Runtime<B> {
                 self.drawings.on_change(&mut ctx, change);
                 self.media.on_change(&mut ctx, change);
                 self.web_views.on_change(&mut ctx, change);
+                self.selection.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             self.tabs.after_commit(&mut ctx);
@@ -722,6 +726,9 @@ impl<B: Backend> Runtime<B> {
                 }
                 if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() && pointer.phase != crate::backend::PointerPhase::Move {
                     eprintln!("pointer {:?} at {:?} hit {:?}", pointer.phase, pointer.position, self.scene.hit_test(pointer.position));
+                }
+                if self.select_text(&pointer) {
+                    return;
                 }
                 {
                     // A freehand canvas owns the pointer while a stroke is drawn.
@@ -931,8 +938,84 @@ impl<B: Backend> Runtime<B> {
         }
     }
 
+    /// Routes a pointer event to the text selection. `true` means it was
+    /// consumed.
+    fn select_text(&mut self, pointer: &crate::backend::PointerEvent) -> bool {
+        use crate::backend::{PointerButton, PointerPhase};
+        use crate::selection::TextSelection;
+        if pointer.button != PointerButton::Primary && pointer.phase != PointerPhase::Move {
+            return false;
+        }
+        let index_at = |runtime: &Self, id: NodeId| {
+            let origin = runtime.scene.window_origin(id);
+            runtime.backend.text_index_at(id, crate::geometry::Point::new(pointer.position.x - origin.x, pointer.position.y - origin.y))
+        };
+        match pointer.phase {
+            PointerPhase::Down => {
+                let target = self.scene.hit_test(pointer.position).and_then(|hit| TextSelection::target(&self.scene, hit));
+                let index = target.and_then(|id| index_at(self, id));
+                let mut ctx = ctx!(self);
+                match (target, index) {
+                    (Some(id), Some(index)) => {
+                        self.selection.begin(&mut ctx, id, index, pointer.click_count, pointer.modifiers.shift);
+                        true
+                    }
+                    _ => {
+                        // A press anywhere else drops the selection.
+                        self.selection.clear(&mut ctx);
+                        false
+                    }
+                }
+            }
+            PointerPhase::Move if self.selection.is_dragging() => {
+                if let Some(index) = self.selection.node().and_then(|id| index_at(self, id)) {
+                    let mut ctx = ctx!(self);
+                    self.selection.extend(&mut ctx, index);
+                }
+                true
+            }
+            PointerPhase::Up | PointerPhase::Cancel if self.selection.is_dragging() => {
+                self.selection.end();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Copy, select all and escape for the selected text. `true` means the
+    /// key was consumed.
+    fn selection_key(&mut self, key: &KeyEvent) -> bool {
+        if self.selection.node().is_none() {
+            return false;
+        }
+        let command = if cfg!(target_os = "macos") { key.modifiers.meta } else { key.modifiers.control };
+        match key.key.to_ascii_lowercase().as_str() {
+            "c" if command => match self.selection.text() {
+                Some(text) => {
+                    self.backend.clipboard_set_text(&text);
+                    true
+                }
+                None => false,
+            },
+            "a" if command => {
+                let mut ctx = ctx!(self);
+                self.selection.select_all(&mut ctx);
+                true
+            }
+            "escape" if self.selection.text().is_some() => {
+                let mut ctx = ctx!(self);
+                self.selection.clear(&mut ctx);
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn handle_key(&mut self, key: &KeyEvent) {
         if key.window != MAIN_WINDOW {
+            return;
+        }
+        if key.pressed && !key.repeat && self.selection_key(key) {
             return;
         }
         if key.pressed && !key.repeat {
