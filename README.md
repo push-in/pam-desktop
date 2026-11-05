@@ -193,7 +193,7 @@ crates/
   pam-desktop-host     the pam-desktop binary; SQLite, secure storage, packaging and updates
 packages/desktop/      the PHP package (Pam\Desktop), the Composer launcher, the worker bootstrap and tests
 examples/              one runnable application per feature
-scripts/               shot.sh captures an example on a virtual display; package-host.sh packs a release archive
+scripts/               shot.sh captures an example on a virtual display; visual.sh compares the examples with a baseline; package-host.sh packs a release archive
 .github/workflows/     ci.yml (checks) and release.yml (host archives of a tag)
 docs/                  this documentation
 ```

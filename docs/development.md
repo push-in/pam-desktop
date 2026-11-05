@@ -103,6 +103,23 @@ What the script does:
 
 It needs `Xvfb`, `xdpyinfo`, `xdotool` and ImageMagick.
 
+### Visual regression
+
+`scripts/visual.sh` captures every example with `shot.sh`, some of them after a click or a scroll, and compares the captures with a baseline:
+
+```bash
+cargo build -p pam-desktop-host
+scripts/visual.sh record            # on a commit you trust
+# change the code, build again
+scripts/visual.sh check             # all scenarios, about two minutes
+scripts/visual.sh check lists chat  # only these
+scripts/visual.sh list
+```
+
+`check` prints one line per scenario with the number of pixels that differ and exits with an error when any scenario has more than it allows. The capture is kept in `target/visual/current` and an image with the differences highlighted in `target/visual/diff`.
+
+The baseline lives in `target/visual/baseline` and is not committed: fonts, the GTK version and the renderer change pixels, so a baseline is only valid on the machine that recorded it. On one machine the captures are reproducible: two runs of the same build differ in no pixel, except in the scenarios that never stop moving (`motion`, `media`, the spinner of `controls` and the seconds counter of `modules`), which have a tolerance. The scenarios, their sizes and tolerances are the table at the top of the script.
+
 ## Tests
 
 ### Rust
