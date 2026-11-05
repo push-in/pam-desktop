@@ -28,6 +28,11 @@ Linux is the reference: every example under `examples/` was run and checked ther
 10. **Display link** pausing and resuming; wake-ups while a menu is open and during a live resize.
 11. **AVFoundation** (the key-value observation thread) and the Core Image filter keys of `blur` and `colorMatrix`.
 12. **Wheel units, gesture signs, tooltips and cursor rectangles** over overlapping views.
+13. **Teardown.** A view or window destroyed from inside one of its own callbacks is released on the next turn of the run loop. That does not cover a nested run loop: remove a list while dragging its scroller, close a window from a menu that is open.
+14. **Window drag** of an undecorated window starts from a mouse-dragged event (`performWindowDragWithEvent`): check that it starts.
+15. **Context menu choice** is read one turn after the menu closes: a choice that arrives later is reported as cancelled.
+16. **Animated `scrollTo`** uses an implicit animation; if it jumps instead, only the animation is lost.
+17. **A frame requested while the window is hidden or minimized** arrives when the window comes back (the display link of a view does not fire, macOS 14 and later).
 
 ### Known differences from the GTK backend
 
@@ -74,7 +79,8 @@ System:
 - A modal window with a parent is a sheet.
 - Links arrive through `application:openURLs:`, also the one that launched the application, so `Linking::listen()` receives it and `Linking::initial()` may be empty.
 - Battery, network and Low Power Mode are read with `pmset`, `route` and `networksetup`, at most every 10 seconds.
-- `Screen::secure()` is not implemented yet (the window sharing type).
+- `Screen::secure()` sets the sharing type of every window to none. Capture tools built on ScreenCaptureKit may still record the window on recent systems.
+- Reduce Motion is followed while the application runs; macOS has no system text scale for applications.
 
 ## Windows (`pam-desktop-win32`)
 
