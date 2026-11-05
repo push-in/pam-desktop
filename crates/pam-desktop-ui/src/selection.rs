@@ -119,13 +119,12 @@ impl TextSelection {
         let text = ctx.scene.plain_text(id).unwrap_or_default();
         let length = utf16_len(&text);
         let index = index.min(length);
-        if extend {
-            if let Some(selected) = self.selected.as_mut().filter(|selected| selected.id == id) {
+        if extend
+            && let Some(selected) = self.selected.as_mut().filter(|selected| selected.id == id) {
                 selected.granularity = Granularity::Character;
                 self.dragging = true;
                 return self.extend(ctx, index);
             }
-        }
         if self.node().is_some_and(|current| current != id) {
             self.clear(ctx);
         }

@@ -142,7 +142,7 @@ impl Shell {
         Rc::new(move |activation| match activation {
             Activation::Report(id) => events.push(BackendEvent::MenuAction { id }),
             Activation::Role(role) => {
-                let focus = window.as_ref().and_then(|window| gtk::prelude::GtkWindowExt::focus(window));
+                let focus = window.as_ref().and_then(gtk::prelude::GtkWindowExt::focus);
                 let edit = |action: &str| {
                     if let Some(focus) = &focus {
                         let _ = focus.activate_action(action, None);

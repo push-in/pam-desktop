@@ -1087,11 +1087,10 @@ impl Scene {
         }
         let pressable = node.is_pressable();
         let mut resolved = Accessibility::resolve(node.kind, node.props(), pressable);
-        if let Some(accessibility) = &mut resolved {
-            if pressable && accessibility.label.is_empty() && !node.is_text_bearing() && !accessibility.hidden {
+        if let Some(accessibility) = &mut resolved
+            && pressable && accessibility.label.is_empty() && !node.is_text_bearing() && !accessibility.hidden {
                 accessibility.label = self.descendant_text(id);
             }
-        }
         let fingerprint = resolved.as_ref().map_or(0, Accessibility::fingerprint);
         if fingerprint == node.pushed_accessibility {
             return 0;
@@ -1114,8 +1113,8 @@ impl Scene {
                 break;
             }
             let Some(node) = self.nodes.get(&current) else { continue };
-            if current != id {
-                if let Some(text) = node.is_text_bearing().then(|| node.props().text_or_empty(PropKey::Text)).filter(|text| !text.is_empty()) {
+            if current != id
+                && let Some(text) = node.is_text_bearing().then(|| node.props().text_or_empty(PropKey::Text)).filter(|text| !text.is_empty()) {
                     if !label.is_empty() {
                         label.push_str(", ");
                     }
@@ -1123,7 +1122,6 @@ impl Scene {
                     // Nested spans are part of the text already read.
                     continue;
                 }
-            }
             stack.extend(node.children.iter().rev());
         }
         label
@@ -1311,12 +1309,11 @@ impl Scene {
 
         // 2. New views, parents first (creation order is pre-order).
         for id in &touched {
-            if let Some(node) = self.nodes.get(id) {
-                if node.dirty.contains(Dirty::CREATED) {
+            if let Some(node) = self.nodes.get(id)
+                && node.dirty.contains(Dirty::CREATED) {
                     backend.create_view(*id, node.class);
                     commands += 1;
                 }
-            }
         }
 
         // 3. Paint state.
@@ -1378,23 +1375,21 @@ impl Scene {
                     commands += 1;
                 }
                 let has_tooltip = tooltip.is_some();
-                if cursor_changed || tooltip_changed {
-                    if let Some(node) = self.nodes.get_mut(id) {
+                if (cursor_changed || tooltip_changed)
+                    && let Some(node) = self.nodes.get_mut(id) {
                         node.pushed_cursor = cursor;
                         node.has_tooltip = has_tooltip;
                     }
-                }
             }
             if dirty.contains(Dirty::CONFIG) {
                 commands += self.push_accessibility(backend, *id);
             }
             if dirty.contains(Dirty::TEXT) {
                 // A pressable is named after the text inside it.
-                if let Some(ancestor) = self.unnamed_pressable_ancestor(*id) {
-                    if !relabel.contains(&ancestor) {
+                if let Some(ancestor) = self.unnamed_pressable_ancestor(*id)
+                    && !relabel.contains(&ancestor) {
                         relabel.push(ancestor);
                     }
-                }
             }
             let Some(node) = self.nodes.get(id) else { continue };
             if dirty.contains(Dirty::CONFIG) && node.class == ViewClass::Box {
@@ -1462,13 +1457,11 @@ impl Scene {
             if node.class == ViewClass::Scroll && !scrolls.contains(id) {
                 scrolls.push(*id);
             }
-            if node.dirty.contains(Dirty::FRAME) || node.dirty.contains(Dirty::CREATED) {
-                if let Some(parent) = self.nodes.get(&node.parent) {
-                    if parent.class == ViewClass::Scroll && !scrolls.contains(&parent.id) {
+            if (node.dirty.contains(Dirty::FRAME) || node.dirty.contains(Dirty::CREATED))
+                && let Some(parent) = self.nodes.get(&node.parent)
+                    && parent.class == ViewClass::Scroll && !scrolls.contains(&parent.id) {
                         scrolls.push(parent.id);
                     }
-                }
-            }
         }
         for id in scrolls {
             let Some(node) = self.nodes.get(&id) else { continue };

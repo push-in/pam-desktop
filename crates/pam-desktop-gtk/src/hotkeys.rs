@@ -157,11 +157,10 @@ fn x11_listen(shortcuts: Vec<(String, Accelerator)>, sender: async_channel::Send
         match connection.wait_for_event()? {
             Event::KeyPress(press) => {
                 let state = u16::from(press.state) & relevant;
-                if let Some((_, _, id)) = grabbed.iter().find(|(code, mask, _)| *code == press.detail && *mask == state) {
-                    if sender.send_blocking(id.clone()).is_err() {
+                if let Some((_, _, id)) = grabbed.iter().find(|(code, mask, _)| *code == press.detail && *mask == state)
+                    && sender.send_blocking(id.clone()).is_err() {
                         break;
                     }
-                }
             }
             // The message `Hotkeys::stop` sends, or anything else: re-check.
             _ => {}

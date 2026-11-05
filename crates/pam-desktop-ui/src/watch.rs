@@ -46,11 +46,10 @@ fn fingerprint_directory(directory: &Path, depth: usize, hasher: &mut DefaultHas
             let Ok(metadata) = entry.metadata() else { continue };
             name.hash(hasher);
             metadata.len().hash(hasher);
-            if let Ok(modified) = metadata.modified() {
-                if let Ok(elapsed) = modified.duration_since(UNIX_EPOCH) {
+            if let Ok(modified) = metadata.modified()
+                && let Ok(elapsed) = modified.duration_since(UNIX_EPOCH) {
                     elapsed.as_nanos().hash(hasher);
                 }
-            }
         }
     }
 }

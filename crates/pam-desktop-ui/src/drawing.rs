@@ -87,7 +87,7 @@ fn decode_strokes(json: &str) -> Vec<Stroke> {
         let Some(values) = entry.get("points").and_then(serde_json::Value::as_array) else { continue };
         let Some(numbers) = values.iter().map(|value| value.as_f64().filter(|number| number.is_finite())).collect::<Option<Vec<f64>>>() else { continue };
         let points: Vec<Point> =
-            numbers.chunks_exact(2).take(MAX_POINTS).map(|pair| Point::new((pair[0] as f32).clamp(0.0, 1.0), (pair[1] as f32).clamp(0.0, 1.0))).collect();
+            numbers.as_chunks::<2>().0.iter().take(MAX_POINTS).map(|pair| Point::new((pair[0] as f32).clamp(0.0, 1.0), (pair[1] as f32).clamp(0.0, 1.0))).collect();
         if points.is_empty() {
             continue;
         }
@@ -268,12 +268,11 @@ impl Drawings {
     /// The image under a sketch was decoded (or went away): strokes follow
     /// its aspect-fit rectangle.
     pub fn set_natural_size(&mut self, ctx: &mut Ctx<'_>, id: NodeId, natural: Option<Size>) {
-        if let Some(sketch) = self.sketches.get_mut(&id) {
-            if sketch.natural != natural {
+        if let Some(sketch) = self.sketches.get_mut(&id)
+            && sketch.natural != natural {
                 sketch.natural = natural;
                 self.paint(ctx, id);
             }
-        }
     }
 
     fn emit(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
@@ -343,14 +342,13 @@ impl Drawings {
                     self.capture = None;
                     self.sample(id, content, local);
                     let (color, width, erase) = Self::brush(ctx, id, content);
-                    if let Some(sketch) = self.sketches.get_mut(&id) {
-                        if let Some(points) = sketch.active.take() {
+                    if let Some(sketch) = self.sketches.get_mut(&id)
+                        && let Some(points) = sketch.active.take() {
                             sketch.strokes.push(Stroke { color, width, erase, points });
                             if sketch.strokes.len() > MAX_STROKES {
                                 sketch.strokes.remove(0);
                             }
                         }
-                    }
                     self.emit(ctx, id);
                     self.paint(ctx, id);
                 }

@@ -132,12 +132,11 @@ impl WireMap {
         if !valid_key(key) {
             return;
         }
-        if let WireValue::Float(number) = value {
-            if !number.is_finite() {
+        if let WireValue::Float(number) = value
+            && !number.is_finite() {
                 self.values.insert(key.to_owned(), WireValue::Float(0.0));
                 return;
             }
-        }
         self.values.insert(key.to_owned(), value);
     }
 

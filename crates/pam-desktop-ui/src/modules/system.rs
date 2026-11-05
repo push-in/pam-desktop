@@ -120,12 +120,11 @@ impl Device {
                 }
                 let status = device_status().encode();
                 for subscription in state.subscriptions.values_mut() {
-                    if subscription.delivered.as_deref() != Some(status.as_slice()) {
-                        if let Some(waiter) = subscription.waiter.take() {
+                    if subscription.delivered.as_deref() != Some(status.as_slice())
+                        && let Some(waiter) = subscription.waiter.take() {
                             subscription.delivered = Some(status.clone());
                             waiter.success(status.clone());
                         }
-                    }
                 }
                 state.subscriptions.values().map(|subscription| subscription.interval).min().unwrap_or(Duration::from_secs(1))
             };

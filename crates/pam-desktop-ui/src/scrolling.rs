@@ -425,11 +425,10 @@ impl Scrolling {
             }
         }
 
-        if let Some((wanted, glides, duration, easing)) = target {
-            if (wanted - offset_before).abs() > 0.01 {
+        if let Some((wanted, glides, duration, easing)) = target
+            && (wanted - offset_before).abs() > 0.01 {
                 Self::scroll_to(ctx, id, horizontal, wanted, glides, duration, easing);
             }
-        }
         self.after_offset(ctx, id);
     }
 
@@ -453,7 +452,7 @@ impl Scrolling {
                 (child.index, covered, start - origin, extent)
             })
             .collect();
-        rows.sort_by(|left, right| left.0.cmp(&right.0));
+        rows.sort_by_key(|left| left.0);
         rows
     }
 

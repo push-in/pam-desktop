@@ -34,7 +34,7 @@ pub fn navigation_allowed(allowed_hosts: &[String], url: &str) -> bool {
     if lower.starts_with("about:") || lower.starts_with("data:") {
         return true;
     }
-    host_of(&lower).is_some_and(|host| allowed_hosts.iter().any(|allowed| *allowed == host))
+    host_of(&lower).is_some_and(|host| allowed_hosts.contains(&host))
 }
 
 /// The lower-cased host of a URL, without credentials or port.

@@ -137,12 +137,11 @@ impl Windows {
 
     /// The user resized a secondary window.
     pub fn on_resized(&mut self, window: WindowId, size: Size) {
-        if let Some((id, surface)) = self.surfaces.iter_mut().find(|(_, surface)| surface.window == window) {
-            if surface.size != size {
+        if let Some((id, surface)) = self.surfaces.iter_mut().find(|(_, surface)| surface.window == window)
+            && surface.size != size {
                 surface.size = size;
                 self.resized.push((*id, Some(size)));
             }
-        }
     }
 
     /// The user asked to close a secondary window: the application decides.

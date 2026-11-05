@@ -209,11 +209,10 @@ impl Drag {
                     }
                 }
                 _ => {
-                    if let Some(index) = key.strip_prefix("settle.").and_then(|index| index.parse::<usize>().ok()) {
-                        if let Some(settle) = Settle::parse(value) {
+                    if let Some(index) = key.strip_prefix("settle.").and_then(|index| index.parse::<usize>().ok())
+                        && let Some(settle) = Settle::parse(value) {
                             drag.settles.push((index, settle));
                         }
-                    }
                 }
             }
         }
@@ -227,16 +226,14 @@ impl Drag {
 
     fn clamp(&self, raw: f32) -> f32 {
         let mut position = raw;
-        if let Some(max) = self.max {
-            if position > max {
+        if let Some(max) = self.max
+            && position > max {
                 position = max + (position - max) * self.rubber;
             }
-        }
-        if let Some(min) = self.min {
-            if position < min {
+        if let Some(min) = self.min
+            && position < min {
                 position = min + (position - min) * self.rubber;
             }
-        }
         position
     }
 
@@ -606,11 +603,10 @@ impl Gestures {
                     recognised: false,
                     pending: None,
                 });
-                if let Some(detector) = id.and_then(|id| self.detectors.get(&id)) {
-                    if detector.kind == Kind::LongPress {
+                if let Some(detector) = id.and_then(|id| self.detectors.get(&id))
+                    && detector.kind == Kind::LongPress {
                         ctx.timers.schedule(Timer::GestureHold, ctx.now_ms + detector.min_duration.max(1));
                     }
-                }
                 Outcome::Ignored
             }
             PointerPhase::Move => self.on_move(ctx, pointer.position),
@@ -747,15 +743,15 @@ impl Gestures {
 
     /// Sends the coalesced update of the gesture in progress.
     pub fn flush(&mut self, ctx: &mut Ctx<'_>) {
-        if let Some(active) = &mut self.active {
-            if let Some(update) = active.pending.take() {
+        if let Some(active) = &mut self.active
+            && let Some(update) = active.pending.take() {
                 ctx.emit_if(active.id, PropKey::OnGestureUpdate, event_kind::GESTURE_UPDATE, update);
             }
-        }
     }
 
     // ---- trackpad gestures -------------------------------------------------
 
+    #[allow(clippy::too_many_arguments)]
     fn continuous(&self, ctx: &Ctx<'_>, id: NodeId, kind: Kind, state: i64, position: Point, scale: f32, rotation: f32) -> Sample {
         let origin = ctx.scene.window_origin(id);
         Sample {

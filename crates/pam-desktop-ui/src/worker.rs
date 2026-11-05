@@ -174,11 +174,10 @@ impl Worker {
     }
 
     fn send(&mut self, message: Vec<u8>) {
-        if let Some(outbox) = &self.outbox {
-            if outbox.send(message).is_err() {
+        if let Some(outbox) = &self.outbox
+            && outbox.send(message).is_err() {
                 self.outbox = None;
             }
-        }
     }
 
     pub fn send_event(&mut self, node: u64, kind: u16, payload: &[u8]) {

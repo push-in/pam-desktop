@@ -515,7 +515,7 @@ impl<B: Backend> Runtime<B> {
                         _ => continue,
                     }
                 }
-                if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() {
+                if debug_enabled() {
                     eprintln!("event node={} kind={} payload={:?}", event.node, event.kind, String::from_utf8_lossy(&event.payload));
                 }
                 worker.send_event(event.node, event.kind, &event.payload);
@@ -642,11 +642,10 @@ impl<B: Backend> Runtime<B> {
             }
             Inbound::ModuleResult { generation, request, status, payload } => {
                 // Results asked by a worker that was reloaded away are stale.
-                if generation == self.generation {
-                    if let Some(worker) = &mut self.worker {
+                if generation == self.generation
+                    && let Some(worker) = &mut self.worker {
                         worker.send_module_result(request, status, &payload);
                     }
-                }
             }
             Inbound::Reload => self.reload(),
             Inbound::ContextMenuAction { node, id } => self.context_menu_chosen(node, &id),
@@ -825,7 +824,7 @@ impl<B: Backend> Runtime<B> {
                     }
                 };
                 self.scene.set_pointer_root(root);
-                if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() && pointer.phase != crate::backend::PointerPhase::Move {
+                if debug_enabled() && pointer.phase != crate::backend::PointerPhase::Move {
                     eprintln!("pointer {:?} at {:?} hit {:?}", pointer.phase, pointer.position, self.scene.hit_test(pointer.position));
                 }
                 if self.select_text(&pointer) {
@@ -1305,6 +1304,13 @@ fn new_engine<B: Backend>(metrics: &WindowMetrics, measure: &mut MeasureContext<
     engine
 }
 
+/// `PAM_DESKTOP_DEBUG=1` logs every pointer press and every event sent to
+/// PHP. Read once: the environment is not consulted per event.
+fn debug_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PAM_DESKTOP_DEBUG").is_some_and(|value| !value.is_empty() && value != "0"))
+}
+
 /// A one-paragraph description of an error report from PHP
 /// (`PAMERR1\n<json>` or a plain `Class: message`).
 fn describe_php_error(report: &str) -> String {
@@ -1387,11 +1393,10 @@ impl<B: Backend + 'static> Shared<B> {
         let shared = Rc::new(Self { runtime: RefCell::new(runtime) });
         let weak = Rc::downgrade(&shared);
         set_pump(Some(Rc::new(move || {
-            if let Some(shared) = weak.upgrade() {
-                if let Ok(mut runtime) = shared.runtime.try_borrow_mut() {
+            if let Some(shared) = weak.upgrade()
+                && let Ok(mut runtime) = shared.runtime.try_borrow_mut() {
                     runtime.drain();
                 }
-            }
         })));
         shared
     }

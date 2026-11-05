@@ -146,25 +146,63 @@ impl Registry {
     }
 }
 
-/// A background thread that runs jobs one at a time, in order: operations of
-/// a storage-like module complete in call order without blocking the UI.
+type Job = Box<dyn FnOnce() + Send>;
+
+/// How long a serial worker keeps its thread without work.
+const SERIAL_IDLE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Runs jobs one at a time, in order, off the UI thread: operations of a
+/// storage-like module complete in call order without blocking the UI.
+///
+/// The thread starts with the first job and exits after a while without
+/// work, so a module nobody uses costs nothing.
 pub struct SerialWorker {
-    jobs: Sender<Box<dyn FnOnce() + Send>>,
+    name: String,
+    /// The queue of the running thread; `None` while no thread exists.
+    jobs: std::sync::Arc<std::sync::Mutex<Option<Sender<Job>>>>,
 }
 
 impl SerialWorker {
     #[must_use]
     pub fn new(name: &str) -> Self {
-        let (jobs, receiver) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
-        let _ = thread::Builder::new().name(name.to_owned()).spawn(move || {
-            while let Ok(job) = receiver.recv() {
-                job();
-            }
-        });
-        Self { jobs }
+        Self { name: name.to_owned(), jobs: std::sync::Arc::new(std::sync::Mutex::new(None)) }
     }
 
     pub fn run(&self, job: impl FnOnce() + Send + 'static) {
-        let _ = self.jobs.send(Box::new(job));
+        let mut job: Job = Box::new(job);
+        // Senders and the exiting thread meet on this lock, so a job is
+        // never left in the queue of a thread that already decided to stop.
+        let Ok(mut slot) = self.jobs.lock() else { return };
+        if let Some(sender) = slot.as_ref() {
+            match sender.send(job) {
+                Ok(()) => return,
+                Err(mpsc::SendError(returned)) => job = returned,
+            }
+        }
+        let (sender, receiver) = mpsc::channel::<Job>();
+        if sender.send(job).is_err() {
+            return;
+        }
+        let jobs = std::sync::Arc::clone(&self.jobs);
+        let spawned = thread::Builder::new().name(self.name.clone()).spawn(move || loop {
+            match receiver.recv_timeout(SERIAL_IDLE) {
+                Ok(job) => job(),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let Ok(mut slot) = jobs.lock() else { return };
+                    match receiver.try_recv() {
+                        Ok(job) => {
+                            drop(slot);
+                            job();
+                        }
+                        Err(_) => {
+                            *slot = None;
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        *slot = spawned.is_ok().then_some(sender);
     }
 }

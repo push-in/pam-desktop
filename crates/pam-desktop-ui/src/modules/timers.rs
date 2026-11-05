@@ -33,6 +33,8 @@ struct Shared {
 
 pub struct Timers {
     shared: Arc<Shared>,
+    /// The waiting thread starts with the first timer.
+    started: bool,
 }
 
 impl Default for Timers {
@@ -44,10 +46,14 @@ impl Default for Timers {
 impl Timers {
     #[must_use]
     pub fn new() -> Self {
-        let shared = Arc::new(Shared { state: Mutex::new(State::default()), wake: Condvar::new() });
-        let worker = Arc::clone(&shared);
-        let _ = thread::Builder::new().name("pam-timers".into()).spawn(move || run(&worker));
-        Self { shared }
+        Self { shared: Arc::new(Shared { state: Mutex::new(State::default()), wake: Condvar::new() }), started: false }
+    }
+
+    fn start(&mut self) {
+        if !std::mem::replace(&mut self.started, true) {
+            let worker = Arc::clone(&self.shared);
+            self.started = thread::Builder::new().name("pam-timers".into()).spawn(move || run(&worker)).is_ok();
+        }
     }
 }
 
@@ -66,11 +72,10 @@ fn run(shared: &Shared) {
             }
             state.queue.pop();
             if let Some(pending) = state.pending.remove(&sequence) {
-                if let Some(timer) = pending.timer {
-                    if state.by_timer.get(&timer) == Some(&sequence) {
+                if let Some(timer) = pending.timer
+                    && state.by_timer.get(&timer) == Some(&sequence) {
                         state.by_timer.remove(&timer);
                     }
-                }
                 due.push(pending.reply);
             }
         }
@@ -107,6 +112,7 @@ impl Module for Timers {
             Ok(request) => request,
             Err(error) => return reply.failure(error),
         };
+        self.start();
         let Ok(mut state) = self.shared.state.lock() else { return reply.failure("Timers module is closed") };
         match method {
             "after" => {

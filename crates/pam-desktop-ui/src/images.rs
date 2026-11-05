@@ -474,13 +474,12 @@ impl Images {
         // Uncached and reloaded images are never shared with other nodes.
         let shared = matches!(policy, CachePolicy::Default | CachePolicy::ForceCache | CachePolicy::OnlyIfCached);
         let id = if shared { format!("{bucket}|{source}") } else { format!("{bucket}|{source}|{}", uuid()) };
-        if let Some(key) = self.index.get(&id).copied() {
-            if let Some(entry) = self.entries.get_mut(&key) {
+        if let Some(key) = self.index.get(&id).copied()
+            && let Some(entry) = self.entries.get_mut(&key) {
                 entry.users.push((node, slot));
                 self.idle.retain(|idle| *idle != key);
                 return key;
             }
-        }
         let key = self.next_key;
         self.next_key += 1;
         let cancel = Arc::new(AtomicBool::new(false));
@@ -582,11 +581,10 @@ impl Images {
     }
 
     fn forget(&mut self, key: ImageKey) {
-        if let Some(entry) = self.entries.remove(&key) {
-            if self.index.get(&entry.id) == Some(&key) {
+        if let Some(entry) = self.entries.remove(&key)
+            && self.index.get(&entry.id) == Some(&key) {
                 self.index.remove(&entry.id);
             }
-        }
         self.idle.retain(|idle| *idle != key);
     }
 
@@ -712,12 +710,11 @@ impl Images {
     /// Hides the poster of a media node while its video shows, and brings it
     /// back when the player goes away.
     pub fn set_suppressed(&mut self, ctx: &mut Ctx<'_>, id: NodeId, suppressed: bool) {
-        if let Some(node) = self.nodes.get_mut(&id) {
-            if node.suppressed != suppressed {
+        if let Some(node) = self.nodes.get_mut(&id)
+            && node.suppressed != suppressed {
                 node.suppressed = suppressed;
                 self.sync(ctx, id);
             }
-        }
     }
 
     /// Natural sizes of the pictures under freehand canvases that changed.

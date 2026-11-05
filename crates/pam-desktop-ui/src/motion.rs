@@ -665,12 +665,11 @@ impl Motion {
             }
             Change::Motion { id, property, previous } => self.transition(ctx, id, property, previous),
             Change::Frame(id) => {
-                if let Some(state) = self.nodes.get_mut(&id) {
-                    if state.shimmer.is_some() {
+                if let Some(state) = self.nodes.get_mut(&id)
+                    && state.shimmer.is_some() {
                         state.shimmers = true;
                         self.dirty = true;
                     }
-                }
             }
             Change::Children(_) => {}
         }

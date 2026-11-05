@@ -13,7 +13,7 @@ pub enum Format {
 }
 
 fn digits(text: &str) -> Vec<char> {
-    text.chars().filter(|character| character.is_numeric() && character.to_digit(10).is_some()).collect()
+    text.chars().filter(|character| character.is_numeric() && character.is_ascii_digit()).collect()
 }
 
 fn count_digits(text: &str) -> usize {
@@ -123,7 +123,7 @@ impl Format {
             let before: Vec<usize> = proposed[..caret]
                 .iter()
                 .enumerate()
-                .filter(|(_, character)| character.to_digit(10).is_some())
+                .filter(|(_, character)| character.is_ascii_digit())
                 .map(|(index, _)| index)
                 .collect();
             if let Some(index) = before.last() {
@@ -131,7 +131,7 @@ impl Format {
                 caret -= 1;
             }
         }
-        let digits_before = proposed[..caret.min(proposed.len())].iter().filter(|character| character.to_digit(10).is_some()).count();
+        let digits_before = proposed[..caret.min(proposed.len())].iter().filter(|character| character.is_ascii_digit()).count();
         let proposed: String = proposed.into_iter().collect();
         let formatted = self.format(&proposed);
         let length = formatted.chars().count();
@@ -145,7 +145,7 @@ impl Format {
                     let mut seen = 0;
                     let mut position = length;
                     for (index, character) in formatted.chars().enumerate() {
-                        if character.to_digit(10).is_some() {
+                        if character.is_ascii_digit() {
                             seen += 1;
                             if seen == digits_before {
                                 position = index + 1;

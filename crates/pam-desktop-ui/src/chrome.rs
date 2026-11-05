@@ -129,6 +129,7 @@ impl<'a, 'b, 'c> Builder<'a, 'b, 'c> {
     }
 
     /// A push button with a centered label.
+    #[allow(clippy::too_many_arguments)]
     pub fn button(&mut self, parent: NodeId, frame: Rect, label: &str, background: i64, color: i64, border: Option<i64>, command: u16) {
         let mut props = vec![
             (PropKey::Text, PropValue::String(label.to_owned())),

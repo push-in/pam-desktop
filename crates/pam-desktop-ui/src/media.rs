@@ -86,7 +86,7 @@ fn trim_cache(root: &Path, budget: u64) {
             Some((metadata.modified().ok()?, metadata.len(), entry.path()))
         })
         .collect();
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.sort_by_key(|file| std::cmp::Reverse(file.0));
     let mut total = 0_u64;
     for (index, (_, size, path)) in files.iter().enumerate() {
         total = total.saturating_add(*size);
@@ -209,6 +209,7 @@ pub struct Media {
     autoplay_dirty: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cache_event(ctx: &mut Ctx<'_>, id: NodeId, marker: PropKey, kind: u16, key: &str, loaded: u64, total: u64, disk: bool) {
     let number = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
     let payload = WireMap::new().with("key", key).with("loaded", number(loaded)).with("total", number(total)).with("disk", disk).encode();
@@ -720,12 +721,11 @@ impl Media {
     }
 
     fn arm_progress(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        if let Some(player) = self.players.get_mut(&id) {
-            if !player.progress_armed {
+        if let Some(player) = self.players.get_mut(&id)
+            && !player.progress_armed {
                 player.progress_armed = true;
                 ctx.timers.schedule(Timer::MediaProgress(id), ctx.now_ms + PROGRESS_INTERVAL_MS);
             }
-        }
     }
 
     /// Something the platform player did.

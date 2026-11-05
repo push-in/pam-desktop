@@ -292,11 +292,10 @@ impl GtkBackend {
                 Some(button) if button > 3 => return glib::Propagation::Proceed,
                 _ => PointerButton::Primary,
             };
-            if phase == PointerPhase::Down {
-                if let (Some(device), Some((x, y)), Some(press)) = (event.device(), event.position(), event.downcast_ref::<gdk::ButtonEvent>()) {
+            if phase == PointerPhase::Down
+                && let (Some(device), Some((x, y)), Some(press)) = (event.device(), event.position(), event.downcast_ref::<gdk::ButtonEvent>()) {
                     *last_press.borrow_mut() = Some((device, press.button() as i32, x, y, event.time()));
                 }
-            }
             let state = event.modifier_state();
             let click_count = match phase {
                 PointerPhase::Down => {
@@ -665,11 +664,10 @@ impl Backend for GtkBackend {
     }
 
     fn set_input_config(&mut self, id: NodeId, config: &InputConfig) {
-        if let Some(entry) = self.views.get_mut(&id) {
-            if let Some(input) = &mut entry.input {
+        if let Some(entry) = self.views.get_mut(&id)
+            && let Some(input) = &mut entry.input {
                 input.configure(config, &entry.container);
             }
-        }
     }
 
     fn set_input_text(&mut self, id: NodeId, text: &str, selection: Option<(u32, u32)>) {
@@ -802,9 +800,6 @@ impl Backend for GtkBackend {
     }
 
     fn set_scroll_content(&mut self, id: NodeId, size: Size) {
-        if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() {
-            eprintln!("scroll content {id} {size:?}");
-        }
         if let Some(entry) = self.views.get(&id) {
             entry.container.set_content_size(Some(size));
         }

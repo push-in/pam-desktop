@@ -213,12 +213,11 @@ impl Inputs {
                 self.apply_value(ctx, id);
             }
             let Some(input) = self.inputs.get_mut(&id) else { continue };
-            if std::mem::take(&mut input.selection_changed) {
-                if let Some((start, end)) = selection {
+            if std::mem::take(&mut input.selection_changed)
+                && let Some((start, end)) = selection {
                     let length = utf16_len(&input.text);
                     ctx.commands.push(HostCommand::InputSelection { id, start: start.min(length), end: end.min(length) });
                 }
-            }
             // AutoFocus waits until the field is actually on screen (a hidden
             // route or a closed modal becoming visible retries it).
             if !input.autofocused {
