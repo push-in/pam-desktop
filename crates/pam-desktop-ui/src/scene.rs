@@ -467,6 +467,8 @@ pub struct Scene {
     removed: Vec<NodeId>,
     changes: Vec<Change>,
     layer_overrides: IdMap<[LayerOverride; LAYER_SLOTS]>,
+    /// Text nodes whose text is painted by a copy the core moves (a marquee).
+    unpainted_text: IdMap<()>,
     motion: IdMap<MotionValues>,
     /// Properties that win over the node's own while resolving paint state.
     style_overlays: IdMap<[Option<PropMap>; STYLE_LAYERS]>,
@@ -568,6 +570,7 @@ impl Scene {
         self.touched.clear();
         self.removed.clear();
         self.layer_overrides.clear();
+        self.unpainted_text.clear();
         self.motion.clear();
         self.style_overlays.clear();
         self.scroll_offsets.clear();
@@ -691,6 +694,7 @@ impl Scene {
                 self.changes.push(Change::Removed(removed, node.kind));
             }
             self.layer_overrides.remove(&removed);
+            self.unpainted_text.remove(&removed);
             self.motion.remove(&removed);
             self.style_overlays.remove(&removed);
             self.scroll_offsets.remove(&removed);
@@ -843,6 +847,19 @@ impl Scene {
             self.layer_overrides.remove(&id);
         }
         self.touch(id, Dirty::LAYER);
+    }
+
+    /// Whether a text node paints its own text. It keeps the text for
+    /// everything else: its size, what is read out, what is selected.
+    pub fn set_text_painted(&mut self, id: NodeId, painted: bool) {
+        let changed = if painted {
+            self.unpainted_text.remove(&id).is_some()
+        } else {
+            self.unpainted_text.insert(id, ()).is_none()
+        };
+        if changed {
+            self.touch(id, Dirty::TEXT);
+        }
     }
 
     #[must_use]
@@ -1467,7 +1484,11 @@ impl Scene {
             };
             let props = self.overlaid(node);
             if dirty.contains(Dirty::TEXT) && node.is_text_bearing() {
-                let content = self.text_content(node, props);
+                let content = if self.unpainted_text.contains_key(id) {
+                    None
+                } else {
+                    self.text_content(node, props)
+                };
                 if content.is_some() || node.has_text {
                     backend.set_text(*id, content.as_ref());
                     commands += 1;

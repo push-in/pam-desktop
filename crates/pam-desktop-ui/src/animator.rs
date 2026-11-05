@@ -337,6 +337,8 @@ pub enum Owner {
     Toast,
     /// Shared elements flying between two routes.
     SharedFlight,
+    /// A line of text that does not fit, sliding to its other end.
+    Marquee(NodeId),
     /// A released bottom sheet returning to its snap point.
     SheetDrag(NodeId),
     /// A bar bound to a media player gliding to the new position.
@@ -363,6 +365,7 @@ impl Owner {
             | Self::MediaBar(id)
             | Self::SheetDrag(id)
             | Self::GesturePose(id)
+            | Self::Marquee(id)
             | Self::Image(id) => *id,
             // Host chrome belongs to no node of the application.
             Self::Toast | Self::SharedFlight => 0,
@@ -494,6 +497,8 @@ pub enum Timer {
     GestureHold,
     /// The wheel driving a pinch stopped.
     GestureIdle,
+    /// A sliding line of text rested long enough at one end.
+    Marquee(NodeId),
 }
 
 #[derive(Default)]

@@ -42,7 +42,7 @@ canvas|canvas|960x640|4|0|
 shell|shell|960x640|4|0|
 windows|windows|960x640|4|0|
 dragdrop|dragdrop|960x640|4|0|
-text|text|960x640|4|0|
+text|text|960x640|4|8000|
 modules|modules|960x640|4|4000|
 links|links|960x640|4|0|
 toast|toast|960x640|4|0|

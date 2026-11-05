@@ -63,6 +63,17 @@ Text::make($this->description)
 
 Text is laid out and drawn by the text engine of the operating system. `selectable()` lets the user select it with the pointer and copy it; see [Accessibility](accessibility.md#text-selection).
 
+A paragraph limited with `numberOfLines()` is cut with an ellipsis at its end. `ellipsize()` moves the ellipsis (`Head`, `Middle`), drops it (`Clip`), or makes one line that does not fit slide instead:
+
+```php
+Text::make($track)
+    ->numberOfLines(1)
+    ->ellipsize(TextEllipsizeMode::Marquee)
+    ->style(new Style(width: 340));
+```
+
+The line slides to its end at 30 units a second, rests, and slides back. The host moves it; PHP runs nothing. A line that fits stays still, and so does every line under reduced motion, which is cut like `Tail`. While it rests, is scrolled out of view or its window is hidden, nothing runs.
+
 `Text::rich()` builds one paragraph from several runs, each with its own style:
 
 ```php

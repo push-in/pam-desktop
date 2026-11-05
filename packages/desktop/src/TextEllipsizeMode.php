@@ -10,6 +10,10 @@ enum TextEllipsizeMode: int
     case Head = 2;
     case Middle = 3;
     case Clip = 4;
-    /** Single-line marquee ticker. Not implemented on desktop: renders as Tail. */
+    /**
+     * A line that does not fit slides to its end and back, resting at each
+     * end. For one line (`numberOfLines(1)`); cut like Tail under reduced
+     * motion.
+     */
     case Marquee = 5;
 }

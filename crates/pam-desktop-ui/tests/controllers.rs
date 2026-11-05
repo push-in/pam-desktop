@@ -1,12 +1,15 @@
 //! Controllers driven directly over a scene: what they emit to PHP and what
 //! they ask the host to do, without a backend or a worker.
 
+use pam_desktop_ui::animator::{Owner, Timer};
 use pam_desktop_ui::backend::{MAIN_WINDOW, PointerPhase};
 use pam_desktop_ui::context::{HostCommand, event_kind};
 use pam_desktop_ui::dragdrop::DragDrop;
-use pam_desktop_ui::geometry::{Point, Rect};
+use pam_desktop_ui::geometry::{Affine, Point, Rect};
 use pam_desktop_ui::gestures::{Gestures, Outcome};
+use pam_desktop_ui::marquee::Marquees;
 use pam_desktop_ui::observers::Observers;
+use pam_desktop_ui::scene::LayerSlot;
 use pam_desktop_ui::testing::Harness;
 use pam_desktop_ui::text::{TextBlock, TextMetrics};
 use pam_desktop_ui::toast::Toasts;
@@ -306,4 +309,91 @@ fn a_window_surface_opens_resizes_and_closes_a_native_window() {
     );
     windows.on_close_requested(&mut harness.ctx(), id);
     assert_eq!(harness.event_kinds(), vec![event_kind::MODAL_REQUEST_CLOSE]);
+}
+
+#[test]
+fn a_marquee_line_slides_only_when_it_does_not_fit() {
+    let line = |text: &str| {
+        vec![
+            (PropKey::Text, PropValue::String(text.into())),
+            (PropKey::NumberOfLines, PropValue::Integer(1)),
+            (PropKey::TextEllipsizeMode, PropValue::Integer(5)),
+        ]
+    };
+    // 50 characters are 350 wide here; the box is 200.
+    let long = line("A line that is much too long for the box it got...");
+    let short = line("Fits");
+    let mut harness = Harness::with_tree(&[
+        (
+            1,
+            0,
+            NodeKind::Column,
+            &[],
+            Rect::new(0.0, 0.0, 400.0, 300.0),
+        ),
+        (
+            2,
+            1,
+            NodeKind::Text,
+            &long,
+            Rect::new(10.0, 10.0, 200.0, 20.0),
+        ),
+        (
+            3,
+            1,
+            NodeKind::Text,
+            &short,
+            Rect::new(10.0, 40.0, 200.0, 20.0),
+        ),
+    ]);
+    let mut marquees = Marquees::default();
+    let mut measurer = measure;
+    harness.settle(|ctx, change| marquees.on_change(ctx, change));
+    let nodes = harness.scene.len();
+    marquees.evaluate(&mut harness.ctx(), &mut measurer);
+
+    // The long line got a clipping box with a copy in it; the short one nothing.
+    assert_eq!(harness.scene.len(), nodes + 2);
+    let clip = harness.scene.node(2).unwrap().children[0];
+    let copy = harness.scene.node(clip).unwrap().children[0];
+    assert_eq!(harness.scene.node(clip).unwrap().frame.width, 200.0);
+    assert!(harness.scene.node(copy).unwrap().frame.width > 350.0);
+    assert!(harness.scene.node(3).unwrap().children.is_empty());
+    assert!(harness.timers.is_pending(Timer::Marquee(2)));
+    assert!(
+        harness.animator.is_idle(),
+        "nothing moves while the line rests"
+    );
+
+    // After the rest it slides by what does not fit, at 30 units a second.
+    harness.now_ms = 1200;
+    for timer in harness.timers.take_due(1200) {
+        if let Timer::Marquee(id) = timer {
+            marquees.on_timer(&mut harness.ctx(), id);
+        }
+    }
+    assert!(harness.animator.is_running(Owner::Marquee(2)));
+    harness.now_ms = 1200 + 5000 + 16;
+    for sample in harness.animator.tick(harness.now_ms) {
+        marquees.on_sample(&mut harness.ctx(), 2, sample.value, sample.finished);
+    }
+    assert_eq!(
+        harness
+            .scene
+            .layer_override(copy, LayerSlot::Presenter)
+            .transform,
+        Affine::translation(-150.0, 0.0)
+    );
+    // It rests again at the end, with nothing running.
+    assert!(harness.animator.is_idle());
+    assert!(harness.timers.is_pending(Timer::Marquee(2)));
+
+    // A text that fits paints itself again.
+    harness
+        .scene
+        .set_prop(2, PropKey::Text, Some(PropValue::String("Short".into())));
+    harness.settle(|ctx, change| marquees.on_change(ctx, change));
+    marquees.evaluate(&mut harness.ctx(), &mut measurer);
+    assert_eq!(harness.scene.len(), nodes);
+    assert!(!harness.timers.is_pending(Timer::Marquee(2)));
 }

@@ -21,6 +21,7 @@ pub mod images;
 pub mod input_format;
 pub mod inputs;
 pub mod interaction;
+pub mod marquee;
 pub mod media;
 pub mod modules;
 pub mod motion;

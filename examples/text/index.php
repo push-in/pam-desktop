@@ -61,6 +61,11 @@ final class Paragraphs extends Component
                 });
             }),
             Text::make($this->clipboard)->style(new Style(fontSize: 14, textColor: 0xFF12B76A)),
+            // One line that does not fit: it slides to its end and back.
+            Text::make('Now playing · A line too long for its box slides to its end and back, resting on each side · PAM Desktop')
+                ->numberOfLines(1)
+                ->ellipsize(\Pam\Desktop\TextEllipsizeMode::Marquee)
+                ->style(new Style(width: 340, fontSize: 14, textColor: 0xFFFFFFFF, backgroundColor: 0xFF12161C, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10)),
         )->style(new Style(flexGrow: 1, padding: 28, gap: 14, backgroundColor: 0xFFF7F8FA));
     }
 }

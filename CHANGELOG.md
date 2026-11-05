@@ -70,6 +70,8 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
 - Stack navigation transitions, modal and bottom sheet presentation.
 - Shared element transitions between routes, for images and for any other
   element.
+- `TextEllipsizeMode::Marquee`: a line that does not fit slides to its end
+  and back.
 
 ### Images, media, web and canvas
 

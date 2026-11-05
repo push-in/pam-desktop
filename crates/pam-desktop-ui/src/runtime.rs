@@ -299,6 +299,7 @@ pub struct Runtime<B: Backend> {
     headers: crate::presenter::header::Headers,
     windows: crate::windows::Windows,
     text_layouts: crate::textlayout::TextLayouts,
+    marquees: crate::marquee::Marquees,
     shared_elements: crate::presenter::shared::SharedElements,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
@@ -512,6 +513,7 @@ impl<B: Backend> Runtime<B> {
             headers: crate::presenter::header::Headers::default(),
             windows: crate::windows::Windows::default(),
             text_layouts: crate::textlayout::TextLayouts::default(),
+            marquees: crate::marquee::Marquees::default(),
             shared_elements: crate::presenter::shared::SharedElements::default(),
             modules,
             directories,
@@ -722,6 +724,7 @@ impl<B: Backend> Runtime<B> {
                 self.gestures.on_change(&mut ctx, change);
                 self.windows.on_change(&mut ctx, change);
                 self.text_layouts.on_change(&mut ctx, change);
+                self.marquees.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             if let Some((outgoing, incoming, pop, duration)) = self.navigation.take_started() {
@@ -760,6 +763,7 @@ impl<B: Backend> Runtime<B> {
             self.coverage.evaluate(&mut ctx);
             self.observers.evaluate(&mut ctx);
             self.text_layouts.evaluate(&mut ctx, &mut measure);
+            self.marquees.evaluate(&mut ctx, &mut measure);
         }
         if flights_changed {
             self.update_host_overlays();
@@ -1229,6 +1233,7 @@ impl<B: Backend> Runtime<B> {
                 for timer in due {
                     match timer {
                         Timer::InputDebounce(id) => self.inputs.on_timer(&mut ctx, id),
+                        Timer::Marquee(id) => self.marquees.on_timer(&mut ctx, id),
                         Timer::WebViewTimeout(id) => self.web_views.on_timer(&mut ctx, id),
                         Timer::ErrorRecovery => recover = true,
                         Timer::ToastDismiss => toast_changed |= self.toasts.dismiss(&mut ctx),
@@ -1409,6 +1414,10 @@ impl<B: Backend> Runtime<B> {
                 Owner::GesturePose(id) => {
                     self.gestures
                         .on_pose_sample(&mut ctx, id, sample.value, sample.finished)
+                }
+                Owner::Marquee(id) => {
+                    self.marquees
+                        .on_sample(&mut ctx, id, sample.value, sample.finished)
                 }
                 Owner::SharedFlight => {
                     toast_changed |=
