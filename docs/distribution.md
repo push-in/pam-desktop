@@ -190,7 +190,10 @@ and macOS it is a shell script that resolves links to itself; PHP's own
 libraries and configuration are set by `bin/pam-desktop-php`, for the PHP
 process alone. On Windows the launcher is the host under the name of the
 application: started from `bin` of a bundle under a name other than
-`pam-desktop`, the host runs the bundle.
+`pam-desktop`, the host runs the bundle. The build writes the icon of the
+application into that copy, at 16, 32, 48 and 256 pixels, before anything is
+signed. The icon is made from a PNG: with an SVG icon, or none, the launcher
+has no icon of its own and the build says so in a note.
 
 **The system provides the desktop platform.** On Linux the host uses the GTK 4
 of the machine it runs on, with its GStreamer, and WebKitGTK 6 for the

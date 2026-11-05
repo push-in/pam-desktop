@@ -47,7 +47,7 @@ keyring = { version = "3.6", default-features = false, features = ["apple-native
 [target.'cfg(target_os = "windows")'.dependencies]
 # By path for the same reason as the GTK backend below.
 pam-desktop-win32 = { path = "../pam-desktop-win32", default-features = false }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_LibraryLoader"] }
 ureq = { version = "3.5", default-features = false, features = ["native-tls"] }
 keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
 

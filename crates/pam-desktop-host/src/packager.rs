@@ -249,6 +249,7 @@ fn build_with(options: &BuildOptions, toolchain: &Toolchain) -> Result<BuildResu
         host: &host,
         runtime: &runtime,
         output: &output,
+        workspace: &workspace.path,
         sign: options.sign,
     };
     let Materialized { system, notes } = materialize_bundle(&context, &bundle)?;
@@ -1021,6 +1022,8 @@ struct BundleContext<'a> {
     host: &'a Path,
     runtime: &'a PhpRuntime,
     output: &'a Path,
+    /// Scratch space of the build, removed when it ends.
+    workspace: &'a Path,
     sign: bool,
 }
 
@@ -1059,7 +1062,7 @@ fn materialize_bundle(context: &BundleContext<'_>, bundle: &Path) -> Result<Mate
     // Decided on the files that are shipped, not on the whole project.
     let (runtime, note) = context.runtime.for_application(&app);
     let runtime = &runtime;
-    let notes: Vec<String> = note.into_iter().collect();
+    let mut notes: Vec<String> = note.into_iter().collect();
 
     let exe = std::env::consts::EXE_SUFFIX;
     copy_binary(context.host, &bin.join(format!("pam-desktop{exe}")))?;
@@ -1108,6 +1111,13 @@ fn materialize_bundle(context: &BundleContext<'_>, bundle: &Path) -> Result<Mate
         // A script cannot be the executable of a desktop application there:
         // the host, started under the application's name, launches the bundle.
         copy_binary(context.host, &launcher)?;
+        // Before anything is signed: a resource written later would break
+        // the signature.
+        notes.extend(set_launcher_icon(
+            &launcher,
+            context.icon,
+            context.workspace,
+        )?);
     } else {
         write_script(&bin.join(PHP_WRAPPER), &php_wrapper(runtime)?)?;
         write_script(&launcher, &launcher_script(&bundled_project_path)?)?;
@@ -2447,18 +2457,93 @@ fn create_msix_package(package: &PackageContext<'_>, output: &Path) -> Result<()
 }
 
 fn create_windows_assets(icon: &Path, assets: &Path) -> Result<(), String> {
+    render_windows_icons(
+        icon,
+        assets,
+        &[
+            ("StoreLogo.png", 50),
+            ("Square44x44Logo.png", 44),
+            ("Square150x150Logo.png", 150),
+        ],
+    )
+}
+
+/// The PowerShell command that draws the PNG named by `PAM_ICON_SOURCE`
+/// at each size of `renditions` (file name, pixels), into the directory
+/// named by `PAM_ICON_OUTPUT`. Two renditions at least: PowerShell
+/// flattens a list of one pair. The bicubic filter averages the source,
+/// so an icon reduced to 16 pixels is not a handful of its pixels.
+fn windows_icon_script(renditions: &[(&str, u32)]) -> String {
+    let list = renditions
+        .iter()
+        .map(|(name, size)| format!("@('{name}',{size})"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "Add-Type -AssemblyName System.Drawing; $source=[System.Drawing.Image]::FromFile($env:PAM_ICON_SOURCE); foreach($asset in @({list})){{$bitmap=New-Object System.Drawing.Bitmap($asset[1],$asset[1]);$graphics=[System.Drawing.Graphics]::FromImage($bitmap);$graphics.InterpolationMode=[System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic;$graphics.DrawImage($source,0,0,$asset[1],$asset[1]);$bitmap.Save((Join-Path $env:PAM_ICON_OUTPUT $asset[0]),[System.Drawing.Imaging.ImageFormat]::Png);$graphics.Dispose();$bitmap.Dispose()}};$source.Dispose()"
+    )
+}
+
+/// Renders a PNG icon at other sizes with the imaging of .NET, which every
+/// Windows has.
+fn render_windows_icons(
+    icon: &Path,
+    output: &Path,
+    renditions: &[(&str, u32)],
+) -> Result<(), String> {
     run_tool(
         Command::new("powershell.exe")
             .args([
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                "Add-Type -AssemblyName System.Drawing; $source=[System.Drawing.Image]::FromFile($env:PAM_ICON_SOURCE); foreach($asset in @(@('StoreLogo.png',50),@('Square44x44Logo.png',44),@('Square150x150Logo.png',150))){$bitmap=New-Object System.Drawing.Bitmap($asset[1],$asset[1]);$graphics=[System.Drawing.Graphics]::FromImage($bitmap);$graphics.DrawImage($source,0,0,$asset[1],$asset[1]);$bitmap.Save((Join-Path $env:PAM_ICON_OUTPUT $asset[0]),[System.Drawing.Imaging.ImageFormat]::Png);$graphics.Dispose();$bitmap.Dispose()};$source.Dispose()",
+                &windows_icon_script(renditions),
             ])
             .env("PAM_ICON_SOURCE", icon)
-            .env("PAM_ICON_OUTPUT", assets),
+            .env("PAM_ICON_OUTPUT", output),
         "the Windows icon renderer",
     )
+}
+
+/// The images of a launcher's icon, in pixels: lists and title bars, the
+/// taskbar, large icons and tiles.
+const LAUNCHER_ICON_SIZES: [(&str, u32); 4] = [
+    ("16.png", 16),
+    ("32.png", 32),
+    ("48.png", 48),
+    ("256.png", 256),
+];
+
+/// Gives the Windows launcher the icon of the application; as a copy of
+/// the host it would show the host's. Returns a note when the icon cannot
+/// be made: only a PNG is rendered there.
+fn set_launcher_icon(
+    launcher: &Path,
+    icon: &Path,
+    workspace: &Path,
+) -> Result<Option<String>, String> {
+    if icon_extension(icon)? != "png" {
+        return Ok(Some(
+            "the launcher has no icon of its own: on Windows it is made from a PNG application icon (`icon` in the manifest)"
+                .to_owned(),
+        ));
+    }
+    let rendered = workspace.join("launcher-icon");
+    fs::create_dir_all(&rendered)
+        .map_err(|error| format!("cannot create {}: {error}", rendered.display()))?;
+    render_windows_icons(icon, &rendered, &LAUNCHER_ICON_SIZES)?;
+    let images = LAUNCHER_ICON_SIZES
+        .iter()
+        .map(|(name, _)| {
+            let path = rendered.join(name);
+            fs::read(&path).map_err(|error| {
+                format!("cannot read the rendered icon {}: {error}", path.display())
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let resources = crate::launcher_icon::icon_resources(&images)?;
+    crate::launcher_icon::write(launcher, &resources)?;
+    Ok(None)
 }
 
 fn windows_architecture(architecture: &str) -> &str {
@@ -3108,6 +3193,26 @@ mod tests {
         assert!(excluded_path(Path::new("notes.md"), &configured));
         assert!(!excluded_path(Path::new("storage/cache-warm"), &configured));
         assert!(!excluded_path(Path::new("storage/data"), &configured));
+    }
+
+    #[test]
+    fn the_icon_renderer_draws_every_rendition() {
+        let script = windows_icon_script(&[("StoreLogo.png", 50), ("16.png", 16)]);
+        assert!(
+            script.contains("foreach($asset in @(@('StoreLogo.png',50),@('16.png',16))){$bitmap=")
+        );
+        assert!(script.ends_with("$bitmap.Dispose()};$source.Dispose()"));
+    }
+
+    #[test]
+    fn a_launcher_icon_is_only_made_from_a_png() {
+        let note = set_launcher_icon(
+            Path::new("bin/hello.exe"),
+            Path::new("icon.svg"),
+            Path::new("workspace"),
+        )
+        .unwrap();
+        assert!(note.is_some_and(|note| note.contains("PNG")));
     }
 
     #[test]

@@ -9,6 +9,7 @@
 mod bundle;
 mod console;
 mod http_client;
+mod launcher_icon;
 mod manifest;
 mod modules;
 mod packager;
