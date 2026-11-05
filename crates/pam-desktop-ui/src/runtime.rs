@@ -262,6 +262,7 @@ pub struct Runtime<B: Backend> {
     observers: crate::observers::Observers,
     gestures: crate::gestures::Gestures,
     headers: crate::presenter::header::Headers,
+    windows: crate::windows::Windows,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
     pub(crate) shell: Shell,
@@ -413,6 +414,7 @@ impl<B: Backend> Runtime<B> {
             observers: crate::observers::Observers::default(),
             gestures: crate::gestures::Gestures::default(),
             headers: crate::presenter::header::Headers::default(),
+            windows: crate::windows::Windows::default(),
             modules,
             directories,
             shell: Shell::default(),
@@ -498,6 +500,9 @@ impl<B: Backend> Runtime<B> {
                 HostCommand::SetTextSelection { id, range } => self.backend.set_text_selection(id, range),
                 HostCommand::BeginTextDrag { source, text } => self.backend.begin_text_drag(MAIN_WINDOW, source, &text),
                 HostCommand::SetMedia { id, state } => self.backend.set_media(id, &state),
+                HostCommand::OpenWindow { window, config } => self.backend.open_window(window, &config),
+                HostCommand::SetWindowRoot { window, root } => self.backend.set_window_root(window, root),
+                HostCommand::CloseWindow(window) => self.backend.close_window(window),
                 HostCommand::SetWebView { id, state } => self.backend.set_web_view(id, &state),
             }
         }
@@ -568,6 +573,7 @@ impl<B: Backend> Runtime<B> {
                 self.selection.on_change(&mut ctx, change);
                 self.observers.on_change(&mut ctx, change);
                 self.gestures.on_change(&mut ctx, change);
+                self.windows.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             self.headers.after_commit(&mut ctx, self.metrics.dark);
@@ -583,6 +589,7 @@ impl<B: Backend> Runtime<B> {
                 self.drawings.set_natural_size(&mut ctx, id, size);
             }
             self.gestures.after_commit(&mut ctx);
+            self.windows.after_commit(&mut ctx);
             self.web_views.after_commit(&mut ctx);
             self.media.after_commit(&mut ctx);
             for (id, hidden) in self.media.take_poster_changes() {
@@ -592,9 +599,16 @@ impl<B: Backend> Runtime<B> {
             self.observers.invalidate();
             self.inputs.retry_autofocus();
         }
-        let mut ctx = ctx!(self);
-        self.coverage.evaluate(&mut ctx);
-        self.observers.evaluate(&mut ctx);
+        {
+            let mut ctx = ctx!(self);
+            self.coverage.evaluate(&mut ctx);
+            self.observers.evaluate(&mut ctx);
+        }
+        // A window that opened or changed size lays its surface out again.
+        if self.windows.has_resized() {
+            self.apply_surface_sizes();
+            self.settle();
+        }
     }
 
     fn handle_inbound(&mut self, item: Inbound) {
@@ -712,6 +726,22 @@ impl<B: Backend> Runtime<B> {
         self.scene.set_host_overlays(overlays);
     }
 
+    /// Tells the engine the size of every surface shown in its own window
+    /// and lays the tree out again when one changed.
+    fn apply_surface_sizes(&mut self) {
+        let resized = self.windows.take_resized();
+        if resized.is_empty() {
+            return;
+        }
+        let mut changed = false;
+        for (surface, size) in resized {
+            changed |= pam_desktop_engine::set_surface_size(surface, size.map(|size| (size.width, size.height)));
+        }
+        if changed {
+            self.relayout();
+        }
+    }
+
     fn commit(&mut self, frame: &[u8]) {
         if self.error_overlay.frame_committed() {
             self.refresh_error_overlay();
@@ -779,11 +809,22 @@ impl<B: Backend> Runtime<B> {
     }
 
     fn handle_backend_event(&mut self, event: BackendEvent) {
+        if !matches!(event, BackendEvent::Pointer(_)) {
+            // Only pointer events of a secondary window resolve in its tree.
+            self.scene.set_pointer_root(None);
+        }
         match event {
             BackendEvent::Pointer(pointer) => {
-                if pointer.window != MAIN_WINDOW {
-                    return;
-                }
+                // A secondary window holds the tree of its own surface.
+                let root = if pointer.window == MAIN_WINDOW {
+                    None
+                } else {
+                    match self.windows.root_of(pointer.window) {
+                        Some(root) => Some(root),
+                        None => return,
+                    }
+                };
+                self.scene.set_pointer_root(root);
                 if std::env::var_os("PAM_DESKTOP_DEBUG").is_some() && pointer.phase != crate::backend::PointerPhase::Move {
                     eprintln!("pointer {:?} at {:?} hit {:?}", pointer.phase, pointer.position, self.scene.hit_test(pointer.position));
                 }
@@ -830,7 +871,7 @@ impl<B: Backend> Runtime<B> {
                     self.run_action(action);
                 }
                 if pointer.phase == crate::backend::PointerPhase::Up && pointer.button == crate::backend::PointerButton::Secondary {
-                    self.open_context_menu(pointer.position);
+                    self.open_context_menu(pointer.window, pointer.position);
                 }
             }
             BackendEvent::Key(key) => self.handle_key(&key),
@@ -867,10 +908,16 @@ impl<B: Backend> Runtime<B> {
                     self.refresh_error_overlay();
                 }
             }
-            BackendEvent::WindowResized { .. } => {}
+            BackendEvent::WindowResized { window, size, .. } => {
+                self.windows.on_resized(window, size);
+                self.apply_surface_sizes();
+            }
             BackendEvent::WindowCloseRequested { window } => {
                 if window == MAIN_WINDOW {
                     self.close_requested();
+                } else {
+                    let mut ctx = ctx!(self);
+                    self.windows.on_close_requested(&mut ctx, window);
                 }
             }
             BackendEvent::MenuAction { id } => self.shell.emit("menu", &id, "{}"),
@@ -1176,7 +1223,7 @@ impl<B: Backend> Runtime<B> {
     }
 
     fn handle_key(&mut self, key: &KeyEvent) {
-        if key.window != MAIN_WINDOW {
+        if key.window != MAIN_WINDOW && self.windows.root_of(key.window).is_none() {
             return;
         }
         if key.pressed && !key.repeat && self.selection_key(key) {

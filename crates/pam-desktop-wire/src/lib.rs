@@ -30,7 +30,7 @@ pub const EXTENSION_BASE: u16 = 1001;
 /// Identifiers that exist only in PAM Desktop start here.
 pub const DESKTOP_BASE: u16 = 2001;
 /// Highest property and event identifiers of the desktop table.
-pub const DESKTOP_PROPERTY_CEILING: u16 = 2009;
+pub const DESKTOP_PROPERTY_CEILING: u16 = 2016;
 pub const DESKTOP_EVENT_CEILING: u16 = 2005;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -756,6 +756,13 @@ pub enum PropKey {
     OnKeyDown = 2007,
     OnKeyUp = 2008,
     OnFilesDrop = 2009,
+    WindowSurface = 2010,
+    WindowWidth = 2011,
+    WindowHeight = 2012,
+    WindowResizable = 2013,
+    WindowModal = 2014,
+    WindowMinWidth = 2015,
+    WindowMinHeight = 2016,
 }
 
 impl TryFrom<u16> for PropKey {
@@ -1326,6 +1333,13 @@ impl TryFrom<u16> for PropKey {
             2007 => Ok(Self::OnKeyDown),
             2008 => Ok(Self::OnKeyUp),
             2009 => Ok(Self::OnFilesDrop),
+            2010 => Ok(Self::WindowSurface),
+            2011 => Ok(Self::WindowWidth),
+            2012 => Ok(Self::WindowHeight),
+            2013 => Ok(Self::WindowResizable),
+            2014 => Ok(Self::WindowModal),
+            2015 => Ok(Self::WindowMinWidth),
+            2016 => Ok(Self::WindowMinHeight),
             other => Err(ProtocolError::UnknownProperty(other)),
         }
     }

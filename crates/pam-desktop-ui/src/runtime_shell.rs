@@ -288,7 +288,7 @@ impl<B: Backend> Runtime<B> {
     }
 
     /// A secondary click: opens the node's context menu, if it has one.
-    pub(crate) fn open_context_menu(&mut self, position: Point) {
+    pub(crate) fn open_context_menu(&mut self, window: crate::backend::WindowId, position: Point) {
         let Some(hit) = self.scene.hit_test(position) else { return };
         // The nearest node at or above the click that declares a menu.
         let mut current = hit;
@@ -308,7 +308,7 @@ impl<B: Backend> Runtime<B> {
         }
         let inbox = std::sync::Arc::clone(&self.inbox);
         self.backend.popup_menu(
-            MAIN_WINDOW,
+            window,
             position,
             &menu,
             Box::new(move |choice| {

@@ -40,6 +40,7 @@ pub mod text;
 pub mod toast;
 pub mod watch;
 pub mod webview;
+pub mod windows;
 pub mod wiremap;
 pub mod worker;
 

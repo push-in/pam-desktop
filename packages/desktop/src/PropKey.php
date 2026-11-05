@@ -575,4 +575,11 @@ enum PropKey: int
     case OnKeyDown = 2007;
     case OnKeyUp = 2008;
     case OnFilesDrop = 2009;
+    case WindowSurface = 2010;
+    case WindowWidth = 2011;
+    case WindowHeight = 2012;
+    case WindowResizable = 2013;
+    case WindowModal = 2014;
+    case WindowMinWidth = 2015;
+    case WindowMinHeight = 2016;
 }

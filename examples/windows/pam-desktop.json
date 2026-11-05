@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.windows",
+    "name": "PAM Desktop windows",
+    "entry": "index.php",
+    "window": {
+        "width": 560,
+        "height": 380
+    }
+}

@@ -122,6 +122,9 @@ pub enum HostCommand {
     /// Starts a system drag of text from the press being handled.
     BeginTextDrag { source: NodeId, text: String },
     SetMedia { id: NodeId, state: Box<crate::backend::MediaState> },
+    OpenWindow { window: crate::backend::WindowId, config: Box<crate::backend::WindowConfig> },
+    SetWindowRoot { window: crate::backend::WindowId, root: Option<NodeId> },
+    CloseWindow(crate::backend::WindowId),
     SetWebView { id: NodeId, state: Box<crate::backend::WebViewState> },
 }
 

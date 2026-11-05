@@ -336,12 +336,25 @@ impl Backend for GtkBackend {
         if let Some(entry) = self.windows.get(&window) {
             entry.window.set_title(Some(&config.title));
             entry.window.set_resizable(config.resizable);
+            entry.window.set_modal(config.modal);
+            // A new size from the application resizes a secondary window.
+            if window != pam_desktop_ui::backend::MAIN_WINDOW && entry.size.get() != config.size {
+                entry.window.set_default_size(config.size.width.round() as i32, config.size.height.round() as i32);
+            }
             return;
         }
         let native = gtk::ApplicationWindow::new(&self.application);
         native.set_title(Some(&config.title));
         native.set_default_size(config.size.width.round() as i32, config.size.height.round() as i32);
         native.set_resizable(config.resizable);
+        native.set_decorated(config.decorated);
+        // The menu bar belongs to the main window.
+        native.set_show_menubar(window == pam_desktop_ui::backend::MAIN_WINDOW);
+        if let Some(parent) = config.parent.and_then(|parent| self.windows.get(&parent)) {
+            native.set_transient_for(Some(&parent.window));
+            native.set_destroy_with_parent(true);
+            native.set_modal(config.modal);
+        }
         if let Some(minimum) = config.min_size {
             native.set_size_request(minimum.width.round() as i32, minimum.height.round() as i32);
         }

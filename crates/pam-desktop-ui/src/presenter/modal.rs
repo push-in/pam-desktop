@@ -62,6 +62,8 @@ fn content_of(ctx: &Ctx<'_>, modal: NodeId) -> Option<NodeId> {
 impl Modals {
     pub fn on_change(&mut self, ctx: &mut Ctx<'_>, change: Change) {
         match change {
+            // A modal marked as a window is shown by the window controller.
+            Change::Created(id, NodeKind::Modal) if ctx.scene.node(id).is_some_and(|node| node.handles(PropKey::WindowSurface)) => {}
             Change::Created(id, NodeKind::Modal) => {
                 self.modals.insert(
                     id,

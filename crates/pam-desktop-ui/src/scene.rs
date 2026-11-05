@@ -441,6 +441,11 @@ pub struct Scene {
     /// Host chrome above everything (error reports, toasts): parentless
     /// synthetic nodes placed by their own frame.
     host_overlays: Vec<NodeId>,
+    /// Modal nodes shown as the root of a window of their own.
+    window_roots: Vec<NodeId>,
+    /// The window root pointer events are being resolved in; `None` is the
+    /// main window.
+    pointer_root: Option<NodeId>,
     overlays_dirty: bool,
     next_synthetic: u64,
     pub environment: Environment,
@@ -533,6 +538,8 @@ impl Scene {
         self.scroll_offsets.clear();
         self.overlays.clear();
         self.host_overlays.clear();
+        self.window_roots.clear();
+        self.pointer_root = None;
         self.overlays_dirty = false;
         self.root = 0;
         self.root_dirty = false;
@@ -863,6 +870,17 @@ impl Scene {
         &self.overlays
     }
 
+    /// The modal nodes presented as roots of windows of their own.
+    pub fn set_window_roots(&mut self, roots: Vec<NodeId>) {
+        self.window_roots = roots;
+    }
+
+    /// Resolves the pointer in the window whose root is `root` (`None` for
+    /// the main window) until told otherwise.
+    pub fn set_pointer_root(&mut self, root: Option<NodeId>) {
+        self.pointer_root = root.filter(|root| self.nodes.contains_key(root));
+    }
+
     /// Replaces the host chrome shown above the application and its modals,
     /// back to front. Unlike modals these only take the pointer inside
     /// their own frame.
@@ -939,7 +957,7 @@ impl Scene {
                 return false;
             }
             if node.kind == NodeKind::Modal {
-                return self.overlays.contains(&current);
+                return self.overlays.contains(&current) || self.window_roots.contains(&current);
             }
             if node.parent == 0 {
                 return true;
@@ -1002,6 +1020,10 @@ impl Scene {
     /// presented modal takes every hit: nothing below it is reachable.
     #[must_use]
     pub fn hit_test(&self, point: Point) -> Option<NodeId> {
+        // A secondary window only holds its own tree.
+        if let Some(root) = self.pointer_root {
+            return self.hit_test_node(root, point);
+        }
         for overlay in self.host_overlays.iter().rev() {
             if let Some(hit) = self.hit_test_node(*overlay, point) {
                 return Some(hit);
