@@ -11,9 +11,13 @@ repository.workspace = true
 pam-desktop-ui.workspace = true
 gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
 webkit = { package = "webkit6", version = "0.6", optional = true }
+ksni = { version = "0.3", default-features = false, features = ["async-io", "blocking"], optional = true }
+async-channel = { version = "2", optional = true }
 
 [features]
-default = ["webview"]
+default = ["webview", "tray"]
+# The tray icon, as a StatusNotifierItem on the session bus.
+tray = ["dep:ksni", "dep:async-channel"]
 # Embedded web pages through WebKitGTK 6 (libwebkitgtk-6.0).
 webview = ["dep:webkit"]
 

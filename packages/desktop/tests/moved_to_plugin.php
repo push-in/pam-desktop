@@ -5,8 +5,8 @@ declare(strict_types=1);
 use Pam\Desktop\Plugin\MovedToPlugin;
 use Pam\Desktop\Plugin\PluginException;
 
-// 1.46: features moved out of the core keep a deprecated alias for one minor.
-// Without the plugin, the old name fails with the exact composer require.
+// Phone-only capabilities are not part of the desktop core: their names
+// fail with a message that names the optional package.
 foreach ([
     'Pam\\Desktop\\System\\Location' => 'pushinbr/pam-desktop-location',
     'Pam\\Desktop\\LocationPosition' => 'pushinbr/pam-desktop-location',
@@ -25,8 +25,8 @@ foreach ([
         $message = $error->getMessage();
     }
     $assert(
-        str_contains($message, $legacy.' moved out of the PAM Desktop core into '.$package)
-            && str_contains($message, 'composer require '.$package),
+        str_contains($message, $legacy.' is not part of PAM Desktop')
+            && str_contains($message, 'optional package '.$package),
         "{$legacy} must point to {$package} when the plugin is missing.",
     );
 }
@@ -50,7 +50,7 @@ foreach ([
     if ($testPluginRoots !== []) continue;
     $message = '';
     try { class_exists($legacy); } catch (PluginException $error) { $message = $error->getMessage(); }
-    $assert(str_contains($message, 'composer require '.$package), $legacy.' must name its plugin.');
+    $assert(str_contains($message, 'optional package '.$package), $legacy.' must name its plugin.');
 }
 
 // With the plugin installed the old name is the plugin class itself.

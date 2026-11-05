@@ -14,6 +14,7 @@ use Pam\Desktop\MenuRole;
 use Pam\Desktop\Notification;
 use Pam\Desktop\Shortcut;
 use Pam\Desktop\Style;
+use Pam\Desktop\Tray;
 use Pam\Desktop\UI\Column;
 use Pam\Desktop\UI\Pressable;
 use Pam\Desktop\UI\Row;
@@ -64,6 +65,18 @@ final class Shell extends Component
                 default => 'normal',
             }.sprintf(' · %d×%d', $state->width, $state->height);
         });
+        Tray::show(
+            Menu::make(
+                'Tray',
+                MenuItem::make('New document', $this->create(...)),
+                MenuItem::separator(),
+                MenuItem::role(MenuRole::Quit),
+            ),
+            'PAM Desktop shell',
+            onActivate: function (): void {
+                $this->status = 'Tray icon clicked';
+            },
+        );
         Window::onFilesDrop(function (array $paths): void {
             foreach ($paths as $path) {
                 $this->documents[] = basename($path);

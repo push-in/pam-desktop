@@ -69,6 +69,8 @@ pub struct GtkBackend {
     shell: Shell,
     /// The last button press, needed to start a window move.
     last_press: Rc<RefCell<Option<(gdk::Device, i32, f64, f64, u32)>>>,
+    #[cfg(feature = "tray")]
+    tray: Option<crate::tray::TrayHost>,
 }
 
 impl GtkBackend {
@@ -87,6 +89,8 @@ impl GtkBackend {
             wake_fired: Rc::new(Cell::new(false)),
             shell,
             last_press: Rc::new(RefCell::new(None)),
+            #[cfg(feature = "tray")]
+            tray: None,
         }
     }
 
@@ -895,7 +899,19 @@ impl Backend for GtkBackend {
         }
     }
 
-    /// GTK 4 has no status icon; the tray needs a StatusNotifierItem service.
+    #[cfg(feature = "tray")]
+    fn set_tray(&mut self, tray: Option<&TrayConfig>) {
+        if self.tray.is_none() && tray.is_some() {
+            let id = self.application.application_id().map(|id| id.to_string()).unwrap_or_else(|| String::from("pam-desktop"));
+            let title = self.windows.get(&pam_desktop_ui::backend::MAIN_WINDOW).and_then(|entry| entry.window.title()).map(|title| title.to_string()).unwrap_or_else(|| id.clone());
+            self.tray = Some(crate::tray::TrayHost::new(&id, &title, &self.events));
+        }
+        if let Some(host) = &mut self.tray {
+            host.set(tray);
+        }
+    }
+
+    #[cfg(not(feature = "tray"))]
     fn set_tray(&mut self, _tray: Option<&TrayConfig>) {}
 
     fn pick_files(&mut self, window: WindowId, config: &FileDialogConfig, done: Box<dyn FnOnce(Vec<std::path::PathBuf>)>) {
