@@ -50,9 +50,20 @@ impl Easing {
             other => other
                 .strip_prefix("bezier:")
                 .and_then(|values| {
-                    let numbers: Vec<f32> = values.split(':').filter_map(|value| value.parse::<f32>().ok()).collect();
-                    (numbers.len() == 4 && numbers.iter().all(|number| number.is_finite()))
-                        .then(|| Self::Bezier(numbers[0].clamp(0.0, 1.0), numbers[1], numbers[2].clamp(0.0, 1.0), numbers[3]))
+                    let numbers: Vec<f32> = values
+                        .split(':')
+                        .filter_map(|value| value.parse::<f32>().ok())
+                        .collect();
+                    (numbers.len() == 4 && numbers.iter().all(|number| number.is_finite())).then(
+                        || {
+                            Self::Bezier(
+                                numbers[0].clamp(0.0, 1.0),
+                                numbers[1],
+                                numbers[2].clamp(0.0, 1.0),
+                                numbers[3],
+                            )
+                        },
+                    )
                 })
                 .unwrap_or(Self::EASE_IN_OUT),
         }
@@ -161,7 +172,12 @@ pub struct Spring {
 
 impl Default for Spring {
     fn default() -> Self {
-        Self { stiffness: 100.0, damping: 10.0, mass: 1.0, velocity: 0.0 }
+        Self {
+            stiffness: 100.0,
+            damping: 10.0,
+            mass: 1.0,
+            velocity: 0.0,
+        }
     }
 }
 
@@ -171,7 +187,10 @@ impl Spring {
     pub fn from_token(token: &str) -> Option<Self> {
         let values = token.trim().strip_prefix("spring")?;
         let mut spring = Self::default();
-        let mut fields = values.trim_start_matches(':').split(':').map(|value| value.parse::<f32>().ok());
+        let mut fields = values
+            .trim_start_matches(':')
+            .split(':')
+            .map(|value| value.parse::<f32>().ok());
         if let Some(Some(stiffness)) = fields.next() {
             spring.stiffness = stiffness;
         }
@@ -192,7 +211,8 @@ impl Spring {
         if zeta < 1.0 {
             let damped = omega * (1.0 - zeta * zeta).sqrt();
             (-zeta * omega * seconds).exp()
-                * (start * (damped * seconds).cos() + (velocity + zeta * omega * start) / damped * (damped * seconds).sin())
+                * (start * (damped * seconds).cos()
+                    + (velocity + zeta * omega * start) / damped * (damped * seconds).sin())
         } else if (zeta - 1.0).abs() < f32::EPSILON {
             (start + (velocity + omega * start) * seconds) * (-omega * seconds).exp()
         } else {
@@ -217,7 +237,9 @@ impl Spring {
         for millisecond in 1..10_000_u32 {
             let seconds = millisecond as f32 / 1000.0;
             let position = self.displacement(start, seconds);
-            let speed = (self.displacement(start, seconds + STEP) - self.displacement(start, seconds - STEP)) / (2.0 * STEP);
+            let speed = (self.displacement(start, seconds + STEP)
+                - self.displacement(start, seconds - STEP))
+                / (2.0 * STEP);
             if position.abs() < rest_displacement && speed.abs() < rest_velocity {
                 return millisecond;
             }
@@ -233,20 +255,32 @@ impl Spring {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Curve {
-    Timing { duration_ms: u32, easing: Easing },
+    Timing {
+        duration_ms: u32,
+        easing: Easing,
+    },
     /// `duration_ms` is the precomputed settling time.
-    Spring { spring: Spring, duration_ms: u32 },
+    Spring {
+        spring: Spring,
+        duration_ms: u32,
+    },
 }
 
 impl Curve {
     #[must_use]
     pub fn timing(duration_ms: u32, easing: Easing) -> Self {
-        Self::Timing { duration_ms, easing }
+        Self::Timing {
+            duration_ms,
+            easing,
+        }
     }
 
     #[must_use]
     pub fn spring(spring: Spring, from: f32, to: f32) -> Self {
-        Self::Spring { spring, duration_ms: spring.duration_ms(from, to) }
+        Self::Spring {
+            spring,
+            duration_ms: spring.duration_ms(from, to),
+        }
     }
 
     #[must_use]
@@ -376,9 +410,23 @@ impl Animator {
     }
 
     /// Starts (or retargets) the tween of `owner`. The first sample is `from`.
-    pub fn start(&mut self, owner: Owner, from: f32, to: f32, curve: Curve, delay_ms: u32, now_ms: u64) {
+    pub fn start(
+        &mut self,
+        owner: Owner,
+        from: f32,
+        to: f32,
+        curve: Curve,
+        delay_ms: u32,
+        now_ms: u64,
+    ) {
         self.tweens.retain(|tween| tween.owner != owner);
-        self.tweens.push(Tween { owner, from, to, start_ms: now_ms + u64::from(delay_ms), curve });
+        self.tweens.push(Tween {
+            owner,
+            from,
+            to,
+            start_ms: now_ms + u64::from(delay_ms),
+            curve,
+        });
     }
 
     /// Stops the tween of `owner` and returns its current value.
@@ -407,7 +455,11 @@ impl Animator {
         let mut samples = Vec::with_capacity(self.tweens.len());
         self.tweens.retain(|tween| {
             let (value, finished) = tween.sample(now_ms);
-            samples.push(Sample { owner: tween.owner, value, finished });
+            samples.push(Sample {
+                owner: tween.owner,
+                value,
+                finished,
+            });
             !finished
         });
         samples
@@ -499,13 +551,21 @@ mod tests {
         assert!((Easing::from_token("ease-out-quad").apply(0.5) - 0.75).abs() < 1e-6);
         assert!((Easing::from_token("ease-in-cubic").apply(0.5) - 0.125).abs() < 1e-6);
         assert_eq!(Easing::from_token("nonsense"), Easing::EASE_IN_OUT);
-        assert_eq!(Easing::from_token("bezier:0.1:0.2:0.3:0.4"), Easing::Bezier(0.1, 0.2, 0.3, 0.4));
+        assert_eq!(
+            Easing::from_token("bezier:0.1:0.2:0.3:0.4"),
+            Easing::Bezier(0.1, 0.2, 0.3, 0.4)
+        );
         // CSS ease-in-out is symmetric around the midpoint.
         assert!((Easing::EASE_IN_OUT.apply(0.5) - 0.5).abs() < 1e-3);
         assert!(Easing::EASE_OUT.apply(0.25) > 0.25 && Easing::EASE_IN.apply(0.25) < 0.25);
         // The overshooting curve goes past the target before settling.
         assert!(Easing::EASE_OUT_BACK.apply(0.7) > 1.0);
-        for easing in [Easing::EASE, Easing::EASE_OUT_BACK, Easing::InOutCubic, Easing::Decelerate(1.75)] {
+        for easing in [
+            Easing::EASE,
+            Easing::EASE_OUT_BACK,
+            Easing::InOutCubic,
+            Easing::Decelerate(1.75),
+        ] {
             assert_eq!(easing.apply(0.0), 0.0);
             assert!((easing.apply(1.0) - 1.0).abs() < 1e-6);
         }
@@ -518,11 +578,16 @@ mod tests {
         assert!(duration > 200 && duration < 3000, "duration {duration}");
         assert!((spring.position(0.0, 100.0, duration as f32) - 100.0).abs() < 0.3);
         // Underdamped: it overshoots on the way.
-        let peak = (0..duration).map(|ms| spring.position(0.0, 100.0, ms as f32)).fold(0.0_f32, f32::max);
+        let peak = (0..duration)
+            .map(|ms| spring.position(0.0, 100.0, ms as f32))
+            .fold(0.0_f32, f32::max);
         assert!(peak > 100.0);
         assert_eq!(spring.duration_ms(5.0, 5.0), 0);
         let parsed = Spring::from_token("spring:260:18:1").expect("valid");
-        assert_eq!((parsed.stiffness, parsed.damping, parsed.mass), (260.0, 18.0, 1.0));
+        assert_eq!(
+            (parsed.stiffness, parsed.damping, parsed.mass),
+            (260.0, 18.0, 1.0)
+        );
         assert!(Spring::from_token("spring:0:1:1").is_none());
     }
 
@@ -530,11 +595,32 @@ mod tests {
     fn tweens_sample_delay_progress_and_finish_once() {
         let mut animator = Animator::new();
         let owner = Owner::Navigation(7);
-        animator.start(owner, 0.0, 1.0, Curve::timing(100, Easing::Linear), 50, 1_000);
-        assert_eq!(animator.tick(1_020), vec![Sample { owner, value: 0.0, finished: false }]);
+        animator.start(
+            owner,
+            0.0,
+            1.0,
+            Curve::timing(100, Easing::Linear),
+            50,
+            1_000,
+        );
+        assert_eq!(
+            animator.tick(1_020),
+            vec![Sample {
+                owner,
+                value: 0.0,
+                finished: false
+            }]
+        );
         let middle = animator.tick(1_100);
         assert!((middle[0].value - 0.5).abs() < 1e-6 && !middle[0].finished);
-        assert_eq!(animator.tick(1_200), vec![Sample { owner, value: 1.0, finished: true }]);
+        assert_eq!(
+            animator.tick(1_200),
+            vec![Sample {
+                owner,
+                value: 1.0,
+                finished: true
+            }]
+        );
         assert!(animator.is_idle());
     }
 
@@ -547,7 +633,14 @@ mod tests {
         assert_eq!(animator.tick(50).len(), 1);
         assert!((animator.cancel(owner, 100).unwrap() - 0.25).abs() < 1e-6);
         assert!(animator.cancel(owner, 100).is_none());
-        animator.start(Owner::Transition(9, MotionProperty::Opacity), 0.0, 1.0, Curve::timing(10, Easing::Linear), 0, 0);
+        animator.start(
+            Owner::Transition(9, MotionProperty::Opacity),
+            0.0,
+            1.0,
+            Curve::timing(10, Easing::Linear),
+            0,
+            0,
+        );
         animator.forget(9);
         assert!(animator.is_idle());
     }
@@ -560,7 +653,10 @@ mod tests {
         timers.schedule(Timer::LongPress(1), 400);
         assert_eq!(timers.next_deadline(), Some(250));
         assert!(timers.take_due(100).is_empty());
-        assert_eq!(timers.take_due(450), vec![Timer::DeferredPress(2), Timer::LongPress(1)]);
+        assert_eq!(
+            timers.take_due(450),
+            vec![Timer::DeferredPress(2), Timer::LongPress(1)]
+        );
         assert_eq!(timers.next_deadline(), None);
         timers.schedule(Timer::PressIn(3), 10);
         assert!(timers.cancel(Timer::PressIn(3)) && !timers.cancel(Timer::PressIn(3)));

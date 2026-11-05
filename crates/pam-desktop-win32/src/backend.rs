@@ -12,23 +12,35 @@ use std::sync::Arc;
 
 use pam_desktop_ui::accessibility::Accessibility;
 use pam_desktop_ui::backend::{
-    AlertConfig, Backend, BackendEvent, DrawCommand, ImageContent, ImageKey, ImageSource, InputConfig, MediaState, NodeId, ScrollConfig, TextContent,
-    ViewClass, WebViewState, WindowConfig, WindowId, WindowMetrics,
+    AlertConfig, Backend, BackendEvent, DrawCommand, ImageContent, ImageKey, ImageSource,
+    InputConfig, MediaState, NodeId, ScrollConfig, TextContent, ViewClass, WebViewState,
+    WindowConfig, WindowId, WindowMetrics,
 };
 use pam_desktop_ui::geometry::{Point, Rect, Size};
 use pam_desktop_ui::runtime::{self, EventQueue, Inbox, Runtime, RuntimeConfig, Shared};
-use pam_desktop_ui::shell::{Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand, WindowState};
+use pam_desktop_ui::shell::{
+    Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand,
+    WindowState,
+};
 use pam_desktop_ui::style::{Decoration, LayerState};
 use pam_desktop_ui::text::{TextBlock, TextMetrics};
-use windows::core::HSTRING;
 use windows::Win32::Foundation::HINSTANCE;
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Ole::{OleInitialize, OleUninitialize};
-use windows::Win32::UI::Controls::{InitCommonControlsEx, ICC_STANDARD_CLASSES, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX};
-use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
-use windows::Win32::UI::Shell::{GetCurrentProcessExplicitAppUserModelID, SetCurrentProcessExplicitAppUserModelID};
-use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, PostQuitMessage, TranslateMessage, MSG};
+use windows::Win32::UI::Controls::{
+    ICC_STANDARD_CLASSES, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
+};
+use windows::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
+};
+use windows::Win32::UI::Shell::{
+    GetCurrentProcessExplicitAppUserModelID, SetCurrentProcessExplicitAppUserModelID,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW, GetMessageW, MSG, PostQuitMessage, TranslateMessage,
+};
+use windows::core::HSTRING;
 
 use crate::app::App;
 use crate::input::InputHost;
@@ -79,13 +91,21 @@ impl Backend for Win32Backend {
     fn create_view(&mut self, id: NodeId, class: ViewClass) {
         // An id created again replaces its view: the old one releases its
         // native resources like any destroyed view.
-        if self.app.state().is_some_and(|state| state.scene.views.contains_key(&id)) {
+        if self
+            .app
+            .state()
+            .is_some_and(|state| state.scene.views.contains_key(&id))
+        {
             self.destroy_view(id);
         }
-        let Some(mut state) = self.app.state() else { return };
+        let Some(mut state) = self.app.state() else {
+            return;
+        };
         state.scene.create(id, class);
         let scene = &mut state.scene;
-        let Some(view) = scene.views.get_mut(&id) else { return };
+        let Some(view) = scene.views.get_mut(&id) else {
+            return;
+        };
         match class {
             ViewClass::Input | ViewClass::TextArea => {
                 view.input = Some(Box::new(InputHost::new(class == ViewClass::TextArea)));
@@ -104,7 +124,10 @@ impl Backend for Win32Backend {
     }
 
     fn destroy_view(&mut self, id: NodeId) {
-        let removed = self.app.state().and_then(|mut state| state.scene.destroy(id));
+        let removed = self
+            .app
+            .state()
+            .and_then(|mut state| state.scene.destroy(id));
         // Native resources are released with the state free again.
         if let Some(mut view) = removed {
             if let Some(input) = view.input.take() {
@@ -127,8 +150,12 @@ impl Backend for Win32Backend {
     }
 
     fn set_frame(&mut self, id: NodeId, frame: Rect) {
-        let Some(mut state) = self.app.state() else { return };
-        let Some(view) = state.scene.views.get_mut(&id) else { return };
+        let Some(mut state) = self.app.state() else {
+            return;
+        };
+        let Some(view) = state.scene.views.get_mut(&id) else {
+            return;
+        };
         if view.frame == frame {
             return;
         }
@@ -144,14 +171,21 @@ impl Backend for Win32Backend {
     }
 
     fn set_decoration(&mut self, id: NodeId, decoration: &Decoration) {
-        let Some(mut state) = self.app.state() else { return };
-        let Some(view) = state.scene.views.get(&id) else { return };
+        let Some(mut state) = self.app.state() else {
+            return;
+        };
+        let Some(view) = state.scene.views.get(&id) else {
+            return;
+        };
         // Clipping and filters change what the whole subtree shows.
-        let reach_changed =
-            view.decoration.clip != decoration.clip || view.decoration.blur != decoration.blur || view.decoration.color_matrix != decoration.color_matrix;
+        let reach_changed = view.decoration.clip != decoration.clip
+            || view.decoration.blur != decoration.blur
+            || view.decoration.color_matrix != decoration.color_matrix;
         // The old shadows must be repainted away too.
         state.scene.damage_view(id);
-        let Some(view) = state.scene.views.get_mut(&id) else { return };
+        let Some(view) = state.scene.views.get_mut(&id) else {
+            return;
+        };
         let recolored = view.decoration.background != decoration.background;
         view.decoration.clone_from(decoration);
         if let Some(cache) = &mut view.cache {
@@ -172,8 +206,12 @@ impl Backend for Win32Backend {
     }
 
     fn set_layer(&mut self, id: NodeId, layer: &LayerState) {
-        let Some(mut state) = self.app.state() else { return };
-        let Some(view) = state.scene.views.get_mut(&id) else { return };
+        let Some(mut state) = self.app.state() else {
+            return;
+        };
+        let Some(view) = state.scene.views.get_mut(&id) else {
+            return;
+        };
         if view.layer == *layer {
             return;
         }
@@ -183,9 +221,19 @@ impl Backend for Win32Backend {
 
     fn set_text(&mut self, id: NodeId, text: Option<&TextContent>) {
         {
-            let Some(mut state) = self.app.state() else { return };
-            let Some(view) = state.scene.views.get_mut(&id) else { return };
-            view.text = text.map(|content| TextState { content: content.clone(), layout: None, wrapped_to: f32::NAN, colored_for: 0, selection: None });
+            let Some(mut state) = self.app.state() else {
+                return;
+            };
+            let Some(view) = state.scene.views.get_mut(&id) else {
+                return;
+            };
+            view.text = text.map(|content| TextState {
+                content: content.clone(),
+                layout: None,
+                wrapped_to: f32::NAN,
+                colored_for: 0,
+                selection: None,
+            });
             state.scene.damage_content(id);
         }
         // The text is the accessible name unless a label was given.
@@ -194,16 +242,24 @@ impl Backend for Win32Backend {
 
     fn set_focusable(&mut self, id: NodeId, focusable: bool) {
         if let Some(mut state) = self.app.state()
-            && let Some(view) = state.scene.views.get_mut(&id) {
-                view.focusable = focusable;
-            }
+            && let Some(view) = state.scene.views.get_mut(&id)
+        {
+            view.focusable = focusable;
+        }
     }
 
     fn set_accessibility(&mut self, id: NodeId, accessibility: Option<&Accessibility>) {
         let previous = {
-            let Some(mut state) = self.app.state() else { return };
-            let Some(view) = state.scene.views.get_mut(&id) else { return };
-            std::mem::replace(&mut view.accessibility, accessibility.cloned().map(Box::new))
+            let Some(mut state) = self.app.state() else {
+                return;
+            };
+            let Some(view) = state.scene.views.get_mut(&id) else {
+                return;
+            };
+            std::mem::replace(
+                &mut view.accessibility,
+                accessibility.cloned().map(Box::new),
+            )
         };
         crate::accessibility::content_changed(&self.app, id);
         crate::accessibility::state_changed(&self.app, id, previous.as_deref());
@@ -231,9 +287,15 @@ impl Backend for Win32Backend {
 
     fn load_image(&mut self, key: ImageKey, source: ImageSource, max_dimension: Option<u32>) {
         let mailbox = Arc::clone(&self.app.mailbox);
-        let started = self.app.state().is_some_and(|mut state| state.images.load(&mailbox, key, source, max_dimension));
+        let started = self
+            .app
+            .state()
+            .is_some_and(|mut state| state.images.load(&mailbox, key, source, max_dimension));
         if !started {
-            self.app.emit(BackendEvent::ImageFailed { key, message: "image decoder could not start".into() });
+            self.app.emit(BackendEvent::ImageFailed {
+                key,
+                message: "image decoder could not start".into(),
+            });
         }
     }
 
@@ -244,8 +306,12 @@ impl Backend for Win32Backend {
     }
 
     fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>) {
-        let Some(mut state) = self.app.state() else { return };
-        let Some(view) = state.scene.views.get_mut(&id) else { return };
+        let Some(mut state) = self.app.state() else {
+            return;
+        };
+        let Some(view) = state.scene.views.get_mut(&id) else {
+            return;
+        };
         view.image = image.copied();
         state.scene.damage_view(id);
     }
@@ -261,7 +327,9 @@ impl Backend for Win32Backend {
         // The layout that is (or will be) painted answers, so the index
         // matches what the user sees.
         if text.layout.is_none() || text.wrapped_to != available {
-            text.layout = state.text.build(&state.graphics.dwrite, &text.content.block, available);
+            text.layout = state
+                .text
+                .build(&state.graphics.dwrite, &text.content.block, available);
             text.wrapped_to = available;
             text.colored_for = 0;
         }
@@ -271,8 +339,17 @@ impl Backend for Win32Backend {
     }
 
     fn set_text_selection(&mut self, id: NodeId, range: Option<(u32, u32)>) {
-        let Some(mut state) = self.app.state() else { return };
-        let Some(text) = state.scene.views.get_mut(&id).and_then(|view| view.text.as_mut()) else { return };
+        let Some(mut state) = self.app.state() else {
+            return;
+        };
+        let Some(text) = state
+            .scene
+            .views
+            .get_mut(&id)
+            .and_then(|view| view.text.as_mut())
+        else {
+            return;
+        };
         let range = range.filter(|(start, end)| start < end);
         if text.selection == range {
             return;
@@ -312,8 +389,12 @@ impl Backend for Win32Backend {
     }
 
     fn set_drawing(&mut self, id: NodeId, commands: &[DrawCommand]) {
-        let Some(mut state) = self.app.state() else { return };
-        let Some(view) = state.scene.views.get_mut(&id) else { return };
+        let Some(mut state) = self.app.state() else {
+            return;
+        };
+        let Some(view) = state.scene.views.get_mut(&id) else {
+            return;
+        };
         view.drawing.clear();
         view.drawing.extend_from_slice(commands);
         if let Some(cache) = &mut view.cache {
@@ -332,8 +413,17 @@ impl Backend for Win32Backend {
     }
 
     fn set_scroll_config(&mut self, id: NodeId, config: &ScrollConfig) {
-        let Some(mut state) = self.app.state() else { return };
-        let Some(scroll) = state.scene.views.get_mut(&id).and_then(|view| view.scroll.as_mut()) else { return };
+        let Some(mut state) = self.app.state() else {
+            return;
+        };
+        let Some(scroll) = state
+            .scene
+            .views
+            .get_mut(&id)
+            .and_then(|view| view.scroll.as_mut())
+        else {
+            return;
+        };
         if scroll.config == *config {
             return;
         }
@@ -354,7 +444,9 @@ impl Backend for Win32Backend {
     // ---- text ----------------------------------------------------------
 
     fn measure_text(&mut self, block: &TextBlock, max_width: f32) -> TextMetrics {
-        let Some(mut state) = self.app.state() else { return TextMetrics::default() };
+        let Some(mut state) = self.app.state() else {
+            return TextMetrics::default();
+        };
         let state = &mut *state;
         state.text.measure(&state.graphics.dwrite, block, max_width)
     }
@@ -382,7 +474,12 @@ impl Backend for Win32Backend {
         crate::shell::clipboard_text(&self.app, done);
     }
 
-    fn show_alert(&mut self, window: WindowId, alert: &AlertConfig, done: Box<dyn FnOnce(Option<usize>)>) {
+    fn show_alert(
+        &mut self,
+        window: WindowId,
+        alert: &AlertConfig,
+        done: Box<dyn FnOnce(Option<usize>)>,
+    ) {
         crate::shell::show_alert(&self.app, window, alert, done);
     }
 
@@ -396,7 +493,13 @@ impl Backend for Win32Backend {
         crate::shell::set_menu_bar(&self.app, menu);
     }
 
-    fn popup_menu(&mut self, window: WindowId, position: Point, menu: &[MenuNode], done: Box<dyn FnOnce(Option<String>)>) {
+    fn popup_menu(
+        &mut self,
+        window: WindowId,
+        position: Point,
+        menu: &[MenuNode],
+        done: Box<dyn FnOnce(Option<String>)>,
+    ) {
         crate::shell::popup_menu(&self.app, window, position, menu, done);
     }
 
@@ -404,7 +507,12 @@ impl Backend for Win32Backend {
         crate::shell::set_tray(&self.app, tray);
     }
 
-    fn pick_files(&mut self, window: WindowId, config: &FileDialogConfig, done: Box<dyn FnOnce(Vec<PathBuf>)>) {
+    fn pick_files(
+        &mut self,
+        window: WindowId,
+        config: &FileDialogConfig,
+        done: Box<dyn FnOnce(Vec<PathBuf>)>,
+    ) {
         crate::shell::pick_files(&self.app, window, config, done);
     }
 
@@ -426,9 +534,10 @@ impl Backend for Win32Backend {
 
     fn set_cursor(&mut self, id: NodeId, cursor: Cursor) {
         if let Some(mut state) = self.app.state()
-            && let Some(view) = state.scene.views.get_mut(&id) {
-                view.cursor = cursor;
-            }
+            && let Some(view) = state.scene.views.get_mut(&id)
+        {
+            view.cursor = cursor;
+        }
     }
 
     fn set_tooltip(&mut self, id: NodeId, text: Option<&str>) {
@@ -469,7 +578,10 @@ fn prepare_process(application_id: &str) {
         // OLE (a single-threaded apartment) for drag and drop, the
         // clipboard, the shell dialogs and UI Automation.
         let _ = OleInitialize(None);
-        let controls = INITCOMMONCONTROLSEX { dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32, dwICC: ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES };
+        let controls = INITCOMMONCONTROLSEX {
+            dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES,
+        };
         let _ = InitCommonControlsEx(&controls);
         // The taskbar and notifications identify the application by this
         // id, unless the launcher (a shortcut, a package) already set one.
@@ -496,19 +608,28 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
     let single_instance = config.single_instance;
     prepare_process(application_id);
     // SAFETY: a null module name is the executable itself.
-    let instance: HINSTANCE = unsafe { GetModuleHandleW(None) }.map(Into::into).unwrap_or_default();
+    let instance: HINSTANCE = unsafe { GetModuleHandleW(None) }
+        .map(Into::into)
+        .unwrap_or_default();
     let events = EventQueue::new();
     let app = match App::install(instance, application_id, Rc::clone(&events)) {
         Ok(app) => app,
         Err(error) => {
-            eprintln!("pam-desktop: could not start the Windows backend: {}", error.message());
+            eprintln!(
+                "pam-desktop: could not start the Windows backend: {}",
+                error.message()
+            );
             // SAFETY: balances the OleInitialize of `prepare_process`.
             unsafe { OleUninitialize() };
             return ExitCode::FAILURE;
         }
     };
     crate::window::register_class(&app);
-    let instance_window = if single_instance { crate::instance::listen(&app) } else { None };
+    let instance_window = if single_instance {
+        crate::instance::listen(&app)
+    } else {
+        None
+    };
     let mailbox = Arc::clone(&app.mailbox);
     // Other threads reach the UI thread by posting to the message window,
     // whose handler drains the runtime.
@@ -573,5 +694,9 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
     // COM object of this thread was released.
     unsafe { OleUninitialize() };
     drop(instance_lock);
-    if failed || exit_code != 0 { ExitCode::FAILURE } else { ExitCode::SUCCESS }
+    if failed || exit_code != 0 {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }

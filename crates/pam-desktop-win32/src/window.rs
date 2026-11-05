@@ -3,49 +3,64 @@
 //! input into `BackendEvent`s; it never interprets the scene beyond what
 //! scrolling, cursors and tooltips need.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
 use pam_desktop_ui::backend::{
-    BackendEvent, GesturePhase, KeyEvent, NodeId, PointerButton, PointerEvent, PointerPhase, WindowConfig, WindowId, WindowMetrics,
+    BackendEvent, GesturePhase, KeyEvent, NodeId, PointerButton, PointerEvent, PointerPhase,
+    WindowConfig, WindowId, WindowMetrics,
 };
 use pam_desktop_ui::geometry::{Point, Rect, Size};
 use pam_desktop_ui::shell::{Cursor, WindowCommand, WindowState};
-use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    ClientToScreen, GetMonitorInfoW, InvalidateRect, MonitorFromWindow, ScreenToClient, ValidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    ClientToScreen, GetMonitorInfoW, InvalidateRect, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+    MonitorFromWindow, ScreenToClient, ValidateRect,
 };
 use windows::Win32::System::SystemServices::{
-    APPCOMMAND_BROWSER_BACKWARD, GC_PAN, GC_PAN_WITH_GUTTER, GC_PAN_WITH_INERTIA, GC_PAN_WITH_SINGLE_FINGER_HORIZONTALLY, GC_PAN_WITH_SINGLE_FINGER_VERTICALLY,
-    GC_ROTATE,
+    APPCOMMAND_BROWSER_BACKWARD, GC_PAN, GC_PAN_WITH_GUTTER, GC_PAN_WITH_INERTIA,
+    GC_PAN_WITH_SINGLE_FINGER_HORIZONTALLY, GC_PAN_WITH_SINGLE_FINGER_VERTICALLY, GC_ROTATE,
 };
 use windows::Win32::UI::Controls::{
-    TOOLTIPS_CLASSW, TTM_ADDTOOLW, TTM_NEWTOOLRECTW, TTM_POP, TTM_RELAYEVENT, TTM_SETMAXTIPWIDTH, TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP, TTS_NOPREFIX,
-    TTTOOLINFOW, WM_MOUSELEAVE,
+    TOOLTIPS_CLASSW, TTM_ADDTOOLW, TTM_NEWTOOLRECTW, TTM_POP, TTM_RELAYEVENT, TTM_SETMAXTIPWIDTH,
+    TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
 };
-use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow, GetSystemMetricsForDpi};
+use windows::Win32::UI::HiDpi::{
+    AdjustWindowRectExForDpi, GetDpiForWindow, GetSystemMetricsForDpi,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    EnableWindow, GetCapture, GetDoubleClickTime, GetFocus, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
+    EnableWindow, GetCapture, GetDoubleClickTime, GetFocus, ReleaseCapture, SetCapture, SetFocus,
+    TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
 };
-use windows::Win32::UI::Input::Touch::{CloseGestureInfoHandle, GetGestureInfo, SetGestureConfig, GESTURECONFIG, GESTUREINFO, GID_PAN, GID_ROTATE, GID_ZOOM, HGESTUREINFO};
+use windows::Win32::UI::Input::Touch::{
+    CloseGestureInfoHandle, GESTURECONFIG, GESTUREINFO, GID_PAN, GID_ROTATE, GID_ZOOM,
+    GetGestureInfo, HGESTUREINFO, SetGestureConfig,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, GetCursorPos, GetMessageTime, GetSystemMetrics, GetWindowLongPtrW,
-    GetWindowPlacement, GetWindowRect, IsChild, IsIconic, IsWindow, IsZoomed, LoadCursorW, PostQuitMessage, RegisterClassExW,
-    SendMessageW, SetCursor, SetForegroundWindow, SetWindowDisplayAffinity, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, SetWindowTextW, ShowWindow,
-    SystemParametersInfoW, WindowFromPoint, CREATESTRUCTW, CW_USEDEFAULT, GF_BEGIN, GF_END, GWLP_USERDATA, GWL_STYLE, HTBOTTOM, HTBOTTOMLEFT,
-    HTBOTTOMRIGHT, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, IDC_ARROW, IDC_CROSS,
-    IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENS, IDC_SIZEWE, IDC_WAIT, MINMAXINFO, MSG, NCCALCSIZE_PARAMS,
-    SIZE_MINIMIZED, SM_CXDOUBLECLK, SM_CXFRAME, SM_CXPADDEDBORDER, SM_CYDOUBLECLK, SM_CYFRAME, SPI_GETWHEELSCROLLLINES, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW,
-    SW_SHOWMAXIMIZED, SW_SHOWNORMAL, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WA_INACTIVE, WDA_EXCLUDEFROMCAPTURE, WDA_MONITOR, WDA_NONE, WHEEL_DELTA, WINDOWPLACEMENT, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_ACTIVATE, WM_APPCOMMAND, WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC,
-    WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_GESTURE, WM_GESTURENOTIFY, WM_GETMINMAXINFO, WM_GETOBJECT, WM_KEYDOWN, WM_KEYUP,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCCALCSIZE, WM_NCCREATE,
-    WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_NOTIFY, WM_PAINT, WM_PARENTNOTIFY, WM_MOVE, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS, WM_SETTINGCHANGE, WM_SIZE,
-    WM_SYSCHAR, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONUP, WNDCLASSEXW, WS_CLIPCHILDREN, WS_MAXIMIZEBOX,
-    WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME, XBUTTON1, HTCAPTION, WM_NCACTIVATE,
+    CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, GF_BEGIN, GF_END,
+    GWL_STYLE, GWLP_USERDATA, GetClientRect, GetCursorPos, GetMessageTime, GetSystemMetrics,
+    GetWindowLongPtrW, GetWindowPlacement, GetWindowRect, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT,
+    HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT, HWND_NOTOPMOST, HWND_TOP,
+    HWND_TOPMOST, IDC_ARROW, IDC_CROSS, IDC_HAND, IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENS,
+    IDC_SIZEWE, IDC_WAIT, IsChild, IsIconic, IsWindow, IsZoomed, LoadCursorW, MINMAXINFO, MSG,
+    NCCALCSIZE_PARAMS, PostQuitMessage, RegisterClassExW, SIZE_MINIMIZED, SM_CXDOUBLECLK,
+    SM_CXFRAME, SM_CXPADDEDBORDER, SM_CYDOUBLECLK, SM_CYFRAME, SPI_GETWHEELSCROLLLINES, SW_HIDE,
+    SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWMAXIMIZED, SW_SHOWNORMAL,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SendMessageW, SetCursor, SetForegroundWindow,
+    SetWindowDisplayAffinity, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos, SetWindowTextW,
+    ShowWindow, SystemParametersInfoW, WA_INACTIVE, WDA_EXCLUDEFROMCAPTURE, WDA_MONITOR, WDA_NONE,
+    WHEEL_DELTA, WINDOW_EX_STYLE, WINDOW_STYLE, WINDOWPLACEMENT, WM_ACTIVATE, WM_APPCOMMAND,
+    WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC,
+    WM_DESTROY, WM_DPICHANGED, WM_ERASEBKGND, WM_GESTURE, WM_GESTURENOTIFY, WM_GETMINMAXINFO,
+    WM_GETOBJECT, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+    WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_MOVE, WM_NCACTIVATE, WM_NCCALCSIZE,
+    WM_NCCREATE, WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_NOTIFY, WM_PAINT, WM_PARENTNOTIFY,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR, WM_SETFOCUS, WM_SETTINGCHANGE, WM_SIZE, WM_SYSCHAR,
+    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONUP, WNDCLASSEXW, WS_CLIPCHILDREN, WS_MAXIMIZEBOX,
+    WS_OVERLAPPEDWINDOW, WS_POPUP, WS_THICKFRAME, WindowFromPoint, XBUTTON1,
 };
+use windows::core::{PCWSTR, PWSTR, w};
 
 use crate::app::{App, State};
 use crate::events;
@@ -164,7 +179,10 @@ pub fn register_class(app: &App) {
         // SAFETY: loading a stock system cursor.
         hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }.unwrap_or_default(),
         // SAFETY: the first icon resource of the executable, when it has one.
-        hIcon: unsafe { windows::Win32::UI::WindowsAndMessaging::LoadIconW(Some(app.instance), PCWSTR(1 as _)) }.unwrap_or_default(),
+        hIcon: unsafe {
+            windows::Win32::UI::WindowsAndMessaging::LoadIconW(Some(app.instance), PCWSTR(1 as _))
+        }
+        .unwrap_or_default(),
         lpszClassName: WINDOW_CLASS,
         ..Default::default()
     };
@@ -174,9 +192,20 @@ pub fn register_class(app: &App) {
 }
 
 /// Outer window size in pixels for a client area of `size` logical units.
-fn outer_size(size: Size, style: WINDOW_STYLE, menu: bool, decorated: bool, dpi: u32) -> (i32, i32) {
+fn outer_size(
+    size: Size,
+    style: WINDOW_STYLE,
+    menu: bool,
+    decorated: bool,
+    dpi: u32,
+) -> (i32, i32) {
     let scale = dpi as f32 / 96.0;
-    let mut rect = RECT { left: 0, top: 0, right: (size.width * scale).round() as i32, bottom: (size.height * scale).round() as i32 };
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: (size.width * scale).round() as i32,
+        bottom: (size.height * scale).round() as i32,
+    };
     if decorated {
         // SAFETY: the rectangle is a live local.
         unsafe {
@@ -192,7 +221,10 @@ fn client_size(hwnd: HWND) -> (u32, u32) {
     unsafe {
         let _ = GetClientRect(hwnd, &mut rect);
     }
-    ((rect.right - rect.left).max(0) as u32, (rect.bottom - rect.top).max(0) as u32)
+    (
+        (rect.right - rect.left).max(0) as u32,
+        (rect.bottom - rect.top).max(0) as u32,
+    )
 }
 
 fn has_menu(hwnd: HWND) -> bool {
@@ -203,7 +235,9 @@ fn has_menu(hwnd: HWND) -> bool {
 /// Creates (or reconfigures) a window. Runs outside any state borrow.
 pub fn open(app: &Rc<App>, window: WindowId, config: &WindowConfig) {
     let title = wide(&config.title);
-    let existing = app.with_state(|state| state.scene.windows.get(&window).map(|entry| entry.hwnd)).flatten();
+    let existing = app
+        .with_state(|state| state.scene.windows.get(&window).map(|entry| entry.hwnd))
+        .flatten();
     if let Some(hwnd) = existing {
         // SAFETY: `hwnd` is a live window of this thread; the title is NUL-terminated.
         unsafe {
@@ -217,7 +251,10 @@ pub fn open(app: &Rc<App>, window: WindowId, config: &WindowConfig) {
         }
         return;
     }
-    let owner = config.parent.and_then(|parent| app.with_state(|state| state.scene.windows.get(&parent).map(|entry| entry.hwnd)).flatten());
+    let owner = config.parent.and_then(|parent| {
+        app.with_state(|state| state.scene.windows.get(&parent).map(|entry| entry.hwnd))
+            .flatten()
+    });
     let style = window_style(config.resizable);
     // SAFETY: the class is registered, the strings are NUL-terminated and
     // the creation parameter is an integer, not a pointer that is read.
@@ -288,7 +325,15 @@ pub fn open(app: &Rc<App>, window: WindowId, config: &WindowConfig) {
     let (width, height) = outer_size(config.size, style, false, config.decorated, dpi);
     // SAFETY: `hwnd` is live; these calls dispatch messages, and no state borrow is held.
     unsafe {
-        let _ = SetWindowPos(hwnd, None, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            width,
+            height,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
     }
     if owner.is_some() {
         command(app, window, &WindowCommand::Center);
@@ -327,9 +372,19 @@ fn create_tooltip(app: &App, owner: HWND) -> HWND {
         };
         let mut empty = [0_u16; 1];
         let tool = tool_info(owner, RECT::default(), PWSTR(empty.as_mut_ptr()));
-        SendMessageW(tooltip, TTM_ADDTOOLW, Some(WPARAM(0)), Some(LPARAM(std::ptr::from_ref(&tool) as isize)));
+        SendMessageW(
+            tooltip,
+            TTM_ADDTOOLW,
+            Some(WPARAM(0)),
+            Some(LPARAM(std::ptr::from_ref(&tool) as isize)),
+        );
         // A maximum width makes the control wrap long text and honor line breaks.
-        SendMessageW(tooltip, TTM_SETMAXTIPWIDTH, Some(WPARAM(0)), Some(LPARAM(480)));
+        SendMessageW(
+            tooltip,
+            TTM_SETMAXTIPWIDTH,
+            Some(WPARAM(0)),
+            Some(LPARAM(480)),
+        );
         tooltip
     }
 }
@@ -359,8 +414,18 @@ fn update_tooltip(tooltip: HWND, owner: HWND, target: Option<(&str, RECT)>) {
     // SAFETY: the tool structure and its text outlive the synchronous sends.
     unsafe {
         SendMessageW(tooltip, TTM_POP, Some(WPARAM(0)), Some(LPARAM(0)));
-        SendMessageW(tooltip, TTM_UPDATETIPTEXTW, Some(WPARAM(0)), Some(tool_pointer));
-        SendMessageW(tooltip, TTM_NEWTOOLRECTW, Some(WPARAM(0)), Some(tool_pointer));
+        SendMessageW(
+            tooltip,
+            TTM_UPDATETIPTEXTW,
+            Some(WPARAM(0)),
+            Some(tool_pointer),
+        );
+        SendMessageW(
+            tooltip,
+            TTM_NEWTOOLRECTW,
+            Some(WPARAM(0)),
+            Some(tool_pointer),
+        );
     }
 }
 
@@ -369,10 +434,21 @@ fn relay_to_tooltip(tooltip: HWND, hwnd: HWND, message: u32, wparam: WPARAM, lpa
     if tooltip.is_invalid() {
         return;
     }
-    let relayed = MSG { hwnd, message, wParam: wparam, lParam: lparam, ..Default::default() };
+    let relayed = MSG {
+        hwnd,
+        message,
+        wParam: wparam,
+        lParam: lparam,
+        ..Default::default()
+    };
     // SAFETY: the message structure outlives the synchronous send.
     unsafe {
-        SendMessageW(tooltip, TTM_RELAYEVENT, Some(WPARAM(0)), Some(LPARAM(std::ptr::from_ref(&relayed) as isize)));
+        SendMessageW(
+            tooltip,
+            TTM_RELAYEVENT,
+            Some(WPARAM(0)),
+            Some(LPARAM(std::ptr::from_ref(&relayed) as isize)),
+        );
     }
 }
 
@@ -384,7 +460,8 @@ fn protect_content(hwnd: HWND, enabled: bool) -> bool {
         }
         // Excluded from captures where the system can (Windows 10 2004),
         // shown as a black rectangle before that.
-        SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE).is_ok() || SetWindowDisplayAffinity(hwnd, WDA_MONITOR).is_ok()
+        SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE).is_ok()
+            || SetWindowDisplayAffinity(hwnd, WDA_MONITOR).is_ok()
     }
 }
 
@@ -394,7 +471,12 @@ pub fn set_content_protection(app: &Rc<App>, enabled: bool) -> bool {
     let windows: Vec<HWND> = app
         .with_state(|state| {
             state.content_protected = enabled;
-            state.scene.windows.values().map(|entry| entry.hwnd).collect()
+            state
+                .scene
+                .windows
+                .values()
+                .map(|entry| entry.hwnd)
+                .collect()
         })
         .unwrap_or_default();
     let mut enforced = !windows.is_empty();
@@ -406,8 +488,18 @@ pub fn set_content_protection(app: &Rc<App>, enabled: bool) -> bool {
 
 /// Destroys a window. Runs outside any state borrow.
 pub fn close(app: &Rc<App>, window: WindowId) {
-    let found = app.with_state(|state| state.scene.windows.get(&window).map(|entry| (entry.hwnd, entry.modal_owner))).flatten();
-    let Some((hwnd, modal_owner)) = found else { return };
+    let found = app
+        .with_state(|state| {
+            state
+                .scene
+                .windows
+                .get(&window)
+                .map(|entry| (entry.hwnd, entry.modal_owner))
+        })
+        .flatten();
+    let Some((hwnd, modal_owner)) = found else {
+        return;
+    };
     // SAFETY: handles of live windows of this thread. The owner is enabled
     // before the dialog goes away so activation returns to it.
     unsafe {
@@ -420,10 +512,27 @@ pub fn close(app: &Rc<App>, window: WindowId) {
 
 pub fn metrics(app: &App, window: WindowId) -> WindowMetrics {
     let known = app.with_state(|state| {
-        state.scene.windows.get(&window).map(|entry| (entry.hwnd, entry.size, entry.scale(), state.system_dark, state.reduced_motion))
+        state.scene.windows.get(&window).map(|entry| {
+            (
+                entry.hwnd,
+                entry.size,
+                entry.scale(),
+                state.system_dark,
+                state.reduced_motion,
+            )
+        })
     });
-    let Some(Some((hwnd, size, scale, dark, reduced_motion))) = known else { return WindowMetrics::default() };
-    WindowMetrics { size, scale, font_scale: crate::shell::text_scale(), dark, refresh_rate: crate::shell::refresh_rate(hwnd), reduced_motion }
+    let Some(Some((hwnd, size, scale, dark, reduced_motion))) = known else {
+        return WindowMetrics::default();
+    };
+    WindowMetrics {
+        size,
+        scale,
+        font_scale: crate::shell::text_scale(),
+        dark,
+        refresh_rate: crate::shell::refresh_rate(hwnd),
+        reduced_motion,
+    }
 }
 
 /// Shows the window once its first root is attached. The first frame is
@@ -442,7 +551,16 @@ pub fn present(app: &Rc<App>, window: WindowId) {
         return;
     }
     app.defer(Box::new(move |app| {
-        let Some((hwnd, modal_owner)) = app.with_state(|state| state.scene.windows.get(&window).map(|entry| (entry.hwnd, entry.modal_owner))).flatten() else {
+        let Some((hwnd, modal_owner)) = app
+            .with_state(|state| {
+                state
+                    .scene
+                    .windows
+                    .get(&window)
+                    .map(|entry| (entry.hwnd, entry.modal_owner))
+            })
+            .flatten()
+        else {
             return;
         };
         paint(app, hwnd, window);
@@ -468,12 +586,24 @@ pub fn present(app: &Rc<App>, window: WindowId) {
 
 fn current_state(entry: &WindowEntry) -> WindowState {
     // SAFETY: plain queries on a live window.
-    let (maximized, minimized) = unsafe { (IsZoomed(entry.hwnd).as_bool(), IsIconic(entry.hwnd).as_bool()) };
-    WindowState { maximized, minimized, full_screen: entry.fullscreen.is_some(), focused: entry.active }
+    let (maximized, minimized) = unsafe {
+        (
+            IsZoomed(entry.hwnd).as_bool(),
+            IsIconic(entry.hwnd).as_bool(),
+        )
+    };
+    WindowState {
+        maximized,
+        minimized,
+        full_screen: entry.fullscreen.is_some(),
+        focused: entry.active,
+    }
 }
 
 pub fn state_of(app: &App, window: WindowId) -> WindowState {
-    app.with_state(|state| state.scene.windows.get(&window).map(current_state)).flatten().unwrap_or_default()
+    app.with_state(|state| state.scene.windows.get(&window).map(current_state))
+        .flatten()
+        .unwrap_or_default()
 }
 
 /// Reports the window state when it differs from the last report.
@@ -482,7 +612,12 @@ fn report_state(app: &App, window: WindowId) {
         .with_state(|state| {
             let entry = state.scene.windows.get_mut(&window)?;
             let now = current_state(entry);
-            let differs = (now.maximized, now.minimized, now.full_screen) != (entry.state.maximized, entry.state.minimized, entry.state.full_screen);
+            let differs = (now.maximized, now.minimized, now.full_screen)
+                != (
+                    entry.state.maximized,
+                    entry.state.minimized,
+                    entry.state.full_screen,
+                );
             entry.state = now;
             differs.then_some(now)
         })
@@ -493,9 +628,14 @@ fn report_state(app: &App, window: WindowId) {
 }
 
 fn monitor_rects(hwnd: HWND) -> Option<(RECT, RECT)> {
-    let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    let mut info = MONITORINFO {
+        cbSize: size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
     // SAFETY: the info structure is a live local with its size set.
-    unsafe { GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut info) }.as_bool().then_some((info.rcMonitor, info.rcWork))
+    unsafe { GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut info) }
+        .as_bool()
+        .then_some((info.rcMonitor, info.rcWork))
 }
 
 fn set_fullscreen(app: &Rc<App>, window: WindowId, hwnd: HWND, enabled: bool) {
@@ -506,7 +646,10 @@ fn set_fullscreen(app: &Rc<App>, window: WindowId, hwnd: HWND, enabled: bool) {
                 return None;
             }
             if enabled {
-                let mut placement = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+                let mut placement = WINDOWPLACEMENT {
+                    length: size_of::<WINDOWPLACEMENT>() as u32,
+                    ..Default::default()
+                };
                 // SAFETY: plain queries; the structure is a live local.
                 let style = unsafe {
                     let _ = GetWindowPlacement(hwnd, &mut placement);
@@ -531,7 +674,9 @@ fn set_fullscreen(app: &Rc<App>, window: WindowId, hwnd: HWND, enabled: bool) {
                 if IsZoomed(hwnd).as_bool() {
                     let _ = ShowWindow(hwnd, SW_RESTORE);
                 }
-                let Some((monitor, _)) = monitor_rects(hwnd) else { return };
+                let Some((monitor, _)) = monitor_rects(hwnd) else {
+                    return;
+                };
                 let style = GetWindowLongPtrW(hwnd, GWL_STYLE) & !(WS_OVERLAPPEDWINDOW.0 as isize);
                 SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_POPUP.0 as isize);
                 let _ = SetWindowPos(
@@ -547,7 +692,15 @@ fn set_fullscreen(app: &Rc<App>, window: WindowId, hwnd: HWND, enabled: bool) {
             Some(saved) => {
                 SetWindowLongPtrW(hwnd, GWL_STYLE, saved.style);
                 let _ = SetWindowPlacement(hwnd, &saved.placement);
-                let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED,
+                );
             }
         }
     }
@@ -558,10 +711,21 @@ fn set_fullscreen(app: &Rc<App>, window: WindowId, hwnd: HWND, enabled: bool) {
 pub fn command(app: &Rc<App>, window: WindowId, command: &WindowCommand) {
     let found = app
         .with_state(|state| {
-            state.scene.windows.get(&window).map(|entry| (entry.hwnd, entry.dpi, entry.decorated, entry.resizable, entry.fullscreen.is_some(), entry.modal_owner))
+            state.scene.windows.get(&window).map(|entry| {
+                (
+                    entry.hwnd,
+                    entry.dpi,
+                    entry.decorated,
+                    entry.resizable,
+                    entry.fullscreen.is_some(),
+                    entry.modal_owner,
+                )
+            })
         })
         .flatten();
-    let Some((hwnd, dpi, decorated, resizable, fullscreen, modal_owner)) = found else { return };
+    let Some((hwnd, dpi, decorated, resizable, fullscreen, modal_owner)) = found else {
+        return;
+    };
     // SAFETY: `hwnd` is a live window of this thread; every call below may
     // dispatch messages, and no state borrow is held.
     unsafe {
@@ -571,8 +735,22 @@ pub fn command(app: &Rc<App>, window: WindowId, command: &WindowCommand) {
                 let _ = SetWindowTextW(hwnd, PCWSTR(title.as_ptr()));
             }
             WindowCommand::SetSize(size) => {
-                let (width, height) = outer_size(*size, window_style(resizable), has_menu(hwnd), decorated, dpi);
-                let _ = SetWindowPos(hwnd, None, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                let (width, height) = outer_size(
+                    *size,
+                    window_style(resizable),
+                    has_menu(hwnd),
+                    decorated,
+                    dpi,
+                );
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    0,
+                    0,
+                    width,
+                    height,
+                    SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                );
             }
             WindowCommand::SetMinSize(size) => {
                 app.with_state(|state| {
@@ -590,10 +768,26 @@ pub fn command(app: &Rc<App>, window: WindowId, command: &WindowCommand) {
                 if !fullscreen {
                     let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
                     let sizing = (WS_THICKFRAME | WS_MAXIMIZEBOX).0 as isize;
-                    let next = if *wanted { style | sizing } else { style & !sizing };
+                    let next = if *wanted {
+                        style | sizing
+                    } else {
+                        style & !sizing
+                    };
                     if next != style {
                         SetWindowLongPtrW(hwnd, GWL_STYLE, next);
-                        let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                        let _ = SetWindowPos(
+                            hwnd,
+                            None,
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE
+                                | SWP_NOSIZE
+                                | SWP_NOZORDER
+                                | SWP_NOACTIVATE
+                                | SWP_FRAMECHANGED,
+                        );
                     }
                 }
             }
@@ -622,16 +816,37 @@ pub fn command(app: &Rc<App>, window: WindowId, command: &WindowCommand) {
             WindowCommand::Center => {
                 let mut rect = RECT::default();
                 if GetWindowRect(hwnd, &mut rect).is_ok()
-                    && let Some((_, work)) = monitor_rects(hwnd) {
-                        let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
-                        let x = work.left + ((work.right - work.left) - width) / 2;
-                        let y = work.top + ((work.bottom - work.top) - height) / 2;
-                        let _ = SetWindowPos(hwnd, None, x, y.max(work.top), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-                    }
+                    && let Some((_, work)) = monitor_rects(hwnd)
+                {
+                    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
+                    let x = work.left + ((work.right - work.left) - width) / 2;
+                    let y = work.top + ((work.bottom - work.top) - height) / 2;
+                    let _ = SetWindowPos(
+                        hwnd,
+                        None,
+                        x,
+                        y.max(work.top),
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                }
             }
             WindowCommand::SetAlwaysOnTop(enabled) => {
-                let after = if *enabled { HWND_TOPMOST } else { HWND_NOTOPMOST };
-                let _ = SetWindowPos(hwnd, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                let after = if *enabled {
+                    HWND_TOPMOST
+                } else {
+                    HWND_NOTOPMOST
+                };
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(after),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
             }
             WindowCommand::Show => {
                 if let Some(owner) = modal_owner {
@@ -656,7 +871,12 @@ pub fn command(app: &Rc<App>, window: WindowId, command: &WindowCommand) {
 /// Starts moving the window with the mouse button that is down.
 pub fn begin_drag(app: &Rc<App>, window: WindowId) {
     app.defer(Box::new(move |app| {
-        let Some(hwnd) = app.with_state(|state| state.scene.windows.get(&window).map(|entry| entry.hwnd)).flatten() else { return };
+        let Some(hwnd) = app
+            .with_state(|state| state.scene.windows.get(&window).map(|entry| entry.hwnd))
+            .flatten()
+        else {
+            return;
+        };
         // SAFETY: `hwnd` is a live window of this thread. Releasing the
         // capture and sending the caption press is how a client area starts
         // the system's move loop; no state borrow is held.
@@ -665,7 +885,12 @@ pub fn begin_drag(app: &Rc<App>, window: WindowId) {
             let _ = GetCursorPos(&mut cursor);
             let _ = ReleaseCapture();
             let position = ((cursor.y as u16 as u32) << 16) | (cursor.x as u16 as u32);
-            SendMessageW(hwnd, WM_NCLBUTTONDOWN, Some(WPARAM(HTCAPTION as usize)), Some(LPARAM(position as isize)));
+            SendMessageW(
+                hwnd,
+                WM_NCLBUTTONDOWN,
+                Some(WPARAM(HTCAPTION as usize)),
+                Some(LPARAM(position as isize)),
+            );
         }
     }));
 }
@@ -716,17 +941,37 @@ fn button_bit(button: PointerButton) -> u8 {
 
 /// Updates hover state (cursor, tooltip, scrollbars) for a pointer position.
 fn hover(state: &mut State, window: WindowId, position: Point, plan: &mut PointerPlan) {
-    let Some(entry) = state.scene.windows.get_mut(&window) else { return };
+    let Some(entry) = state.scene.windows.get_mut(&window) else {
+        return;
+    };
     let mut path = std::mem::take(&mut entry.path);
     state.scene.hit_path(window, position, &mut path);
     state.scrolling().hover(&path, position);
-    let cursor = path.iter().rev().filter_map(|id| state.scene.views.get(id)).map(|view| view.cursor).find(|cursor| *cursor != Cursor::Default).unwrap_or_default();
-    let tooltip_node = path.iter().rev().copied().find(|id| state.scene.views.get(id).is_some_and(|view| view.tooltip.is_some()));
+    let cursor = path
+        .iter()
+        .rev()
+        .filter_map(|id| state.scene.views.get(id))
+        .map(|view| view.cursor)
+        .find(|cursor| *cursor != Cursor::Default)
+        .unwrap_or_default();
+    let tooltip_node = path.iter().rev().copied().find(|id| {
+        state
+            .scene
+            .views
+            .get(id)
+            .is_some_and(|view| view.tooltip.is_some())
+    });
     let tooltip = tooltip_node.and_then(|id| {
         let text = state.scene.views.get(&id)?.tooltip.clone()?;
         let (_, transform) = state.scene.world_transform(id)?;
         let scale = state.scene.windows.get(&window)?.scale();
-        Some((text, pixel_rect(transform.bounds(state.scene.views.get(&id)?.bounds()), scale)))
+        Some((
+            text,
+            pixel_rect(
+                transform.bounds(state.scene.views.get(&id)?.bounds()),
+                scale,
+            ),
+        ))
     });
     let hovered = path.last().copied();
     if let Some(entry) = state.scene.windows.get_mut(&window) {
@@ -744,7 +989,14 @@ fn hover(state: &mut State, window: WindowId, position: Point, plan: &mut Pointe
     }
 }
 
-fn pointer(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+fn pointer(
+    app: &Rc<App>,
+    hwnd: HWND,
+    window: WindowId,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> Option<LRESULT> {
     let (phase, button) = match message {
         WM_MOUSEMOVE => (PointerPhase::Move, PointerButton::Primary),
         WM_LBUTTONDOWN => (PointerPhase::Down, PointerButton::Primary),
@@ -756,8 +1008,14 @@ fn pointer(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WP
     };
     let (x, y) = lparam_point(lparam);
     // SAFETY: plain queries without preconditions.
-    let (time, double_time, double_x, double_y) =
-        unsafe { (GetMessageTime(), GetDoubleClickTime() as i32, GetSystemMetrics(SM_CXDOUBLECLK), GetSystemMetrics(SM_CYDOUBLECLK)) };
+    let (time, double_time, double_x, double_y) = unsafe {
+        (
+            GetMessageTime(),
+            GetDoubleClickTime() as i32,
+            GetSystemMetrics(SM_CXDOUBLECLK),
+            GetSystemMetrics(SM_CYDOUBLECLK),
+        )
+    };
     let modifiers = events::modifiers();
     let plan = app.with_state(|state| {
         let mut plan = PointerPlan::default();
@@ -777,7 +1035,12 @@ fn pointer(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WP
                     entry.bar_drag = None;
                     entry.buttons &= !button_bit(button);
                     plan.release = entry.buttons == 0;
-                    if let Some(scroll) = state.scene.views.get_mut(&drag.id).and_then(|view| view.scroll.as_mut()) {
+                    if let Some(scroll) = state
+                        .scene
+                        .views
+                        .get_mut(&drag.id)
+                        .and_then(|view| view.scroll.as_mut())
+                    {
                         scroll.bar_held = false;
                     }
                 }
@@ -799,7 +1062,13 @@ fn pointer(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WP
                 }
                 _ => 1,
             };
-            entry.last_click = Some(Click { time, x, y, button, count });
+            entry.last_click = Some(Click {
+                time,
+                x,
+                y,
+                button,
+                count,
+            });
             entry.press_count = count;
             plan.capture = entry.buttons == 0;
             entry.buttons |= button_bit(button);
@@ -807,7 +1076,11 @@ fn pointer(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WP
             entry.buttons &= !button_bit(button);
             plan.release = entry.buttons == 0;
         }
-        let click_count = if entry.buttons != 0 || phase == PointerPhase::Up { entry.press_count } else { 1 };
+        let click_count = if entry.buttons != 0 || phase == PointerPhase::Up {
+            entry.press_count
+        } else {
+            1
+        };
         hover(state, window, position, &mut plan);
         if phase == PointerPhase::Down {
             // The pointer takes over from the keyboard: the focus ring goes.
@@ -818,7 +1091,12 @@ fn pointer(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WP
                 }
             }
             if button == PointerButton::Primary {
-                let path = state.scene.windows.get_mut(&window).map(|entry| std::mem::take(&mut entry.path)).unwrap_or_default();
+                let path = state
+                    .scene
+                    .windows
+                    .get_mut(&window)
+                    .map(|entry| std::mem::take(&mut entry.path))
+                    .unwrap_or_default();
                 let grabbed = state.scrolling().press(&path, position);
                 let consumed = grabbed.is_some() || crate::media::press(state, &path, position);
                 if let Some(entry) = state.scene.windows.get_mut(&window) {
@@ -834,7 +1112,15 @@ fn pointer(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WP
             crate::media::hover(state, window, position);
         }
         state.schedule_scroll_work();
-        plan.event = Some(PointerEvent { window, phase, position, button, modifiers, click_count, time_ms: now });
+        plan.event = Some(PointerEvent {
+            window,
+            phase,
+            position,
+            button,
+            modifiers,
+            click_count,
+            time_ms: now,
+        });
         Some(plan)
     });
     let Some(Some(plan)) = plan else { return None };
@@ -842,7 +1128,12 @@ fn pointer(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WP
     // tracking calls may dispatch messages, and no state borrow is held.
     unsafe {
         if plan.track {
-            let mut track = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
+            let mut track = TRACKMOUSEEVENT {
+                cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: TME_LEAVE,
+                hwndTrack: hwnd,
+                dwHoverTime: 0,
+            };
             let _ = TrackMouseEvent(&mut track);
         }
         if plan.capture {
@@ -856,7 +1147,11 @@ fn pointer(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WP
         apply_cursor(cursor);
     }
     if let Some(tooltip) = &plan.tooltip {
-        update_tooltip(plan.tooltip_window, hwnd, tooltip.as_ref().map(|(text, rect)| (text.as_str(), *rect)));
+        update_tooltip(
+            plan.tooltip_window,
+            hwnd,
+            tooltip.as_ref().map(|(text, rect)| (text.as_str(), *rect)),
+        );
     }
     relay_to_tooltip(plan.tooltip_window, hwnd, message, wparam, lparam);
     if let Some(event) = plan.event {
@@ -867,13 +1162,22 @@ fn pointer(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WP
 
 /// A pointer event seen by a child control (text inputs), reported in the
 /// window's coordinates so hover and press states keep working over it.
-pub fn pointer_from_child(app: &Rc<App>, child: HWND, phase: PointerPhase, button: PointerButton, lparam: LPARAM) {
+pub fn pointer_from_child(
+    app: &Rc<App>,
+    child: HWND,
+    phase: PointerPhase,
+    button: PointerButton,
+    lparam: LPARAM,
+) {
     let (x, y) = lparam_point(lparam);
     let mut point = POINT { x, y };
     // SAFETY: plain coordinate conversions on live windows.
     let root = unsafe {
         let _ = ClientToScreen(child, &mut point);
-        let root = windows::Win32::UI::WindowsAndMessaging::GetAncestor(child, windows::Win32::UI::WindowsAndMessaging::GA_ROOT);
+        let root = windows::Win32::UI::WindowsAndMessaging::GetAncestor(
+            child,
+            windows::Win32::UI::WindowsAndMessaging::GA_ROOT,
+        );
         let _ = ScreenToClient(root, &mut point);
         root
     };
@@ -881,11 +1185,23 @@ pub fn pointer_from_child(app: &Rc<App>, child: HWND, phase: PointerPhase, butto
     let event = app
         .with_state(|state| {
             let now = state.now_ms();
-            let (window, entry) = state.scene.windows.iter_mut().find(|(_, entry)| entry.hwnd == root)?;
+            let (window, entry) = state
+                .scene
+                .windows
+                .iter_mut()
+                .find(|(_, entry)| entry.hwnd == root)?;
             let scale = entry.scale();
             let position = Point::new(point.x as f32 / scale, point.y as f32 / scale);
             entry.pointer = position;
-            Some(PointerEvent { window: *window, phase, position, button, modifiers, click_count: 1, time_ms: now })
+            Some(PointerEvent {
+                window: *window,
+                phase,
+                position,
+                button,
+                modifiers,
+                click_count: 1,
+                time_ms: now,
+            })
         })
         .flatten();
     if let Some(event) = event {
@@ -941,23 +1257,52 @@ fn pointer_left(app: &Rc<App>, hwnd: HWND, window: WindowId, from_child: bool) {
 /// The pointer left a child control (text inputs track it themselves).
 pub fn pointer_left_child(app: &Rc<App>, child: HWND) {
     // SAFETY: plain query on a live window.
-    let root = unsafe { windows::Win32::UI::WindowsAndMessaging::GetAncestor(child, windows::Win32::UI::WindowsAndMessaging::GA_ROOT) };
-    let window = app.with_state(|state| state.scene.windows.iter().find(|(_, entry)| entry.hwnd == root).map(|(window, _)| *window)).flatten();
+    let root = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetAncestor(
+            child,
+            windows::Win32::UI::WindowsAndMessaging::GA_ROOT,
+        )
+    };
+    let window = app
+        .with_state(|state| {
+            state
+                .scene
+                .windows
+                .iter()
+                .find(|(_, entry)| entry.hwnd == root)
+                .map(|(window, _)| *window)
+        })
+        .flatten();
     if let Some(window) = window {
         pointer_left(app, root, window, true);
         app.post_pump_if_pending();
     }
 }
 
-fn wheel(app: &Rc<App>, hwnd: HWND, window: WindowId, horizontal: bool, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+fn wheel(
+    app: &Rc<App>,
+    hwnd: HWND,
+    window: WindowId,
+    horizontal: bool,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> Option<LRESULT> {
     let rotation = f32::from(hiword(wparam.0) as i16);
     let (screen_x, screen_y) = lparam_point(lparam);
-    let mut point = POINT { x: screen_x, y: screen_y };
+    let mut point = POINT {
+        x: screen_x,
+        y: screen_y,
+    };
     let mut lines = 3_u32;
     // SAFETY: plain queries; the out pointers refer to live locals.
     unsafe {
         let _ = ScreenToClient(hwnd, &mut point);
-        let _ = SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, Some(std::ptr::from_mut(&mut lines).cast()), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0));
+        let _ = SystemParametersInfoW(
+            SPI_GETWHEELSCROLLLINES,
+            0,
+            Some(std::ptr::from_mut(&mut lines).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        );
     }
     let modifiers = events::modifiers();
     // A mouse sends whole notches; touchpads send small pixel-precise steps
@@ -967,7 +1312,11 @@ fn wheel(app: &Rc<App>, hwnd: HWND, window: WindowId, horizontal: bool, wparam: 
         let entry = state.scene.windows.get_mut(&window)?;
         let scale = entry.scale();
         let position = Point::new(point.x as f32 / scale, point.y as f32 / scale);
-        let per_notch = if lines == PAGE_SCROLL { entry.size.height * 0.9 } else { lines.max(1) as f32 * LINE_EXTENT };
+        let per_notch = if lines == PAGE_SCROLL {
+            entry.size.height * 0.9
+        } else {
+            lines.max(1) as f32 * LINE_EXTENT
+        };
         let amount = rotation / WHEEL_DELTA as f32 * per_notch;
         // Forward rotation scrolls up (content moves down); a horizontal
         // wheel tilted right scrolls right. Shift turns the wheel sideways.
@@ -987,7 +1336,12 @@ fn wheel(app: &Rc<App>, hwnd: HWND, window: WindowId, horizontal: bool, wparam: 
             entry.path = path;
         }
         state.schedule_scroll_work();
-        (!consumed).then_some(BackendEvent::Wheel { window, position, delta, modifiers })
+        (!consumed).then_some(BackendEvent::Wheel {
+            window,
+            position,
+            delta,
+            modifiers,
+        })
     });
     if let Some(Some(event)) = event {
         app.emit(event);
@@ -995,7 +1349,14 @@ fn wheel(app: &Rc<App>, hwnd: HWND, window: WindowId, horizontal: bool, wparam: 
     Some(LRESULT(0))
 }
 
-fn key(app: &Rc<App>, window: WindowId, pressed: bool, system: bool, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+fn key(
+    app: &Rc<App>,
+    window: WindowId,
+    pressed: bool,
+    system: bool,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> Option<LRESULT> {
     let code = wparam.0 as u32;
     let bits = lparam.0 as u32;
     let scan_code = (bits >> 16) & 0xFF;
@@ -1013,7 +1374,12 @@ fn key(app: &Rc<App>, window: WindowId, pressed: bool, system: bool, wparam: WPA
             }
         });
     }
-    if pressed && name == "Tab" && !modifiers.control && !modifiers.alt && crate::focus::advance(app, window, !modifiers.shift) {
+    if pressed
+        && name == "Tab"
+        && !modifiers.control
+        && !modifiers.alt
+        && crate::focus::advance(app, window, !modifiers.shift)
+    {
         return Some(LRESULT(0));
     }
     let scrolled = pressed
@@ -1026,7 +1392,13 @@ fn key(app: &Rc<App>, window: WindowId, pressed: bool, system: bool, wparam: WPA
             })
             .unwrap_or(false);
     if !scrolled {
-        app.emit(BackendEvent::Key(KeyEvent { window, pressed, key: name, modifiers, repeat }));
+        app.emit(BackendEvent::Key(KeyEvent {
+            window,
+            pressed,
+            key: name,
+            modifiers,
+            repeat,
+        }));
     }
     // System keys keep their default handling (Alt+F4, the window menu).
     if system { None } else { Some(LRESULT(0)) }
@@ -1035,18 +1407,42 @@ fn key(app: &Rc<App>, window: WindowId, pressed: bool, system: bool, wparam: WPA
 /// A key a native control did not use, reported for its window.
 pub fn key_from_child(app: &Rc<App>, child: HWND, pressed: bool, wparam: WPARAM, lparam: LPARAM) {
     // SAFETY: plain query on a live window.
-    let root = unsafe { windows::Win32::UI::WindowsAndMessaging::GetAncestor(child, windows::Win32::UI::WindowsAndMessaging::GA_ROOT) };
-    let Some(window) = app.with_state(|state| state.scene.windows.iter().find(|(_, entry)| entry.hwnd == root).map(|(window, _)| *window)).flatten() else {
+    let root = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetAncestor(
+            child,
+            windows::Win32::UI::WindowsAndMessaging::GA_ROOT,
+        )
+    };
+    let Some(window) = app
+        .with_state(|state| {
+            state
+                .scene
+                .windows
+                .iter()
+                .find(|(_, entry)| entry.hwnd == root)
+                .map(|(window, _)| *window)
+        })
+        .flatten()
+    else {
         return;
     };
     let bits = lparam.0 as u32;
     let name = events::key_name(wparam.0 as u32, (bits >> 16) & 0xFF);
     let repeat = pressed && bits & (1 << 30) != 0;
-    app.emit_later(BackendEvent::Key(KeyEvent { window, pressed, key: name, modifiers: events::modifiers(), repeat }));
+    app.emit_later(BackendEvent::Key(KeyEvent {
+        window,
+        pressed,
+        key: name,
+        modifiers: events::modifiers(),
+        repeat,
+    }));
 }
 
 fn gesture(app: &Rc<App>, hwnd: HWND, window: WindowId, lparam: LPARAM) -> Option<LRESULT> {
-    let mut info = GESTUREINFO { cbSize: size_of::<GESTUREINFO>() as u32, ..Default::default() };
+    let mut info = GESTUREINFO {
+        cbSize: size_of::<GESTUREINFO>() as u32,
+        ..Default::default()
+    };
     let handle = HGESTUREINFO(lparam.0 as *mut _);
     // SAFETY: the handle comes from the WM_GESTURE being handled and the
     // structure is a live local with its size set.
@@ -1059,7 +1455,10 @@ fn gesture(app: &Rc<App>, hwnd: HWND, window: WindowId, lparam: LPARAM) -> Optio
     if !zoom && !rotate && !pan {
         return None;
     }
-    let mut point = POINT { x: i32::from(info.ptsLocation.x), y: i32::from(info.ptsLocation.y) };
+    let mut point = POINT {
+        x: i32::from(info.ptsLocation.x),
+        y: i32::from(info.ptsLocation.y),
+    };
     // SAFETY: plain conversion; the handle is closed exactly once because
     // the message is not passed on.
     unsafe {
@@ -1086,7 +1485,10 @@ fn gesture(app: &Rc<App>, hwnd: HWND, window: WindowId, lparam: LPARAM) -> Optio
             }
             let (from_x, from_y) = previous.filter(|_| phase != GesturePhase::Begin)?;
             // The content follows the fingers.
-            let delta = Point::new((from_x - point.x) as f32 / scale, (from_y - point.y) as f32 / scale);
+            let delta = Point::new(
+                (from_x - point.x) as f32 / scale,
+                (from_y - point.y) as f32 / scale,
+            );
             if delta == Point::ZERO {
                 return None;
             }
@@ -1098,7 +1500,12 @@ fn gesture(app: &Rc<App>, hwnd: HWND, window: WindowId, lparam: LPARAM) -> Optio
                 entry.path = path;
             }
             state.schedule_scroll_work();
-            (!consumed).then_some(BackendEvent::Wheel { window, position, delta, modifiers })
+            (!consumed).then_some(BackendEvent::Wheel {
+                window,
+                position,
+                delta,
+                modifiers,
+            })
         });
         if let Some(Some(event)) = event {
             app.emit(event);
@@ -1118,13 +1525,32 @@ fn gesture(app: &Rc<App>, hwnd: HWND, window: WindowId, lparam: LPARAM) -> Optio
                     entry.gesture_start = argument.max(1.0);
                 }
                 let factor = (argument / entry.gesture_start) as f32;
-                Some(BackendEvent::Magnify { window, position, phase, scale: if phase == GesturePhase::Begin { 1.0 } else { factor } })
+                Some(BackendEvent::Magnify {
+                    window,
+                    position,
+                    phase,
+                    scale: if phase == GesturePhase::Begin {
+                        1.0
+                    } else {
+                        factor
+                    },
+                })
             } else {
                 // GID_ROTATE_ANGLE_FROM_ARGUMENT: counter-clockwise radians.
                 // At the start the argument is the absolute angle of the
                 // fingers; afterwards it is the change since the start.
-                let angle = (argument / 65535.0) * 4.0 * std::f64::consts::PI - 2.0 * std::f64::consts::PI;
-                Some(BackendEvent::Rotate { window, position, phase, radians: if phase == GesturePhase::Begin { 0.0 } else { -angle as f32 } })
+                let angle =
+                    (argument / 65535.0) * 4.0 * std::f64::consts::PI - 2.0 * std::f64::consts::PI;
+                Some(BackendEvent::Rotate {
+                    window,
+                    position,
+                    phase,
+                    radians: if phase == GesturePhase::Begin {
+                        0.0
+                    } else {
+                        -angle as f32
+                    },
+                })
             }
         })
         .flatten();
@@ -1141,7 +1567,11 @@ fn frameless_hit_test(hwnd: HWND, lparam: LPARAM, dpi: u32, resizable: bool) -> 
     // SAFETY: plain queries; the rectangle is a live local.
     let (border, maximized) = unsafe {
         let _ = GetWindowRect(hwnd, &mut rect);
-        (GetSystemMetricsForDpi(SM_CXFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi), IsZoomed(hwnd).as_bool())
+        (
+            GetSystemMetricsForDpi(SM_CXFRAME, dpi)
+                + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi),
+            IsZoomed(hwnd).as_bool(),
+        )
     };
     if !resizable || maximized {
         return LRESULT(HTCLIENT as isize);
@@ -1168,7 +1598,13 @@ fn paint(app: &Rc<App>, hwnd: HWND, window: WindowId) {
     unsafe {
         let _ = ValidateRect(Some(hwnd), None);
     }
-    let needs_natives = app.with_state(|state| state.scene.windows.get_mut(&window).is_some_and(|entry| std::mem::take(&mut entry.natives_dirty)));
+    let needs_natives = app.with_state(|state| {
+        state
+            .scene
+            .windows
+            .get_mut(&window)
+            .is_some_and(|entry| std::mem::take(&mut entry.natives_dirty))
+    });
     match needs_natives {
         Some(true) => crate::native::sync(app, window),
         Some(false) => {}
@@ -1176,14 +1612,22 @@ fn paint(app: &Rc<App>, hwnd: HWND, window: WindowId) {
     }
     let mut lost = false;
     let rendered = app.with_state(|state| {
-        let Some(entry) = state.scene.windows.get(&window) else { return };
-        let never_presented = entry.surface.as_ref().is_none_or(|surface| !surface.presented);
+        let Some(entry) = state.scene.windows.get(&window) else {
+            return;
+        };
+        let never_presented = entry
+            .surface
+            .as_ref()
+            .is_none_or(|surface| !surface.presented);
         // SAFETY: plain query on a live window.
         let minimized = unsafe { IsIconic(entry.hwnd) }.as_bool();
         if minimized || (entry.dirty == Damage::Clean && !never_presented) {
             return;
         }
-        if matches!(crate::render::render_window(state, window), crate::render::Outcome::DeviceLost) {
+        if matches!(
+            crate::render::render_window(state, window),
+            crate::render::Outcome::DeviceLost
+        ) {
             lost = true;
         }
     });
@@ -1213,7 +1657,11 @@ fn resized(app: &Rc<App>, hwnd: HWND, window: WindowId, kind: u32) {
             state.scene.damage_all(window);
             // Back from minimized: animations run again.
             state.resume_frames();
-            changed.then_some(BackendEvent::WindowResized { window, size, scale })
+            changed.then_some(BackendEvent::WindowResized {
+                window,
+                size,
+                scale,
+            })
         })
         .flatten();
     if let Some(event) = event {
@@ -1256,7 +1704,11 @@ fn dpi_changed(app: &Rc<App>, hwnd: HWND, window: WindowId, wparam: WPARAM, lpar
             entry.pixel_size = (width, height);
             entry.size = Size::new(width as f32 / scale, height as f32 / scale);
             entry.natives_dirty = true;
-            Some(BackendEvent::WindowResized { window, size: entry.size, scale })
+            Some(BackendEvent::WindowResized {
+                window,
+                size: entry.size,
+                scale,
+            })
         })
         .flatten();
     if let Some(event) = event {
@@ -1286,7 +1738,14 @@ fn destroyed(app: &Rc<App>, hwnd: HWND, window: WindowId) {
     }
 }
 
-fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+fn handle(
+    app: &Rc<App>,
+    hwnd: HWND,
+    window: WindowId,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> Option<LRESULT> {
     match message {
         WM_PAINT => {
             paint(app, hwnd, window);
@@ -1306,9 +1765,8 @@ fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPA
             crate::webview::window_moved(app, window);
             None
         }
-        WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_LBUTTONUP | WM_RBUTTONDOWN | WM_RBUTTONUP | WM_MBUTTONDOWN | WM_MBUTTONUP => {
-            pointer(app, hwnd, window, message, wparam, lparam)
-        }
+        WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_LBUTTONUP | WM_RBUTTONDOWN | WM_RBUTTONUP
+        | WM_MBUTTONDOWN | WM_MBUTTONUP => pointer(app, hwnd, window, message, wparam, lparam),
         WM_MOUSELEAVE => {
             pointer_left(app, hwnd, window, false);
             Some(LRESULT(0))
@@ -1343,7 +1801,12 @@ fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPA
                     let position = entry.pointer;
                     if let Some(drag) = entry.bar_drag.take() {
                         // The thumb is no longer held: its bar may fade.
-                        if let Some(scroll) = state.scene.views.get_mut(&drag.id).and_then(|view| view.scroll.as_mut()) {
+                        if let Some(scroll) = state
+                            .scene
+                            .views
+                            .get_mut(&drag.id)
+                            .and_then(|view| view.scroll.as_mut())
+                        {
                             scroll.bar_held = false;
                         }
                         state.schedule_scroll_work();
@@ -1376,15 +1839,31 @@ fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPA
             // Without a menu bar there are no mnemonics: swallowing the
             // character avoids the default beep on Alt chords. Alt+Space
             // still opens the window menu.
-            if has_menu(hwnd) || wparam.0 == 0x20 { None } else { Some(LRESULT(0)) }
+            if has_menu(hwnd) || wparam.0 == 0x20 {
+                None
+            } else {
+                Some(LRESULT(0))
+            }
         }
         WM_GESTURENOTIFY => {
             // Rotation is off by default, and so is panning sideways with
             // one finger; the gutter would lock a pan to its first axis.
-            let pan = (GC_PAN | GC_PAN_WITH_SINGLE_FINGER_VERTICALLY | GC_PAN_WITH_SINGLE_FINGER_HORIZONTALLY | GC_PAN_WITH_INERTIA).0;
+            let pan = (GC_PAN
+                | GC_PAN_WITH_SINGLE_FINGER_VERTICALLY
+                | GC_PAN_WITH_SINGLE_FINGER_HORIZONTALLY
+                | GC_PAN_WITH_INERTIA)
+                .0;
             let wanted = [
-                GESTURECONFIG { dwID: GID_ROTATE, dwWant: GC_ROTATE.0, dwBlock: 0 },
-                GESTURECONFIG { dwID: GID_PAN, dwWant: pan, dwBlock: GC_PAN_WITH_GUTTER.0 },
+                GESTURECONFIG {
+                    dwID: GID_ROTATE,
+                    dwWant: GC_ROTATE.0,
+                    dwBlock: 0,
+                },
+                GESTURECONFIG {
+                    dwID: GID_PAN,
+                    dwWant: pan,
+                    dwBlock: GC_PAN_WITH_GUTTER.0,
+                },
             ];
             // SAFETY: the configuration array is live for the call.
             unsafe {
@@ -1395,7 +1874,9 @@ fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPA
         WM_GESTURE => gesture(app, hwnd, window, lparam),
         WM_SETCURSOR => {
             if u32::from(loword(lparam.0 as usize)) == HTCLIENT && wparam.0 == hwnd.0 as usize {
-                let cursor = app.with_state(|state| state.scene.windows.get(&window).map(|entry| entry.cursor)).flatten()?;
+                let cursor = app
+                    .with_state(|state| state.scene.windows.get(&window).map(|entry| entry.cursor))
+                    .flatten()?;
                 apply_cursor(cursor);
                 Some(LRESULT(1))
             } else {
@@ -1419,16 +1900,26 @@ fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPA
                 }
                 Some(entry.tooltip)
             });
-            if !active
-                && let Some(Some(tooltip)) = tooltip {
-                    update_tooltip(tooltip, hwnd, None);
-                }
-            app.emit(BackendEvent::WindowFocusChanged { window, focused: active });
+            if !active && let Some(Some(tooltip)) = tooltip {
+                update_tooltip(tooltip, hwnd, None);
+            }
+            app.emit(BackendEvent::WindowFocusChanged {
+                window,
+                focused: active,
+            });
             None
         }
         WM_SETFOCUS => {
             // A plain window does not remember which child had the focus.
-            let restore = app.with_state(|state| state.scene.windows.get_mut(&window).and_then(|entry| entry.focus_restore.take())).flatten();
+            let restore = app
+                .with_state(|state| {
+                    state
+                        .scene
+                        .windows
+                        .get_mut(&window)
+                        .and_then(|entry| entry.focus_restore.take())
+                })
+                .flatten();
             if let Some(child) = restore {
                 // SAFETY: the handle is checked to still be a window; no state borrow is held.
                 unsafe {
@@ -1448,24 +1939,52 @@ fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPA
             Some(LRESULT(0))
         }
         WM_GETMINMAXINFO => {
-            let minimum = app.with_state(|state| state.scene.windows.get(&window).and_then(|entry| entry.min_size.map(|size| (size, entry.dpi, entry.decorated, entry.resizable)))).flatten()?;
+            let minimum = app
+                .with_state(|state| {
+                    state.scene.windows.get(&window).and_then(|entry| {
+                        entry
+                            .min_size
+                            .map(|size| (size, entry.dpi, entry.decorated, entry.resizable))
+                    })
+                })
+                .flatten()?;
             let (size, dpi, decorated, resizable) = minimum;
-            let (width, height) = outer_size(size, window_style(resizable), has_menu(hwnd), decorated, dpi);
+            let (width, height) = outer_size(
+                size,
+                window_style(resizable),
+                has_menu(hwnd),
+                decorated,
+                dpi,
+            );
             // SAFETY: lParam of WM_GETMINMAXINFO points to a MINMAXINFO for the duration of the message.
             unsafe {
                 let info = &mut *(lparam.0 as *mut MINMAXINFO);
-                info.ptMinTrackSize = POINT { x: width, y: height };
+                info.ptMinTrackSize = POINT {
+                    x: width,
+                    y: height,
+                };
             }
             Some(LRESULT(0))
         }
         WM_NCCALCSIZE if wparam.0 != 0 => {
-            let (decorated, dpi) = app.with_state(|state| state.scene.windows.get(&window).map(|entry| (entry.decorated || entry.fullscreen.is_some(), entry.dpi))).flatten()?;
+            let (decorated, dpi) = app
+                .with_state(|state| {
+                    state
+                        .scene
+                        .windows
+                        .get(&window)
+                        .map(|entry| (entry.decorated || entry.fullscreen.is_some(), entry.dpi))
+                })
+                .flatten()?;
             if decorated {
                 return None;
             }
             // The client area is the whole window. A maximized window hangs
             // over the monitor by its frame: keep the client on screen.
-            let mut placement = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+            let mut placement = WINDOWPLACEMENT {
+                length: size_of::<WINDOWPLACEMENT>() as u32,
+                ..Default::default()
+            };
             // SAFETY: lParam of WM_NCCALCSIZE (wParam TRUE) points to
             // NCCALCSIZE_PARAMS for the duration of the message.
             unsafe {
@@ -1473,7 +1992,10 @@ fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPA
                 if placement.showCmd == SW_SHOWMAXIMIZED.0 as u32 {
                     let parameters = &mut *(lparam.0 as *mut NCCALCSIZE_PARAMS);
                     let padding = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
-                    let (frame_x, frame_y) = (GetSystemMetricsForDpi(SM_CXFRAME, dpi) + padding, GetSystemMetricsForDpi(SM_CYFRAME, dpi) + padding);
+                    let (frame_x, frame_y) = (
+                        GetSystemMetricsForDpi(SM_CXFRAME, dpi) + padding,
+                        GetSystemMetricsForDpi(SM_CYFRAME, dpi) + padding,
+                    );
                     parameters.rgrc[0].left += frame_x;
                     parameters.rgrc[0].right -= frame_x;
                     parameters.rgrc[0].top += frame_y;
@@ -1483,7 +2005,15 @@ fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPA
             Some(LRESULT(0))
         }
         WM_NCACTIVATE => {
-            let decorated = app.with_state(|state| state.scene.windows.get(&window).map(|entry| entry.decorated)).flatten()?;
+            let decorated = app
+                .with_state(|state| {
+                    state
+                        .scene
+                        .windows
+                        .get(&window)
+                        .map(|entry| entry.decorated)
+                })
+                .flatten()?;
             if decorated {
                 return None;
             }
@@ -1493,19 +2023,38 @@ fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPA
             Some(unsafe { DefWindowProcW(hwnd, message, wparam, LPARAM(-1)) })
         }
         WM_NCHITTEST => {
-            let (decorated, dpi, resizable) =
-                app.with_state(|state| state.scene.windows.get(&window).map(|entry| (entry.decorated || entry.fullscreen.is_some(), entry.dpi, entry.resizable))).flatten()?;
-            if decorated { None } else { Some(frameless_hit_test(hwnd, lparam, dpi, resizable)) }
+            let (decorated, dpi, resizable) = app
+                .with_state(|state| {
+                    state.scene.windows.get(&window).map(|entry| {
+                        (
+                            entry.decorated || entry.fullscreen.is_some(),
+                            entry.dpi,
+                            entry.resizable,
+                        )
+                    })
+                })
+                .flatten()?;
+            if decorated {
+                None
+            } else {
+                Some(frameless_hit_test(hwnd, lparam, dpi, resizable))
+            }
         }
         WM_COMMAND => {
             if lparam.0 == 0 {
                 crate::shell::menu_command(app, window, u32::from(loword(wparam.0)));
             } else {
-                crate::input::notification(app, HWND(lparam.0 as *mut _), u32::from(hiword(wparam.0)));
+                crate::input::notification(
+                    app,
+                    HWND(lparam.0 as *mut _),
+                    u32::from(hiword(wparam.0)),
+                );
             }
             Some(LRESULT(0))
         }
-        WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC => crate::input::control_colors(app, HWND(lparam.0 as *mut _), wparam),
+        WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC => {
+            crate::input::control_colors(app, HWND(lparam.0 as *mut _), wparam)
+        }
         WM_SETTINGCHANGE => {
             if lparam.0 != 0 {
                 // SAFETY: lParam of WM_SETTINGCHANGE is a NUL-terminated
@@ -1523,7 +2072,12 @@ fn handle(app: &Rc<App>, hwnd: HWND, window: WindowId, message: u32, wparam: WPA
     }
 }
 
-extern "system" fn window_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+extern "system" fn window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     let handled = catch_unwind(AssertUnwindSafe(|| {
         if message == WM_NCCREATE {
             // SAFETY: lParam of WM_NCCREATE points to the CREATESTRUCTW of
@@ -1544,7 +2098,10 @@ extern "system" fn window_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam:
         // Messages a child control sends from inside its own procedure
         // (notifications, color queries while it paints, creation and
         // destruction notices): events are drained after it returns.
-        let from_control = matches!(message, WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC | WM_PARENTNOTIFY | WM_NOTIFY) || (message == WM_COMMAND && lparam.0 != 0);
+        let from_control = matches!(
+            message,
+            WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC | WM_PARENTNOTIFY | WM_NOTIFY
+        ) || (message == WM_COMMAND && lparam.0 != 0);
         if from_control {
             app.post_pump_if_pending();
         } else {
@@ -1561,7 +2118,9 @@ extern "system" fn window_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam:
 
 /// Destroys every window (application quit).
 pub fn close_all(app: &Rc<App>) {
-    let windows: Vec<WindowId> = app.with_state(|state| state.scene.windows.keys().copied().collect()).unwrap_or_default();
+    let windows: Vec<WindowId> = app
+        .with_state(|state| state.scene.windows.keys().copied().collect())
+        .unwrap_or_default();
     for window in windows {
         close(app, window);
     }

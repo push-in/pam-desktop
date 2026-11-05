@@ -22,7 +22,10 @@ pub struct Props<'a> {
 impl<'a> Props<'a> {
     #[must_use]
     pub const fn new(base: &'a PropMap) -> Self {
-        Self { base, overlays: [None, None] }
+        Self {
+            base,
+            overlays: [None, None],
+        }
     }
 
     #[must_use]
@@ -125,10 +128,18 @@ impl<'a> Props<'a> {
         let horizontal = self.number(PropKey::PaddingHorizontal).unwrap_or(all);
         let vertical = self.number(PropKey::PaddingVertical).unwrap_or(all);
         Insets::new(
-            self.number(PropKey::PaddingLeft).unwrap_or(horizontal).max(0.0),
-            self.number(PropKey::PaddingTop).unwrap_or(vertical).max(0.0),
-            self.number(PropKey::PaddingRight).unwrap_or(horizontal).max(0.0),
-            self.number(PropKey::PaddingBottom).unwrap_or(vertical).max(0.0),
+            self.number(PropKey::PaddingLeft)
+                .unwrap_or(horizontal)
+                .max(0.0),
+            self.number(PropKey::PaddingTop)
+                .unwrap_or(vertical)
+                .max(0.0),
+            self.number(PropKey::PaddingRight)
+                .unwrap_or(horizontal)
+                .max(0.0),
+            self.number(PropKey::PaddingBottom)
+                .unwrap_or(vertical)
+                .max(0.0),
         )
     }
 }

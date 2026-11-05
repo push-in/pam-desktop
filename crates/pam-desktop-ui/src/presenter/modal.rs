@@ -8,7 +8,7 @@ use pam_desktop_wire::{NodeKind, PropKey, PropValue};
 
 use crate::animator::{Curve, Easing, Owner};
 use crate::backend::{NodeId, PointerButton, PointerEvent, PointerPhase};
-use crate::context::{event_kind, Ctx};
+use crate::context::{Ctx, event_kind};
 use crate::geometry::{Affine, Rect};
 use crate::props::PropMap;
 use crate::scene::{Action, Change, IdMap, LayerOverride, LayerSlot, StyleLayer};
@@ -74,12 +74,20 @@ const SHEET_SETTLE_MS: u32 = 180;
 
 /// `BottomSheetSnapPoints`: a count and that many fractions of the surface.
 fn snap_points(bytes: Option<&[u8]>) -> Vec<f32> {
-    let Some(bytes) = bytes.filter(|bytes| bytes.len() >= 2) else { return vec![0.5, 0.9] };
+    let Some(bytes) = bytes.filter(|bytes| bytes.len() >= 2) else {
+        return vec![0.5, 0.9];
+    };
     let count = usize::from(u16::from_le_bytes([bytes[0], bytes[1]])).min(16);
     let snaps: Vec<f32> = bytes[2..]
-        .as_chunks::<8>().0.iter()
+        .as_chunks::<8>()
+        .0
+        .iter()
         .take(count)
-        .map(|chunk| f64::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7]]) as f32)
+        .map(|chunk| {
+            f64::from_le_bytes([
+                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+            ]) as f32
+        })
         .filter(|snap| snap.is_finite() && *snap > 0.0 && *snap <= 1.0)
         .collect();
     snaps
@@ -87,18 +95,34 @@ fn snap_points(bytes: Option<&[u8]>) -> Vec<f32> {
 
 fn content_of(ctx: &Ctx<'_>, modal: NodeId) -> Option<NodeId> {
     let node = ctx.scene.node(modal)?;
-    node.children.iter().copied().find(|child| ctx.scene.node(*child).is_some_and(|node| !node.is_synthetic()))
+    node.children.iter().copied().find(|child| {
+        ctx.scene
+            .node(*child)
+            .is_some_and(|node| !node.is_synthetic())
+    })
 }
 
 impl Modals {
     pub fn on_change(&mut self, ctx: &mut Ctx<'_>, change: Change) {
         match change {
             // A modal marked as a window is shown by the window controller.
-            Change::Created(id, NodeKind::Modal) if ctx.scene.node(id).is_some_and(|node| node.handles(PropKey::WindowSurface)) => {}
+            Change::Created(id, NodeKind::Modal)
+                if ctx
+                    .scene
+                    .node(id)
+                    .is_some_and(|node| node.handles(PropKey::WindowSurface)) => {}
             Change::Created(id, NodeKind::Modal) => {
                 self.modals.insert(
                     id,
-                    Modal { phase: Phase::Hidden, backdrop: None, handle: None, sync: true, restyle: false, animation: ANIMATION_NONE, sheet: false },
+                    Modal {
+                        phase: Phase::Hidden,
+                        backdrop: None,
+                        handle: None,
+                        sync: true,
+                        restyle: false,
+                        animation: ANIMATION_NONE,
+                        sheet: false,
+                    },
                 );
                 self.dirty = true;
             }
@@ -110,7 +134,9 @@ impl Modals {
                 ctx.animator.cancel(Owner::ModalContent(id), ctx.now_ms);
             }
             Change::Updated(id, key) => {
-                let Some(modal) = self.modals.get_mut(&id) else { return };
+                let Some(modal) = self.modals.get_mut(&id) else {
+                    return;
+                };
                 match key {
                     PropKey::Visible => modal.sync = true,
                     PropKey::ModalBackdropColor
@@ -127,7 +153,10 @@ impl Modals {
                 let modal = if self.modals.contains_key(&id) {
                     Some(id)
                 } else {
-                    ctx.scene.node(id).map(|node| node.parent).filter(|parent| self.modals.contains_key(parent))
+                    ctx.scene
+                        .node(id)
+                        .map(|node| node.parent)
+                        .filter(|parent| self.modals.contains_key(parent))
                 };
                 if let Some(modal) = modal.and_then(|modal| self.modals.get_mut(&modal)) {
                     modal.restyle = true;
@@ -145,17 +174,30 @@ impl Modals {
         self.dirty = false;
         let ids: Vec<NodeId> = self.modals.keys().copied().collect();
         for id in ids {
-            let Some(modal) = self.modals.get_mut(&id) else { continue };
-            let (sync, restyle) = (std::mem::take(&mut modal.sync), std::mem::take(&mut modal.restyle));
+            let Some(modal) = self.modals.get_mut(&id) else {
+                continue;
+            };
+            let (sync, restyle) = (
+                std::mem::take(&mut modal.sync),
+                std::mem::take(&mut modal.restyle),
+            );
             if sync {
-                let visible = ctx.scene.node(id).is_some_and(|node| node.props().flag_or(PropKey::Visible, true));
+                let visible = ctx
+                    .scene
+                    .node(id)
+                    .is_some_and(|node| node.props().flag_or(PropKey::Visible, true));
                 let presented = matches!(modal.phase, Phase::Entering | Phase::Shown);
                 if visible && !presented {
                     self.present(ctx, id);
                 } else if !visible && presented {
                     self.dismiss(ctx, id);
                 }
-            } else if restyle && self.modals.get(&id).is_some_and(|modal| modal.phase != Phase::Hidden) {
+            } else if restyle
+                && self
+                    .modals
+                    .get(&id)
+                    .is_some_and(|modal| modal.phase != Phase::Hidden)
+            {
                 self.style(ctx, id);
             }
         }
@@ -173,11 +215,15 @@ impl Modals {
     }
 
     fn present(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let props = node.props();
         let sheet = props.integer_or(PropKey::ModalPresentation, 2) == PRESENTATION_SHEET;
         let animation = props.integer_or(PropKey::ModalAnimationType, ANIMATION_NONE);
-        let Some(modal) = self.modals.get_mut(&id) else { return };
+        let Some(modal) = self.modals.get_mut(&id) else {
+            return;
+        };
         ctx.animator.cancel(Owner::ModalBackdrop(id), ctx.now_ms);
         ctx.animator.cancel(Owner::ModalContent(id), ctx.now_ms);
         modal.sheet = sheet;
@@ -187,14 +233,21 @@ impl Modals {
             let mut backdrop = PropMap::new();
             // Below the content, whatever its index.
             backdrop.insert(PropKey::ZIndex, PropValue::Integer(-1));
-            modal.backdrop =
-                Some(ctx.scene.add_synthetic(id, NodeKind::View, backdrop, Rect::ZERO, 0, Some(Action::ModalBackdrop { modal: id })));
+            modal.backdrop = Some(ctx.scene.add_synthetic(
+                id,
+                NodeKind::View,
+                backdrop,
+                Rect::ZERO,
+                0,
+                Some(Action::ModalBackdrop { modal: id }),
+            ));
         }
         if !self.stack.contains(&id) {
             self.stack.push(id);
         }
         ctx.scene.set_overlays(self.stack.clone());
-        ctx.scene.set_layer_override(id, LayerSlot::Presenter, LayerOverride::NONE);
+        ctx.scene
+            .set_layer_override(id, LayerSlot::Presenter, LayerOverride::NONE);
         self.style(ctx, id);
 
         let (duration, backdrop_curve, content_curve) = entrance(animation, sheet);
@@ -205,33 +258,71 @@ impl Modals {
             }
         } else {
             self.apply(ctx, id, 0.0, 0.0);
-            ctx.animator.start(Owner::ModalBackdrop(id), 0.0, 1.0, Curve::timing(duration, backdrop_curve), 0, ctx.now_ms);
-            ctx.animator.start(Owner::ModalContent(id), 0.0, 1.0, Curve::timing(duration, content_curve), 0, ctx.now_ms);
+            ctx.animator.start(
+                Owner::ModalBackdrop(id),
+                0.0,
+                1.0,
+                Curve::timing(duration, backdrop_curve),
+                0,
+                ctx.now_ms,
+            );
+            ctx.animator.start(
+                Owner::ModalContent(id),
+                0.0,
+                1.0,
+                Curve::timing(duration, content_curve),
+                0,
+                ctx.now_ms,
+            );
         }
         ctx.emit_if(id, PropKey::OnModalShow, event_kind::MODAL_SHOW, Vec::new());
     }
 
     /// Starts the exit; the modal leaves the window when it ends.
     fn dismiss(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(modal) = self.modals.get_mut(&id) else { return };
+        let Some(modal) = self.modals.get_mut(&id) else {
+            return;
+        };
         if !matches!(modal.phase, Phase::Entering | Phase::Shown) {
             return;
         }
         modal.phase = Phase::Exiting;
         let (animation, sheet) = (modal.animation, modal.sheet);
-        let backdrop_from = ctx.animator.cancel(Owner::ModalBackdrop(id), ctx.now_ms).unwrap_or(1.0);
-        let content_from = ctx.animator.cancel(Owner::ModalContent(id), ctx.now_ms).unwrap_or(1.0);
+        let backdrop_from = ctx
+            .animator
+            .cancel(Owner::ModalBackdrop(id), ctx.now_ms)
+            .unwrap_or(1.0);
+        let content_from = ctx
+            .animator
+            .cancel(Owner::ModalContent(id), ctx.now_ms)
+            .unwrap_or(1.0);
         let (duration, backdrop_curve, content_curve) = exit(animation, sheet);
         if duration == 0 || ctx.reduced_motion {
             self.finish_exit(ctx, id);
         } else {
-            ctx.animator.start(Owner::ModalBackdrop(id), backdrop_from, 0.0, Curve::timing(duration, backdrop_curve), 0, ctx.now_ms);
-            ctx.animator.start(Owner::ModalContent(id), content_from, 0.0, Curve::timing(duration, content_curve), 0, ctx.now_ms);
+            ctx.animator.start(
+                Owner::ModalBackdrop(id),
+                backdrop_from,
+                0.0,
+                Curve::timing(duration, backdrop_curve),
+                0,
+                ctx.now_ms,
+            );
+            ctx.animator.start(
+                Owner::ModalContent(id),
+                content_from,
+                0.0,
+                Curve::timing(duration, content_curve),
+                0,
+                ctx.now_ms,
+            );
         }
     }
 
     fn finish_exit(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(modal) = self.modals.get_mut(&id) else { return };
+        let Some(modal) = self.modals.get_mut(&id) else {
+            return;
+        };
         modal.phase = Phase::Hidden;
         let chrome = [modal.backdrop.take(), modal.handle.take()];
         for node in chrome.into_iter().flatten() {
@@ -240,50 +331,86 @@ impl Modals {
         self.stack.retain(|presented| *presented != id);
         ctx.scene.set_overlays(self.stack.clone());
         if let Some(content) = content_of(ctx, id) {
-            ctx.scene.set_layer_override(content, LayerSlot::Presenter, LayerOverride::NONE);
-            ctx.scene.set_style_overlay(content, StyleLayer::Presenter, None);
+            ctx.scene
+                .set_layer_override(content, LayerSlot::Presenter, LayerOverride::NONE);
+            ctx.scene
+                .set_style_overlay(content, StyleLayer::Presenter, None);
         }
-        ctx.emit_if(id, PropKey::OnModalDismiss, event_kind::MODAL_DISMISS, Vec::new());
+        ctx.emit_if(
+            id,
+            PropKey::OnModalDismiss,
+            event_kind::MODAL_DISMISS,
+            Vec::new(),
+        );
     }
 
     /// Backdrop colour, sheet corners and grabber, and chrome geometry.
     fn style(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let props = node.props();
         let frame = node.frame;
         let transparent = props.flag_or(PropKey::ModalTransparent, false);
-        let color = if transparent { 0 } else { props.integer_or(PropKey::ModalBackdropColor, DEFAULT_BACKDROP) };
+        let color = if transparent {
+            0
+        } else {
+            props.integer_or(PropKey::ModalBackdropColor, DEFAULT_BACKDROP)
+        };
         let sheet = props.integer_or(PropKey::ModalPresentation, 2) == PRESENTATION_SHEET;
-        let radius = props.number_or(PropKey::BottomSheetCornerRadius, 20.0).clamp(0.0, 128.0);
+        let radius = props
+            .number_or(PropKey::BottomSheetCornerRadius, 20.0)
+            .clamp(0.0, 128.0);
         let shows_handle = sheet && props.flag_or(PropKey::BottomSheetHandleVisible, true);
         let content = content_of(ctx, id);
-        let content_frame = content.and_then(|content| ctx.scene.node(content)).map(|node| node.frame);
-        let Some(modal) = self.modals.get_mut(&id) else { return };
+        let content_frame = content
+            .and_then(|content| ctx.scene.node(content))
+            .map(|node| node.frame);
+        let Some(modal) = self.modals.get_mut(&id) else {
+            return;
+        };
         modal.sheet = sheet;
         if let Some(backdrop) = modal.backdrop {
             ctx.scene.set_synthetic_frame(backdrop, frame);
-            ctx.scene.set_prop(backdrop, PropKey::BackgroundColor, Some(PropValue::Integer(color)));
+            ctx.scene.set_prop(
+                backdrop,
+                PropKey::BackgroundColor,
+                Some(PropValue::Integer(color)),
+            );
         }
         if let Some(content) = content {
             // A sheet rounds its top corners and clips its content to them.
             let overlay = sheet.then(|| {
                 let mut overlay = PropMap::new();
-                overlay.insert(PropKey::BorderTopLeftRadius, PropValue::Float(f64::from(radius)));
-                overlay.insert(PropKey::BorderTopRightRadius, PropValue::Float(f64::from(radius)));
+                overlay.insert(
+                    PropKey::BorderTopLeftRadius,
+                    PropValue::Float(f64::from(radius)),
+                );
+                overlay.insert(
+                    PropKey::BorderTopRightRadius,
+                    PropValue::Float(f64::from(radius)),
+                );
                 overlay.insert(PropKey::Overflow, PropValue::Integer(2));
                 overlay
             });
-            ctx.scene.set_style_overlay(content, StyleLayer::Presenter, overlay);
+            ctx.scene
+                .set_style_overlay(content, StyleLayer::Presenter, overlay);
         }
         match (shows_handle, content_frame, modal.handle) {
             (true, Some(sheet_frame), existing) => {
-                let handle_frame = Rect::new(sheet_frame.x + (sheet_frame.width - 36.0) / 2.0, sheet_frame.y + 10.0, 36.0, 4.0);
+                let handle_frame = Rect::new(
+                    sheet_frame.x + (sheet_frame.width - 36.0) / 2.0,
+                    sheet_frame.y + 10.0,
+                    36.0,
+                    4.0,
+                );
                 let handle = existing.unwrap_or_else(|| {
                     let mut handle = PropMap::new();
                     handle.insert(PropKey::BackgroundColor, PropValue::Integer(HANDLE_COLOR));
                     handle.insert(PropKey::BorderRadius, PropValue::Integer(2));
                     handle.insert(PropKey::PointerEvents, PropValue::Integer(2));
-                    ctx.scene.add_synthetic(id, NodeKind::View, handle, handle_frame, 1, None)
+                    ctx.scene
+                        .add_synthetic(id, NodeKind::View, handle, handle_frame, 1, None)
                 });
                 ctx.scene.set_synthetic_frame(handle, handle_frame);
                 modal.handle = Some(handle);
@@ -299,7 +426,9 @@ impl Modals {
     /// Frame-clock sample of a backdrop or content tween.
     pub fn on_sample(&mut self, ctx: &mut Ctx<'_>, owner: Owner, value: f32, finished: bool) {
         let id = owner.node();
-        let Some(modal) = self.modals.get(&id) else { return };
+        let Some(modal) = self.modals.get(&id) else {
+            return;
+        };
         let phase = modal.phase;
         match owner {
             Owner::ModalBackdrop(_) => self.apply_backdrop(ctx, id, value),
@@ -327,19 +456,31 @@ impl Modals {
     }
 
     fn apply_backdrop(&self, ctx: &mut Ctx<'_>, id: NodeId, progress: f32) {
-        let Some(modal) = self.modals.get(&id) else { return };
-        let layer = LayerOverride { opacity: progress.clamp(0.0, 1.0), ..LayerOverride::NONE };
+        let Some(modal) = self.modals.get(&id) else {
+            return;
+        };
+        let layer = LayerOverride {
+            opacity: progress.clamp(0.0, 1.0),
+            ..LayerOverride::NONE
+        };
         if let Some(backdrop) = modal.backdrop {
-            ctx.scene.set_layer_override(backdrop, LayerSlot::Presenter, layer);
+            ctx.scene
+                .set_layer_override(backdrop, LayerSlot::Presenter, layer);
         }
     }
 
     /// `progress` 0 = fully out, 1 = resting position.
     fn apply_content(&self, ctx: &mut Ctx<'_>, id: NodeId, progress: f32) {
-        let Some(modal) = self.modals.get(&id) else { return };
-        let Some(content) = content_of(ctx, id) else { return };
-        let (Some(surface), Some(frame)) = (ctx.scene.node(id).map(|node| node.frame), ctx.scene.node(content).map(|node| node.frame))
-        else {
+        let Some(modal) = self.modals.get(&id) else {
+            return;
+        };
+        let Some(content) = content_of(ctx, id) else {
+            return;
+        };
+        let (Some(surface), Some(frame)) = (
+            ctx.scene.node(id).map(|node| node.frame),
+            ctx.scene.node(content).map(|node| node.frame),
+        ) else {
             return;
         };
         let remaining = 1.0 - progress;
@@ -362,25 +503,45 @@ impl Modals {
                 _ => {}
             }
         }
-        ctx.scene.set_layer_override(content, LayerSlot::Presenter, layer);
+        ctx.scene
+            .set_layer_override(content, LayerSlot::Presenter, layer);
         if let Some(handle) = modal.handle {
-            ctx.scene.set_layer_override(handle, LayerSlot::Presenter, LayerOverride { transform: layer.transform, ..LayerOverride::NONE });
+            ctx.scene.set_layer_override(
+                handle,
+                LayerSlot::Presenter,
+                LayerOverride {
+                    transform: layer.transform,
+                    ..LayerOverride::NONE
+                },
+            );
         }
     }
 
     /// Moves the content of a sheet by `offset` (0 = resting at its snap).
     fn apply_sheet_offset(&self, ctx: &mut Ctx<'_>, id: NodeId, offset: f32) {
-        let value = if offset == 0.0 { LayerOverride::NONE } else { LayerOverride { transform: Affine::translation(0.0, offset), ..LayerOverride::NONE } };
+        let value = if offset == 0.0 {
+            LayerOverride::NONE
+        } else {
+            LayerOverride {
+                transform: Affine::translation(0.0, offset),
+                ..LayerOverride::NONE
+            }
+        };
         // The grabber is chrome of the modal: it travels with the sheet.
         let handle = self.modals.get(&id).and_then(|modal| modal.handle);
         for node in [content_of(ctx, id), handle].into_iter().flatten() {
-            ctx.scene.set_layer_override(node, LayerSlot::Presenter, value);
+            ctx.scene
+                .set_layer_override(node, LayerSlot::Presenter, value);
         }
     }
 
     /// A frame of a released sheet returning to its snap.
     pub fn on_sheet_sample(&mut self, ctx: &mut Ctx<'_>, id: NodeId, offset: f32) {
-        if self.modals.get(&id).is_some_and(|modal| modal.phase == Phase::Shown) {
+        if self
+            .modals
+            .get(&id)
+            .is_some_and(|modal| modal.phase == Phase::Shown)
+        {
             self.apply_sheet_offset(ctx, id, offset);
         }
     }
@@ -396,14 +557,27 @@ impl Modals {
                 let id = self.top()?;
                 let node = ctx.scene.node(id)?;
                 let modal = self.modals.get(&id)?;
-                if !modal.sheet || modal.phase != Phase::Shown || !node.props().flag_or(PropKey::BottomSheetDragEnabled, true) {
+                if !modal.sheet
+                    || modal.phase != Phase::Shown
+                    || !node.props().flag_or(PropKey::BottomSheetDragEnabled, true)
+                {
                     return None;
                 }
                 let frame = ctx.scene.node(content_of(ctx, id)?)?.frame;
-                let inside = pointer.position.x >= frame.x && pointer.position.x <= frame.right() && pointer.position.y >= frame.y && pointer.position.y <= frame.y + SHEET_GRIP;
+                let inside = pointer.position.x >= frame.x
+                    && pointer.position.x <= frame.right()
+                    && pointer.position.y >= frame.y
+                    && pointer.position.y <= frame.y + SHEET_GRIP;
                 if inside {
                     ctx.animator.cancel(Owner::SheetDrag(id), ctx.now_ms);
-                    self.drag = Some(SheetDrag { modal: id, start_y: pointer.position.y, last_y: pointer.position.y, last_ms: ctx.now_ms, velocity: 0.0, moving: false });
+                    self.drag = Some(SheetDrag {
+                        modal: id,
+                        start_y: pointer.position.y,
+                        last_y: pointer.position.y,
+                        last_ms: ctx.now_ms,
+                        velocity: 0.0,
+                        moving: false,
+                    });
                 }
                 None
             }
@@ -436,27 +610,53 @@ impl Modals {
                 let props = node.props();
                 let surface = node.frame.height.max(1.0);
                 let snaps = snap_points(props.bytes(PropKey::BottomSheetSnapPoints));
-                let index = usize::try_from(props.integer_or(PropKey::BottomSheetIndex, 0)).unwrap_or(0).min(snaps.len().saturating_sub(1));
+                let index = usize::try_from(props.integer_or(PropKey::BottomSheetIndex, 0))
+                    .unwrap_or(0)
+                    .min(snaps.len().saturating_sub(1));
                 let dismissible = props.flag_or(PropKey::BottomSheetDismissible, true);
                 let current = snaps.get(index).copied().unwrap_or(1.0);
                 let projected = current - (travel + drag.velocity * 0.12) / surface;
                 let cancelled = pointer.phase == PointerPhase::Cancel;
                 if !cancelled && dismissible && index == 0 && projected < current * 0.55 {
-                    ctx.emit_if(id, PropKey::OnBottomSheetDismiss, event_kind::BOTTOM_SHEET_DISMISS, Vec::new());
+                    ctx.emit_if(
+                        id,
+                        PropKey::OnBottomSheetDismiss,
+                        event_kind::BOTTOM_SHEET_DISMISS,
+                        Vec::new(),
+                    );
                     // The exit starts from where the sheet was released.
                     self.apply_sheet_offset(ctx, id, 0.0);
                     self.request_close(ctx, id, false);
                     return Some(false);
                 }
                 if !cancelled && !snaps.is_empty() {
-                    let nearest = snaps.iter().enumerate().min_by(|a, b| (a.1 - projected).abs().total_cmp(&(b.1 - projected).abs())).map_or(index, |(nearest, _)| nearest);
-                    let payload = WireMap::new().with("index", nearest as i64).with("position", snaps[nearest]).encode();
-                    ctx.emit_if(id, PropKey::OnBottomSheetChange, event_kind::BOTTOM_SHEET_CHANGE, payload);
+                    let nearest = snaps
+                        .iter()
+                        .enumerate()
+                        .min_by(|a, b| (a.1 - projected).abs().total_cmp(&(b.1 - projected).abs()))
+                        .map_or(index, |(nearest, _)| nearest);
+                    let payload = WireMap::new()
+                        .with("index", nearest as i64)
+                        .with("position", snaps[nearest])
+                        .encode();
+                    ctx.emit_if(
+                        id,
+                        PropKey::OnBottomSheetChange,
+                        event_kind::BOTTOM_SHEET_CHANGE,
+                        payload,
+                    );
                 }
                 if ctx.reduced_motion {
                     self.apply_sheet_offset(ctx, id, 0.0);
                 } else {
-                    ctx.animator.start(Owner::SheetDrag(id), offset, 0.0, Curve::timing(SHEET_SETTLE_MS, Easing::EASE_OUT), 0, ctx.now_ms);
+                    ctx.animator.start(
+                        Owner::SheetDrag(id),
+                        offset,
+                        0.0,
+                        Curve::timing(SHEET_SETTLE_MS, Easing::EASE_OUT),
+                        0,
+                        ctx.now_ms,
+                    );
                 }
                 Some(false)
             }
@@ -482,7 +682,9 @@ impl Modals {
     }
 
     fn request_close(&mut self, ctx: &mut Ctx<'_>, id: NodeId, from_backdrop: bool) {
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let props = node.props();
         let presentation = props.integer_or(PropKey::ModalPresentation, 2);
         let sheet = presentation == PRESENTATION_SHEET;
@@ -500,9 +702,17 @@ impl Modals {
         let notifies_native = node.handles(PropKey::OnNativeEvent);
         // Close first, then tell PHP: the window never waits for a round trip.
         self.dismiss(ctx, id);
-        ctx.emit_if(id, PropKey::OnModalRequestClose, event_kind::MODAL_REQUEST_CLOSE, Vec::new());
+        ctx.emit_if(
+            id,
+            PropKey::OnModalRequestClose,
+            event_kind::MODAL_REQUEST_CLOSE,
+            Vec::new(),
+        );
         if notifies_native {
-            let payload = WireMap::new().with("action", 1_i64).with("dismissed", true).encode();
+            let payload = WireMap::new()
+                .with("action", 1_i64)
+                .with("dismissed", true)
+                .encode();
             ctx.emit(id, event_kind::NATIVE, payload);
         }
     }

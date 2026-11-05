@@ -11,12 +11,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use gtk::prelude::*;
 use gtk::{gdk, glib};
 use pam_desktop_ui::backend::{
-    BackendEvent, Capitalization, InputConfig, InputEvent, InputPurpose, NodeId, TextContent, VerticalAlign,
+    BackendEvent, Capitalization, InputConfig, InputEvent, InputPurpose, NodeId, TextContent,
+    VerticalAlign,
 };
 use pam_desktop_ui::color::Color;
 use pam_desktop_ui::geometry::{Rect, Size};
 use pam_desktop_ui::runtime::EventQueue;
-use pam_desktop_ui::text::{char_to_utf16_offset, utf16_to_char_offset, TextAlign, TextBlock, TextRun};
+use pam_desktop_ui::text::{
+    TextAlign, TextBlock, TextRun, char_to_utf16_offset, utf16_to_char_offset,
+};
 
 use crate::view::{self, PamView};
 
@@ -24,7 +27,10 @@ static NEXT_CLASS: AtomicU64 = AtomicU64::new(1);
 
 enum Control {
     Line(gtk::Text),
-    Area { scrolled: gtk::ScrolledWindow, view: gtk::TextView },
+    Area {
+        scrolled: gtk::ScrolledWindow,
+        view: gtk::TextView,
+    },
 }
 
 pub struct InputHost {
@@ -39,7 +45,13 @@ pub struct InputHost {
 }
 
 fn css_color(color: Color) -> String {
-    format!("rgba({},{},{},{:.3})", color.r, color.g, color.b, f32::from(color.a) / 255.0)
+    format!(
+        "rgba({},{},{},{:.3})",
+        color.r,
+        color.g,
+        color.b,
+        f32::from(color.a) / 255.0
+    )
 }
 
 /// Reports an input event once GTK finished the signal emission it came
@@ -54,13 +66,20 @@ fn emit(events: &Rc<EventQueue>, event: BackendEvent) {
 }
 
 fn key_text(key: gdk::Key, state: gdk::ModifierType) -> Option<String> {
-    if state.intersects(gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK | gdk::ModifierType::META_MASK) {
+    if state.intersects(
+        gdk::ModifierType::CONTROL_MASK
+            | gdk::ModifierType::ALT_MASK
+            | gdk::ModifierType::META_MASK,
+    ) {
         return None;
     }
     match key {
         gdk::Key::BackSpace => Some("Backspace".into()),
         gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::ISO_Enter => Some("Enter".into()),
-        _ => key.to_unicode().filter(|character| !character.is_control()).map(|character| character.to_string()),
+        _ => key
+            .to_unicode()
+            .filter(|character| !character.is_control())
+            .map(|character| character.to_string()),
     }
 }
 
@@ -71,7 +90,11 @@ impl InputHost {
         let class = format!("pam-input-{}", NEXT_CLASS.fetch_add(1, Ordering::Relaxed));
         let provider = gtk::CssProvider::new();
         if let Some(display) = gdk::Display::default() {
-            gtk::style_context_add_provider_for_display(&display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+            );
         }
 
         let control = if multiline {
@@ -92,7 +115,9 @@ impl InputHost {
                 let container = container.downgrade();
                 let config = Rc::clone(&config);
                 buffer.connect_changed(move |buffer| {
-                    let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+                    let text = buffer
+                        .text(&buffer.start_iter(), &buffer.end_iter(), false)
+                        .to_string();
                     if let Some(container) = container.upgrade() {
                         show_placeholder(&container, &config.borrow(), text.is_empty());
                     }
@@ -100,7 +125,16 @@ impl InputHost {
                         return;
                     }
                     let caret = char_to_utf16_offset(&text, buffer.cursor_position().max(0) as u32);
-                    emit(&events, BackendEvent::Input { id, event: InputEvent::Edited { text, selection: (caret, caret) } });
+                    emit(
+                        &events,
+                        BackendEvent::Input {
+                            id,
+                            event: InputEvent::Edited {
+                                text,
+                                selection: (caret, caret),
+                            },
+                        },
+                    );
                 });
             }
             {
@@ -110,18 +144,23 @@ impl InputHost {
                     if updating.get() {
                         return;
                     }
-                    let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string();
+                    let text = buffer
+                        .text(&buffer.start_iter(), &buffer.end_iter(), false)
+                        .to_string();
                     let (start, end) = match buffer.selection_bounds() {
                         Some((start, end)) => (start.offset(), end.offset()),
                         None => (buffer.cursor_position(), buffer.cursor_position()),
                     };
-                    emit(&events, BackendEvent::Input {
-                        id,
-                        event: InputEvent::SelectionChanged {
-                            start: char_to_utf16_offset(&text, start.max(0) as u32),
-                            end: char_to_utf16_offset(&text, end.max(0) as u32),
+                    emit(
+                        &events,
+                        BackendEvent::Input {
+                            id,
+                            event: InputEvent::SelectionChanged {
+                                start: char_to_utf16_offset(&text, start.max(0) as u32),
+                                end: char_to_utf16_offset(&text, end.max(0) as u32),
+                            },
                         },
-                    });
+                    );
                 });
             }
             {
@@ -130,11 +169,27 @@ impl InputHost {
                 let events = Rc::clone(events);
                 let config = Rc::clone(&config);
                 keys.connect_key_pressed(move |_, key, _, state| {
-                    let Some(text) = key_text(key, state) else { return glib::Propagation::Proceed };
-                    let submits = text == "Enter" && config.borrow().submit_on_enter && !state.contains(gdk::ModifierType::SHIFT_MASK);
-                    emit(&events, BackendEvent::Input { id, event: InputEvent::KeyPressed { key: text } });
+                    let Some(text) = key_text(key, state) else {
+                        return glib::Propagation::Proceed;
+                    };
+                    let submits = text == "Enter"
+                        && config.borrow().submit_on_enter
+                        && !state.contains(gdk::ModifierType::SHIFT_MASK);
+                    emit(
+                        &events,
+                        BackendEvent::Input {
+                            id,
+                            event: InputEvent::KeyPressed { key: text },
+                        },
+                    );
                     if submits {
-                        emit(&events, BackendEvent::Input { id, event: InputEvent::Submitted });
+                        emit(
+                            &events,
+                            BackendEvent::Input {
+                                id,
+                                event: InputEvent::Submitted,
+                            },
+                        );
                         return glib::Propagation::Stop;
                     }
                     glib::Propagation::Proceed
@@ -159,12 +214,29 @@ impl InputHost {
                     }
                     let value = text.text().to_string();
                     let caret = char_to_utf16_offset(&value, text.position().max(0) as u32);
-                    emit(&events, BackendEvent::Input { id, event: InputEvent::Edited { text: value, selection: (caret, caret) } });
+                    emit(
+                        &events,
+                        BackendEvent::Input {
+                            id,
+                            event: InputEvent::Edited {
+                                text: value,
+                                selection: (caret, caret),
+                            },
+                        },
+                    );
                 });
             }
             {
                 let events = Rc::clone(events);
-                text.connect_activate(move |_| emit(&events, BackendEvent::Input { id, event: InputEvent::Submitted }));
+                text.connect_activate(move |_| {
+                    emit(
+                        &events,
+                        BackendEvent::Input {
+                            id,
+                            event: InputEvent::Submitted,
+                        },
+                    )
+                });
             }
             for property in ["cursor-position", "selection-bound"] {
                 let events = Rc::clone(events);
@@ -174,14 +246,19 @@ impl InputHost {
                         return;
                     }
                     let value = text.text().to_string();
-                    let (start, end) = text.selection_bounds().unwrap_or((text.position(), text.position()));
-                    emit(&events, BackendEvent::Input {
-                        id,
-                        event: InputEvent::SelectionChanged {
-                            start: char_to_utf16_offset(&value, start.max(0) as u32),
-                            end: char_to_utf16_offset(&value, end.max(0) as u32),
+                    let (start, end) = text
+                        .selection_bounds()
+                        .unwrap_or((text.position(), text.position()));
+                    emit(
+                        &events,
+                        BackendEvent::Input {
+                            id,
+                            event: InputEvent::SelectionChanged {
+                                start: char_to_utf16_offset(&value, start.max(0) as u32),
+                                end: char_to_utf16_offset(&value, end.max(0) as u32),
+                            },
                         },
-                    });
+                    );
                 });
             }
             {
@@ -190,7 +267,13 @@ impl InputHost {
                 let events = Rc::clone(events);
                 keys.connect_key_pressed(move |_, key, _, state| {
                     if let Some(key) = key_text(key, state) {
-                        emit(&events, BackendEvent::Input { id, event: InputEvent::KeyPressed { key } });
+                        emit(
+                            &events,
+                            BackendEvent::Input {
+                                id,
+                                event: InputEvent::KeyPressed { key },
+                            },
+                        );
                     }
                     glib::Propagation::Proceed
                 });
@@ -226,7 +309,15 @@ impl InputHost {
             target.add_controller(focus);
         }
 
-        Self { id, control, updating, config, provider, class, size: Size::ZERO }
+        Self {
+            id,
+            control,
+            updating,
+            config,
+            provider,
+            class,
+            size: Size::ZERO,
+        }
     }
 
     /// The widget placed inside the container.
@@ -250,7 +341,9 @@ impl InputHost {
             Control::Line(text) => text.text().to_string(),
             Control::Area { view, .. } => {
                 let buffer = view.buffer();
-                buffer.text(&buffer.start_iter(), &buffer.end_iter(), false).to_string()
+                buffer
+                    .text(&buffer.start_iter(), &buffer.end_iter(), false)
+                    .to_string()
             }
         }
     }
@@ -277,11 +370,18 @@ impl InputHost {
              background: none; border: none; box-shadow: none; outline: none; padding: 0; margin: 0; min-height: 0;",
             config.font.size,
             config.font.weight,
-            if config.font.italic { "italic" } else { "normal" },
+            if config.font.italic {
+                "italic"
+            } else {
+                "normal"
+            },
             config.letter_spacing,
         );
         if !config.font.family.is_empty() {
-            rules.push_str(&format!(" font-family: \"{}\";", config.font.family.replace(['"', '\\', ';', '{', '}'], "")));
+            rules.push_str(&format!(
+                " font-family: \"{}\";",
+                config.font.family.replace(['"', '\\', ';', '{', '}'], "")
+            ));
         }
         if let Some(color) = config.color {
             rules.push_str(&format!(" color: {};", css_color(color)));
@@ -294,12 +394,20 @@ impl InputHost {
         let class = &self.class;
         let mut css = format!(".{class}, .{class} text {{ {rules} }}\n");
         match config.placeholder_color {
-            Some(color) => css.push_str(&format!(".{class} > placeholder {{ color: {}; opacity: 1; }}\n", css_color(color))),
+            Some(color) => css.push_str(&format!(
+                ".{class} > placeholder {{ color: {}; opacity: 1; }}\n",
+                css_color(color)
+            )),
             // Without an authored colour the hint is a dimmed version of the text.
-            None => css.push_str(&format!(".{class} > placeholder {{ color: alpha(currentColor, 0.45); opacity: 1; }}\n")),
+            None => css.push_str(&format!(
+                ".{class} > placeholder {{ color: alpha(currentColor, 0.45); opacity: 1; }}\n"
+            )),
         }
         if let Some(color) = config.selection_color {
-            css.push_str(&format!(".{class} selection, .{class} text selection {{ background-color: {}; }}\n", css_color(color)));
+            css.push_str(&format!(
+                ".{class} selection, .{class} text selection {{ background-color: {}; }}\n",
+                css_color(color)
+            ));
         }
         self.provider.load_from_string(&css);
 
@@ -311,7 +419,11 @@ impl InputHost {
             InputPurpose::Phone => gtk::InputPurpose::Phone,
             InputPurpose::Url => gtk::InputPurpose::Url,
         };
-        let mut hints = if config.spellcheck { gtk::InputHints::SPELLCHECK } else { gtk::InputHints::NO_SPELLCHECK };
+        let mut hints = if config.spellcheck {
+            gtk::InputHints::SPELLCHECK
+        } else {
+            gtk::InputHints::NO_SPELLCHECK
+        };
         hints |= match config.capitalization {
             Capitalization::None => gtk::InputHints::LOWERCASE,
             Capitalization::Sentences => gtk::InputHints::UPPERCASE_SENTENCES,
@@ -325,16 +437,26 @@ impl InputHost {
         };
         match &self.control {
             Control::Line(text) => {
-                text.set_placeholder_text((!config.placeholder.is_empty()).then_some(config.placeholder.as_str()));
+                text.set_placeholder_text(
+                    (!config.placeholder.is_empty()).then_some(config.placeholder.as_str()),
+                );
                 text.set_visibility(!config.secure);
-                text.set_input_purpose(if config.secure { gtk::InputPurpose::Password } else { purpose });
+                text.set_input_purpose(if config.secure {
+                    gtk::InputPurpose::Password
+                } else {
+                    purpose
+                });
                 text.set_input_hints(hints);
                 text.set_editable(config.editable);
                 text.set_sensitive(config.enabled);
                 text.set_alignment(alignment);
                 // GTK counts characters; the protocol counts UTF-16 units. The
                 // difference only matters for text outside the basic plane.
-                text.set_max_length(config.max_length.map_or(0, |length| i32::try_from(length).unwrap_or(i32::MAX)));
+                text.set_max_length(
+                    config
+                        .max_length
+                        .map_or(0, |length| i32::try_from(length).unwrap_or(i32::MAX)),
+                );
                 text.set_valign(match config.vertical {
                     VerticalAlign::Top => gtk::Align::Start,
                     VerticalAlign::Center => gtk::Align::Fill,
@@ -368,9 +490,14 @@ impl InputHost {
                 }
                 match selection {
                     Some((start, end)) if start != end => {
-                        text.select_region(utf16_to_char_offset(value, start) as i32, utf16_to_char_offset(value, end) as i32);
+                        text.select_region(
+                            utf16_to_char_offset(value, start) as i32,
+                            utf16_to_char_offset(value, end) as i32,
+                        );
                     }
-                    Some((start, _)) => text.set_position(utf16_to_char_offset(value, start) as i32),
+                    Some((start, _)) => {
+                        text.set_position(utf16_to_char_offset(value, start) as i32)
+                    }
                     None => text.set_position(-1),
                 }
             }
@@ -426,7 +553,9 @@ fn show_placeholder(container: &PamView, config: &InputConfig, empty: bool) {
         container.set_text(None);
         return;
     }
-    let color = config.placeholder_color.unwrap_or(Color::rgba(128, 128, 128, 200));
+    let color = config
+        .placeholder_color
+        .unwrap_or(Color::rgba(128, 128, 128, 200));
     container.set_text(Some(&TextContent {
         block: TextBlock {
             runs: vec![TextRun {

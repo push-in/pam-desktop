@@ -15,11 +15,14 @@ pub struct AppPaths {
 }
 
 fn home() -> PathBuf {
-    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map_or_else(std::env::temp_dir, PathBuf::from)
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map_or_else(std::env::temp_dir, PathBuf::from)
 }
 
 fn from_env(name: &str) -> Option<PathBuf> {
-    std::env::var_os(name).map(PathBuf::from).filter(|path| path.is_absolute())
+    std::env::var_os(name)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
 }
 
 impl AppPaths {
@@ -28,16 +31,30 @@ impl AppPaths {
     pub fn for_application(id: &str) -> Self {
         if cfg!(target_os = "macos") {
             let support = home().join("Library/Application Support").join(id);
-            Self { state: support.join("State"), data: support, cache: home().join("Library/Caches").join(id) }
+            Self {
+                state: support.join("State"),
+                data: support,
+                cache: home().join("Library/Caches").join(id),
+            }
         } else if cfg!(windows) {
             let roaming = from_env("APPDATA").unwrap_or_else(|| home().join("AppData/Roaming"));
             let local = from_env("LOCALAPPDATA").unwrap_or_else(|| home().join("AppData/Local"));
-            Self { data: roaming.join(id), cache: local.join(id).join("Cache"), state: local.join(id).join("State") }
+            Self {
+                data: roaming.join(id),
+                cache: local.join(id).join("Cache"),
+                state: local.join(id).join("State"),
+            }
         } else {
             Self {
-                data: from_env("XDG_DATA_HOME").unwrap_or_else(|| home().join(".local/share")).join(id),
-                cache: from_env("XDG_CACHE_HOME").unwrap_or_else(|| home().join(".cache")).join(id),
-                state: from_env("XDG_STATE_HOME").unwrap_or_else(|| home().join(".local/state")).join(id),
+                data: from_env("XDG_DATA_HOME")
+                    .unwrap_or_else(|| home().join(".local/share"))
+                    .join(id),
+                cache: from_env("XDG_CACHE_HOME")
+                    .unwrap_or_else(|| home().join(".cache"))
+                    .join(id),
+                state: from_env("XDG_STATE_HOME")
+                    .unwrap_or_else(|| home().join(".local/state"))
+                    .join(id),
             }
         }
     }
@@ -46,7 +63,11 @@ impl AppPaths {
     #[must_use]
     pub fn for_development(project: &Path) -> Self {
         let root = project.join(".pam-desktop");
-        Self { data: root.join("data"), cache: root.join("cache"), state: root.join("state") }
+        Self {
+            data: root.join("data"),
+            cache: root.join("cache"),
+            state: root.join("state"),
+        }
     }
 
     /// Environment overrides win (tests, sandboxes), directory by directory.
@@ -74,9 +95,18 @@ impl AppPaths {
     #[must_use]
     pub fn environment(&self) -> Vec<(String, String)> {
         vec![
-            ("PAM_DESKTOP_DATA_DIR".into(), self.data.display().to_string()),
-            ("PAM_DESKTOP_CACHE_DIR".into(), self.cache.display().to_string()),
-            ("PAM_DESKTOP_STATE_DIR".into(), self.state.display().to_string()),
+            (
+                "PAM_DESKTOP_DATA_DIR".into(),
+                self.data.display().to_string(),
+            ),
+            (
+                "PAM_DESKTOP_CACHE_DIR".into(),
+                self.cache.display().to_string(),
+            ),
+            (
+                "PAM_DESKTOP_STATE_DIR".into(),
+                self.state.display().to_string(),
+            ),
         ]
     }
 }
@@ -90,7 +120,9 @@ pub fn valid_application_id(id: &str) -> bool {
         && segments.iter().all(|segment| {
             !segment.is_empty()
                 && !segment.starts_with(|first: char| first.is_ascii_digit())
-                && segment.chars().all(|character| character.is_ascii_alphanumeric() || character == '_' || character == '-')
+                && segment.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || character == '_' || character == '-'
+                })
         })
 }
 
@@ -112,6 +144,11 @@ mod tests {
     fn development_paths_stay_inside_the_project() {
         let paths = AppPaths::for_development(Path::new("/work/app"));
         assert_eq!(paths.state, PathBuf::from("/work/app/.pam-desktop/state"));
-        assert!(paths.environment().iter().any(|(key, _)| key == "PAM_DESKTOP_CACHE_DIR"));
+        assert!(
+            paths
+                .environment()
+                .iter()
+                .any(|(key, _)| key == "PAM_DESKTOP_CACHE_DIR")
+        );
     }
 }

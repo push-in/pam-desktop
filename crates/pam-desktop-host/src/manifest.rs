@@ -70,7 +70,9 @@ impl Category {
     }
 
     fn parse(keyword: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|category| category.keyword() == keyword)
+        Self::ALL
+            .into_iter()
+            .find(|category| category.keyword() == keyword)
     }
 }
 
@@ -97,7 +99,9 @@ impl UpdatePolicy {
     }
 
     fn parse(keyword: &str) -> Option<Self> {
-        [Self::Manual, Self::Notify, Self::Automatic].into_iter().find(|policy| policy.keyword() == keyword)
+        [Self::Manual, Self::Notify, Self::Automatic]
+            .into_iter()
+            .find(|policy| policy.keyword() == keyword)
     }
 }
 
@@ -141,7 +145,10 @@ impl Application {
     /// The file name of the launcher: the last segment of the identifier.
     #[must_use]
     pub fn executable(&self) -> &str {
-        self.identifier.rsplit('.').next().unwrap_or(&self.identifier)
+        self.identifier
+            .rsplit('.')
+            .next()
+            .unwrap_or(&self.identifier)
     }
 }
 
@@ -158,7 +165,10 @@ impl Manifest {
     /// be read is treated as absent.
     #[must_use]
     pub fn load(project: &Path) -> Self {
-        Self::read(project).unwrap_or_else(|_| Self { document: Map::new(), folder: folder_name(project) })
+        Self::read(project).unwrap_or_else(|_| Self {
+            document: Map::new(),
+            folder: folder_name(project),
+        })
     }
 
     /// Reads the manifest for shipping the application.
@@ -172,14 +182,18 @@ impl Manifest {
         let metadata = match std::fs::metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self { document: Map::new(), folder });
+                return Ok(Self {
+                    document: Map::new(),
+                    folder,
+                });
             }
             Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
         };
         if metadata.len() > MAX_MANIFEST_BYTES {
             return Err(format!("{} is larger than one MiB", path.display()));
         }
-        let source = std::fs::read(&path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        let source = std::fs::read(&path)
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
         match serde_json::from_slice::<Value>(&source) {
             Ok(Value::Object(document)) => Ok(Self { document, folder }),
             Ok(_) => Err(format!("{} must contain a JSON object", path.display())),
@@ -213,10 +227,20 @@ impl Manifest {
             .map(str::to_owned)
             .filter(|id| paths::valid_application_id(id));
         declared.unwrap_or_else(|| {
-            let folder = if self.folder.is_empty() { "app" } else { &self.folder };
+            let folder = if self.folder.is_empty() {
+                "app"
+            } else {
+                &self.folder
+            };
             let name: String = folder
                 .chars()
-                .map(|character| if character.is_ascii_alphanumeric() { character.to_ascii_lowercase() } else { '_' })
+                .map(|character| {
+                    if character.is_ascii_alphanumeric() {
+                        character.to_ascii_lowercase()
+                    } else {
+                        '_'
+                    }
+                })
                 .collect();
             format!("dev.pam.desktop.app_{name}")
         })
@@ -239,15 +263,23 @@ impl Manifest {
     /// When the list is too long or names a scheme that is malformed,
     /// repeated or reserved for the system.
     pub fn url_schemes(&self) -> Result<Vec<String>, String> {
-        let schemes = self.string_list("urlSchemes", MAX_URL_SCHEMES)?.unwrap_or_default();
+        let schemes = self
+            .string_list("urlSchemes", MAX_URL_SCHEMES)?
+            .unwrap_or_default();
         let mut unique = HashSet::with_capacity(schemes.len());
         for scheme in &schemes {
             let mut bytes = scheme.bytes();
             let valid = (2..=32).contains(&scheme.len())
                 && bytes.next().is_some_and(|first| first.is_ascii_lowercase())
-                && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'+' | b'.' | b'-'));
+                && bytes.all(|byte| {
+                    byte.is_ascii_lowercase()
+                        || byte.is_ascii_digit()
+                        || matches!(byte, b'+' | b'.' | b'-')
+                });
             if !valid {
-                return Err(format!("urlSchemes lists {scheme:?}: a scheme is a lowercase letter followed by 1 to 31 lowercase letters, digits, +, . or -"));
+                return Err(format!(
+                    "urlSchemes lists {scheme:?}: a scheme is a lowercase letter followed by 1 to 31 lowercase letters, digits, +, . or -"
+                ));
             }
             if RESERVED_URL_SCHEMES.contains(&scheme.as_str()) {
                 return Err(format!("urlSchemes cannot claim the {scheme} scheme"));
@@ -268,7 +300,9 @@ impl Manifest {
         self.document
             .get("singleInstance")
             .and_then(Value::as_bool)
-            .unwrap_or_else(|| !development && self.url_schemes().is_ok_and(|schemes| !schemes.is_empty()))
+            .unwrap_or_else(|| {
+                !development && self.url_schemes().is_ok_and(|schemes| !schemes.is_empty())
+            })
     }
 
     /// The first window (`window.title`, `width`, `height`, `minWidth`,
@@ -281,12 +315,18 @@ impl Manifest {
             config.title = name.to_owned();
         }
         if let Some(window) = self.document.get("window") {
-            let number = |key: &str| window.get(key).and_then(Value::as_f64).map(|value| value as f32);
+            let number = |key: &str| {
+                window
+                    .get(key)
+                    .and_then(Value::as_f64)
+                    .map(|value| value as f32)
+            };
             if let Some(title) = window.get("title").and_then(Value::as_str) {
                 config.title = title.to_owned();
             }
             if let (Some(width), Some(height)) = (number("width"), number("height")) {
-                config.size = Size::new(width.clamp(120.0, 16_384.0), height.clamp(120.0, 16_384.0));
+                config.size =
+                    Size::new(width.clamp(120.0, 16_384.0), height.clamp(120.0, 16_384.0));
             }
             if let (Some(width), Some(height)) = (number("minWidth"), number("minHeight")) {
                 config.min_size = Some(Size::new(width.max(1.0), height.max(1.0)));
@@ -311,11 +351,20 @@ impl Manifest {
     /// When the block is present and invalid: the application then runs
     /// without updates rather than with a feed it did not mean to trust.
     pub fn updates(&self) -> Result<Option<UpdateConfig>, String> {
-        let Some(value) = self.document.get("updates").filter(|value| !value.is_null()) else {
+        let Some(value) = self
+            .document
+            .get("updates")
+            .filter(|value| !value.is_null())
+        else {
             return Ok(None);
         };
         let block = value.as_object().ok_or("updates must be an object")?;
-        if let Some(unknown) = block.keys().find(|key| !matches!(key.as_str(), "endpoint" | "publicKey" | "channel" | "policy")) {
+        if let Some(unknown) = block.keys().find(|key| {
+            !matches!(
+                key.as_str(),
+                "endpoint" | "publicKey" | "channel" | "policy"
+            )
+        }) {
             return Err(format!("updates.{unknown} is not a known field"));
         }
         let text = |key: &str| match block.get(key) {
@@ -331,9 +380,15 @@ impl Manifest {
         validate_channel(channel, "updates.channel")?;
         let policy = match text("policy")? {
             None => UpdatePolicy::Manual,
-            Some(keyword) => UpdatePolicy::parse(keyword).ok_or("updates.policy must be manual, notify or automatic")?,
+            Some(keyword) => UpdatePolicy::parse(keyword)
+                .ok_or("updates.policy must be manual, notify or automatic")?,
         };
-        Ok(Some(UpdateConfig { endpoint: endpoint.to_owned(), public_key: public_key.to_owned(), channel: channel.to_owned(), policy }))
+        Ok(Some(UpdateConfig {
+            endpoint: endpoint.to_owned(),
+            public_key: public_key.to_owned(),
+            channel: channel.to_owned(),
+            policy,
+        }))
     }
 
     /// The identity and distribution settings, validated for shipping.
@@ -372,9 +427,14 @@ impl Manifest {
         };
         validate_text(&build, "build", 64, true)?;
 
-        let entry = self.string("entry")?.unwrap_or_else(|| DEFAULT_ENTRY.to_owned());
+        let entry = self
+            .string("entry")?
+            .unwrap_or_else(|| DEFAULT_ENTRY.to_owned());
         validate_project_path(&entry, "entry")?;
-        if !matches!(self.document.get("singleInstance"), None | Some(Value::Bool(_) | Value::Null)) {
+        if !matches!(
+            self.document.get("singleInstance"),
+            None | Some(Value::Bool(_) | Value::Null)
+        ) {
             return Err("singleInstance must be true or false".into());
         }
 
@@ -385,7 +445,10 @@ impl Manifest {
         let category = match self.string("category")? {
             None => Category::default(),
             Some(keyword) => Category::parse(&keyword).ok_or_else(|| {
-                let known: Vec<&str> = Category::ALL.iter().map(|category| category.keyword()).collect();
+                let known: Vec<&str> = Category::ALL
+                    .iter()
+                    .map(|category| category.keyword())
+                    .collect();
                 format!("category must be one of {}", known.join(", "))
             })?,
         };
@@ -393,21 +456,39 @@ impl Manifest {
         let icon = self.string("icon")?;
         if let Some(icon) = &icon {
             validate_project_path(icon, "icon")?;
-            let extension = Path::new(icon).extension().and_then(|value| value.to_str()).map(str::to_ascii_lowercase);
+            let extension = Path::new(icon)
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(str::to_ascii_lowercase);
             if !matches!(extension.as_deref(), Some("png" | "svg")) {
                 return Err("icon must be a PNG or SVG file of the project".into());
             }
         }
 
-        let exclude = self.string_list("exclude", MAX_EXCLUSIONS)?.unwrap_or_default();
-        let required = [FILE_NAME, "composer.json", "composer.lock", "vendor", entry.as_str()].map(normalized);
+        let exclude = self
+            .string_list("exclude", MAX_EXCLUSIONS)?
+            .unwrap_or_default();
+        let required = [
+            FILE_NAME,
+            "composer.json",
+            "composer.lock",
+            "vendor",
+            entry.as_str(),
+        ]
+        .map(normalized);
         let mut unique = HashSet::with_capacity(exclude.len());
         for path in &exclude {
             validate_project_path(path, "exclude")?;
             let excluded = normalized(path);
             // Excluding a directory excludes what it holds.
-            if let Some(required) = required.iter().find(|required| required.starts_with(&excluded)) {
-                return Err(format!("the required project path {:?} cannot be excluded", required.display().to_string()));
+            if let Some(required) = required
+                .iter()
+                .find(|required| required.starts_with(&excluded))
+            {
+                return Err(format!(
+                    "the required project path {:?} cannot be excluded",
+                    required.display().to_string()
+                ));
             }
             if !unique.insert(excluded) {
                 return Err(format!("exclude lists {path:?} twice"));
@@ -419,9 +500,13 @@ impl Manifest {
             let mut unique = HashSet::with_capacity(extensions.len());
             for extension in extensions {
                 let valid = (1..=64).contains(&extension.len())
-                    && extension.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_');
+                    && extension.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                    });
                 if !valid || !unique.insert(extension.as_str()) {
-                    return Err(format!("extensions lists {extension:?}, which is not a lowercase PHP extension name or is repeated"));
+                    return Err(format!(
+                        "extensions lists {extension:?}, which is not a lowercase PHP extension name or is repeated"
+                    ));
                 }
             }
         }
@@ -450,11 +535,21 @@ impl Manifest {
         let slug: String = self
             .folder
             .chars()
-            .map(|character| if character.is_ascii_alphanumeric() { character.to_ascii_lowercase() } else { '-' })
+            .map(|character| {
+                if character.is_ascii_alphanumeric() {
+                    character.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
             .collect();
         let slug = slug.trim_matches('-');
         let slug: String = slug.chars().take(64).collect();
-        if slug.is_empty() { String::from("dev.pam.desktop.app") } else { format!("dev.pam.desktop.app-{slug}") }
+        if slug.is_empty() {
+            String::from("dev.pam.desktop.app")
+        } else {
+            format!("dev.pam.desktop.app-{slug}")
+        }
     }
 
     fn string(&self, key: &str) -> Result<Option<String>, String> {
@@ -476,19 +571,30 @@ impl Manifest {
         }
         items
             .iter()
-            .map(|item| item.as_str().map(str::to_owned).ok_or_else(|| format!("{key} must be a list of strings")))
+            .map(|item| {
+                item.as_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("{key} must be a list of strings"))
+            })
             .collect::<Result<Vec<_>, _>>()
             .map(Some)
     }
 }
 
 fn folder_name(project: &Path) -> String {
-    project.file_name().and_then(|name| name.to_str()).unwrap_or("app").to_owned()
+    project
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("app")
+        .to_owned()
 }
 
 /// A project-relative path without `.` components.
 fn normalized(path: &str) -> PathBuf {
-    Path::new(path).components().filter(|component| matches!(component, Component::Normal(_))).collect()
+    Path::new(path)
+        .components()
+        .filter(|component| matches!(component, Component::Normal(_)))
+        .collect()
 }
 
 /// A lowercase reverse-DNS identifier: the name of the application in
@@ -502,10 +608,17 @@ fn normalized(path: &str) -> PathBuf {
 pub fn validate_identifier(identifier: &str) -> Result<(), String> {
     let valid_segment = |segment: &str| {
         let mut characters = segment.chars();
-        characters.next().is_some_and(|first| first.is_ascii_lowercase())
-            && characters.all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-')
+        characters
+            .next()
+            .is_some_and(|first| first.is_ascii_lowercase())
+            && characters.all(|character| {
+                character.is_ascii_lowercase() || character.is_ascii_digit() || character == '-'
+            })
     };
-    if identifier.len() > 155 || identifier.split('.').count() < 2 || !identifier.split('.').all(valid_segment) {
+    if identifier.len() > 155
+        || identifier.split('.').count() < 2
+        || !identifier.split('.').all(valid_segment)
+    {
         return Err(format!(
             "applicationId {identifier:?} must be a lowercase reverse-DNS name of at most 155 bytes \
              whose segments begin with a letter and contain letters, digits or dashes"
@@ -522,8 +635,13 @@ pub fn validate_identifier(identifier: &str) -> Result<(), String> {
 /// digits, dots, pluses, dashes or tildes.
 pub fn validate_version(version: &str) -> Result<(), String> {
     let valid = (1..=64).contains(&version.len())
-        && version.bytes().next().is_some_and(|first| first.is_ascii_digit())
-        && version.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-' | b'~'));
+        && version
+            .bytes()
+            .next()
+            .is_some_and(|first| first.is_ascii_digit())
+        && version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-' | b'~'));
     if !valid {
         return Err(format!(
             "version {version:?} must begin with a number and contain at most 64 letters, numbers, dots, pluses, dashes or tildes"
@@ -538,9 +656,19 @@ pub fn validate_version(version: &str) -> Result<(), String> {
 ///
 /// When the text has control characters, is too long, or is blank where a
 /// value is required.
-pub fn validate_text(value: &str, label: &str, maximum_bytes: usize, allow_empty: bool) -> Result<(), String> {
-    if (!allow_empty && value.trim().is_empty()) || value.len() > maximum_bytes || value.chars().any(char::is_control) {
-        return Err(format!("{label} must be printable text of at most {maximum_bytes} bytes"));
+pub fn validate_text(
+    value: &str,
+    label: &str,
+    maximum_bytes: usize,
+    allow_empty: bool,
+) -> Result<(), String> {
+    if (!allow_empty && value.trim().is_empty())
+        || value.len() > maximum_bytes
+        || value.chars().any(char::is_control)
+    {
+        return Err(format!(
+            "{label} must be printable text of at most {maximum_bytes} bytes"
+        ));
     }
     Ok(())
 }
@@ -554,8 +682,16 @@ pub fn validate_project_path(value: &str, label: &str) -> Result<(), String> {
     let bytes = value.as_bytes();
     let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
     let upwards = value.split(['/', '\\']).any(|segment| segment == "..");
-    if value.is_empty() || value.contains('\0') || value.starts_with(['/', '\\']) || drive || upwards || normalized(value).as_os_str().is_empty() {
-        return Err(format!("{label} path {value:?} must be relative and inside the project"));
+    if value.is_empty()
+        || value.contains('\0')
+        || value.starts_with(['/', '\\'])
+        || drive
+        || upwards
+        || normalized(value).as_os_str().is_empty()
+    {
+        return Err(format!(
+            "{label} path {value:?} must be relative and inside the project"
+        ));
     }
     Ok(())
 }
@@ -566,8 +702,14 @@ pub fn validate_project_path(value: &str, label: &str) -> Result<(), String> {
 ///
 /// When the value has another length or other characters.
 pub fn validate_lower_hex(value: &str, length: usize, label: &str) -> Result<(), String> {
-    if value.len() != length || !value.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
-        return Err(format!("{label} must contain exactly {length} lowercase hexadecimal characters"));
+    if value.len() != length
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(format!(
+            "{label} must contain exactly {length} lowercase hexadecimal characters"
+        ));
     }
     Ok(())
 }
@@ -580,11 +722,16 @@ pub fn validate_lower_hex(value: &str, length: usize, label: &str) -> Result<(),
 /// dashes or underscores.
 pub fn validate_channel(value: &str, label: &str) -> Result<(), String> {
     let mut characters = value.chars();
-    let valid = characters.next().is_some_and(|first| first.is_ascii_alphabetic())
+    let valid = characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic())
         && value.len() <= 64
-        && characters.all(|character| character.is_ascii_alphanumeric() || "._-".contains(character));
+        && characters
+            .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character));
     if !valid {
-        return Err(format!("{label} must begin with a letter and contain at most 64 letters, numbers, dots, dashes or underscores"));
+        return Err(format!(
+            "{label} must begin with a letter and contain at most 64 letters, numbers, dots, dashes or underscores"
+        ));
     }
     Ok(())
 }
@@ -599,10 +746,14 @@ pub fn validate_update_url(value: &str, label: &str) -> Result<(), String> {
     let trusted = value.len() <= 2048
         && !value.contains('#')
         && parse_url(value).is_some_and(|url| {
-            !url.credentials && (url.scheme == "https" || (cfg!(debug_assertions) && url.scheme == "http" && url.is_loopback()))
+            !url.credentials
+                && (url.scheme == "https"
+                    || (cfg!(debug_assertions) && url.scheme == "http" && url.is_loopback()))
         });
     if !trusted {
-        return Err(format!("{label} must be an HTTPS URL without credentials or fragment"));
+        return Err(format!(
+            "{label} must be an HTTPS URL without credentials or fragment"
+        ));
     }
     Ok(())
 }
@@ -613,10 +764,14 @@ mod tests {
     use pam_desktop_ui::modules::test_support::temporary_directory;
 
     fn manifest(json: &str) -> Manifest {
-        let Value::Object(document) = serde_json::from_str::<Value>(json).expect("fixture is JSON") else {
+        let Value::Object(document) = serde_json::from_str::<Value>(json).expect("fixture is JSON")
+        else {
             panic!("fixture is an object");
         };
-        Manifest { document, folder: String::from("My App") }
+        Manifest {
+            document,
+            folder: String::from("My App"),
+        }
     }
 
     #[test]
@@ -630,10 +785,21 @@ mod tests {
         assert_eq!(loaded.window().title, WindowConfig::default().title);
 
         std::fs::write(project.join(FILE_NAME), "{ not json").unwrap();
-        assert_eq!(Manifest::load(&project).application_id(), "dev.pam.desktop.app_hello_world");
-        assert!(Manifest::read(&project).unwrap_err().contains("not valid JSON"));
+        assert_eq!(
+            Manifest::load(&project).application_id(),
+            "dev.pam.desktop.app_hello_world"
+        );
+        assert!(
+            Manifest::read(&project)
+                .unwrap_err()
+                .contains("not valid JSON")
+        );
         std::fs::write(project.join(FILE_NAME), "[]").unwrap();
-        assert!(Manifest::read(&project).unwrap_err().contains("JSON object"));
+        assert!(
+            Manifest::read(&project)
+                .unwrap_err()
+                .contains("JSON object")
+        );
         let _ = std::fs::remove_dir_all(&directory);
     }
 
@@ -697,7 +863,10 @@ mod tests {
         assert_eq!(application.category, Category::Productivity);
         assert_eq!(application.icon.as_deref(), Some("assets/icon.PNG"));
         assert_eq!(application.exclude, ["storage/cache", "./notes.md"]);
-        assert_eq!(application.extensions, Some(vec![String::from("ctype"), String::from("pdo_sqlite")]));
+        assert_eq!(
+            application.extensions,
+            Some(vec![String::from("ctype"), String::from("pdo_sqlite")])
+        );
         assert_eq!(application.url_schemes, ["invoices", "acme-pay"]);
         let updates = application.updates.unwrap();
         assert_eq!(updates.channel, "stable");
@@ -719,7 +888,13 @@ mod tests {
         assert!(rejected(r#"{"entry": "../main.php"}"#).contains("entry"));
         assert!(rejected(r#"{"entry": "/srv/main.php"}"#).contains("entry"));
         assert!(rejected(r#"{"singleInstance": "yes"}"#).contains("singleInstance"));
-        assert_eq!(manifest(r#"{"entry": "src/main.php"}"#).application().unwrap().entry, "src/main.php");
+        assert_eq!(
+            manifest(r#"{"entry": "src/main.php"}"#)
+                .application()
+                .unwrap()
+                .entry,
+            "src/main.php"
+        );
         assert!(rejected(r#"{"extensions": ["Ctype"]}"#).contains("extensions"));
     }
 
@@ -733,21 +908,41 @@ mod tests {
         assert!(rejected(r#"{"exclude": ["a/../../b"]}"#).contains("exclude"));
         assert!(rejected(r#"{"exclude": ["cache", "./cache"]}"#).contains("twice"));
         assert!(rejected(r#"{"exclude": "cache"}"#).contains("list of strings"));
-        for required in ["vendor", "./vendor", "composer.json", "composer.lock", "pam-desktop.json", "index.php"] {
+        for required in [
+            "vendor",
+            "./vendor",
+            "composer.json",
+            "composer.lock",
+            "pam-desktop.json",
+            "index.php",
+        ] {
             let error = rejected(&format!(r#"{{"exclude": [{required:?}]}}"#));
             assert!(error.contains("cannot be excluded"), "{required}: {error}");
         }
-        assert!(rejected(r#"{"entry": "main.php", "exclude": ["main.php"]}"#).contains("cannot be excluded"));
-        assert!(rejected(r#"{"entry": "./src/main.php", "exclude": ["src"]}"#).contains("cannot be excluded"));
+        assert!(
+            rejected(r#"{"entry": "main.php", "exclude": ["main.php"]}"#)
+                .contains("cannot be excluded")
+        );
+        assert!(
+            rejected(r#"{"entry": "./src/main.php", "exclude": ["src"]}"#)
+                .contains("cannot be excluded")
+        );
         // Only the declared entry is required.
-        assert!(manifest(r#"{"entry": "main.php", "exclude": ["index.php", "vendor-notes"]}"#).application().is_ok());
+        assert!(
+            manifest(r#"{"entry": "main.php", "exclude": ["index.php", "vendor-notes"]}"#)
+                .application()
+                .is_ok()
+        );
     }
 
     #[test]
     fn running_honors_the_declared_entry() {
         assert_eq!(manifest("{}").entry(), "index.php");
         assert_eq!(manifest(r#"{"entry": "main.php"}"#).entry(), "main.php");
-        assert_eq!(manifest(r#"{"entry": "src/main.php"}"#).entry(), "src/main.php");
+        assert_eq!(
+            manifest(r#"{"entry": "src/main.php"}"#).entry(),
+            "src/main.php"
+        );
         // An entry that leaves the project is not one.
         assert_eq!(manifest(r#"{"entry": "../main.php"}"#).entry(), "index.php");
         assert_eq!(manifest(r#"{"entry": 7}"#).entry(), "index.php");
@@ -757,15 +952,44 @@ mod tests {
     fn url_schemes_are_validated_and_imply_a_single_instance() {
         let schemes = |json: &str| manifest(json).url_schemes();
         assert_eq!(schemes("{}"), Ok(Vec::new()));
-        assert_eq!(schemes(r#"{"urlSchemes": ["myapp", "my-app+v2.x"]}"#), Ok(vec![String::from("myapp"), String::from("my-app+v2.x")]));
-        for invalid in [r#"["MyApp"]"#, r#"["a"]"#, r#"["1app"]"#, r#"["my app"]"#, r#"["my_app"]"#, r#"["https"]"#, r#"["file"]"#, r#"["mailto"]"#, r#"["javascript"]"#, r#"["data"]"#, r#"["http"]"#, r#"["one", "one"]"#, r#""myapp""#, r#"[7]"#] {
-            assert!(schemes(&format!(r#"{{"urlSchemes": {invalid}}}"#)).is_err(), "{invalid}");
+        assert_eq!(
+            schemes(r#"{"urlSchemes": ["myapp", "my-app+v2.x"]}"#),
+            Ok(vec![String::from("myapp"), String::from("my-app+v2.x")])
+        );
+        for invalid in [
+            r#"["MyApp"]"#,
+            r#"["a"]"#,
+            r#"["1app"]"#,
+            r#"["my app"]"#,
+            r#"["my_app"]"#,
+            r#"["https"]"#,
+            r#"["file"]"#,
+            r#"["mailto"]"#,
+            r#"["javascript"]"#,
+            r#"["data"]"#,
+            r#"["http"]"#,
+            r#"["one", "one"]"#,
+            r#""myapp""#,
+            r#"[7]"#,
+        ] {
+            assert!(
+                schemes(&format!(r#"{{"urlSchemes": {invalid}}}"#)).is_err(),
+                "{invalid}"
+            );
         }
         assert!(schemes(&format!(r#"{{"urlSchemes": ["a{}"]}}"#, "b".repeat(31))).is_ok());
         assert!(schemes(&format!(r#"{{"urlSchemes": ["a{}"]}}"#, "b".repeat(32))).is_err());
         let nine: Vec<String> = (0..9).map(|index| format!("\"app{index}\"")).collect();
-        assert!(schemes(&format!(r#"{{"urlSchemes": [{}]}}"#, nine.join(","))).unwrap_err().contains("more than 8"));
-        assert!(manifest(r#"{"urlSchemes": ["https"]}"#).application().is_err());
+        assert!(
+            schemes(&format!(r#"{{"urlSchemes": [{}]}}"#, nine.join(",")))
+                .unwrap_err()
+                .contains("more than 8")
+        );
+        assert!(
+            manifest(r#"{"urlSchemes": ["https"]}"#)
+                .application()
+                .is_err()
+        );
 
         // An application that opens links runs once, outside development.
         let links = manifest(r#"{"urlSchemes": ["myapp"]}"#);
@@ -775,7 +999,10 @@ mod tests {
         assert!(!manifest(r#"{"urlSchemes": ["https"]}"#).single_instance(false));
         // The manifest has the last word.
         assert!(manifest(r#"{"singleInstance": true}"#).single_instance(true));
-        assert!(!manifest(r#"{"urlSchemes": ["myapp"], "singleInstance": false}"#).single_instance(false));
+        assert!(
+            !manifest(r#"{"urlSchemes": ["myapp"], "singleInstance": false}"#)
+                .single_instance(false)
+        );
     }
 
     #[test]
@@ -789,25 +1016,64 @@ mod tests {
             .unwrap();
         assert_eq!(config.channel, "beta");
         assert_eq!(config.policy, UpdatePolicy::Automatic);
-        assert!(block(&format!(r#""publicKey": "{key}""#)).unwrap_err().contains("endpoint"));
-        assert!(block(r#""endpoint": "https://example.com/feed.json""#).unwrap_err().contains("publicKey"));
-        assert!(block(&format!(r#""endpoint": "https://example.com/feed.json", "publicKey": "{}""#, key.to_uppercase())).is_err());
-        assert!(block(&format!(r#""endpoint": "http://example.com/feed.json", "publicKey": "{key}""#)).is_err());
-        assert!(block(&format!(r#""endpoint": "https://user:pw@example.com/feed.json", "publicKey": "{key}""#)).is_err());
-        assert!(block(&format!(r#""endpoint": "https://example.com/feed.json#latest", "publicKey": "{key}""#)).is_err());
+        assert!(
+            block(&format!(r#""publicKey": "{key}""#))
+                .unwrap_err()
+                .contains("endpoint")
+        );
+        assert!(
+            block(r#""endpoint": "https://example.com/feed.json""#)
+                .unwrap_err()
+                .contains("publicKey")
+        );
+        assert!(
+            block(&format!(
+                r#""endpoint": "https://example.com/feed.json", "publicKey": "{}""#,
+                key.to_uppercase()
+            ))
+            .is_err()
+        );
+        assert!(
+            block(&format!(
+                r#""endpoint": "http://example.com/feed.json", "publicKey": "{key}""#
+            ))
+            .is_err()
+        );
+        assert!(
+            block(&format!(
+                r#""endpoint": "https://user:pw@example.com/feed.json", "publicKey": "{key}""#
+            ))
+            .is_err()
+        );
+        assert!(
+            block(&format!(
+                r#""endpoint": "https://example.com/feed.json#latest", "publicKey": "{key}""#
+            ))
+            .is_err()
+        );
         assert!(block(&format!(r#""endpoint": "https://example.com/feed.json", "publicKey": "{key}", "policy": "always""#)).is_err());
         assert!(block(&format!(r#""endpoint": "https://example.com/feed.json", "publicKey": "{key}", "channel": "9x""#)).is_err());
         assert!(block(&format!(r#""endpoint": "https://example.com/feed.json", "publicKey": "{key}", "secret": "x""#)).is_err());
         // An invalid block also stops a build.
-        assert!(manifest(r#"{"updates": {"endpoint": "ftp://example.com"}}"#).application().is_err());
+        assert!(
+            manifest(r#"{"updates": {"endpoint": "ftp://example.com"}}"#)
+                .application()
+                .is_err()
+        );
     }
 
     #[test]
     fn update_urls_are_https_or_debug_loopback() {
         assert!(validate_update_url("https://cdn.example.com/app.tar.gz", "url").is_ok());
-        assert_eq!(validate_update_url("http://127.0.0.1:8080/feed", "url").is_ok(), cfg!(debug_assertions));
+        assert_eq!(
+            validate_update_url("http://127.0.0.1:8080/feed", "url").is_ok(),
+            cfg!(debug_assertions)
+        );
         assert!(validate_update_url("http://192.168.0.2/feed", "url").is_err());
         assert!(validate_update_url("https://exa mple.com/", "url").is_err());
-        assert!(validate_update_url(&format!("https://example.com/{}", "a".repeat(2048)), "url").is_err());
+        assert!(
+            validate_update_url(&format!("https://example.com/{}", "a".repeat(2048)), "url")
+                .is_err()
+        );
     }
 }

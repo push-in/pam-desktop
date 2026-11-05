@@ -38,7 +38,10 @@ pub fn host_modules(
     let sqlite: Box<dyn Module> = Box::new(sqlite::Sqlite::new(data));
     // A feed the manifest did not describe correctly is not a feed to trust.
     let update_config = manifest.updates().unwrap_or_else(|error| {
-        eprintln!("pam-desktop: {}: {error}; updates are disabled", crate::manifest::FILE_NAME);
+        eprintln!(
+            "pam-desktop: {}: {error}; updates are disabled",
+            crate::manifest::FILE_NAME
+        );
         None
     });
     let updates: Box<dyn Module> = Box::new(updates::Updates::new(

@@ -10,27 +10,34 @@ use std::rc::Rc;
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool, NSObject, NSObjectProtocol, ProtocolObject, Sel};
-use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
+use objc2::{
+    AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel,
+};
 use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication, NSCursor,
-    NSEvent, NSEventMask, NSEventModifierFlags, NSFloatingWindowLevel, NSImage, NSMenu, NSMenuDelegate, NSMenuItem,
-    NSMenuItemValidation, NSModalResponse, NSModalResponseOK, NSNormalWindowLevel, NSOpenPanel, NSPasteboard,
-    NSPasteboardTypeString, NSSavePanel, NSStatusBar, NSStatusItem, NSVariableStatusItemLength, NSView, NSWindow,
-    NSWindowStyleMask, NSWorkspace, NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
+    NSAlert, NSAlertFirstButtonReturn, NSAppearance, NSAppearanceNameAqua,
+    NSAppearanceNameDarkAqua, NSApplication, NSCursor, NSEvent, NSEventMask, NSEventModifierFlags,
+    NSFloatingWindowLevel, NSImage, NSMenu, NSMenuDelegate, NSMenuItem, NSMenuItemValidation,
+    NSModalResponse, NSModalResponseOK, NSNormalWindowLevel, NSOpenPanel, NSPasteboard,
+    NSPasteboardTypeString, NSSavePanel, NSStatusBar, NSStatusItem, NSVariableStatusItemLength,
+    NSView, NSWindow, NSWindowStyleMask, NSWorkspace,
+    NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
 };
 use objc2_core_foundation::CGSize;
-use objc2_foundation::{NSArray, NSBundle, NSCopying, NSError, NSNotification, NSOperationQueue, NSProcessInfo, NSURL, NSUUID};
+use objc2_foundation::{
+    NSArray, NSBundle, NSCopying, NSError, NSNotification, NSOperationQueue, NSProcessInfo, NSURL,
+    NSUUID,
+};
 use objc2_uniform_type_identifiers::UTType;
 use objc2_user_notifications::{
-    UNAuthorizationOptions, UNMutableNotificationContent, UNNotification, UNNotificationPresentationOptions,
-    UNNotificationRequest, UNNotificationResponse, UNNotificationSound, UNUserNotificationCenter,
-    UNUserNotificationCenterDelegate,
+    UNAuthorizationOptions, UNMutableNotificationContent, UNNotification,
+    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
+    UNNotificationSound, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
 use pam_desktop_ui::backend::{AlertButtonStyle, AlertConfig, BackendEvent, Modifiers};
 use pam_desktop_ui::geometry::{Point, Size};
 use pam_desktop_ui::shell::{
-    Accelerator, Cursor, FileDialogConfig, FileDialogKind, MenuNode, MenuRole, NotificationConfig, Shortcut, TrayConfig,
-    WindowCommand,
+    Accelerator, Cursor, FileDialogConfig, FileDialogKind, MenuNode, MenuRole, NotificationConfig,
+    Shortcut, TrayConfig, WindowCommand,
 };
 
 use crate::events::{self, Events, MainThread};
@@ -38,7 +45,10 @@ use crate::util::{cg_point, cg_size, ns_string};
 use crate::window::window_state;
 
 /// The system cursor of a CSS cursor; `None` keeps the arrow.
-#[expect(deprecated, reason = "the replacements of the resize cursors need macOS 15")]
+#[expect(
+    deprecated,
+    reason = "the replacements of the resize cursors need macOS 15"
+)]
 pub fn native_cursor(cursor: Cursor) -> Option<Retained<NSCursor>> {
     Some(match cursor {
         Cursor::Default => return None,
@@ -61,14 +71,22 @@ pub fn is_dark(appearance: &NSAppearance) -> bool {
     // SAFETY: the appearance names are immutable strings exported by AppKit.
     let (light, dark) = unsafe { (NSAppearanceNameAqua, NSAppearanceNameDarkAqua) };
     let names = NSArray::from_slice(&[light, dark]);
-    appearance.bestMatchFromAppearancesWithNames(&names).is_some_and(|name| &*name == dark)
+    appearance
+        .bestMatchFromAppearancesWithNames(&names)
+        .is_some_and(|name| &*name == dark)
 }
 
 /// Forces light or dark chrome, or follows the system.
 pub fn set_appearance(mtm: MainThreadMarker, dark: Option<bool>) {
     let appearance = dark.and_then(|dark| {
         // SAFETY: the appearance names are immutable strings exported by AppKit.
-        NSAppearance::appearanceNamed(unsafe { if dark { NSAppearanceNameDarkAqua } else { NSAppearanceNameAqua } })
+        NSAppearance::appearanceNamed(unsafe {
+            if dark {
+                NSAppearanceNameDarkAqua
+            } else {
+                NSAppearanceNameAqua
+            }
+        })
     });
     NSApplication::sharedApplication(mtm).setAppearance(appearance.as_deref());
 }
@@ -78,7 +96,8 @@ pub fn system_is_dark(mtm: MainThreadMarker, forced: bool) -> bool {
     if forced {
         // The effective appearance is the forced one: ask the preference
         // the system keeps for "dark mode".
-        let style = objc2_foundation::NSUserDefaults::standardUserDefaults().stringForKey(&ns_string("AppleInterfaceStyle"));
+        let style = objc2_foundation::NSUserDefaults::standardUserDefaults()
+            .stringForKey(&ns_string("AppleInterfaceStyle"));
         style.is_some_and(|style| style.to_string().eq_ignore_ascii_case("dark"))
     } else {
         is_dark(&NSApplication::sharedApplication(mtm).effectiveAppearance())
@@ -97,7 +116,8 @@ pub type Registration = Retained<ProtocolObject<dyn NSObjectProtocol>>;
 /// registration back.
 pub fn watch_display_options(events: &Rc<Events>) -> Registration {
     let events = Rc::clone(events);
-    let changed = RcBlock::new(move |_: NonNull<NSNotification>| events.push(BackendEvent::MetricsChanged));
+    let changed =
+        RcBlock::new(move |_: NonNull<NSNotification>| events.push(BackendEvent::MetricsChanged));
     let center = NSWorkspace::sharedWorkspace().notificationCenter();
     // SAFETY: the block only runs on the main queue, where the events it
     // captures live; the name is an immutable string exported by AppKit.
@@ -156,7 +176,10 @@ fn key_equivalent(key: &str) -> String {
         "End" => function(0xF72B),
         "PageUp" => function(0xF72C),
         "PageDown" => function(0xF72D),
-        other => match other.strip_prefix('F').and_then(|number| number.parse::<u32>().ok()) {
+        other => match other
+            .strip_prefix('F')
+            .and_then(|number| number.parse::<u32>().ok())
+        {
             Some(number @ 1..=24) => function(0xF704 + number - 1),
             _ => other.to_lowercase(),
         },
@@ -165,12 +188,21 @@ fn key_equivalent(key: &str) -> String {
 
 /// The shortcut the platform gives a role when the application gives none.
 fn role_accelerator(role: MenuRole) -> Option<Accelerator> {
-    let command = Modifiers { meta: true, ..Modifiers::default() };
+    let command = Modifiers {
+        meta: true,
+        ..Modifiers::default()
+    };
     let (modifiers, key) = match role {
         MenuRole::Quit => (command, "q"),
         MenuRole::Preferences => (command, ","),
         MenuRole::Undo => (command, "z"),
-        MenuRole::Redo => (Modifiers { shift: true, ..command }, "z"),
+        MenuRole::Redo => (
+            Modifiers {
+                shift: true,
+                ..command
+            },
+            "z",
+        ),
         MenuRole::Cut => (command, "x"),
         MenuRole::Copy => (command, "c"),
         MenuRole::Paste => (command, "v"),
@@ -178,11 +210,26 @@ fn role_accelerator(role: MenuRole) -> Option<Accelerator> {
         MenuRole::Minimize => (command, "m"),
         MenuRole::CloseWindow => (command, "w"),
         MenuRole::Hide => (command, "h"),
-        MenuRole::HideOthers => (Modifiers { alt: true, ..command }, "h"),
-        MenuRole::ToggleFullScreen => (Modifiers { control: true, ..command }, "f"),
+        MenuRole::HideOthers => (
+            Modifiers {
+                alt: true,
+                ..command
+            },
+            "h",
+        ),
+        MenuRole::ToggleFullScreen => (
+            Modifiers {
+                control: true,
+                ..command
+            },
+            "f",
+        ),
         MenuRole::About | MenuRole::Zoom | MenuRole::ShowAll => return None,
     };
-    Some(Accelerator { modifiers, key: key.to_owned() })
+    Some(Accelerator {
+        modifiers,
+        key: key.to_owned(),
+    })
 }
 
 /// The standard action of a role, sent down the responder chain.
@@ -303,7 +350,11 @@ impl MenuTarget {
     /// Registers an item that reports `id` and returns its tag.
     fn register(&self, id: &str, enabled: bool, checkable: bool) -> isize {
         let mut entries = self.ivars().entries.borrow_mut();
-        entries.push(MenuEntry { id: id.to_owned(), enabled, checkable });
+        entries.push(MenuEntry {
+            id: id.to_owned(),
+            enabled,
+            checkable,
+        });
         (entries.len() - 1) as isize
     }
 
@@ -312,10 +363,24 @@ impl MenuTarget {
     }
 }
 
-fn menu_item(mtm: MainThreadMarker, label: &str, action: Option<Sel>, accelerator: Option<&Accelerator>) -> Retained<NSMenuItem> {
-    let key = accelerator.map(|accelerator| key_equivalent(&accelerator.key)).unwrap_or_default();
+fn menu_item(
+    mtm: MainThreadMarker,
+    label: &str,
+    action: Option<Sel>,
+    accelerator: Option<&Accelerator>,
+) -> Retained<NSMenuItem> {
+    let key = accelerator
+        .map(|accelerator| key_equivalent(&accelerator.key))
+        .unwrap_or_default();
     // SAFETY: the action is a selector taking the sender, or nil.
-    let item = unsafe { NSMenuItem::initWithTitle_action_keyEquivalent(NSMenuItem::alloc(mtm), &ns_string(label), action, &ns_string(&key)) };
+    let item = unsafe {
+        NSMenuItem::initWithTitle_action_keyEquivalent(
+            NSMenuItem::alloc(mtm),
+            &ns_string(label),
+            action,
+            &ns_string(&key),
+        )
+    };
     if let Some(accelerator) = accelerator {
         item.setKeyEquivalentModifierMask(modifier_mask(accelerator.modifiers));
     }
@@ -327,13 +392,25 @@ fn menu_item(mtm: MainThreadMarker, label: &str, action: Option<Sel>, accelerato
 fn add_node(mtm: MainThreadMarker, menu: &NSMenu, node: &MenuNode, target: &MenuTarget) {
     match node {
         MenuNode::Separator => menu.addItem(&NSMenuItem::separatorItem(mtm)),
-        MenuNode::Submenu { label, enabled, children } => {
+        MenuNode::Submenu {
+            label,
+            enabled,
+            children,
+        } => {
             let item = menu_item(mtm, label, None, None);
             item.setSubmenu(Some(&build_menu(mtm, label, children, target)));
             item.setEnabled(*enabled);
             menu.addItem(&item);
         }
-        MenuNode::Item { id, label, accelerator, enabled, checked, role, .. } => {
+        MenuNode::Item {
+            id,
+            label,
+            accelerator,
+            enabled,
+            checked,
+            role,
+            ..
+        } => {
             let default_accelerator = role.and_then(role_accelerator);
             let accelerator = accelerator.as_ref().or(default_accelerator.as_ref());
             let item = match role.and_then(role_selector) {
@@ -361,7 +438,12 @@ fn add_node(mtm: MainThreadMarker, menu: &NSMenu, node: &MenuNode, target: &Menu
     }
 }
 
-fn build_menu(mtm: MainThreadMarker, title: &str, nodes: &[MenuNode], target: &MenuTarget) -> Retained<NSMenu> {
+fn build_menu(
+    mtm: MainThreadMarker,
+    title: &str,
+    nodes: &[MenuNode],
+    target: &MenuTarget,
+) -> Retained<NSMenu> {
     let menu = NSMenu::initWithTitle(NSMenu::alloc(mtm), &ns_string(title));
     for node in nodes {
         add_node(mtm, &menu, node, target);
@@ -370,7 +452,15 @@ fn build_menu(mtm: MainThreadMarker, title: &str, nodes: &[MenuNode], target: &M
 }
 
 fn role_item(label: &str, role: MenuRole) -> MenuNode {
-    MenuNode::Item { id: String::new(), label: label.to_owned(), accelerator: None, enabled: true, checked: None, role: Some(role), destructive: false }
+    MenuNode::Item {
+        id: String::new(),
+        label: label.to_owned(),
+        accelerator: None,
+        enabled: true,
+        checked: None,
+        role: Some(role),
+        destructive: false,
+    }
 }
 
 /// The menu named after the application, which every Mac program has.
@@ -422,11 +512,23 @@ fn default_menus() -> Vec<MenuNode> {
 }
 
 fn is_application_menu(node: &MenuNode) -> bool {
-    let MenuNode::Submenu { children, .. } = node else { return false };
+    let MenuNode::Submenu { children, .. } = node else {
+        return false;
+    };
     children.iter().any(|child| {
         matches!(
             child,
-            MenuNode::Item { role: Some(MenuRole::About | MenuRole::Quit | MenuRole::Preferences | MenuRole::Hide | MenuRole::HideOthers | MenuRole::ShowAll), .. }
+            MenuNode::Item {
+                role: Some(
+                    MenuRole::About
+                        | MenuRole::Quit
+                        | MenuRole::Preferences
+                        | MenuRole::Hide
+                        | MenuRole::HideOthers
+                        | MenuRole::ShowAll
+                ),
+                ..
+            }
         )
     })
 }
@@ -455,14 +557,22 @@ define_class!(
             _notification: &UNNotification,
             completion: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
         ) {
-            completion.call((UNNotificationPresentationOptions::Banner | UNNotificationPresentationOptions::List | UNNotificationPresentationOptions::Sound,));
+            completion.call((UNNotificationPresentationOptions::Banner
+                | UNNotificationPresentationOptions::List
+                | UNNotificationPresentationOptions::Sound,));
         }
 
         /// The user activated a notification.
         #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
-        fn did_receive(&self, _center: &UNUserNotificationCenter, response: &UNNotificationResponse, completion: &block2::DynBlock<dyn Fn()>) {
+        fn did_receive(
+            &self,
+            _center: &UNUserNotificationCenter,
+            response: &UNNotificationResponse,
+            completion: &block2::DynBlock<dyn Fn()>,
+        ) {
             let id = response.notification().request().identifier().to_string();
-            self.ivars().run(move || events::post(BackendEvent::NotificationActivated { id }));
+            self.ivars()
+                .run(move || events::post(BackendEvent::NotificationActivated { id }));
             completion.call(());
         }
     }
@@ -497,7 +607,11 @@ impl Shell {
     pub fn set_menu_bar(&mut self, menu: &[MenuNode]) {
         let mtm = self.mtm;
         let name = application_name();
-        let mut nodes: Vec<MenuNode> = if menu.is_empty() { default_menus() } else { menu.to_vec() };
+        let mut nodes: Vec<MenuNode> = if menu.is_empty() {
+            default_menus()
+        } else {
+            menu.to_vec()
+        };
         // The first menu of the bar is the application's.
         if !nodes.first().is_some_and(is_application_menu) {
             nodes.insert(0, application_menu(&name));
@@ -514,13 +628,23 @@ impl Shell {
 
     /// Opens a context menu at `position` of `view`. The menu tracks the
     /// pointer in its own run loop, so it opens once the runtime is idle.
-    pub fn popup_menu(&self, view: &NSView, position: Point, menu: &[MenuNode], done: Box<dyn FnOnce(Option<String>)>) {
+    pub fn popup_menu(
+        &self,
+        view: &NSView,
+        position: Point,
+        menu: &[MenuNode],
+        done: Box<dyn FnOnce(Option<String>)>,
+    ) {
         let target = MenuTarget::new(self.mtm, &self.events, MenuKind::Popup);
         let native = build_menu(self.mtm, "", menu, &target);
         let view = view.retain();
         let events = Rc::clone(&self.events);
         self.events.defer(move || {
-            native.popUpMenuPositioningItem_atLocation_inView(None, cg_point(position), Some(&view));
+            native.popUpMenuPositioningItem_atLocation_inView(
+                None,
+                cg_point(position),
+                Some(&view),
+            );
             // The chosen item's action is delivered by the run loop: read
             // the choice on its next turn.
             events.defer(move || done(target.take_chosen()));
@@ -542,16 +666,25 @@ impl Shell {
         let target = MenuTarget::new(mtm, &self.events, MenuKind::Tray);
         if let Some(button) = item.button(mtm) {
             let image = match &config.icon {
-                Some(path) => NSImage::initWithContentsOfFile(NSImage::alloc(), &ns_string(&path.to_string_lossy())),
+                Some(path) => NSImage::initWithContentsOfFile(
+                    NSImage::alloc(),
+                    &ns_string(&path.to_string_lossy()),
+                ),
                 // A copy: resizing the shared image would resize the Dock's.
-                None => NSApplication::sharedApplication(mtm).applicationIconImage().map(|icon| icon.copy()),
+                None => NSApplication::sharedApplication(mtm)
+                    .applicationIconImage()
+                    .map(|icon| icon.copy()),
             };
             if let Some(image) = &image {
                 // The height of the menu bar's icons.
                 image.setSize(CGSize::new(18.0, 18.0));
             }
             button.setImage(image.as_deref());
-            button.setToolTip((!config.tooltip.is_empty()).then(|| ns_string(&config.tooltip)).as_deref());
+            button.setToolTip(
+                (!config.tooltip.is_empty())
+                    .then(|| ns_string(&config.tooltip))
+                    .as_deref(),
+            );
             // SAFETY: the target implements `statusItemClicked:` and is
             // kept alive by the tray.
             unsafe {
@@ -566,21 +699,30 @@ impl Shell {
             menu.setDelegate(Some(ProtocolObject::from_ref(&*target)));
             item.setMenu(Some(&menu));
         }
-        self.tray = Some(Tray { item, _target: target });
+        self.tray = Some(Tray {
+            item,
+            _target: target,
+        });
     }
 
-    pub fn pick_files(&self, parent: Option<&NSWindow>, config: &FileDialogConfig, done: Box<dyn FnOnce(Vec<PathBuf>)>) {
+    pub fn pick_files(
+        &self,
+        parent: Option<&NSWindow>,
+        config: &FileDialogConfig,
+        done: Box<dyn FnOnce(Vec<PathBuf>)>,
+    ) {
         let mtm = self.mtm;
-        let (panel, open): (Retained<NSSavePanel>, Option<Retained<NSOpenPanel>>) = if config.kind == FileDialogKind::Save {
-            (NSSavePanel::savePanel(mtm), None)
-        } else {
-            let open = NSOpenPanel::openPanel(mtm);
-            let folders = config.kind == FileDialogKind::SelectFolder;
-            open.setCanChooseFiles(!folders);
-            open.setCanChooseDirectories(folders);
-            open.setAllowsMultipleSelection(config.kind == FileDialogKind::OpenMultiple);
-            (Retained::into_super(open.clone()), Some(open))
-        };
+        let (panel, open): (Retained<NSSavePanel>, Option<Retained<NSOpenPanel>>) =
+            if config.kind == FileDialogKind::Save {
+                (NSSavePanel::savePanel(mtm), None)
+            } else {
+                let open = NSOpenPanel::openPanel(mtm);
+                let folders = config.kind == FileDialogKind::SelectFolder;
+                open.setCanChooseFiles(!folders);
+                open.setCanChooseDirectories(folders);
+                open.setAllowsMultipleSelection(config.kind == FileDialogKind::OpenMultiple);
+                (Retained::into_super(open.clone()), Some(open))
+            };
         panel.setCanCreateDirectories(true);
         if !config.title.is_empty() {
             // Sheets have no title bar: the message line shows the title.
@@ -591,12 +733,25 @@ impl Shell {
             panel.setNameFieldStringValue(&ns_string(&config.default_name));
         }
         if let Some(directory) = &config.directory {
-            panel.setDirectoryURL(Some(&NSURL::fileURLWithPath(&ns_string(&directory.to_string_lossy()))));
+            panel.setDirectoryURL(Some(&NSURL::fileURLWithPath(&ns_string(
+                &directory.to_string_lossy(),
+            ))));
         }
-        let extensions: Vec<&str> = config.filters.iter().flat_map(|filter| filter.extensions.iter().map(String::as_str)).collect();
-        if !extensions.is_empty() && !extensions.contains(&"*") && config.kind != FileDialogKind::SelectFolder {
-            let types: Vec<Retained<UTType>> =
-                extensions.iter().filter_map(|extension| UTType::typeWithFilenameExtension(&ns_string(extension.trim_start_matches('.')))).collect();
+        let extensions: Vec<&str> = config
+            .filters
+            .iter()
+            .flat_map(|filter| filter.extensions.iter().map(String::as_str))
+            .collect();
+        if !extensions.is_empty()
+            && !extensions.contains(&"*")
+            && config.kind != FileDialogKind::SelectFolder
+        {
+            let types: Vec<Retained<UTType>> = extensions
+                .iter()
+                .filter_map(|extension| {
+                    UTType::typeWithFilenameExtension(&ns_string(extension.trim_start_matches('.')))
+                })
+                .collect();
             if !types.is_empty() {
                 panel.setAllowedContentTypes(&NSArray::from_retained_slice(&types));
             }
@@ -613,7 +768,12 @@ impl Shell {
                     None => chosen.URL().into_iter().collect(),
                 }
             };
-            done(urls.iter().filter_map(|url| url.path()).map(|path| PathBuf::from(path.to_string())).collect());
+            done(
+                urls.iter()
+                    .filter_map(|url| url.path())
+                    .map(|path| PathBuf::from(path.to_string()))
+                    .collect(),
+            );
         });
         match parent {
             Some(window) => panel.beginSheetModalForWindow_completionHandler(window, &handler),
@@ -621,7 +781,12 @@ impl Shell {
         }
     }
 
-    pub fn show_alert(&self, parent: Option<&NSWindow>, config: &AlertConfig, done: Box<dyn FnOnce(Option<usize>)>) {
+    pub fn show_alert(
+        &self,
+        parent: Option<&NSWindow>,
+        config: &AlertConfig,
+        done: Box<dyn FnOnce(Option<usize>)>,
+    ) {
         let alert = NSAlert::new(self.mtm);
         alert.setMessageText(&ns_string(&config.title));
         alert.setInformativeText(&ns_string(&config.message));
@@ -631,7 +796,11 @@ impl Shell {
         }
         // The first button that is not Cancel answers to Return; AppKit
         // gives Return to the first one added.
-        let default = config.buttons.iter().position(|button| button.style != AlertButtonStyle::Cancel).unwrap_or(0);
+        let default = config
+            .buttons
+            .iter()
+            .position(|button| button.style != AlertButtonStyle::Cancel)
+            .unwrap_or(0);
         for (index, button) in config.buttons.iter().enumerate() {
             let native = alert.addButtonWithTitle(&ns_string(&button.label));
             match button.style {
@@ -642,10 +811,16 @@ impl Shell {
                     }
                     native.setKeyEquivalent(&ns_string(if index == default { "\r" } else { "" }));
                 }
-                AlertButtonStyle::Default => native.setKeyEquivalent(&ns_string(if index == default { "\r" } else { "" })),
+                AlertButtonStyle::Default => {
+                    native.setKeyEquivalent(&ns_string(if index == default { "\r" } else { "" }))
+                }
             }
         }
-        let answer = move |response: NSModalResponse| usize::try_from(response - NSAlertFirstButtonReturn).ok().filter(|index| *index < count);
+        let answer = move |response: NSModalResponse| {
+            usize::try_from(response - NSAlertFirstButtonReturn)
+                .ok()
+                .filter(|index| *index < count)
+        };
         match parent {
             Some(window) => {
                 let done = Cell::new(Some(done));
@@ -671,7 +846,9 @@ impl Shell {
 
     pub fn clipboard_text(&self, done: Box<dyn FnOnce(Option<String>)>) {
         // SAFETY: the type name is an immutable string exported by AppKit.
-        let text = NSPasteboard::generalPasteboard().stringForType(unsafe { NSPasteboardTypeString }).map(|text| text.to_string());
+        let text = NSPasteboard::generalPasteboard()
+            .stringForType(unsafe { NSPasteboardTypeString })
+            .map(|text| text.to_string());
         self.events.defer(move || done(text));
     }
 
@@ -701,18 +878,34 @@ impl Shell {
             content.setTitle(&ns_string(&title));
             content.setBody(&ns_string(&body));
             content.setSound(Some(&UNNotificationSound::defaultSound()));
-            let identifier = if id.is_empty() { NSUUID::new().UUIDString() } else { ns_string(&id) };
-            let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&identifier, &content, None);
-            UNUserNotificationCenter::currentNotificationCenter().addNotificationRequest_withCompletionHandler(&request, None);
+            let identifier = if id.is_empty() {
+                NSUUID::new().UUIDString()
+            } else {
+                ns_string(&id)
+            };
+            let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
+                &identifier,
+                &content,
+                None,
+            );
+            UNUserNotificationCenter::currentNotificationCenter()
+                .addNotificationRequest_withCompletionHandler(&request, None);
         });
-        center.requestAuthorizationWithOptions_completionHandler(UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound, &handler);
+        center.requestAuthorizationWithOptions_completionHandler(
+            UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound,
+            &handler,
+        );
     }
 
     /// Shortcuts of the focused window are matched by the core. Global
     /// ones are watched while other applications are in front, which the
     /// system only allows to applications trusted for accessibility.
     pub fn set_shortcuts(&mut self, shortcuts: &[Shortcut]) {
-        let global: Vec<Shortcut> = shortcuts.iter().filter(|shortcut| shortcut.global).cloned().collect();
+        let global: Vec<Shortcut> = shortcuts
+            .iter()
+            .filter(|shortcut| shortcut.global)
+            .cloned()
+            .collect();
         let wanted = !global.is_empty();
         *self.global_shortcuts.borrow_mut() = global;
         if !wanted {
@@ -725,13 +918,23 @@ impl Shell {
             let handler = RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| {
                 // SAFETY: AppKit passes a valid event for the duration of the call.
                 let event = unsafe { event.as_ref() };
-                let (key, modifiers) = (events::key_name(event), events::modifiers(event.modifierFlags()));
-                let fired = registered.borrow().iter().find(|shortcut| shortcut.accelerator.matches(&key, modifiers)).map(|shortcut| shortcut.id.clone());
+                let (key, modifiers) = (
+                    events::key_name(event),
+                    events::modifiers(event.modifierFlags()),
+                );
+                let fired = registered
+                    .borrow()
+                    .iter()
+                    .find(|shortcut| shortcut.accelerator.matches(&key, modifiers))
+                    .map(|shortcut| shortcut.id.clone());
                 if let Some(id) = fired {
                     events.push(BackendEvent::Shortcut { id });
                 }
             });
-            self.global_monitor = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &handler);
+            self.global_monitor = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
+                NSEventMask::KeyDown,
+                &handler,
+            );
         }
     }
 
@@ -739,7 +942,9 @@ impl Shell {
     pub fn shutdown(&mut self) {
         self.set_tray(None);
         self.set_shortcuts(&[]);
-        if self.notifications.take().is_some() && NSBundle::mainBundle().bundleIdentifier().is_some() {
+        if self.notifications.take().is_some()
+            && NSBundle::mainBundle().bundleIdentifier().is_some()
+        {
             UNUserNotificationCenter::currentNotificationCenter().setDelegate(None);
         }
     }
@@ -750,7 +955,9 @@ pub fn window_command(mtm: MainThreadMarker, window: &NSWindow, command: &Window
     match command {
         WindowCommand::SetTitle(title) => window.setTitle(&ns_string(title)),
         WindowCommand::SetSize(size) => window.setContentSize(cg_size(*size)),
-        WindowCommand::SetMinSize(size) => window.setContentMinSize(cg_size(size.unwrap_or(Size::ZERO))),
+        WindowCommand::SetMinSize(size) => {
+            window.setContentMinSize(cg_size(size.unwrap_or(Size::ZERO)))
+        }
         WindowCommand::SetResizable(resizable) => {
             let mut style = window.styleMask();
             style.set(NSWindowStyleMask::Resizable, *resizable);
@@ -784,14 +991,25 @@ pub fn window_command(mtm: MainThreadMarker, window: &NSWindow, command: &Window
             window.makeKeyAndOrderFront(None);
         }
         WindowCommand::Center => window.center(),
-        WindowCommand::SetAlwaysOnTop(enabled) => window.setLevel(if *enabled { NSFloatingWindowLevel } else { NSNormalWindowLevel }),
+        WindowCommand::SetAlwaysOnTop(enabled) => window.setLevel(if *enabled {
+            NSFloatingWindowLevel
+        } else {
+            NSNormalWindowLevel
+        }),
         WindowCommand::Show => window.makeKeyAndOrderFront(None),
         WindowCommand::Hide => window.orderOut(None),
         WindowCommand::Close => window.close(),
         // The Dock icon shows the progress as its badge.
         WindowCommand::SetProgress(progress) => {
-            let badge = progress.map(|progress| ns_string(&format!("{}%", (progress.clamp(0.0, 1.0) * 100.0).round() as u32)));
-            NSApplication::sharedApplication(mtm).dockTile().setBadgeLabel(badge.as_deref());
+            let badge = progress.map(|progress| {
+                ns_string(&format!(
+                    "{}%",
+                    (progress.clamp(0.0, 1.0) * 100.0).round() as u32
+                ))
+            });
+            NSApplication::sharedApplication(mtm)
+                .dockTile()
+                .setBadgeLabel(badge.as_deref());
         }
     }
 }

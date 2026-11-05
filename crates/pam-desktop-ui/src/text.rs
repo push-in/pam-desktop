@@ -24,7 +24,13 @@ pub struct FontSpec {
 
 impl Default for FontSpec {
     fn default() -> Self {
-        Self { family: String::new(), size: 14.0, weight: 400, italic: false, features: String::new() }
+        Self {
+            family: String::new(),
+            size: 14.0,
+            weight: 400,
+            italic: false,
+            features: String::new(),
+        }
     }
 }
 
@@ -159,15 +165,30 @@ fn parse_spans(wire: &str) -> Vec<SpanSpec> {
         spans.push(SpanSpec {
             start,
             end,
-            size: field(2).and_then(|value| value.parse::<f32>().ok()).filter(|size| size.is_finite() && *size > 0.0),
-            weight: field(3).and_then(|value| value.parse::<i64>().ok()).map(|weight| weight.clamp(1, 1000) as u16),
-            italic: field(4).and_then(|value| value.parse::<i64>().ok()).map(|style| style == 2),
-            color: field(5).and_then(|value| value.parse::<i64>().ok()).map(Color::from_wire),
-            background: field(6).and_then(|value| value.parse::<i64>().ok()).map(Color::from_wire),
+            size: field(2)
+                .and_then(|value| value.parse::<f32>().ok())
+                .filter(|size| size.is_finite() && *size > 0.0),
+            weight: field(3)
+                .and_then(|value| value.parse::<i64>().ok())
+                .map(|weight| weight.clamp(1, 1000) as u16),
+            italic: field(4)
+                .and_then(|value| value.parse::<i64>().ok())
+                .map(|style| style == 2),
+            color: field(5)
+                .and_then(|value| value.parse::<i64>().ok())
+                .map(Color::from_wire),
+            background: field(6)
+                .and_then(|value| value.parse::<i64>().ok())
+                .map(Color::from_wire),
             decoration: field(7).and_then(|value| value.parse::<i64>().ok()),
-            letter_spacing: field(8).and_then(|value| value.parse::<f32>().ok()).filter(|spacing| spacing.is_finite()),
+            letter_spacing: field(8)
+                .and_then(|value| value.parse::<f32>().ok())
+                .filter(|spacing| spacing.is_finite()),
             family: field(9).map(str::to_owned),
-            press: field(10).and_then(|value| value.parse::<i64>().ok()).filter(|slot| *slot >= 0).map(|slot| slot as u32),
+            press: field(10)
+                .and_then(|value| value.parse::<i64>().ok())
+                .filter(|slot| *slot >= 0)
+                .map(|slot| slot as u32),
             transform: field(11).and_then(|value| value.parse::<i64>().ok()),
         });
     }
@@ -223,7 +244,8 @@ pub struct TextSource<'a> {
 impl<'a> TextSource<'a> {
     #[must_use]
     pub fn from_props(kind: NodeKind, props: Props<'a>, font_scale: f32) -> Self {
-        let single_line_input = kind == NodeKind::Input && !props.flag_or(PropKey::Multiline, false);
+        let single_line_input =
+            kind == NodeKind::Input && !props.flag_or(PropKey::Multiline, false);
         Self {
             text: props.text_or_empty(PropKey::Text),
             spans: props.text_or_empty(PropKey::TextSpans),
@@ -239,7 +261,10 @@ impl<'a> TextSource<'a> {
             max_lines: if single_line_input {
                 1
             } else {
-                props.integer(PropKey::NumberOfLines).filter(|lines| *lines > 0).map_or(0, |lines| lines.min(i64::from(u32::MAX)) as u32)
+                props
+                    .integer(PropKey::NumberOfLines)
+                    .filter(|lines| *lines > 0)
+                    .map_or(0, |lines| lines.min(i64::from(u32::MAX)) as u32)
             },
         }
     }
@@ -266,7 +291,10 @@ impl<'a> TextSource<'a> {
         };
         let spans = parse_spans(self.spans);
         if spans.is_empty() {
-            return vec![TextRun { text: transform_text(self.text, self.transform), ..base }];
+            return vec![TextRun {
+                text: transform_text(self.text, self.transform),
+                ..base
+            }];
         }
 
         // Boundaries in code points, then one run per segment with every
@@ -288,7 +316,10 @@ impl<'a> TextSource<'a> {
             }
             let mut run = base.clone();
             let mut transform = self.transform;
-            for span in spans.iter().filter(|span| span.start <= start && span.end >= end) {
+            for span in spans
+                .iter()
+                .filter(|span| span.start <= start && span.end >= end)
+            {
                 if let Some(size) = span.size {
                     run.font.size = size * self.font_scale;
                 }
@@ -346,7 +377,9 @@ impl<'a> TextSource<'a> {
 /// Length of `text` in UTF-16 code units (the unit of protocol offsets).
 #[must_use]
 pub fn utf16_len(text: &str) -> u32 {
-    text.chars().map(|character| character.len_utf16() as u32).sum()
+    text.chars()
+        .map(|character| character.len_utf16() as u32)
+        .sum()
 }
 
 /// Converts a UTF-16 offset to a character (code point) offset, clamped to
@@ -369,7 +402,10 @@ pub fn utf16_to_char_offset(text: &str, offset: u32) -> u32 {
 /// Converts a character (code point) offset to UTF-16 code units.
 #[must_use]
 pub fn char_to_utf16_offset(text: &str, offset: u32) -> u32 {
-    text.chars().take(offset as usize).map(|character| character.len_utf16() as u32).sum()
+    text.chars()
+        .take(offset as usize)
+        .map(|character| character.len_utf16() as u32)
+        .sum()
 }
 
 /// Accessibility text scale after `allowFontScaling` / `maxFontSizeMultiplier`.
@@ -378,7 +414,11 @@ pub fn effective_font_scale(props: Props<'_>, scale: f32) -> f32 {
     if !props.flag_or(PropKey::TextAllowFontScaling, true) {
         return 1.0;
     }
-    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
     match props.number(PropKey::TextMaxFontSizeMultiplier) {
         Some(maximum) if maximum >= 1.0 => scale.min(maximum),
         _ => scale,
@@ -415,7 +455,10 @@ mod tests {
         let mut map = PropMap::new();
         map.insert(PropKey::Text, PropValue::String("ação já feita".into()));
         // "ação" bold; "já" bold + red + pressable (nested inside a longer bold span).
-        map.insert(PropKey::TextSpans, PropValue::String("0,7,,700;5,7,,,,-65536,,,,,3".into()));
+        map.insert(
+            PropKey::TextSpans,
+            PropValue::String("0,7,,700;5,7,,,,-65536,,,,,3".into()),
+        );
         let runs = source(&map).runs(None, 1);
         let texts: Vec<&str> = runs.iter().map(|run| run.text.as_str()).collect();
         assert_eq!(texts, vec!["ação ", "já", " feita"]);
@@ -430,8 +473,14 @@ mod tests {
     fn single_line_inputs_measure_one_line() {
         let mut map = PropMap::new();
         map.insert(PropKey::NumberOfLines, PropValue::Integer(3));
-        assert_eq!(TextSource::from_props(NodeKind::Input, Props::new(&map), 1.0).max_lines, 1);
-        assert_eq!(TextSource::from_props(NodeKind::Text, Props::new(&map), 1.0).max_lines, 3);
+        assert_eq!(
+            TextSource::from_props(NodeKind::Input, Props::new(&map), 1.0).max_lines,
+            1
+        );
+        assert_eq!(
+            TextSource::from_props(NodeKind::Text, Props::new(&map), 1.0).max_lines,
+            3
+        );
     }
 
     #[test]

@@ -3,19 +3,23 @@
 use std::rc::Rc;
 
 use block2::RcBlock;
+use objc2::AnyThread;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, Bool};
-use objc2::AnyThread;
 use objc2_app_kit::{
-    NSAccessibility, NSAccessibilityAnnouncementKey, NSAccessibilityAnnouncementRequestedNotification, NSAccessibilityButtonRole,
-    NSAccessibilityCheckBoxRole, NSAccessibilityComboBoxRole, NSAccessibilityCustomAction, NSAccessibilityDialogSubrole,
-    NSAccessibilityGridRole, NSAccessibilityGroupRole, NSAccessibilityImageRole, NSAccessibilityIncrementorRole,
-    NSAccessibilityLinkRole, NSAccessibilityListRole, NSAccessibilityMenuBarRole, NSAccessibilityMenuItemRole, NSAccessibilityMenuRole,
-    NSAccessibilityPostNotificationWithUserInfo, NSAccessibilityPriorityKey, NSAccessibilityPriorityLevel,
-    NSAccessibilityProgressIndicatorRole, NSAccessibilityRadioButtonRole, NSAccessibilityRadioGroupRole, NSAccessibilityScrollBarRole,
-    NSAccessibilitySearchFieldSubrole, NSAccessibilitySliderRole, NSAccessibilityStaticTextRole, NSAccessibilitySwitchSubrole,
-    NSAccessibilityTabButtonSubrole, NSAccessibilityTabGroupRole, NSAccessibilityTextFieldRole, NSAccessibilityToggleSubrole,
-    NSAccessibilityToolbarRole, NSView, NSWindow, NSWorkspace,
+    NSAccessibility, NSAccessibilityAnnouncementKey,
+    NSAccessibilityAnnouncementRequestedNotification, NSAccessibilityButtonRole,
+    NSAccessibilityCheckBoxRole, NSAccessibilityComboBoxRole, NSAccessibilityCustomAction,
+    NSAccessibilityDialogSubrole, NSAccessibilityGridRole, NSAccessibilityGroupRole,
+    NSAccessibilityImageRole, NSAccessibilityIncrementorRole, NSAccessibilityLinkRole,
+    NSAccessibilityListRole, NSAccessibilityMenuBarRole, NSAccessibilityMenuItemRole,
+    NSAccessibilityMenuRole, NSAccessibilityPostNotificationWithUserInfo,
+    NSAccessibilityPriorityKey, NSAccessibilityPriorityLevel, NSAccessibilityProgressIndicatorRole,
+    NSAccessibilityRadioButtonRole, NSAccessibilityRadioGroupRole, NSAccessibilityScrollBarRole,
+    NSAccessibilitySearchFieldSubrole, NSAccessibilitySliderRole, NSAccessibilityStaticTextRole,
+    NSAccessibilitySwitchSubrole, NSAccessibilityTabButtonSubrole, NSAccessibilityTabGroupRole,
+    NSAccessibilityTextFieldRole, NSAccessibilityToggleSubrole, NSAccessibilityToolbarRole, NSView,
+    NSWindow, NSWorkspace,
 };
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString};
 use pam_desktop_ui::accessibility::{Accessibility, Checked, LiveRegion, Role};
@@ -39,11 +43,16 @@ fn native_role(role: Role) -> (&'static NSString, Option<&'static NSString>) {
     // SAFETY: the role and subrole names are immutable strings exported by AppKit.
     unsafe {
         match role {
-            Role::Generic | Role::Alert | Role::Summary | Role::ListItem => (NSAccessibilityGroupRole, None),
+            Role::Generic | Role::Alert | Role::Summary | Role::ListItem => {
+                (NSAccessibilityGroupRole, None)
+            }
             Role::Button => (NSAccessibilityButtonRole, None),
             Role::TextInput => (NSAccessibilityTextFieldRole, None),
             Role::Image => (NSAccessibilityImageRole, None),
-            Role::Switch => (NSAccessibilityCheckBoxRole, Some(NSAccessibilitySwitchSubrole)),
+            Role::Switch => (
+                NSAccessibilityCheckBoxRole,
+                Some(NSAccessibilitySwitchSubrole),
+            ),
             Role::Slider => (NSAccessibilitySliderRole, None),
             Role::Checkbox => (NSAccessibilityCheckBoxRole, None),
             Role::ComboBox => (NSAccessibilityComboBoxRole, None),
@@ -56,11 +65,20 @@ fn native_role(role: Role) -> (&'static NSString, Option<&'static NSString>) {
             Role::Radio => (NSAccessibilityRadioButtonRole, None),
             Role::RadioGroup => (NSAccessibilityRadioGroupRole, None),
             Role::ScrollBar => (NSAccessibilityScrollBarRole, None),
-            Role::Search => (NSAccessibilityTextFieldRole, Some(NSAccessibilitySearchFieldSubrole)),
+            Role::Search => (
+                NSAccessibilityTextFieldRole,
+                Some(NSAccessibilitySearchFieldSubrole),
+            ),
             Role::SpinButton => (NSAccessibilityIncrementorRole, None),
-            Role::Tab => (NSAccessibilityRadioButtonRole, Some(NSAccessibilityTabButtonSubrole)),
+            Role::Tab => (
+                NSAccessibilityRadioButtonRole,
+                Some(NSAccessibilityTabButtonSubrole),
+            ),
             Role::TabList => (NSAccessibilityTabGroupRole, None),
-            Role::ToggleButton => (NSAccessibilityCheckBoxRole, Some(NSAccessibilityToggleSubrole)),
+            Role::ToggleButton => (
+                NSAccessibilityCheckBoxRole,
+                Some(NSAccessibilityToggleSubrole),
+            ),
             Role::Toolbar => (NSAccessibilityToolbarRole, None),
             Role::Grid => (NSAccessibilityGridRole, None),
             Role::List => (NSAccessibilityListRole, None),
@@ -73,7 +91,15 @@ fn native_role(role: Role) -> (&'static NSString, Option<&'static NSString>) {
 fn is_pressable(role: Role) -> bool {
     matches!(
         role,
-        Role::Button | Role::Link | Role::Switch | Role::Checkbox | Role::Radio | Role::Tab | Role::MenuItem | Role::ToggleButton | Role::ComboBox
+        Role::Button
+            | Role::Link
+            | Role::Switch
+            | Role::Checkbox
+            | Role::Radio
+            | Role::Tab
+            | Role::MenuItem
+            | Role::ToggleButton
+            | Role::ComboBox
     )
 }
 
@@ -86,16 +112,26 @@ fn announce(view: &NSView, text: &str, live: LiveRegion) {
 
 /// Speaks `text` as an announcement of `window`.
 pub fn announce_in(window: &NSWindow, text: &str, assertive: bool) {
-    let priority = if assertive { NSAccessibilityPriorityLevel::High } else { NSAccessibilityPriorityLevel::Medium };
+    let priority = if assertive {
+        NSAccessibilityPriorityLevel::High
+    } else {
+        NSAccessibilityPriorityLevel::Medium
+    };
     let (text, priority) = (ns_string(text), NSNumber::new_isize(priority.0));
     // SAFETY: the notification name and keys are immutable strings exported
     // by AppKit; the announcement is a string and the priority a number,
     // as the notification documents. The element is the window.
     unsafe {
-        let info: Retained<NSDictionary<NSString, AnyObject>> =
-            NSDictionary::from_slices(&[NSAccessibilityAnnouncementKey, NSAccessibilityPriorityKey], &[text.as_ref(), priority.as_ref()]);
+        let info: Retained<NSDictionary<NSString, AnyObject>> = NSDictionary::from_slices(
+            &[NSAccessibilityAnnouncementKey, NSAccessibilityPriorityKey],
+            &[text.as_ref(), priority.as_ref()],
+        );
         let element: &AnyObject = window.as_ref();
-        NSAccessibilityPostNotificationWithUserInfo(element, NSAccessibilityAnnouncementRequestedNotification, Some(&info));
+        NSAccessibilityPostNotificationWithUserInfo(
+            element,
+            NSAccessibilityAnnouncementRequestedNotification,
+            Some(&info),
+        );
     }
 }
 
@@ -119,7 +155,11 @@ pub fn apply(
 ) {
     let plain = Accessibility::default();
     let described = accessibility.unwrap_or(&plain);
-    let name = if described.label.is_empty() { text.unwrap_or_default() } else { described.label.as_str() };
+    let name = if described.label.is_empty() {
+        text.unwrap_or_default()
+    } else {
+        described.label.as_str()
+    };
     let optional = |value: &str| (!value.is_empty()).then(|| ns_string(value));
     let target: &NSView = control.unwrap_or(view);
 
@@ -143,7 +183,10 @@ pub fn apply(
         let (native, subrole) = native_role(role);
         let exposed = !described.hidden
             && !described.hide_descendants
-            && (role != Role::Generic || !name.is_empty() || !described.actions.is_empty() || described.live != LiveRegion::Off);
+            && (role != Role::Generic
+                || !name.is_empty()
+                || !described.actions.is_empty()
+                || described.live != LiveRegion::Off);
         view.setAccessibilityElement(exposed);
         view.setAccessibilityRole(Some(native));
         view.setAccessibilitySubrole(subrole);
@@ -160,13 +203,22 @@ pub fn apply(
                 Checked::Checked => 1,
                 Checked::Mixed => 2,
             };
-            Some(Retained::into_super(Retained::into_super(Retained::into_super(NSNumber::new_isize(state)))))
+            Some(Retained::into_super(Retained::into_super(
+                Retained::into_super(NSNumber::new_isize(state)),
+            )))
         } else if let Some((_, _, now)) = described.range {
-            Some(Retained::into_super(Retained::into_super(Retained::into_super(NSNumber::new_f32(now)))))
+            Some(Retained::into_super(Retained::into_super(
+                Retained::into_super(NSNumber::new_f32(now)),
+            )))
         } else {
-            optional(&described.value_text).map(|value| Retained::into_super(Retained::into_super(value)))
+            optional(&described.value_text)
+                .map(|value| Retained::into_super(Retained::into_super(value)))
         };
-        let number = |value: f32| -> Retained<AnyObject> { Retained::into_super(Retained::into_super(Retained::into_super(NSNumber::new_f32(value)))) };
+        let number = |value: f32| -> Retained<AnyObject> {
+            Retained::into_super(Retained::into_super(Retained::into_super(
+                NSNumber::new_f32(value),
+            )))
+        };
         let (minimum, maximum) = match described.range {
             Some((minimum, maximum, _)) => (Some(number(minimum)), Some(number(maximum))),
             None => (None, None),
@@ -178,7 +230,11 @@ pub fn apply(
             view.setAccessibilityMinValue(minimum.as_deref());
             view.setAccessibilityMaxValue(maximum.as_deref());
         }
-        let spoken_value = if described.range.is_some() || described.checked.is_some() { optional(&described.value_text) } else { None };
+        let spoken_value = if described.range.is_some() || described.checked.is_some() {
+            optional(&described.value_text)
+        } else {
+            None
+        };
         view.setAccessibilityValueDescription(spoken_value.as_deref());
         view.setAccessibilitySelected(described.selected.unwrap_or(false));
         view.setAccessibilityExpanded(described.expanded.unwrap_or(false));
@@ -202,10 +258,17 @@ pub fn apply(
                 .map(|action| {
                     let (events, name) = (Rc::clone(events), action.name.clone());
                     let handler = RcBlock::new(move || {
-                        events.push(BackendEvent::AccessibilityAction { id, name: name.clone() });
+                        events.push(BackendEvent::AccessibilityAction {
+                            id,
+                            name: name.clone(),
+                        });
                         Bool::YES
                     });
-                    NSAccessibilityCustomAction::initWithName_handler(NSAccessibilityCustomAction::alloc(), &ns_string(&action.label), Some(&handler))
+                    NSAccessibilityCustomAction::initWithName_handler(
+                        NSAccessibilityCustomAction::alloc(),
+                        &ns_string(&action.label),
+                        Some(&handler),
+                    )
                 })
                 .collect();
             view.setAccessibilityCustomActions(Some(&NSArray::from_retained_slice(&actions)));

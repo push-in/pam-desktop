@@ -57,15 +57,26 @@ impl InitOptions {
     ///
     /// When an option is unknown or misses its value.
     pub fn parse(arguments: impl Iterator<Item = OsString>) -> Result<Self, String> {
-        let mut options = Self { directory: PathBuf::from("."), name: None, id: None };
+        let mut options = Self {
+            directory: PathBuf::from("."),
+            name: None,
+            id: None,
+        };
         let mut directory = None;
         let mut arguments = arguments;
         while let Some(argument) = arguments.next() {
-            let mut value = |flag: &str| arguments.next().and_then(|value| value.into_string().ok()).ok_or_else(|| format!("{flag} needs a value\n{USAGE}"));
+            let mut value = |flag: &str| {
+                arguments
+                    .next()
+                    .and_then(|value| value.into_string().ok())
+                    .ok_or_else(|| format!("{flag} needs a value\n{USAGE}"))
+            };
             match argument.to_str() {
                 Some("--name") => options.name = Some(value("--name")?),
                 Some("--id") => options.id = Some(value("--id")?),
-                Some(flag) if flag.starts_with('-') => return Err(format!("unknown option {flag}\n{USAGE}")),
+                Some(flag) if flag.starts_with('-') => {
+                    return Err(format!("unknown option {flag}\n{USAGE}"));
+                }
                 _ if directory.is_none() => directory = Some(PathBuf::from(argument)),
                 _ => return Err(USAGE.to_owned()),
             }
@@ -87,18 +98,28 @@ fn slug(text: &str) -> String {
             slug.push('-');
         }
     }
-    let slug = slug.trim_end_matches('-').trim_start_matches(|character: char| character.is_ascii_digit() || character == '-');
-    if slug.is_empty() { String::from("app") } else { slug.chars().take(40).collect() }
+    let slug = slug
+        .trim_end_matches('-')
+        .trim_start_matches(|character: char| character.is_ascii_digit() || character == '-');
+    if slug.is_empty() {
+        String::from("app")
+    } else {
+        slug.chars().take(40).collect()
+    }
 }
 
 /// Writes `contents` unless the file exists; reports which happened.
 fn create(path: &Path, contents: &str, report: &mut Vec<String>) -> Result<(), String> {
-    let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
     if path.exists() {
         report.push(format!("[kept] {name}"));
         return Ok(());
     }
-    fs::write(path, contents).map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    fs::write(path, contents)
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
     report.push(format!("[new]  {name}"));
     Ok(())
 }
@@ -111,16 +132,34 @@ fn create(path: &Path, contents: &str, report: &mut Vec<String>) -> Result<(), S
 /// When the directory cannot be created or written, or the identity given
 /// on the command line is not a valid one.
 pub fn init(options: &InitOptions) -> Result<Vec<String>, String> {
-    fs::create_dir_all(&options.directory).map_err(|error| format!("cannot create {}: {error}", options.directory.display()))?;
-    let directory = options.directory.canonicalize().map_err(|error| format!("cannot resolve {}: {error}", options.directory.display()))?;
-    let folder = directory.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-    let name = options.name.clone().unwrap_or_else(|| if folder.is_empty() { String::from("My application") } else { folder.clone() });
-    let id = options.id.clone().unwrap_or_else(|| format!("com.example.{}", slug(&folder)));
+    fs::create_dir_all(&options.directory)
+        .map_err(|error| format!("cannot create {}: {error}", options.directory.display()))?;
+    let directory = options
+        .directory
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve {}: {error}", options.directory.display()))?;
+    let folder = directory
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let name = options.name.clone().unwrap_or_else(|| {
+        if folder.is_empty() {
+            String::from("My application")
+        } else {
+            folder.clone()
+        }
+    });
+    let id = options
+        .id
+        .clone()
+        .unwrap_or_else(|| format!("com.example.{}", slug(&folder)));
 
     // The identity is checked with the rules `build` applies later.
     manifest::validate_identifier(&id).map_err(|error| format!("{error}\n{USAGE}"))?;
     if name.trim().is_empty() || name.len() > 80 || name.chars().any(char::is_control) {
-        return Err(format!("the name must be 1 to 80 bytes of printable text\n{USAGE}"));
+        return Err(format!(
+            "the name must be 1 to 80 bytes of printable text\n{USAGE}"
+        ));
     }
 
     let document = serde_json::json!({
@@ -138,14 +177,22 @@ pub fn init(options: &InitOptions) -> Result<Vec<String>, String> {
     create(&directory.join(manifest::FILE_NAME), &text, &mut report)?;
     let title = serde_json::to_string(&name).map_err(|error| error.to_string())?;
     // A PHP single-quoted string: only the backslash and the quote are special.
-    let title = title.trim_matches('"').replace("\\\"", "\"").replace('\'', "\\'");
-    create(&directory.join(manifest::DEFAULT_ENTRY), &INDEX.replace("@NAME@", &title), &mut report)?;
+    let title = title
+        .trim_matches('"')
+        .replace("\\\"", "\"")
+        .replace('\'', "\\'");
+    create(
+        &directory.join(manifest::DEFAULT_ENTRY),
+        &INDEX.replace("@NAME@", &title),
+        &mut report,
+    )?;
     let composer = serde_json::json!({
         "name": format!("app/{}", slug(&folder)),
         "type": "project",
         "require": { "php": "^8.5", "pushinbr/pam-desktop": concat!("^", env!("CARGO_PKG_VERSION_MAJOR"), ".", env!("CARGO_PKG_VERSION_MINOR")) },
     });
-    let mut composer = serde_json::to_string_pretty(&composer).map_err(|error| error.to_string())?;
+    let mut composer =
+        serde_json::to_string_pretty(&composer).map_err(|error| error.to_string())?;
     composer.push('\n');
     create(&directory.join("composer.json"), &composer, &mut report)?;
     create(&directory.join(".gitignore"), IGNORED, &mut report)?;
@@ -167,13 +214,24 @@ mod tests {
 
     #[test]
     fn parses_the_command_line() {
-        assert_eq!(options(&[]).unwrap(), InitOptions { directory: PathBuf::from("."), name: None, id: None });
+        assert_eq!(
+            options(&[]).unwrap(),
+            InitOptions {
+                directory: PathBuf::from("."),
+                name: None,
+                id: None
+            }
+        );
         let parsed = options(&["notes", "--name", "My Notes", "--id", "com.acme.notes"]).unwrap();
         assert_eq!(parsed.directory, PathBuf::from("notes"));
         assert_eq!(parsed.name.as_deref(), Some("My Notes"));
         assert_eq!(parsed.id.as_deref(), Some("com.acme.notes"));
         assert!(options(&["--name"]).unwrap_err().contains("needs a value"));
-        assert!(options(&["--force"]).unwrap_err().contains("unknown option"));
+        assert!(
+            options(&["--force"])
+                .unwrap_err()
+                .contains("unknown option")
+        );
         assert!(options(&["one", "two"]).is_err());
     }
 
@@ -190,22 +248,58 @@ mod tests {
         let root = std::env::temp_dir().join(format!("pam-desktop-init-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let directory = root.join("Bill's Notes");
-        let created = init(&InitOptions { directory: directory.clone(), name: None, id: None }).unwrap();
-        assert_eq!(created.iter().filter(|line| line.starts_with("[new]")).count(), 4);
+        let created = init(&InitOptions {
+            directory: directory.clone(),
+            name: None,
+            id: None,
+        })
+        .unwrap();
+        assert_eq!(
+            created
+                .iter()
+                .filter(|line| line.starts_with("[new]"))
+                .count(),
+            4
+        );
 
         let manifest = manifest::Manifest::read(&directory).unwrap();
         let application = manifest.application().unwrap();
         assert_eq!(application.identifier, "com.example.bill-s-notes");
         let index = fs::read_to_string(directory.join("index.php")).unwrap();
         assert!(index.contains(r"Text::make('Bill\'s Notes')"));
-        assert!(fs::read_to_string(directory.join("composer.json")).unwrap().contains("\"pushinbr/pam-desktop\": \"^2.0\""));
+        assert!(
+            fs::read_to_string(directory.join("composer.json"))
+                .unwrap()
+                .contains("\"pushinbr/pam-desktop\": \"^2.0\"")
+        );
 
         fs::write(directory.join("index.php"), "<?php // mine").unwrap();
-        let again = init(&InitOptions { directory: directory.clone(), name: None, id: None }).unwrap();
-        assert_eq!(again.iter().filter(|line| line.starts_with("[kept]")).count(), 4);
-        assert_eq!(fs::read_to_string(directory.join("index.php")).unwrap(), "<?php // mine");
+        let again = init(&InitOptions {
+            directory: directory.clone(),
+            name: None,
+            id: None,
+        })
+        .unwrap();
+        assert_eq!(
+            again
+                .iter()
+                .filter(|line| line.starts_with("[kept]"))
+                .count(),
+            4
+        );
+        assert_eq!(
+            fs::read_to_string(directory.join("index.php")).unwrap(),
+            "<?php // mine"
+        );
 
-        assert!(init(&InitOptions { directory: root.join("bad"), name: None, id: Some("Not An Id".into()) }).is_err());
+        assert!(
+            init(&InitOptions {
+                directory: root.join("bad"),
+                name: None,
+                id: Some("Not An Id".into())
+            })
+            .is_err()
+        );
         let _ = fs::remove_dir_all(&root);
     }
 }

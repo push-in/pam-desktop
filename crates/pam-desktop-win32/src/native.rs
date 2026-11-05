@@ -25,7 +25,9 @@ pub fn sync(app: &Rc<App>, window: WindowId) {
             .collect();
         Some((parent, placements))
     });
-    let Some(Some((parent, placements))) = plan else { return };
+    let Some(Some((parent, placements))) = plan else {
+        return;
+    };
     for (id, placement) in placements {
         match placement {
             Some(placement) => {
@@ -44,7 +46,9 @@ pub fn sync(app: &Rc<App>, window: WindowId) {
 /// A top-level window was destroyed: its child windows are gone.
 pub fn parent_destroyed(state: &mut State, parent: HWND) {
     for id in &state.scene.natives {
-        let Some(view) = state.scene.views.get_mut(id) else { continue };
+        let Some(view) = state.scene.views.get_mut(id) else {
+            continue;
+        };
         if let Some(input) = view.input.as_mut() {
             crate::input::parent_destroyed(input, parent);
         }

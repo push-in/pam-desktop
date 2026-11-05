@@ -17,12 +17,16 @@ use crate::scene::Placement;
 #[cfg(feature = "webview")]
 pub use enabled::WebHost;
 #[cfg(feature = "webview")]
-pub use enabled::{apply, close_retired, detach, focus, parent_destroyed, place, release, shutdown, window_moved};
+pub use enabled::{
+    apply, close_retired, detach, focus, parent_destroyed, place, release, shutdown, window_moved,
+};
 
 #[cfg(not(feature = "webview"))]
 pub use disabled::WebHost;
 #[cfg(not(feature = "webview"))]
-pub use disabled::{apply, close_retired, detach, focus, parent_destroyed, place, release, shutdown, window_moved};
+pub use disabled::{
+    apply, close_retired, detach, focus, parent_destroyed, place, release, shutdown, window_moved,
+};
 
 #[cfg(not(feature = "webview"))]
 mod disabled {
@@ -38,7 +42,9 @@ mod disabled {
 
     impl WebHost {
         pub fn new(_id: NodeId) -> Self {
-            Self { reported: WebSource::None }
+            Self {
+                reported: WebSource::None,
+            }
         }
     }
 
@@ -68,7 +74,10 @@ mod disabled {
             .flatten()
             .is_some();
         if changed && state.source != WebSource::None {
-            app.emit(BackendEvent::WebView { id, event: WebViewEvent::Failed("WebView2 is not available in this build".into()) });
+            app.emit(BackendEvent::WebView {
+                id,
+                event: WebViewEvent::Failed("WebView2 is not available in this build".into()),
+            });
         }
     }
 
@@ -82,27 +91,33 @@ mod enabled {
     use std::cell::RefCell;
 
     use pam_desktop_ui::backend::{BackendEvent, WebSource, WebViewEvent};
-    use pam_desktop_ui::webview::{navigation_allowed, BRIDGE_SCRIPT};
+    use pam_desktop_ui::webview::{BRIDGE_SCRIPT, navigation_allowed};
     use webview2_com::Microsoft::Web::WebView2::Win32::{
-        CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2, ICoreWebView2Controller, ICoreWebView2Environment, ICoreWebView2EnvironmentOptions,
-        ICoreWebView2NavigationCompletedEventArgs2, ICoreWebView2Settings2, COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT, COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS,
-        COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC, COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_WEB_ERROR_STATUS,
-        COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED, COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN,
+        COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT, COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS,
+        COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC, COREWEBVIEW2_PERMISSION_STATE_DENY,
+        COREWEBVIEW2_WEB_ERROR_STATUS, COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED,
+        COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN, CreateCoreWebView2EnvironmentWithOptions,
+        ICoreWebView2, ICoreWebView2Controller, ICoreWebView2Environment,
+        ICoreWebView2EnvironmentOptions, ICoreWebView2NavigationCompletedEventArgs2,
+        ICoreWebView2Settings2,
     };
     use webview2_com::{
-        AddScriptToExecuteOnDocumentCreatedCompletedHandler, CoreWebView2EnvironmentOptions, CreateCoreWebView2ControllerCompletedHandler,
-        CreateCoreWebView2EnvironmentCompletedHandler, ExecuteScriptCompletedHandler, FocusChangedEventHandler, MoveFocusRequestedEventHandler,
-        NavigationCompletedEventHandler, NavigationStartingEventHandler, NewWindowRequestedEventHandler, PermissionRequestedEventHandler,
-        ProcessFailedEventHandler, WebMessageReceivedEventHandler,
+        AddScriptToExecuteOnDocumentCreatedCompletedHandler, CoreWebView2EnvironmentOptions,
+        CreateCoreWebView2ControllerCompletedHandler,
+        CreateCoreWebView2EnvironmentCompletedHandler, ExecuteScriptCompletedHandler,
+        FocusChangedEventHandler, MoveFocusRequestedEventHandler, NavigationCompletedEventHandler,
+        NavigationStartingEventHandler, NewWindowRequestedEventHandler,
+        PermissionRequestedEventHandler, ProcessFailedEventHandler, WebMessageReceivedEventHandler,
     };
-    use windows::core::{w, Interface, BOOL, HSTRING, PCWSTR, PWSTR};
     use windows::Win32::Foundation::{LPARAM, LRESULT, RECT, WPARAM};
     use windows::Win32::Graphics::Gdi::{CreateRectRgn, SetWindowRgn};
     use windows::Win32::System::Com::CoTaskMemFree;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassExW, SetWindowPos, ShowWindow, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA,
-        WINDOW_EX_STYLE, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassExW, SW_HIDE, SW_SHOWNA,
+        SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WNDCLASSEXW,
+        WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
     };
+    use windows::core::{BOOL, HSTRING, Interface, PCWSTR, PWSTR, w};
 
     use super::*;
     use crate::util::pixel_rect_nearest;
@@ -205,7 +220,11 @@ mod enabled {
     fn source_of(webview: &ICoreWebView2) -> String {
         let mut uri = PWSTR::null();
         // SAFETY: the out pointer refers to a live local.
-        if unsafe { webview.Source(&mut uri) }.is_ok() { take_string(uri) } else { String::new() }
+        if unsafe { webview.Source(&mut uri) }.is_ok() {
+            take_string(uri)
+        } else {
+            String::new()
+        }
     }
 
     fn execute(webview: &ICoreWebView2, script: &str) {
@@ -220,7 +239,13 @@ mod enabled {
     }
 
     fn lock_scroll(webview: &ICoreWebView2, scroll_enabled: bool) {
-        execute(webview, &format!("{SCROLL_LOCK}({});", if scroll_enabled { "false" } else { "true" }));
+        execute(
+            webview,
+            &format!(
+                "{SCROLL_LOCK}({});",
+                if scroll_enabled { "false" } else { "true" }
+            ),
+        );
     }
 
     fn close(controller: &ICoreWebView2Controller) {
@@ -251,8 +276,13 @@ mod enabled {
 
     fn user_data_folder(app: &App) -> String {
         // Next to the executable is the default, which is rarely writable.
-        let base = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
-        base.join(&app.application_id).join("WebView2").display().to_string()
+        let base = std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        base.join(&app.application_id)
+            .join("WebView2")
+            .display()
+            .to_string()
     }
 
     /// Starts creating the shared environment; views in `waiting` continue
@@ -260,39 +290,57 @@ mod enabled {
     /// (a process-wide browser switch: the first page decides).
     fn create_environment(app: &Rc<App>, autoplay: bool) {
         let weak = Rc::downgrade(app);
-        let handler = CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(move |result, environment| {
-            let Some(app) = weak.upgrade() else { return Ok(()) };
-            let waiting = SHARED.with(|shared| {
-                let mut shared = shared.borrow_mut();
-                shared.creating = false;
-                match (&result, environment) {
-                    (Ok(()), Some(environment)) => shared.environment = Some(environment),
-                    (Err(error), _) => shared.failure = Some(format!("WebView2 could not start ({})", error.message())),
-                    (Ok(()), None) => shared.failure = Some(String::from("WebView2 could not start")),
+        let handler = CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(
+            move |result, environment| {
+                let Some(app) = weak.upgrade() else {
+                    return Ok(());
+                };
+                let waiting = SHARED.with(|shared| {
+                    let mut shared = shared.borrow_mut();
+                    shared.creating = false;
+                    match (&result, environment) {
+                        (Ok(()), Some(environment)) => shared.environment = Some(environment),
+                        (Err(error), _) => {
+                            shared.failure =
+                                Some(format!("WebView2 could not start ({})", error.message()))
+                        }
+                        (Ok(()), None) => {
+                            shared.failure = Some(String::from("WebView2 could not start"))
+                        }
+                    }
+                    std::mem::take(&mut shared.waiting)
+                });
+                for id in waiting {
+                    create_controller(&app, id);
                 }
-                std::mem::take(&mut shared.waiting)
-            });
-            for id in waiting {
-                create_controller(&app, id);
-            }
-            Ok(())
-        }));
+                Ok(())
+            },
+        ));
         let folder = HSTRING::from(user_data_folder(app));
         let options = CoreWebView2EnvironmentOptions::default();
         if autoplay {
             // SAFETY: the options object is not shared yet.
-            unsafe { options.set_additional_browser_arguments(String::from("--autoplay-policy=no-user-gesture-required")) };
+            unsafe {
+                options.set_additional_browser_arguments(String::from(
+                    "--autoplay-policy=no-user-gesture-required",
+                ))
+            };
         }
         let options: ICoreWebView2EnvironmentOptions = options.into();
         // SAFETY: the folder string, the options and the handler outlive the
         // call; a null browser folder selects the installed Evergreen runtime.
-        let started = unsafe { CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), &folder, &options, &handler) };
+        let started = unsafe {
+            CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), &folder, &options, &handler)
+        };
         if let Err(error) = started {
             // The loader fails at once when no runtime is installed.
             let waiting = SHARED.with(|shared| {
                 let mut shared = shared.borrow_mut();
                 shared.creating = false;
-                shared.failure = Some(format!("The WebView2 runtime is not installed ({})", error.message()));
+                shared.failure = Some(format!(
+                    "The WebView2 runtime is not installed ({})",
+                    error.message()
+                ));
                 std::mem::take(&mut shared.waiting)
             });
             for id in waiting {
@@ -337,46 +385,93 @@ mod enabled {
             if !shared.waiting.contains(&id) {
                 shared.waiting.push(id);
             }
-            if std::mem::replace(&mut shared.creating, true) { Step::Wait } else { Step::Start }
+            if std::mem::replace(&mut shared.creating, true) {
+                Step::Wait
+            } else {
+                Step::Start
+            }
         });
         let environment = match step {
             Step::Wait => return,
             Step::Start => {
-                let autoplay = app.with_state(|state| host_mut(state, id).and_then(|host| host.wanted.as_ref().map(|wanted| wanted.inline_media))).flatten().unwrap_or(true);
+                let autoplay = app
+                    .with_state(|state| {
+                        host_mut(state, id)
+                            .and_then(|host| host.wanted.as_ref().map(|wanted| wanted.inline_media))
+                    })
+                    .flatten()
+                    .unwrap_or(true);
                 return create_environment(app, autoplay);
             }
             Step::Fail(message) => return creation_failed(app, id, None, message),
             Step::Create(environment) => environment,
         };
-        let Some(Some(container)) = app.with_state(|state| host_mut(state, id).and_then(|host| host.container)) else { return };
+        let Some(Some(container)) =
+            app.with_state(|state| host_mut(state, id).and_then(|host| host.container))
+        else {
+            return;
+        };
         let weak = Rc::downgrade(app);
-        let handler = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(move |result, controller| {
-            let Some(app) = weak.upgrade() else { return Ok(()) };
-            match (result, controller) {
-                (Ok(()), Some(controller)) => controller_ready(&app, id, container, controller),
-                (Err(error), _) => creation_failed(&app, id, Some(container), format!("WebView2 could not create the page ({})", error.message())),
-                (Ok(()), None) => creation_failed(&app, id, Some(container), String::from("WebView2 could not create the page")),
-            }
-            Ok(())
-        }));
+        let handler = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(
+            move |result, controller| {
+                let Some(app) = weak.upgrade() else {
+                    return Ok(());
+                };
+                match (result, controller) {
+                    (Ok(()), Some(controller)) => controller_ready(&app, id, container, controller),
+                    (Err(error), _) => creation_failed(
+                        &app,
+                        id,
+                        Some(container),
+                        format!("WebView2 could not create the page ({})", error.message()),
+                    ),
+                    (Ok(()), None) => creation_failed(
+                        &app,
+                        id,
+                        Some(container),
+                        String::from("WebView2 could not create the page"),
+                    ),
+                }
+                Ok(())
+            },
+        ));
         // SAFETY: the container is a live child window of this thread.
-        if let Err(error) = unsafe { environment.CreateCoreWebView2Controller(container, &handler) } {
-            creation_failed(app, id, Some(container), format!("WebView2 could not create the page ({})", error.message()));
+        if let Err(error) = unsafe { environment.CreateCoreWebView2Controller(container, &handler) }
+        {
+            creation_failed(
+                app,
+                id,
+                Some(container),
+                format!("WebView2 could not create the page ({})", error.message()),
+            );
         }
     }
 
     /// The page exists: wire its events, then bring it to the wanted state.
-    fn controller_ready(app: &Rc<App>, id: NodeId, container: HWND, controller: ICoreWebView2Controller) {
+    fn controller_ready(
+        app: &Rc<App>,
+        id: NodeId,
+        container: HWND,
+        controller: ICoreWebView2Controller,
+    ) {
         // SAFETY: COM call on the freshly created controller.
         let Ok(webview) = (unsafe { controller.CoreWebView2() }) else {
             close(&controller);
-            return creation_failed(app, id, Some(container), String::from("WebView2 could not create the page"));
+            return creation_failed(
+                app,
+                id,
+                Some(container),
+                String::from("WebView2 could not create the page"),
+            );
         };
         let default_user_agent = {
             let mut agent = PWSTR::null();
             // SAFETY: COM calls on the live page; the out pointer refers to a live local.
             unsafe {
-                match webview.Settings().and_then(|settings| settings.cast::<ICoreWebView2Settings2>()) {
+                match webview
+                    .Settings()
+                    .and_then(|settings| settings.cast::<ICoreWebView2Settings2>())
+                {
                     Ok(settings) if settings.UserAgent(&mut agent).is_ok() => take_string(agent),
                     _ => String::new(),
                 }
@@ -418,14 +513,19 @@ mod enabled {
 
             let weak = Rc::downgrade(app);
             let starting = NavigationStartingEventHandler::create(Box::new(move |_, arguments| {
-                let (Some(app), Some(arguments)) = (weak.upgrade(), arguments) else { return Ok(()) };
+                let (Some(app), Some(arguments)) = (weak.upgrade(), arguments) else {
+                    return Ok(());
+                };
                 let mut uri = PWSTR::null();
                 arguments.Uri(&mut uri)?;
                 let url = take_string(uri);
                 let allowed = app
                     .with_state(|state| {
                         let host = host_mut(state, id)?;
-                        let allowed = host.wanted.as_ref().is_none_or(|wanted| navigation_allowed(&wanted.allowed_hosts, &url));
+                        let allowed = host
+                            .wanted
+                            .as_ref()
+                            .is_none_or(|wanted| navigation_allowed(&wanted.allowed_hosts, &url));
                         if allowed {
                             host.loaded = false;
                         }
@@ -442,55 +542,81 @@ mod enabled {
             let _ = webview.add_NavigationStarting(&starting, &mut token);
 
             let weak = Rc::downgrade(app);
-            let completed = NavigationCompletedEventHandler::create(Box::new(move |webview, arguments| {
-                let (Some(app), Some(webview), Some(arguments)) = (weak.upgrade(), webview, arguments) else { return Ok(()) };
-                let mut success = BOOL(0);
-                arguments.IsSuccess(&mut success)?;
-                let mut status = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
-                let _ = arguments.WebErrorStatus(&mut status);
-                // An HTTP error status still shows a page: that is a load.
-                let mut http_status = 0_i32;
-                if let Ok(detailed) = arguments.cast::<ICoreWebView2NavigationCompletedEventArgs2>() {
-                    let _ = detailed.HttpStatusCode(&mut http_status);
-                }
-                let shown = success.as_bool() || (status == COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN && http_status >= 400);
-                if !shown {
-                    // A stopped or replaced load is not a failure of the page.
-                    if status != COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED {
-                        report(&app, id, WebViewEvent::Failed(error_text(status)));
+            let completed =
+                NavigationCompletedEventHandler::create(Box::new(move |webview, arguments| {
+                    let (Some(app), Some(webview), Some(arguments)) =
+                        (weak.upgrade(), webview, arguments)
+                    else {
+                        return Ok(());
+                    };
+                    let mut success = BOOL(0);
+                    arguments.IsSuccess(&mut success)?;
+                    let mut status = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
+                    let _ = arguments.WebErrorStatus(&mut status);
+                    // An HTTP error status still shows a page: that is a load.
+                    let mut http_status = 0_i32;
+                    if let Ok(detailed) =
+                        arguments.cast::<ICoreWebView2NavigationCompletedEventArgs2>()
+                    {
+                        let _ = detailed.HttpStatusCode(&mut http_status);
                     }
-                    return Ok(());
-                }
-                let wanted = app
-                    .with_state(|state| {
-                        let host = host_mut(state, id)?;
-                        host.loaded = true;
-                        host.wanted.clone()
-                    })
-                    .flatten();
-                if let Some(wanted) = wanted {
-                    if !wanted.scroll_enabled {
-                        lock_scroll(&webview, false);
+                    let shown = success.as_bool()
+                        || (status == COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN && http_status >= 400);
+                    if !shown {
+                        // A stopped or replaced load is not a failure of the page.
+                        if status != COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED {
+                            report(&app, id, WebViewEvent::Failed(error_text(status)));
+                        }
+                        return Ok(());
                     }
-                    if wanted.javascript {
-                        execute(&webview, &wanted.injected_script);
+                    let wanted = app
+                        .with_state(|state| {
+                            let host = host_mut(state, id)?;
+                            host.loaded = true;
+                            host.wanted.clone()
+                        })
+                        .flatten();
+                    if let Some(wanted) = wanted {
+                        if !wanted.scroll_enabled {
+                            lock_scroll(&webview, false);
+                        }
+                        if wanted.javascript {
+                            execute(&webview, &wanted.injected_script);
+                        }
                     }
-                }
-                report(&app, id, WebViewEvent::Loaded { url: source_of(&webview) });
-                Ok(())
-            }));
+                    report(
+                        &app,
+                        id,
+                        WebViewEvent::Loaded {
+                            url: source_of(&webview),
+                        },
+                    );
+                    Ok(())
+                }));
             let _ = webview.add_NavigationCompleted(&completed, &mut token);
 
             let weak = Rc::downgrade(app);
-            let message = WebMessageReceivedEventHandler::create(Box::new(move |webview, arguments| {
-                let (Some(app), Some(webview), Some(arguments)) = (weak.upgrade(), webview, arguments) else { return Ok(()) };
-                let mut text = PWSTR::null();
-                // Only strings are messages; other JSON values are ignored.
-                if arguments.TryGetWebMessageAsString(&mut text).is_ok() {
-                    report(&app, id, WebViewEvent::Message { message: take_string(text), url: source_of(&webview) });
-                }
-                Ok(())
-            }));
+            let message =
+                WebMessageReceivedEventHandler::create(Box::new(move |webview, arguments| {
+                    let (Some(app), Some(webview), Some(arguments)) =
+                        (weak.upgrade(), webview, arguments)
+                    else {
+                        return Ok(());
+                    };
+                    let mut text = PWSTR::null();
+                    // Only strings are messages; other JSON values are ignored.
+                    if arguments.TryGetWebMessageAsString(&mut text).is_ok() {
+                        report(
+                            &app,
+                            id,
+                            WebViewEvent::Message {
+                                message: take_string(text),
+                                url: source_of(&webview),
+                            },
+                        );
+                    }
+                    Ok(())
+                }));
             let _ = webview.add_WebMessageReceived(&message, &mut token);
 
             // New windows are never opened.
@@ -515,7 +641,13 @@ mod enabled {
             let weak = Rc::downgrade(app);
             let process_failed = ProcessFailedEventHandler::create(Box::new(move |_, _| {
                 if let Some(app) = weak.upgrade() {
-                    report(&app, id, WebViewEvent::Failed(String::from("The web page process ended unexpectedly")));
+                    report(
+                        &app,
+                        id,
+                        WebViewEvent::Failed(String::from(
+                            "The web page process ended unexpectedly",
+                        )),
+                    );
                 }
                 Ok(())
             }));
@@ -540,35 +672,48 @@ mod enabled {
             let _ = controller.add_LostFocus(&lost_focus, &mut token);
             // Tab past the last (or first) element of the page leaves it.
             let weak = Rc::downgrade(app);
-            let move_focus = MoveFocusRequestedEventHandler::create(Box::new(move |_, arguments| {
-                let (Some(app), Some(arguments)) = (weak.upgrade(), arguments) else { return Ok(()) };
-                let mut reason = COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC;
-                arguments.Reason(&mut reason)?;
-                let forward = reason != COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS;
-                if reason == COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT || reason == COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS {
-                    let window = app.with_state(|state| state.scene.window_of(id)).flatten();
-                    if let Some(window) = window {
-                        arguments.SetHandled(crate::focus::advance(&app, window, forward))?;
-                        app.post_pump();
+            let move_focus =
+                MoveFocusRequestedEventHandler::create(Box::new(move |_, arguments| {
+                    let (Some(app), Some(arguments)) = (weak.upgrade(), arguments) else {
+                        return Ok(());
+                    };
+                    let mut reason = COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC;
+                    arguments.Reason(&mut reason)?;
+                    let forward = reason != COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS;
+                    if reason == COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT
+                        || reason == COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS
+                    {
+                        let window = app.with_state(|state| state.scene.window_of(id)).flatten();
+                        if let Some(window) = window {
+                            arguments.SetHandled(crate::focus::advance(&app, window, forward))?;
+                            app.post_pump();
+                        }
                     }
-                }
-                Ok(())
-            }));
+                    Ok(())
+                }));
             let _ = controller.add_MoveFocusRequested(&move_focus, &mut token);
 
             // Pages reach the application through `PamNative.postMessage`
             // (main frame only). The script is only guaranteed to run in
             // documents created after its registration completed, so the
             // first navigation waits for that.
-            let bridge = format!("if(window.top===window){{{}}}", BRIDGE_SCRIPT.replace("__PAM_POST__", "window.chrome.webview.postMessage"));
+            let bridge = format!(
+                "if(window.top===window){{{}}}",
+                BRIDGE_SCRIPT.replace("__PAM_POST__", "window.chrome.webview.postMessage")
+            );
             let weak = Rc::downgrade(app);
-            let registered = AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(move |_, _| {
-                if let Some(app) = weak.upgrade() {
-                    synchronize(&app, id);
-                }
-                Ok(())
-            }));
-            if webview.AddScriptToExecuteOnDocumentCreated(&HSTRING::from(bridge), &registered).is_err() {
+            let registered = AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(
+                move |_, _| {
+                    if let Some(app) = weak.upgrade() {
+                        synchronize(&app, id);
+                    }
+                    Ok(())
+                },
+            ));
+            if webview
+                .AddScriptToExecuteOnDocumentCreated(&HSTRING::from(bridge), &registered)
+                .is_err()
+            {
                 synchronize(app, id);
             }
         }
@@ -586,28 +731,46 @@ mod enabled {
                 let webview = host.webview.clone()?;
                 let wanted = host.wanted.clone()?;
                 let previous = host.applied.replace(wanted.clone());
-                if previous.as_ref().map(|previous| &previous.source) != Some(&wanted.source) && wanted.source != WebSource::None {
+                if previous.as_ref().map(|previous| &previous.source) != Some(&wanted.source)
+                    && wanted.source != WebSource::None
+                {
                     host.loaded = false;
                 }
-                Some((webview, wanted, previous, host.loaded, host.default_user_agent.clone()))
+                Some((
+                    webview,
+                    wanted,
+                    previous,
+                    host.loaded,
+                    host.default_user_agent.clone(),
+                ))
             })
             .flatten();
-        let Some((webview, wanted, previous, loaded, default_user_agent)) = plan else { return };
+        let Some((webview, wanted, previous, loaded, default_user_agent)) = plan else {
+            return;
+        };
         // SAFETY: COM calls on the live page; strings outlive the calls.
         unsafe {
             if let Ok(settings) = webview.Settings() {
                 let _ = settings.SetIsScriptEnabled(wanted.javascript);
                 if let Ok(settings) = settings.cast::<ICoreWebView2Settings2>() {
-                    let agent = if wanted.user_agent.is_empty() { &default_user_agent } else { &wanted.user_agent };
+                    let agent = if wanted.user_agent.is_empty() {
+                        &default_user_agent
+                    } else {
+                        &wanted.user_agent
+                    };
                     if !agent.is_empty() {
                         let _ = settings.SetUserAgent(&HSTRING::from(agent.as_str()));
                     }
                 }
             }
-            if previous.as_ref().is_some_and(|previous| previous.stop != wanted.stop) {
+            if previous
+                .as_ref()
+                .is_some_and(|previous| previous.stop != wanted.stop)
+            {
                 let _ = webview.Stop();
             }
-            let source_changed = previous.as_ref().map(|previous| &previous.source) != Some(&wanted.source);
+            let source_changed =
+                previous.as_ref().map(|previous| &previous.source) != Some(&wanted.source);
             if source_changed {
                 match &wanted.source {
                     WebSource::None => {
@@ -617,21 +780,35 @@ mod enabled {
                     }
                     WebSource::Url(url) => {
                         if let Err(error) = webview.Navigate(&HSTRING::from(url.as_str())) {
-                            fail(app, id, format!("The page could not be loaded ({})", error.message()));
+                            fail(
+                                app,
+                                id,
+                                format!("The page could not be loaded ({})", error.message()),
+                            );
                         }
                     }
                     WebSource::Html(html) => {
-                        if let Err(error) = webview.NavigateToString(&HSTRING::from(html.as_str())) {
-                            fail(app, id, format!("The page could not be loaded ({})", error.message()));
+                        if let Err(error) = webview.NavigateToString(&HSTRING::from(html.as_str()))
+                        {
+                            fail(
+                                app,
+                                id,
+                                format!("The page could not be loaded ({})", error.message()),
+                            );
                         }
                     }
                 }
             } else if loaded {
-                let script_changed = previous.as_ref().is_some_and(|previous| previous.injected_script != wanted.injected_script);
+                let script_changed = previous
+                    .as_ref()
+                    .is_some_and(|previous| previous.injected_script != wanted.injected_script);
                 if script_changed && wanted.javascript {
                     execute(&webview, &wanted.injected_script);
                 }
-                if previous.as_ref().is_some_and(|previous| previous.scroll_enabled != wanted.scroll_enabled) {
+                if previous
+                    .as_ref()
+                    .is_some_and(|previous| previous.scroll_enabled != wanted.scroll_enabled)
+                {
                     lock_scroll(&webview, wanted.scroll_enabled);
                 }
             }
@@ -643,7 +820,9 @@ mod enabled {
         let known = app
             .with_state(|state| {
                 let host = host_mut(state, id)?;
-                let navigates = host.wanted.as_ref().map(|previous| &previous.source) != Some(&wanted.source) && wanted.source != WebSource::None;
+                let navigates = host.wanted.as_ref().map(|previous| &previous.source)
+                    != Some(&wanted.source)
+                    && wanted.source != WebSource::None;
                 if navigates {
                     // A new page may fail (and be reported) again.
                     host.failed = false;
@@ -664,7 +843,9 @@ mod enabled {
             Some((true, _, _)) => synchronize(app, id),
             Some((false, true, failure)) => {
                 // Without a runtime (or a page) there is nothing to load into.
-                if let Some(message) = failure.or_else(|| SHARED.with(|shared| shared.borrow().failure.clone())) {
+                if let Some(message) =
+                    failure.or_else(|| SHARED.with(|shared| shared.borrow().failure.clone()))
+                {
                     fail(app, id, message);
                 }
             }
@@ -672,20 +853,46 @@ mod enabled {
         }
     }
 
-    extern "system" fn host_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    extern "system" fn host_proc(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
         // SAFETY: the container has no behaviour of its own.
         unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
     }
 
     fn create_container(app: &App, parent: HWND) -> Option<HWND> {
-        let registered = SHARED.with(|shared| std::mem::replace(&mut shared.borrow_mut().class_registered, true));
+        let registered = SHARED
+            .with(|shared| std::mem::replace(&mut shared.borrow_mut().class_registered, true));
         // SAFETY: standard class registration and creation of a child window.
         unsafe {
             if !registered {
-                let class = WNDCLASSEXW { cbSize: size_of::<WNDCLASSEXW>() as u32, lpfnWndProc: Some(host_proc), hInstance: app.instance, lpszClassName: HOST_CLASS, ..Default::default() };
+                let class = WNDCLASSEXW {
+                    cbSize: size_of::<WNDCLASSEXW>() as u32,
+                    lpfnWndProc: Some(host_proc),
+                    hInstance: app.instance,
+                    lpszClassName: HOST_CLASS,
+                    ..Default::default()
+                };
                 RegisterClassExW(&class);
             }
-            CreateWindowExW(WINDOW_EX_STYLE(0), HOST_CLASS, PCWSTR::null(), WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 0, 0, Some(parent), None, Some(app.instance), None).ok()
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                HOST_CLASS,
+                PCWSTR::null(),
+                WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+                0,
+                0,
+                0,
+                0,
+                Some(parent),
+                None,
+                Some(app.instance),
+                None,
+            )
+            .ok()
         }
     }
 
@@ -700,11 +907,20 @@ mod enabled {
                 let moved = host.placement.replace(*placement) != Some(*placement);
                 // The view is now in another top-level window: WebView2
                 // cannot follow, so the page starts over there.
-                let stale = (host.container.is_some() && host.parent != parent).then(|| (host.container, host.reset()));
-                Some((parent, host.container, host.controller.clone(), moved, stale))
+                let stale = (host.container.is_some() && host.parent != parent)
+                    .then(|| (host.container, host.reset()));
+                Some((
+                    parent,
+                    host.container,
+                    host.controller.clone(),
+                    moved,
+                    stale,
+                ))
             })
             .flatten();
-        let Some((parent, mut container, controller, moved, stale)) = plan else { return };
+        let Some((parent, mut container, controller, moved, stale)) = plan else {
+            return;
+        };
         if let Some((stale_container, stale_controller)) = stale {
             if let Some(controller) = &stale_controller {
                 close(controller);
@@ -719,7 +935,14 @@ mod enabled {
         let mut start = false;
         if container.is_none() {
             container = create_container(app, parent);
-            let Some(created) = container else { return creation_failed(app, id, None, String::from("WebView2 could not create its window")) };
+            let Some(created) = container else {
+                return creation_failed(
+                    app,
+                    id,
+                    None,
+                    String::from("WebView2 could not create its window"),
+                );
+            };
             app.with_state(|state| {
                 if let Some(host) = host_mut(state, id) {
                     host.container = Some(created);
@@ -733,7 +956,10 @@ mod enabled {
         let Some(container) = container else { return };
         if moved || start {
             let rect = pixel_rect_nearest(placement.rect, placement.scale);
-            let (width, height) = ((rect.right - rect.left).max(0), (rect.bottom - rect.top).max(0));
+            let (width, height) = (
+                (rect.right - rect.left).max(0),
+                (rect.bottom - rect.top).max(0),
+            );
             // Without a page the container would be an unpainted hole over the node.
             let visible = placement.visible && width > 0 && height > 0 && controller.is_some();
             // SAFETY: live windows and COM objects of this thread; these
@@ -741,11 +967,28 @@ mod enabled {
             // region passed to SetWindowRgn is owned by the system afterwards.
             unsafe {
                 if visible {
-                    let _ = SetWindowPos(container, None, rect.left, rect.top, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+                    let _ = SetWindowPos(
+                        container,
+                        None,
+                        rect.left,
+                        rect.top,
+                        width,
+                        height,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
                     match placement.clip {
                         Some(clip) => {
                             let clip = pixel_rect_nearest(clip, placement.scale);
-                            SetWindowRgn(container, Some(CreateRectRgn(clip.left - rect.left, clip.top - rect.top, clip.right - rect.left, clip.bottom - rect.top)), true);
+                            SetWindowRgn(
+                                container,
+                                Some(CreateRectRgn(
+                                    clip.left - rect.left,
+                                    clip.top - rect.top,
+                                    clip.right - rect.left,
+                                    clip.bottom - rect.top,
+                                )),
+                                true,
+                            );
                         }
                         None => {
                             SetWindowRgn(container, None, true);
@@ -756,7 +999,12 @@ mod enabled {
                     let _ = ShowWindow(container, SW_HIDE);
                 }
                 if let Some(controller) = &controller {
-                    let _ = controller.SetBounds(RECT { left: 0, top: 0, right: width, bottom: height });
+                    let _ = controller.SetBounds(RECT {
+                        left: 0,
+                        top: 0,
+                        right: width,
+                        bottom: height,
+                    });
                     let _ = controller.SetIsVisible(visible);
                     let _ = controller.NotifyParentWindowPositionChanged();
                 }
@@ -835,7 +1083,15 @@ mod enabled {
     /// Moves keyboard focus into the page of `id`. Returns whether the view
     /// is a web view.
     pub fn focus(app: &Rc<App>, id: NodeId) -> bool {
-        let Some(Some(controller)) = app.with_state(|state| state.scene.views.get(&id)?.web.as_ref().map(|host| host.controller.clone())) else {
+        let Some(Some(controller)) = app.with_state(|state| {
+            state
+                .scene
+                .views
+                .get(&id)?
+                .web
+                .as_ref()
+                .map(|host| host.controller.clone())
+        }) else {
             return false;
         };
         if let Some(controller) = controller {

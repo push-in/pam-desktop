@@ -8,11 +8,11 @@ use pam_desktop_wire::{NodeKind, PropKey, PropValue};
 
 use crate::animator::{Curve, Easing, Owner, Timer};
 use crate::backend::{KeyEvent, NodeId, ViewClass};
-use crate::context::{event_kind, Ctx, HostCommand};
+use crate::context::{Ctx, HostCommand, event_kind};
 use crate::geometry::{Affine, Point, Rect};
 use crate::props::PropMap;
 use crate::scene::{Change, IdMap, LayerOverride, LayerSlot, Scene, StyleLayer};
-use crate::wiremap::{decode_string_list, WireMap};
+use crate::wiremap::{WireMap, decode_string_list};
 
 /// No offset for this long means the scroll gesture ended.
 const REST_MS: u64 = 140;
@@ -84,7 +84,10 @@ pub struct Scrolling {
 }
 
 fn is_scrollable(kind: NodeKind) -> bool {
-    matches!(kind, NodeKind::Scroll | NodeKind::List | NodeKind::SectionList | NodeKind::VirtualList)
+    matches!(
+        kind,
+        NodeKind::Scroll | NodeKind::List | NodeKind::SectionList | NodeKind::VirtualList
+    )
 }
 
 fn axis(point: Point, horizontal: bool) -> f32 {
@@ -103,26 +106,41 @@ fn nearest_scroll(scene: &Scene, id: NodeId) -> Option<NodeId> {
 }
 
 fn node_children_of(scene: &Scene, id: NodeId) -> Vec<NodeId> {
-    scene.node(id).map(|node| node.children.clone()).unwrap_or_default()
+    scene
+        .node(id)
+        .map(|node| node.children.clone())
+        .unwrap_or_default()
 }
 
 /// Viewport length, content length and largest offset on the scroll axis.
 fn extents(scene: &Scene, id: NodeId, horizontal: bool) -> (f32, f32, f32) {
-    let Some(node) = scene.node(id) else { return (0.0, 0.0, 0.0) };
+    let Some(node) = scene.node(id) else {
+        return (0.0, 0.0, 0.0);
+    };
     let content = scene.content_size(id);
-    let (viewport, content) = if horizontal { (node.frame.width, content.width) } else { (node.frame.height, content.height) };
+    let (viewport, content) = if horizontal {
+        (node.frame.width, content.width)
+    } else {
+        (node.frame.height, content.height)
+    };
     (viewport, content, (content - viewport).max(0.0))
 }
 
 /// Whether a list shows its rows from the visual end.
 fn is_inverted(scene: &Scene, id: NodeId) -> bool {
-    scene.node(id).is_some_and(|node| node.props().flag_or(PropKey::ListInverted, false))
+    scene
+        .node(id)
+        .is_some_and(|node| node.props().flag_or(PropKey::ListInverted, false))
 }
 
 /// Converts between the logical offset of an inverted list and the native
 /// one (the mapping is its own inverse).
 fn mirrored(scene: &Scene, id: NodeId, horizontal: bool, offset: f32) -> f32 {
-    if is_inverted(scene, id) { (extents(scene, id, horizontal).2 - offset).max(0.0) } else { offset }
+    if is_inverted(scene, id) {
+        (extents(scene, id, horizontal).2 - offset).max(0.0)
+    } else {
+        offset
+    }
 }
 
 impl Scrolling {
@@ -130,10 +148,26 @@ impl Scrolling {
         match change {
             Change::Created(id, kind) => {
                 if is_scrollable(kind) {
-                    self.scrolls.insert(id, Scroll { end_armed: true, sync: true, request_changed: true, offset_changed: true, items_changed: true, ..Scroll::default() });
+                    self.scrolls.insert(
+                        id,
+                        Scroll {
+                            end_armed: true,
+                            sync: true,
+                            request_changed: true,
+                            offset_changed: true,
+                            items_changed: true,
+                            ..Scroll::default()
+                        },
+                    );
                     self.dirty = true;
                 } else if kind == NodeKind::RefreshControl {
-                    self.refreshes.insert(id, Refresh { sync: true, ..Refresh::default() });
+                    self.refreshes.insert(
+                        id,
+                        Refresh {
+                            sync: true,
+                            ..Refresh::default()
+                        },
+                    );
                     self.dirty = true;
                 }
                 self.watch(ctx, id);
@@ -154,8 +188,13 @@ impl Scrolling {
                 if let Some(scroll) = self.scrolls.get_mut(&id) {
                     match key {
                         PropKey::ScrollRequest => scroll.request_changed = true,
-                        PropKey::ScrollContentOffsetX | PropKey::ScrollContentOffsetY => scroll.offset_changed = true,
-                        PropKey::Items | PropKey::SectionItems | PropKey::ListRowHeight | PropKey::TextColor => scroll.items_changed = true,
+                        PropKey::ScrollContentOffsetX | PropKey::ScrollContentOffsetY => {
+                            scroll.offset_changed = true
+                        }
+                        PropKey::Items
+                        | PropKey::SectionItems
+                        | PropKey::ListRowHeight
+                        | PropKey::TextColor => scroll.items_changed = true,
                         _ => {}
                     }
                     scroll.sync = true;
@@ -171,7 +210,11 @@ impl Scrolling {
                     self.dirty = true;
                 }
                 // The view, a row or anything inside its content moved.
-                let scroll = if self.scrolls.contains_key(&id) { Some(id) } else { nearest_scroll(ctx.scene, id) };
+                let scroll = if self.scrolls.contains_key(&id) {
+                    Some(id)
+                } else {
+                    nearest_scroll(ctx.scene, id)
+                };
                 if let Some(scroll) = scroll.and_then(|scroll| self.scrolls.get_mut(&scroll)) {
                     scroll.sync = true;
                     self.dirty = true;
@@ -193,7 +236,9 @@ impl Scrolling {
 
     /// Registers sticky headers and layout listeners.
     fn watch(&mut self, ctx: &Ctx<'_>, id: NodeId) {
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         if node.is_synthetic() {
             return;
         }
@@ -222,11 +267,21 @@ impl Scrolling {
             return;
         }
         self.dirty = false;
-        let ids: Vec<NodeId> = self.scrolls.iter().filter(|(_, scroll)| scroll.sync).map(|(id, _)| *id).collect();
+        let ids: Vec<NodeId> = self
+            .scrolls
+            .iter()
+            .filter(|(_, scroll)| scroll.sync)
+            .map(|(id, _)| *id)
+            .collect();
         for id in ids {
             self.sync(ctx, id);
         }
-        let refreshes: Vec<NodeId> = self.refreshes.iter().filter(|(_, refresh)| refresh.sync).map(|(id, _)| *id).collect();
+        let refreshes: Vec<NodeId> = self
+            .refreshes
+            .iter()
+            .filter(|(_, refresh)| refresh.sync)
+            .map(|(id, _)| *id)
+            .collect();
         for id in refreshes {
             self.sync_refresh(ctx, id);
         }
@@ -239,22 +294,57 @@ impl Scrolling {
     fn report_layouts(&mut self, ctx: &mut Ctx<'_>) {
         let ids: Vec<NodeId> = self.layout_listeners.keys().copied().collect();
         for id in ids {
-            let Some(node) = ctx.scene.node(id) else { continue };
-            let origin = ctx.scene.node(node.parent).map_or(Point::ZERO, |parent| parent.frame.origin());
-            let frame = Rect::new(node.frame.x - origin.x, node.frame.y - origin.y, node.frame.width, node.frame.height);
+            let Some(node) = ctx.scene.node(id) else {
+                continue;
+            };
+            let origin = ctx
+                .scene
+                .node(node.parent)
+                .map_or(Point::ZERO, |parent| parent.frame.origin());
+            let frame = Rect::new(
+                node.frame.x - origin.x,
+                node.frame.y - origin.y,
+                node.frame.width,
+                node.frame.height,
+            );
             if self.layout_listeners.get(&id).copied().flatten() == Some(frame) {
                 continue;
             }
             self.layout_listeners.insert(id, Some(frame));
-            let payload = WireMap::new().with("x", frame.x).with("y", frame.y).with("width", frame.width).with("height", frame.height).encode();
+            let payload = WireMap::new()
+                .with("x", frame.x)
+                .with("y", frame.y)
+                .with("width", frame.width)
+                .with("height", frame.height)
+                .encode();
             ctx.emit(id, event_kind::LAYOUT, payload);
         }
     }
 
-    fn scroll_to(ctx: &mut Ctx<'_>, id: NodeId, horizontal: bool, target: f32, animated: bool, duration: u32, easing: Easing) {
-        let current = mirrored(ctx.scene, id, horizontal, axis(ctx.scene.scroll_offset(id), horizontal));
+    fn scroll_to(
+        ctx: &mut Ctx<'_>,
+        id: NodeId,
+        horizontal: bool,
+        target: f32,
+        animated: bool,
+        duration: u32,
+        easing: Easing,
+    ) {
+        let current = mirrored(
+            ctx.scene,
+            id,
+            horizontal,
+            axis(ctx.scene.scroll_offset(id), horizontal),
+        );
         if animated && !ctx.reduced_motion && (current - target).abs() > 0.5 {
-            ctx.animator.start(Owner::Scroll(id), current, target, Curve::timing(duration.max(1), easing), 0, ctx.now_ms);
+            ctx.animator.start(
+                Owner::Scroll(id),
+                current,
+                target,
+                Curve::timing(duration.max(1), easing),
+                0,
+                ctx.now_ms,
+            );
         } else {
             ctx.animator.cancel(Owner::Scroll(id), ctx.now_ms);
             Self::jump(ctx, id, horizontal, target);
@@ -263,8 +353,16 @@ impl Scrolling {
 
     fn jump(ctx: &mut Ctx<'_>, id: NodeId, horizontal: bool, target: f32) {
         let target = mirrored(ctx.scene, id, horizontal, target);
-        let offset = if horizontal { Point::new(target, 0.0) } else { Point::new(0.0, target) };
-        ctx.commands.push(HostCommand::ScrollTo { id, offset, animated: false });
+        let offset = if horizontal {
+            Point::new(target, 0.0)
+        } else {
+            Point::new(0.0, target)
+        };
+        ctx.commands.push(HostCommand::ScrollTo {
+            id,
+            offset,
+            animated: false,
+        });
     }
 
     /// Frame-clock sample of a gliding offset.
@@ -276,14 +374,20 @@ impl Scrolling {
 
     /// Re-evaluates a scroll view after its content, frame or props changed.
     fn sync(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let props = node.props();
         let kind = node.kind;
-        let horizontal = props.flag_or(PropKey::ScrollHorizontal, false) || props.flag_or(PropKey::ListHorizontal, false);
+        let horizontal = props.flag_or(PropKey::ScrollHorizontal, false)
+            || props.flag_or(PropKey::ListHorizontal, false);
         let anchor_to_end = props.flag_or(PropKey::ScrollAnchorToEnd, false);
         let maintain = props.flag_or(PropKey::ScrollMaintainVisibleContentPosition, false);
-        let anchor_threshold = props.number_or(PropKey::ScrollAutoScrollToEndThreshold, 24.0).max(0.0);
-        let follow_end = props.flag_or(PropKey::ListFollowEndOnResize, true) && kind == NodeKind::VirtualList;
+        let anchor_threshold = props
+            .number_or(PropKey::ScrollAutoScrollToEndThreshold, 24.0)
+            .max(0.0);
+        let follow_end =
+            props.flag_or(PropKey::ListFollowEndOnResize, true) && kind == NodeKind::VirtualList;
         let stack_from_end = props.flag_or(PropKey::ListStackFromEnd, false);
         let initial_index = props.integer_or(PropKey::ListInitialScrollIndex, 0);
         let request_token = props.integer(PropKey::ScrollRequest);
@@ -291,23 +395,37 @@ impl Scrolling {
         let request_offset = props.number_or(PropKey::ScrollTargetOffset, -1.0);
         let alignment = props.integer_or(PropKey::ScrollTargetAlignment, 1);
         let animated = props.flag_or(PropKey::ScrollAnimated, false);
-        let content_offset = (props.number(PropKey::ScrollContentOffsetX), props.number(PropKey::ScrollContentOffsetY));
-        let glide_ms = props.integer_or(PropKey::ScrollOffsetAnimationMs, 0).clamp(0, 2000) as u32;
+        let content_offset = (
+            props.number(PropKey::ScrollContentOffsetX),
+            props.number(PropKey::ScrollContentOffsetY),
+        );
+        let glide_ms = props
+            .integer_or(PropKey::ScrollOffsetAnimationMs, 0)
+            .clamp(0, 2000) as u32;
         let active_section = props.text_or_empty(PropKey::ListActiveSection).to_owned();
         let frame = node.frame;
         let inverted = props.flag_or(PropKey::ListInverted, false) && kind != NodeKind::Scroll;
-        let rows: Vec<NodeId> = if inverted { node.children.clone() } else { Vec::new() };
+        let rows: Vec<NodeId> = if inverted {
+            node.children.clone()
+        } else {
+            Vec::new()
+        };
 
-        let Some(scroll) = self.scrolls.get_mut(&id) else { return };
+        let Some(scroll) = self.scrolls.get_mut(&id) else {
+            return;
+        };
         scroll.sync = false;
         scroll.horizontal = horizontal;
         if scroll.inverted && !inverted {
             for row in &node_children_of(ctx.scene, id) {
-                ctx.scene.set_layer_override(*row, LayerSlot::Presenter, LayerOverride::NONE);
+                ctx.scene
+                    .set_layer_override(*row, LayerSlot::Presenter, LayerOverride::NONE);
             }
         }
         scroll.inverted = inverted;
-        if std::mem::take(&mut scroll.items_changed) && matches!(kind, NodeKind::List | NodeKind::SectionList) {
+        if std::mem::take(&mut scroll.items_changed)
+            && matches!(kind, NodeKind::List | NodeKind::SectionList)
+        {
             Self::build_string_rows(ctx, id, scroll);
             scroll.end_armed = true;
         }
@@ -326,13 +444,28 @@ impl Scrolling {
             // the end: each one moves to its mirrored place.
             let extent = content.max(viewport);
             for row in rows {
-                let Some(child) = ctx.scene.node(row) else { continue };
-                let shift = if horizontal {
-                    Affine::translation(extent - 2.0 * (child.frame.x - frame.x) - child.frame.width, 0.0)
-                } else {
-                    Affine::translation(0.0, extent - 2.0 * (child.frame.y - frame.y) - child.frame.height)
+                let Some(child) = ctx.scene.node(row) else {
+                    continue;
                 };
-                ctx.scene.set_layer_override(row, LayerSlot::Presenter, LayerOverride { transform: shift, ..LayerOverride::NONE });
+                let shift = if horizontal {
+                    Affine::translation(
+                        extent - 2.0 * (child.frame.x - frame.x) - child.frame.width,
+                        0.0,
+                    )
+                } else {
+                    Affine::translation(
+                        0.0,
+                        extent - 2.0 * (child.frame.y - frame.y) - child.frame.height,
+                    )
+                };
+                ctx.scene.set_layer_override(
+                    row,
+                    LayerSlot::Presenter,
+                    LayerOverride {
+                        transform: shift,
+                        ..LayerOverride::NONE
+                    },
+                );
             }
             // The logical offset holds while content is added at the far end.
             if (max != previous_max || !scroll.inverted_placed) && scroll.gesture.is_none() {
@@ -352,12 +485,18 @@ impl Scrolling {
             } else if anchor_to_end && max != previous_max && distance <= anchor_threshold {
                 target = Some((max, false, 0, Easing::Linear));
             } else if maintain && max > previous_max {
-                target = Some((offset_before + (max - previous_max), false, 0, Easing::Linear));
+                target = Some((
+                    offset_before + (max - previous_max),
+                    false,
+                    0,
+                    Easing::Linear,
+                ));
             }
             if !anchor_to_end {
                 scroll.anchored_to_end = false;
             }
-        } else if (follow_end || stack_from_end) && scroll.gesture.is_none() && max != previous_max {
+        } else if (follow_end || stack_from_end) && scroll.gesture.is_none() && max != previous_max
+        {
             // A list resting at its end stays there.
             let rested_at_end = scroll.at_end || (stack_from_end && previous_max <= 0.0);
             if rested_at_end && offset_before >= previous_max - 1.0 && max > 0.0 {
@@ -369,7 +508,10 @@ impl Scrolling {
         if std::mem::take(&mut scroll.offset_changed) {
             scroll.pending_offset = match content_offset {
                 (None, None) => None,
-                (x, y) => Some(Point::new(x.unwrap_or(0.0).max(0.0), y.unwrap_or(0.0).max(0.0))),
+                (x, y) => Some(Point::new(
+                    x.unwrap_or(0.0).max(0.0),
+                    y.unwrap_or(0.0).max(0.0),
+                )),
             };
         }
         if let Some(pending) = scroll.pending_offset {
@@ -383,14 +525,20 @@ impl Scrolling {
         }
 
         // 3. The initial row of a list, once it has rows.
-        if kind == NodeKind::VirtualList && initial_index > 0 && scroll.initial_index != Some(initial_index) {
+        if kind == NodeKind::VirtualList
+            && initial_index > 0
+            && scroll.initial_index != Some(initial_index)
+        {
             let starts = Self::row_starts(ctx.scene, id, horizontal);
             if !starts.is_empty() {
                 scroll.initial_index = Some(initial_index);
                 scroll.at_end = true;
                 let row = starts
                     .iter()
-                    .find(|(index, rows, _, _)| initial_index >= i64::from(*index) && initial_index < i64::from(*index) + i64::from(*rows))
+                    .find(|(index, rows, _, _)| {
+                        initial_index >= i64::from(*index)
+                            && initial_index < i64::from(*index) + i64::from(*rows)
+                    })
                     .or(starts.last());
                 if let Some((_, _, start, _)) = row {
                     target = Some((start.min(max), false, 0, Easing::Linear));
@@ -399,7 +547,10 @@ impl Scrolling {
         }
 
         // 4. A scroll request (a new token) wins over everything above.
-        if std::mem::take(&mut scroll.request_changed) && request_token.is_some() && scroll.request != request_token {
+        if std::mem::take(&mut scroll.request_changed)
+            && request_token.is_some()
+            && scroll.request != request_token
+        {
             scroll.request = request_token;
             let origin = axis(frame.origin(), horizontal);
             let aligned = |start: f32, extent: f32| {
@@ -411,10 +562,16 @@ impl Scrolling {
                 (start - adjust).clamp(0.0, max)
             };
             let wanted = if !request_test_id.is_empty() {
-                Self::find_test_id(ctx.scene, id, &request_test_id).and_then(|target| ctx.scene.node(target)).map(|target| {
-                    let (start, extent) = if horizontal { (target.frame.x, target.frame.width) } else { (target.frame.y, target.frame.height) };
-                    aligned(start - origin, extent)
-                })
+                Self::find_test_id(ctx.scene, id, &request_test_id)
+                    .and_then(|target| ctx.scene.node(target))
+                    .map(|target| {
+                        let (start, extent) = if horizontal {
+                            (target.frame.x, target.frame.width)
+                        } else {
+                            (target.frame.y, target.frame.height)
+                        };
+                        aligned(start - origin, extent)
+                    })
             } else if request_offset >= 0.0 {
                 Some(aligned(request_offset, 0.0))
             } else if kind == NodeKind::Scroll {
@@ -428,15 +585,18 @@ impl Scrolling {
         }
 
         if let Some((wanted, glides, duration, easing)) = target
-            && (wanted - offset_before).abs() > 0.01 {
-                Self::scroll_to(ctx, id, horizontal, wanted, glides, duration, easing);
-            }
+            && (wanted - offset_before).abs() > 0.01
+        {
+            Self::scroll_to(ctx, id, horizontal, wanted, glides, duration, easing);
+        }
         self.after_offset(ctx, id);
     }
 
     /// `(row index, rows covered, start, extent)` of every shown cell of a list, in order.
     fn row_starts(scene: &Scene, id: NodeId, horizontal: bool) -> Vec<(u32, u32, f32, f32)> {
-        let Some(node) = scene.node(id) else { return Vec::new() };
+        let Some(node) = scene.node(id) else {
+            return Vec::new();
+        };
         let origin = axis(node.frame.origin(), horizontal);
         let mut rows: Vec<(u32, u32, f32, f32)> = node
             .children
@@ -446,11 +606,17 @@ impl Scrolling {
             .map(|child| {
                 let props = child.props();
                 let covered = if props.flag_or(PropKey::ListPlaceholder, false) {
-                    props.integer_or(PropKey::ListPlaceholderRows, 1).clamp(1, i64::from(u32::MAX)) as u32
+                    props
+                        .integer_or(PropKey::ListPlaceholderRows, 1)
+                        .clamp(1, i64::from(u32::MAX)) as u32
                 } else {
                     1
                 };
-                let (start, extent) = if horizontal { (child.frame.x, child.frame.width) } else { (child.frame.y, child.frame.height) };
+                let (start, extent) = if horizontal {
+                    (child.frame.x, child.frame.width)
+                } else {
+                    (child.frame.y, child.frame.height)
+                };
                 (child.index, covered, start - origin, extent)
             })
             .collect();
@@ -472,23 +638,42 @@ impl Scrolling {
 
     /// Rows of the active section are shown; the others stay mounted but hidden.
     fn apply_sections(ctx: &mut Ctx<'_>, id: NodeId, scroll: &mut Scroll, active: &str) {
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let children = node.children.clone();
         let mut sectioned = false;
         for child in children {
-            let Some(section) = ctx.scene.node(child).map(|child| child.props().text(PropKey::ListSection).map(str::to_owned)) else { continue };
+            let Some(section) = ctx
+                .scene
+                .node(child)
+                .map(|child| child.props().text(PropKey::ListSection).map(str::to_owned))
+            else {
+                continue;
+            };
             let Some(section) = section else { continue };
             sectioned = true;
-            let layer = if section == active { LayerOverride::NONE } else { LayerOverride::HIDDEN };
-            ctx.scene.set_layer_override(child, LayerSlot::Presenter, layer);
+            let layer = if section == active {
+                LayerOverride::NONE
+            } else {
+                LayerOverride::HIDDEN
+            };
+            ctx.scene
+                .set_layer_override(child, LayerSlot::Presenter, layer);
         }
         if sectioned && scroll.active_section != active {
             // Each section remembers where it was left.
             let offset = axis(scroll.offset, scroll.horizontal);
             let previous = std::mem::replace(&mut scroll.active_section, active.to_owned());
-            scroll.section_offsets.retain(|(section, _)| *section != previous);
+            scroll
+                .section_offsets
+                .retain(|(section, _)| *section != previous);
             scroll.section_offsets.push((previous, offset));
-            if let Some((_, saved)) = scroll.section_offsets.iter().find(|(section, _)| section == active) {
+            if let Some((_, saved)) = scroll
+                .section_offsets
+                .iter()
+                .find(|(section, _)| section == active)
+            {
                 Self::jump(ctx, id, scroll.horizontal, *saved);
             }
         }
@@ -499,10 +684,14 @@ impl Scrolling {
         for row in scroll.rows.drain(..) {
             ctx.scene.remove_synthetic(row);
         }
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let props = node.props();
         let frame = node.frame;
-        let row_height = props.number_or(PropKey::ListRowHeight, STRING_ROW_HEIGHT).max(1.0);
+        let row_height = props
+            .number_or(PropKey::ListRowHeight, STRING_ROW_HEIGHT)
+            .max(1.0);
         let color = props.integer(PropKey::TextColor);
         let mut entries: Vec<(String, bool)> = Vec::new();
         if node.kind == NodeKind::SectionList {
@@ -530,8 +719,20 @@ impl Scrolling {
                     row.insert(PropKey::TextColor, PropValue::Integer(color));
                 }
             }
-            let row_frame = Rect::new(frame.x, frame.y + position as f32 * row_height, frame.width, row_height);
-            scroll.rows.push(ctx.scene.add_synthetic(id, NodeKind::Text, row, row_frame, position as u32, None));
+            let row_frame = Rect::new(
+                frame.x,
+                frame.y + position as f32 * row_height,
+                frame.width,
+                row_height,
+            );
+            scroll.rows.push(ctx.scene.add_synthetic(
+                id,
+                NodeKind::Text,
+                row,
+                row_frame,
+                position as u32,
+                None,
+            ));
         }
     }
 
@@ -540,11 +741,17 @@ impl Scrolling {
     /// The native viewport moved.
     pub fn on_scroll(&mut self, ctx: &mut Ctx<'_>, id: NodeId, offset: Point) {
         ctx.scene.set_scroll_offset(id, offset);
-        let Some(scroll) = self.scrolls.get_mut(&id) else { return };
+        let Some(scroll) = self.scrolls.get_mut(&id) else {
+            return;
+        };
         // An inverted list reports and reasons in logical offsets.
         let offset = if scroll.inverted {
             let logical = (scroll.max - axis(offset, scroll.horizontal)).max(0.0);
-            if scroll.horizontal { Point::new(logical, 0.0) } else { Point::new(0.0, logical) }
+            if scroll.horizontal {
+                Point::new(logical, 0.0)
+            } else {
+                Point::new(0.0, logical)
+            }
         } else {
             offset
         };
@@ -566,9 +773,15 @@ impl Scrolling {
             if scroll.gesture.is_none() {
                 scroll.gesture = Some(previous);
                 let payload = Self::phase_payload(ctx.scene, id, scroll, 0.0);
-                ctx.emit_if(id, PropKey::OnScrollBeginDrag, event_kind::SCROLL_BEGIN_DRAG, payload);
+                ctx.emit_if(
+                    id,
+                    PropKey::OnScrollBeginDrag,
+                    event_kind::SCROLL_BEGIN_DRAG,
+                    payload,
+                );
             }
-            ctx.timers.schedule(Timer::ScrollRest(id), ctx.now_ms + REST_MS);
+            ctx.timers
+                .schedule(Timer::ScrollRest(id), ctx.now_ms + REST_MS);
         }
         self.after_offset(ctx, id);
     }
@@ -577,13 +790,19 @@ impl Scrolling {
     /// pages and the list window.
     fn after_offset(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
         self.pin_sticky(ctx, id);
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let props = node.props();
-        let threshold = props.number_or(PropKey::EndReachedThreshold, 0.5).clamp(0.0, 10.0);
+        let threshold = props
+            .number_or(PropKey::EndReachedThreshold, 0.5)
+            .clamp(0.0, 10.0);
         let paging = props.flag_or(PropKey::ScrollPagingEnabled, false);
         let snap = props.number_or(PropKey::ScrollSnapInterval, 0.0);
         let windowed = props.flag_or(PropKey::ListWindowed, false);
-        let Some(scroll) = self.scrolls.get_mut(&id) else { return };
+        let Some(scroll) = self.scrolls.get_mut(&id) else {
+            return;
+        };
         let (viewport, content, max) = extents(ctx.scene, id, scroll.horizontal);
         let offset = axis(scroll.offset, scroll.horizontal);
         scroll.at_end = max > 0.0 && offset >= max - 1.0;
@@ -594,18 +813,34 @@ impl Scrolling {
             scroll.end_viewport = viewport;
             scroll.end_armed = true;
         }
-        if scroll.end_armed && content > 0.0 && viewport > 0.0 && content - (offset + viewport) <= viewport * threshold {
+        if scroll.end_armed
+            && content > 0.0
+            && viewport > 0.0
+            && content - (offset + viewport) <= viewport * threshold
+        {
             scroll.end_armed = false;
-            ctx.emit_if(id, PropKey::OnEndReached, event_kind::END_REACHED, Vec::new());
+            ctx.emit_if(
+                id,
+                PropKey::OnEndReached,
+                event_kind::END_REACHED,
+                Vec::new(),
+            );
         }
 
         let extent = if snap > 0.0 { snap } else { viewport };
-        let page = if extent > 0.0 { ((offset / extent).round() as i64).max(0) } else { 0 };
+        let page = if extent > 0.0 {
+            ((offset / extent).round() as i64).max(0)
+        } else {
+            0
+        };
         let _ = paging;
         match scroll.page {
             Some(previous) if previous != page => {
                 scroll.page = Some(page);
-                let payload = WireMap::new().with("page", page).with("previousPage", previous).encode();
+                let payload = WireMap::new()
+                    .with("page", page)
+                    .with("previousPage", previous)
+                    .encode();
                 ctx.emit_if(id, PropKey::OnPageChange, event_kind::PAGE_CHANGE, payload);
             }
             // The first observation only records the page.
@@ -618,9 +853,16 @@ impl Scrolling {
     }
 
     fn phase_payload(scene: &Scene, id: NodeId, scroll: &Scroll, velocity: f32) -> Vec<u8> {
-        let size = scene.node(id).map(|node| node.frame.size()).unwrap_or_default();
+        let size = scene
+            .node(id)
+            .map(|node| node.frame.size())
+            .unwrap_or_default();
         let content = scene.content_size(id);
-        let (velocity_x, velocity_y) = if scroll.horizontal { (velocity, 0.0) } else { (0.0, velocity) };
+        let (velocity_x, velocity_y) = if scroll.horizontal {
+            (velocity, 0.0)
+        } else {
+            (0.0, velocity)
+        };
         WireMap::new()
             .with("x", scroll.offset.x)
             .with("y", scroll.offset.y)
@@ -636,16 +878,24 @@ impl Scrolling {
 
     /// Sticky headers pin to the top of their viewport and are pushed out by the next one.
     fn pin_sticky(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(scroll) = self.scrolls.get(&id) else { return };
+        let Some(scroll) = self.scrolls.get(&id) else {
+            return;
+        };
         if scroll.horizontal {
             return;
         }
-        let Some(origin) = ctx.scene.node(id).map(|node| node.frame.y) else { return };
+        let Some(origin) = ctx.scene.node(id).map(|node| node.frame.y) else {
+            return;
+        };
         let mut headers: Vec<(NodeId, f32, f32)> = self
             .sticky
             .iter()
             .filter(|(_, owner)| **owner == id)
-            .filter_map(|(header, _)| ctx.scene.node(*header).map(|node| (*header, node.frame.y - origin, node.frame.height)))
+            .filter_map(|(header, _)| {
+                ctx.scene
+                    .node(*header)
+                    .map(|node| (*header, node.frame.y - origin, node.frame.height))
+            })
             .collect();
         if headers.is_empty() {
             return;
@@ -654,12 +904,21 @@ impl Scrolling {
         let offset = scroll.offset.y;
         for position in 0..headers.len() {
             let (header, top, height) = headers[position];
-            let next = headers.get(position + 1).map_or(f32::INFINITY, |next| next.1);
-            let shift = if offset <= top { 0.0 } else { (offset - top).min((next - top - height).max(0.0)) };
+            let next = headers
+                .get(position + 1)
+                .map_or(f32::INFINITY, |next| next.1);
+            let shift = if offset <= top {
+                0.0
+            } else {
+                (offset - top).min((next - top - height).max(0.0))
+            };
             ctx.scene.set_layer_override(
                 header,
                 LayerSlot::Presenter,
-                LayerOverride { transform: Affine::translation(0.0, shift), ..LayerOverride::NONE },
+                LayerOverride {
+                    transform: Affine::translation(0.0, shift),
+                    ..LayerOverride::NONE
+                },
             );
             // A pinned header draws above the rows it covers and takes their clicks.
             let overlay = (shift > 0.0).then(|| {
@@ -667,14 +926,17 @@ impl Scrolling {
                 overlay.insert(PropKey::ZIndex, PropValue::Integer(1_000_000));
                 overlay
             });
-            ctx.scene.set_style_overlay(header, StyleLayer::Presenter, overlay);
+            ctx.scene
+                .set_style_overlay(header, StyleLayer::Presenter, overlay);
         }
     }
 
     /// Windowed lists build rows on demand: tell PHP which rows are on screen
     /// whenever an unbuilt one comes near.
     fn report_window(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(scroll) = self.scrolls.get_mut(&id) else { return };
+        let Some(scroll) = self.scrolls.get_mut(&id) else {
+            return;
+        };
         let rows = Self::row_starts(ctx.scene, id, scroll.horizontal);
         if rows.is_empty() {
             return;
@@ -682,43 +944,62 @@ impl Scrolling {
         let (viewport, _, _) = extents(ctx.scene, id, scroll.horizontal);
         let offset = axis(scroll.offset, scroll.horizontal);
         let overscan = viewport * 1.5;
-        let Some(node) = ctx.scene.node(id) else { return };
-        let placeholder_near = node.children.iter().filter_map(|child| ctx.scene.node(*child)).any(|child| {
-            if !child.props().flag_or(PropKey::ListPlaceholder, false) {
-                return false;
-            }
-            let start = child.frame.y - node.frame.y;
-            start < offset + viewport + overscan && start + child.frame.height > offset - overscan
-        });
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
+        let placeholder_near = node
+            .children
+            .iter()
+            .filter_map(|child| ctx.scene.node(*child))
+            .any(|child| {
+                if !child.props().flag_or(PropKey::ListPlaceholder, false) {
+                    return false;
+                }
+                let start = child.frame.y - node.frame.y;
+                start < offset + viewport + overscan
+                    && start + child.frame.height > offset - overscan
+            });
         if !placeholder_near {
             ctx.timers.cancel(Timer::ListWindow(id));
             return;
         }
         let row_at = |position: f32| {
-            rows.iter().find(|(_, _, start, extent)| position < start + extent).or(rows.last()).map_or(0, |(index, covered, start, extent)| {
-                let into = (position - start).max(0.0);
-                let each = extent / *covered as f32;
-                let inside = if each > 0.0 { ((into / each).floor() as u32).min(covered - 1) } else { 0 };
-                index + inside
-            })
+            rows.iter()
+                .find(|(_, _, start, extent)| position < start + extent)
+                .or(rows.last())
+                .map_or(0, |(index, covered, start, extent)| {
+                    let into = (position - start).max(0.0);
+                    let each = extent / *covered as f32;
+                    let inside = if each > 0.0 {
+                        ((into / each).floor() as u32).min(covered - 1)
+                    } else {
+                        0
+                    };
+                    index + inside
+                })
         };
         let first = row_at(offset);
         let last = row_at(offset + viewport - 0.5).max(first);
         let total: u32 = rows.iter().map(|(_, covered, _, _)| *covered).sum();
         let payload = format!("@{first},{last},{total}");
-        let repeated = scroll.window_report.as_ref().is_some_and(|(sent, at)| *sent == payload && ctx.now_ms.saturating_sub(*at) < WINDOW_REPEAT_MS);
+        let repeated = scroll.window_report.as_ref().is_some_and(|(sent, at)| {
+            *sent == payload && ctx.now_ms.saturating_sub(*at) < WINDOW_REPEAT_MS
+        });
         if !repeated {
             scroll.window_report = Some((payload.clone(), ctx.now_ms));
             ctx.emit(id, event_kind::LIST_WINDOW, payload.into_bytes());
         }
         // Ask again if PHP has not built the rows by then.
-        ctx.timers.schedule(Timer::ListWindow(id), ctx.now_ms + WINDOW_REPEAT_MS);
+        ctx.timers
+            .schedule(Timer::ListWindow(id), ctx.now_ms + WINDOW_REPEAT_MS);
     }
 
     pub fn on_timer(&mut self, ctx: &mut Ctx<'_>, timer: Timer) {
         match timer {
             Timer::ScrollRest(id) => {
-                let Some(scroll) = self.scrolls.get_mut(&id) else { return };
+                let Some(scroll) = self.scrolls.get_mut(&id) else {
+                    return;
+                };
                 if scroll.gesture.take().is_none() {
                     return;
                 }
@@ -726,8 +1007,18 @@ impl Scrolling {
                 scroll.last_step = None;
                 let released = Self::phase_payload(ctx.scene, id, scroll, velocity);
                 let rested = Self::phase_payload(ctx.scene, id, scroll, 0.0);
-                ctx.emit_if(id, PropKey::OnScrollEndDrag, event_kind::SCROLL_END_DRAG, released);
-                ctx.emit_if(id, PropKey::OnMomentumScrollEnd, event_kind::MOMENTUM_SCROLL_END, rested);
+                ctx.emit_if(
+                    id,
+                    PropKey::OnScrollEndDrag,
+                    event_kind::SCROLL_END_DRAG,
+                    released,
+                );
+                ctx.emit_if(
+                    id,
+                    PropKey::OnMomentumScrollEnd,
+                    event_kind::MOMENTUM_SCROLL_END,
+                    rested,
+                );
             }
             Timer::ListWindow(id) => self.report_window(ctx, id),
             Timer::RefreshFallback(id) => {
@@ -744,12 +1035,24 @@ impl Scrolling {
 
     /// Sends the scroll offsets coalesced during this drain.
     pub fn flush(&mut self, ctx: &mut Ctx<'_>) {
-        let reports: Vec<NodeId> = self.scrolls.iter().filter(|(_, scroll)| scroll.report).map(|(id, _)| *id).collect();
+        let reports: Vec<NodeId> = self
+            .scrolls
+            .iter()
+            .filter(|(_, scroll)| scroll.report)
+            .map(|(id, _)| *id)
+            .collect();
         for id in reports {
-            let Some(scroll) = self.scrolls.get_mut(&id) else { continue };
+            let Some(scroll) = self.scrolls.get_mut(&id) else {
+                continue;
+            };
             scroll.report = false;
             let offset = axis(scroll.offset, scroll.horizontal);
-            ctx.emit_if(id, PropKey::OnScroll, event_kind::SCROLL, format!("{offset}").into_bytes());
+            ctx.emit_if(
+                id,
+                PropKey::OnScroll,
+                event_kind::SCROLL,
+                format!("{offset}").into_bytes(),
+            );
         }
     }
 
@@ -758,17 +1061,28 @@ impl Scrolling {
     /// The spinner of a refresh host: shown while PHP says it is refreshing,
     /// or right after the user asked for a refresh.
     fn sync_refresh(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let props = node.props();
         let frame = node.frame;
         let refreshing = props.flag_or(PropKey::Refreshing, false);
         let offset = props.number_or(PropKey::RefreshProgressViewOffset, 0.0);
         // The tint, else the first of the refresh colours, else a neutral grey.
-        let first_color = props.text_or_empty(PropKey::RefreshColors).split(',').next().and_then(|color| color.trim().parse::<i64>().ok());
-        let color = props.integer(PropKey::TintColor).or(first_color).unwrap_or(0xFF8E_8E93);
+        let first_color = props
+            .text_or_empty(PropKey::RefreshColors)
+            .split(',')
+            .next()
+            .and_then(|color| color.trim().parse::<i64>().ok());
+        let color = props
+            .integer(PropKey::TintColor)
+            .or(first_color)
+            .unwrap_or(0xFF8E_8E93);
         let background = props.integer(PropKey::RefreshProgressBackgroundColor);
         let large = props.integer(PropKey::RefreshIndicatorSize) == Some(2);
-        let Some(refresh) = self.refreshes.get_mut(&id) else { return };
+        let Some(refresh) = self.refreshes.get_mut(&id) else {
+            return;
+        };
         refresh.sync = false;
         if refreshing {
             refresh.requested = false;
@@ -776,14 +1090,22 @@ impl Scrolling {
         }
         let shown = refreshing || refresh.requested;
         if !shown {
-            for node in [refresh.indicator.take(), refresh.backdrop.take()].into_iter().flatten() {
+            for node in [refresh.indicator.take(), refresh.backdrop.take()]
+                .into_iter()
+                .flatten()
+            {
                 ctx.scene.remove_synthetic(node);
             }
             return;
         }
         let size = if large { 36.0 } else { 28.0 };
         let padding = if background.is_some() { 6.0 } else { 0.0 };
-        let disc = Rect::new(frame.x + (frame.width - size) / 2.0 - padding, frame.y + 12.0 + offset, size + padding * 2.0, size + padding * 2.0);
+        let disc = Rect::new(
+            frame.x + (frame.width - size) / 2.0 - padding,
+            frame.y + 12.0 + offset,
+            size + padding * 2.0,
+            size + padding * 2.0,
+        );
         match (background, refresh.backdrop) {
             (Some(background), existing) => {
                 let backdrop = existing.unwrap_or_else(|| {
@@ -792,10 +1114,19 @@ impl Scrolling {
                     // A hairline keeps a disc of the list's own colour visible.
                     props.insert(PropKey::BorderWidth, PropValue::Float(1.0));
                     props.insert(PropKey::BorderColor, PropValue::Integer(0x1F00_0000));
-                    ctx.scene.add_synthetic(id, NodeKind::View, props, disc, 0, None)
+                    ctx.scene
+                        .add_synthetic(id, NodeKind::View, props, disc, 0, None)
                 });
-                ctx.scene.set_prop(backdrop, PropKey::BackgroundColor, Some(PropValue::Integer(background)));
-                ctx.scene.set_prop(backdrop, PropKey::BorderRadius, Some(PropValue::Float(f64::from(disc.width / 2.0))));
+                ctx.scene.set_prop(
+                    backdrop,
+                    PropKey::BackgroundColor,
+                    Some(PropValue::Integer(background)),
+                );
+                ctx.scene.set_prop(
+                    backdrop,
+                    PropKey::BorderRadius,
+                    Some(PropValue::Float(f64::from(disc.width / 2.0))),
+                );
                 ctx.scene.set_synthetic_frame(backdrop, disc);
                 refresh.backdrop = Some(backdrop);
             }
@@ -809,9 +1140,20 @@ impl Scrolling {
         let indicator = refresh.indicator.unwrap_or_else(|| {
             let mut spinner = PropMap::new();
             spinner.insert(PropKey::PointerEvents, PropValue::Integer(2));
-            ctx.scene.add_synthetic(id, NodeKind::ActivityIndicator, spinner, indicator_frame, 1, None)
+            ctx.scene.add_synthetic(
+                id,
+                NodeKind::ActivityIndicator,
+                spinner,
+                indicator_frame,
+                1,
+                None,
+            )
         });
-        ctx.scene.set_prop(indicator, PropKey::ProgressColor, Some(PropValue::Integer(color)));
+        ctx.scene.set_prop(
+            indicator,
+            PropKey::ProgressColor,
+            Some(PropValue::Integer(color)),
+        );
         ctx.scene.set_synthetic_frame(indicator, indicator_frame);
         refresh.indicator = Some(indicator);
     }
@@ -821,23 +1163,38 @@ impl Scrolling {
     pub fn on_key(&mut self, ctx: &mut Ctx<'_>, key: &KeyEvent) -> bool {
         let chord = key.pressed
             && !key.repeat
-            && (key.key == "F5" || (key.key.eq_ignore_ascii_case("r") && (key.modifiers.control || key.modifiers.meta) && !key.modifiers.alt));
+            && (key.key == "F5"
+                || (key.key.eq_ignore_ascii_case("r")
+                    && (key.modifiers.control || key.modifiers.meta)
+                    && !key.modifiers.alt));
         if !chord {
             return false;
         }
         let target = self.refreshes.keys().copied().find(|id| {
             ctx.scene.is_effectively_visible(*id)
-                && ctx.scene.node(*id).is_some_and(|node| node.handles(PropKey::OnRefresh) && node.props().flag_or(PropKey::Enabled, true) && node.props().flag_or(PropKey::RefreshEnabled, true))
+                && ctx.scene.node(*id).is_some_and(|node| {
+                    node.handles(PropKey::OnRefresh)
+                        && node.props().flag_or(PropKey::Enabled, true)
+                        && node.props().flag_or(PropKey::RefreshEnabled, true)
+                })
         });
         let Some(id) = target else { return false };
-        let Some(refresh) = self.refreshes.get_mut(&id) else { return false };
-        if refresh.requested || ctx.scene.node(id).is_some_and(|node| node.props().flag_or(PropKey::Refreshing, false)) {
+        let Some(refresh) = self.refreshes.get_mut(&id) else {
+            return false;
+        };
+        if refresh.requested
+            || ctx
+                .scene
+                .node(id)
+                .is_some_and(|node| node.props().flag_or(PropKey::Refreshing, false))
+        {
             return true;
         }
         refresh.requested = true;
         ctx.emit(id, event_kind::REFRESH, Vec::new());
         // Without an answer the spinner returns to its controlled state.
-        ctx.timers.schedule(Timer::RefreshFallback(id), ctx.now_ms + REFRESH_FALLBACK_MS);
+        ctx.timers
+            .schedule(Timer::RefreshFallback(id), ctx.now_ms + REFRESH_FALLBACK_MS);
         self.sync_refresh(ctx, id);
         true
     }
@@ -854,7 +1211,9 @@ fn decode_sections(bytes: &[u8]) -> Option<Vec<(String, bool)>> {
     };
     let read_text = |bytes: &[u8], offset: &mut usize, length: u32| -> Option<String> {
         let end = offset.checked_add(length as usize)?;
-        let text = std::str::from_utf8(bytes.get(*offset..end)?).ok()?.to_owned();
+        let text = std::str::from_utf8(bytes.get(*offset..end)?)
+            .ok()?
+            .to_owned();
         *offset = end;
         Some(text)
     };
@@ -897,7 +1256,12 @@ mod tests {
         }
         assert_eq!(
             decode_sections(&bytes),
-            Some(vec![("Fruits".into(), true), ("Apple".into(), false), ("Pear".into(), false), ("Empty".into(), true)]),
+            Some(vec![
+                ("Fruits".into(), true),
+                ("Apple".into(), false),
+                ("Pear".into(), false),
+                ("Empty".into(), true)
+            ]),
         );
         bytes.push(0);
         assert!(decode_sections(&bytes).is_none());

@@ -26,8 +26,8 @@ use sha2::{Digest, Sha256};
 
 use crate::bundle::{self, Installed, hash_file, validate_relative_path, verify_file_hash};
 use crate::manifest::{
-    Application, UpdateConfig, UpdatePolicy, validate_channel, validate_identifier, validate_lower_hex, validate_text, validate_update_url,
-    validate_version,
+    Application, UpdateConfig, UpdatePolicy, validate_channel, validate_identifier,
+    validate_lower_hex, validate_text, validate_update_url, validate_version,
 };
 
 /// Version of the feed document; unchanged since PAM Desktop 1.x.
@@ -145,12 +145,20 @@ pub struct Release {
 impl Release {
     fn validate(&self) -> Result<(), String> {
         if self.schema_version != FEED_VERSION {
-            return Err(format!("update feed schema {} is unsupported; expected {FEED_VERSION}", self.schema_version));
+            return Err(format!(
+                "update feed schema {} is unsupported; expected {FEED_VERSION}",
+                self.schema_version
+            ));
         }
         validate_identifier(&self.application_id)?;
         validate_channel(&self.channel, "update channel")?;
         validate_version(&self.version)?;
-        validate_text(&self.published_at, "update publication timestamp", 64, false)?;
+        validate_text(
+            &self.published_at,
+            "update publication timestamp",
+            64,
+            false,
+        )?;
         if let Some(notes_url) = &self.notes_url {
             validate_update_url(notes_url, "update notes URL")?;
         }
@@ -160,7 +168,11 @@ impl Release {
         let mut targets = HashSet::with_capacity(self.artifacts.len());
         for artifact in &self.artifacts {
             artifact.validate()?;
-            if !targets.insert((artifact.platform, artifact.architecture.as_str(), artifact.kind)) {
+            if !targets.insert((
+                artifact.platform,
+                artifact.architecture.as_str(),
+                artifact.kind,
+            )) {
                 return Err(format!(
                     "update artifact target {}/{} ({}) is duplicated",
                     artifact.platform.keyword(),
@@ -173,7 +185,8 @@ impl Release {
     }
 
     fn signed_payload(&self) -> Result<Vec<u8>, String> {
-        serde_json::to_vec(self).map_err(|error| format!("cannot serialize the update release: {error}"))
+        serde_json::to_vec(self)
+            .map_err(|error| format!("cannot serialize the update release: {error}"))
     }
 }
 
@@ -191,13 +204,17 @@ pub struct SignedRelease {
 ///
 /// When the feed is malformed or was not signed by the holder of the key.
 pub fn verify_signed_feed(feed: &SignedRelease, public_key: &str) -> Result<(), String> {
-    feed.release.validate().map_err(|error| format!("The update feed is invalid: {error}"))?;
+    feed.release
+        .validate()
+        .map_err(|error| format!("The update feed is invalid: {error}"))?;
     let public_key = decode_hex::<32>(public_key, "update public key")?;
     let signature = decode_hex::<64>(&feed.signature, "update signature")?;
-    let verifying_key =
-        VerifyingKey::from_bytes(&public_key).map_err(|_| "The configured Ed25519 update public key is invalid.".to_owned())?;
+    let verifying_key = VerifyingKey::from_bytes(&public_key)
+        .map_err(|_| "The configured Ed25519 update public key is invalid.".to_owned())?;
     let signature = Signature::from_bytes(&signature);
-    verifying_key.verify_strict(&feed.release.signed_payload()?, &signature).map_err(|_| "The update feed signature did not verify.".to_owned())
+    verifying_key
+        .verify_strict(&feed.release.signed_payload()?, &signature)
+        .map_err(|_| "The update feed signature did not verify.".to_owned())
 }
 
 fn decode_hex<const N: usize>(value: &str, label: &str) -> Result<[u8; N], String> {
@@ -227,8 +244,12 @@ fn version_is_newer(candidate: &str, current: &str) -> bool {
 /// above its pre-releases; build metadata is ignored.
 fn compare_versions(left: &str, right: &str) -> Ordering {
     let split = |version: &'_ str| -> (Vec<String>, Option<String>) {
-        let version = version.split_once('+').map_or(version, |(version, _)| version);
-        let (core, pre) = version.split_once('-').map_or((version, None), |(core, pre)| (core, Some(pre.to_owned())));
+        let version = version
+            .split_once('+')
+            .map_or(version, |(version, _)| version);
+        let (core, pre) = version
+            .split_once('-')
+            .map_or((version, None), |(core, pre)| (core, Some(pre.to_owned())));
         (core.split('.').map(str::to_owned).collect(), pre)
     };
     let (left_parts, left_pre) = split(left);
@@ -373,7 +394,11 @@ impl Updater {
         client: Arc<dyn HttpClient>,
         listener: impl Fn(&Snapshot) + Send + Sync + 'static,
     ) -> Self {
-        let status = if config.is_some() { Status::Idle } else { Status::Disabled };
+        let status = if config.is_some() {
+            Status::Idle
+        } else {
+            Status::Disabled
+        };
         Self {
             inner: Arc::new(Inner {
                 application_id: application_id.to_owned(),
@@ -450,7 +475,11 @@ impl Updater {
     /// When no release is available, the staging directory cannot be
     /// prepared, the transfer fails or the archive is not the signed one.
     pub fn download(&self) -> Result<Snapshot, String> {
-        let candidate = self.lock_state().candidate.clone().ok_or("No update is available. Check for updates first.")?;
+        let candidate = self
+            .lock_state()
+            .candidate
+            .clone()
+            .ok_or("No update is available. Check for updates first.")?;
         self.begin(Status::Downloading)?;
         match self.download_inner(&candidate) {
             Ok(archive) => Ok(self.change(|state| {
@@ -474,14 +503,28 @@ impl Updater {
     pub fn install(&self) -> Result<Snapshot, String> {
         let (archive, candidate) = {
             let state = self.lock_state();
-            let archive = state.archive.clone().ok_or("No verified update has been downloaded.")?;
-            let candidate = state.candidate.clone().ok_or("The staged update has no matching release.")?;
+            let archive = state
+                .archive
+                .clone()
+                .ok_or("No verified update has been downloaded.")?;
+            let candidate = state
+                .candidate
+                .clone()
+                .ok_or("The staged update has no matching release.")?;
             (archive, candidate)
         };
-        let installed =
-            self.inner.installed.clone().ok_or("Updates can only be installed from a packaged PAM Desktop application.")?;
+        let installed = self
+            .inner
+            .installed
+            .clone()
+            .ok_or("Updates can only be installed from a packaged PAM Desktop application.")?;
         self.begin(Status::Applying)?;
-        match launch_apply_helper(&installed, &archive, &candidate.artifact.sha256, std::process::id()) {
+        match launch_apply_helper(
+            &installed,
+            &archive,
+            &candidate.artifact.sha256,
+            std::process::id(),
+        ) {
             Ok(()) => Ok(self.snapshot()),
             Err(error) => Err(self.fail(error)),
         }
@@ -491,11 +534,19 @@ impl Updater {
     /// whether an installation started, in which case the host must exit.
     #[must_use]
     pub fn run_policy(&self) -> bool {
-        let Some(policy) = self.policy().filter(|policy| *policy != UpdatePolicy::Manual) else {
+        let Some(policy) = self
+            .policy()
+            .filter(|policy| *policy != UpdatePolicy::Manual)
+        else {
             return false;
         };
-        let available = self.check().is_ok_and(|snapshot| snapshot.status == Status::Available);
-        policy == UpdatePolicy::Automatic && available && self.download().is_ok() && self.install().is_ok()
+        let available = self
+            .check()
+            .is_ok_and(|snapshot| snapshot.status == Status::Available);
+        policy == UpdatePolicy::Automatic
+            && available
+            && self.download().is_ok()
+            && self.install().is_ok()
     }
 
     fn check_inner(&self, config: &UpdateConfig) -> Result<Option<Candidate>, String> {
@@ -509,7 +560,8 @@ impl Updater {
         if bytes.len() as u64 > MAX_FEED_BYTES {
             return Err("The update feed is larger than one MiB.".to_owned());
         }
-        let feed: SignedRelease = serde_json::from_slice(&bytes).map_err(|error| format!("The update feed is not valid: {error}"))?;
+        let feed: SignedRelease = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("The update feed is not valid: {error}"))?;
         verify_signed_feed(&feed, &config.public_key)?;
         if feed.release.application_id != self.inner.application_id {
             return Err("The signed release belongs to a different application.".to_owned());
@@ -521,18 +573,30 @@ impl Updater {
         if !version_is_newer(&feed.release.version, &current_version) {
             return Ok(None);
         }
-        let platform = Platform::current().ok_or("This operating system has no PAM Desktop update target.")?;
+        let platform =
+            Platform::current().ok_or("This operating system has no PAM Desktop update target.")?;
         let artifact = feed
             .release
             .artifacts
             .into_iter()
             .find(|artifact| {
-                artifact.platform == platform && artifact.architecture == std::env::consts::ARCH && artifact.kind == ArtifactKind::PortableArchive
+                artifact.platform == platform
+                    && artifact.architecture == std::env::consts::ARCH
+                    && artifact.kind == ArtifactKind::PortableArchive
             })
             .ok_or_else(|| {
-                format!("Release {} has no portable artifact for {}/{}.", feed.release.version, std::env::consts::OS, std::env::consts::ARCH)
+                format!(
+                    "Release {} has no portable artifact for {}/{}.",
+                    feed.release.version,
+                    std::env::consts::OS,
+                    std::env::consts::ARCH
+                )
             })?;
-        Ok(Some(Candidate { artifact, version: feed.release.version, notes_url: feed.release.notes_url }))
+        Ok(Some(Candidate {
+            artifact,
+            version: feed.release.version,
+            notes_url: feed.release.notes_url,
+        }))
     }
 
     fn download_inner(&self, candidate: &Candidate) -> Result<PathBuf, String> {
@@ -547,10 +611,14 @@ impl Updater {
         let expected = candidate.artifact.bytes;
         // No overall deadline: a large archive on a slow link is still progress.
         let mut response = self.get(&candidate.artifact.url, "update artifact", None)?;
-        if response.content_length.is_some_and(|length| length != expected) {
+        if response
+            .content_length
+            .is_some_and(|length| length != expected)
+        {
             return Err("The update server returned an unexpected artifact size.".to_owned());
         }
-        let mut output = File::create(&archive).map_err(|error| format!("Cannot create the update staging file: {error}"))?;
+        let mut output = File::create(&archive)
+            .map_err(|error| format!("Cannot create the update staging file: {error}"))?;
         let mut digest = Sha256::new();
         let mut total = 0_u64;
         let mut reported = 0_u64;
@@ -566,7 +634,9 @@ impl Updater {
             if total > expected {
                 return Err("The downloaded update is larger than its signed size.".to_owned());
             }
-            output.write_all(&buffer[..read]).map_err(|error| format!("Cannot write the update staging file: {error}"))?;
+            output
+                .write_all(&buffer[..read])
+                .map_err(|error| format!("Cannot write the update staging file: {error}"))?;
             digest.update(&buffer[..read]);
             // One change per whole percent keeps listeners informed without flooding them.
             let percent = total.saturating_mul(100) / expected;
@@ -575,39 +645,63 @@ impl Updater {
                 self.change(|state| state.snapshot.downloaded_bytes = total);
             }
         }
-        output.sync_all().map_err(|error| format!("Cannot flush the update staging file: {error}"))?;
+        output
+            .sync_all()
+            .map_err(|error| format!("Cannot flush the update staging file: {error}"))?;
         if total != expected || hex(&digest.finalize()) != candidate.artifact.sha256 {
-            return Err("The downloaded update does not match its signed size and SHA-256 digest.".to_owned());
+            return Err(
+                "The downloaded update does not match its signed size and SHA-256 digest."
+                    .to_owned(),
+            );
         }
         Ok(archive)
     }
 
     /// A GET that follows a few redirects itself, so that every hop obeys
     /// the same HTTPS rule as the URL the application pinned.
-    fn get(&self, url: &str, label: &str, total_timeout: Option<Duration>) -> Result<HttpResponse, String> {
+    fn get(
+        &self,
+        url: &str,
+        label: &str,
+        total_timeout: Option<Duration>,
+    ) -> Result<HttpResponse, String> {
         let mut url = url.to_owned();
         for _ in 0..=MAX_REDIRECTS {
-            validate_update_url(&url, label).map_err(|error| format!("Cannot fetch the {label}: {error}"))?;
+            validate_update_url(&url, label)
+                .map_err(|error| format!("Cannot fetch the {label}: {error}"))?;
             let mut request = HttpRequest::get(url.as_str());
             request.connect_timeout = NETWORK_TIMEOUT;
             request.read_timeout = NETWORK_TIMEOUT;
             request.total_timeout = total_timeout;
-            let response =
-                self.inner.client.send(request, None, &self.inner.never_cancelled).map_err(|error| format!("Cannot fetch the {label}: {error}"))?;
+            let response = self
+                .inner
+                .client
+                .send(request, None, &self.inner.never_cancelled)
+                .map_err(|error| format!("Cannot fetch the {label}: {error}"))?;
             match response.status {
                 200 => return Ok(response),
                 301 | 302 | 303 | 307 | 308 => {
-                    let location = response.header("location").ok_or_else(|| format!("Cannot fetch the {label}: redirect without a location"))?;
-                    url = redirect_target(&url, location).ok_or_else(|| format!("Cannot fetch the {label}: unsupported redirect"))?;
+                    let location = response.header("location").ok_or_else(|| {
+                        format!("Cannot fetch the {label}: redirect without a location")
+                    })?;
+                    url = redirect_target(&url, location)
+                        .ok_or_else(|| format!("Cannot fetch the {label}: unsupported redirect"))?;
                 }
-                status => return Err(format!("Cannot fetch the {label}: the server answered {status}")),
+                status => {
+                    return Err(format!(
+                        "Cannot fetch the {label}: the server answered {status}"
+                    ));
+                }
             }
         }
         Err(format!("Cannot fetch the {label}: too many redirects"))
     }
 
     fn config(&self) -> Result<&UpdateConfig, String> {
-        self.inner.config.as_ref().ok_or_else(|| "Updates are not configured for this application.".to_owned())
+        self.inner
+            .config
+            .as_ref()
+            .ok_or_else(|| "Updates are not configured for this application.".to_owned())
     }
 
     fn begin(&self, next: Status) -> Result<(), String> {
@@ -623,7 +717,11 @@ impl Updater {
                 state.snapshot.downloaded_bytes = 0;
             }
         });
-        if busy { Err("Another update operation is already running.".to_owned()) } else { Ok(()) }
+        if busy {
+            Err("Another update operation is already running.".to_owned())
+        } else {
+            Ok(())
+        }
     }
 
     fn fail(&self, error: String) -> String {
@@ -649,7 +747,10 @@ impl Updater {
     }
 
     fn lock_state(&self) -> MutexGuard<'_, InternalState> {
-        self.inner.state.lock().unwrap_or_else(PoisonError::into_inner)
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -671,9 +772,16 @@ fn redirect_target(current: &str, location: &str) -> Option<String> {
 fn update_stage(parent: &Path, application_id: &str, version: &str) -> Result<PathBuf, String> {
     prune_update_stages(parent, application_id)?;
     let mut entropy = [0_u8; 8];
-    getrandom::fill(&mut entropy).map_err(|error| format!("Cannot create the update staging name: {error}"))?;
-    let stage = parent.join(format!(".pam-update-{}-{}-{}", safe_path_segment(application_id), safe_path_segment(version), hex(&entropy)));
-    fs::create_dir(&stage).map_err(|error| format!("Cannot create the update staging directory: {error}"))?;
+    getrandom::fill(&mut entropy)
+        .map_err(|error| format!("Cannot create the update staging name: {error}"))?;
+    let stage = parent.join(format!(
+        ".pam-update-{}-{}-{}",
+        safe_path_segment(application_id),
+        safe_path_segment(version),
+        hex(&entropy)
+    ));
+    fs::create_dir(&stage)
+        .map_err(|error| format!("Cannot create the update staging directory: {error}"))?;
     Ok(stage)
 }
 
@@ -696,25 +804,55 @@ fn prune_update_stages(parent: &Path, application_id: &str) -> Result<(), String
         .collect();
     stages.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
     for (_, _, stage) in stages.into_iter().skip(MAX_RETAINED_UPDATE_STAGES) {
-        fs::remove_dir_all(&stage).map_err(|error| format!("Cannot remove the stale update stage {}: {error}", stage.display()))?;
+        fs::remove_dir_all(&stage).map_err(|error| {
+            format!(
+                "Cannot remove the stale update stage {}: {error}",
+                stage.display()
+            )
+        })?;
     }
     Ok(())
 }
 
 fn safe_path_segment(value: &str) -> String {
-    value.chars().map(|character| if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') { character } else { '_' }).collect()
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 const fn archive_name() -> &'static str {
-    if cfg!(target_os = "linux") { "update.tar.gz" } else { "update.zip" }
+    if cfg!(target_os = "linux") {
+        "update.tar.gz"
+    } else {
+        "update.zip"
+    }
 }
 
-fn launch_apply_helper(installed: &Installed, archive: &Path, sha256: &str, parent_pid: u32) -> Result<(), String> {
-    let current_exe = std::env::current_exe().map_err(|error| format!("Cannot locate the PAM Desktop host: {error}"))?;
-    let stage = archive.parent().ok_or("The update staging path has no parent.")?;
+fn launch_apply_helper(
+    installed: &Installed,
+    archive: &Path,
+    sha256: &str,
+    parent_pid: u32,
+) -> Result<(), String> {
+    let current_exe = std::env::current_exe()
+        .map_err(|error| format!("Cannot locate the PAM Desktop host: {error}"))?;
+    let stage = archive
+        .parent()
+        .ok_or("The update staging path has no parent.")?;
     // The helper runs from a copy: the bundle it replaces holds the original.
-    let helper = stage.join(format!("pam-desktop-update{}", std::env::consts::EXE_SUFFIX));
-    fs::copy(&current_exe, &helper).map_err(|error| format!("Cannot prepare the update helper: {error}"))?;
+    let helper = stage.join(format!(
+        "pam-desktop-update{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    fs::copy(&current_exe, &helper)
+        .map_err(|error| format!("Cannot prepare the update helper: {error}"))?;
     let mut command = Command::new(&helper);
     command
         .arg("apply-update")
@@ -733,7 +871,10 @@ fn launch_apply_helper(installed: &Installed, archive: &Path, sha256: &str, pare
     if let Some(launcher) = &installed.launcher {
         command.arg("--launcher").arg(launcher);
     }
-    command.spawn().map(|_| ()).map_err(|error| format!("Cannot start the update helper: {error}"))
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Cannot start the update helper: {error}"))
 }
 
 // ---- keys and feed publication --------------------------------------------
@@ -774,13 +915,40 @@ impl PublishOptions {
         let mut arguments = arguments.into_iter();
         while let Some(argument) = arguments.next() {
             match argument.to_str() {
-                Some("--key") => set_once(&mut private_key, arguments.next().map(PathBuf::from), "--key", "a private key file")?,
-                Some("--output" | "-o") => set_once(&mut output, arguments.next().map(PathBuf::from), "--output", "a feed path")?,
-                Some("--channel") => set_once(&mut channel, text_value(arguments.next()), "--channel", "a value")?,
-                Some("--published-at") => set_once(&mut published_at, text_value(arguments.next()), "--published-at", "an RFC 3339 timestamp")?,
-                Some("--notes-url") => set_once(&mut notes_url, text_value(arguments.next()), "--notes-url", "an HTTPS URL")?,
+                Some("--key") => set_once(
+                    &mut private_key,
+                    arguments.next().map(PathBuf::from),
+                    "--key",
+                    "a private key file",
+                )?,
+                Some("--output" | "-o") => set_once(
+                    &mut output,
+                    arguments.next().map(PathBuf::from),
+                    "--output",
+                    "a feed path",
+                )?,
+                Some("--channel") => set_once(
+                    &mut channel,
+                    text_value(arguments.next()),
+                    "--channel",
+                    "a value",
+                )?,
+                Some("--published-at") => set_once(
+                    &mut published_at,
+                    text_value(arguments.next()),
+                    "--published-at",
+                    "an RFC 3339 timestamp",
+                )?,
+                Some("--notes-url") => set_once(
+                    &mut notes_url,
+                    text_value(arguments.next()),
+                    "--notes-url",
+                    "an HTTPS URL",
+                )?,
                 Some("--artifact") => {
-                    let value = arguments.next().ok_or("--artifact requires a target tuple")?;
+                    let value = arguments
+                        .next()
+                        .ok_or("--artifact requires a target tuple")?;
                     artifacts.push(parse_publish_artifact(&value)?);
                 }
                 Some("--force") => force = true,
@@ -807,7 +975,12 @@ fn text_value(value: Option<OsString>) -> Option<String> {
     value.and_then(|value| value.into_string().ok())
 }
 
-fn set_once<T>(target: &mut Option<T>, value: Option<T>, option: &str, expected: &str) -> Result<(), String> {
+fn set_once<T>(
+    target: &mut Option<T>,
+    value: Option<T>,
+    option: &str,
+    expected: &str,
+) -> Result<(), String> {
     let value = value.ok_or_else(|| format!("{option} requires {expected}"))?;
     if target.replace(value).is_some() {
         return Err(format!("{option} may only be specified once"));
@@ -821,12 +994,20 @@ fn parse_publish_artifact(value: &OsStr) -> Result<PublishArtifact, String> {
     if fields.len() != 5 || fields.iter().any(|field| field.is_empty()) {
         return Err("artifact tuple must be platform,architecture,kind,path,url (kind: portable or installer)".to_owned());
     }
-    let platform = Platform::parse(fields[0]).ok_or_else(|| format!("unknown update artifact platform {:?}", fields[0]))?;
+    let platform = Platform::parse(fields[0])
+        .ok_or_else(|| format!("unknown update artifact platform {:?}", fields[0]))?;
     let kind = match fields[2] {
         "native" => ArtifactKind::NativeInstaller,
-        keyword => ArtifactKind::parse(keyword).ok_or_else(|| format!("unknown update artifact kind {keyword:?}"))?,
+        keyword => ArtifactKind::parse(keyword)
+            .ok_or_else(|| format!("unknown update artifact kind {keyword:?}"))?,
     };
-    Ok(PublishArtifact { platform, architecture: fields[1].to_owned(), kind, path: PathBuf::from(fields[3]), url: fields[4].to_owned() })
+    Ok(PublishArtifact {
+        platform,
+        architecture: fields[1].to_owned(),
+        kind,
+        path: PathBuf::from(fields[3]),
+        url: fields[4].to_owned(),
+    })
 }
 
 /// Creates an Ed25519 seed file and returns the public key. The private key
@@ -837,14 +1018,24 @@ fn parse_publish_artifact(value: &OsStr) -> Result<PublishArtifact, String> {
 /// When the file exists, its directory does not, or it cannot be written.
 pub fn generate_key(path: &Path) -> Result<String, String> {
     if path.exists() {
-        return Err(format!("update private key {} already exists", path.display()));
+        return Err(format!(
+            "update private key {} already exists",
+            path.display()
+        ));
     }
-    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     if !parent.is_dir() {
-        return Err(format!("update private key directory does not exist: {}", parent.display()));
+        return Err(format!(
+            "update private key directory does not exist: {}",
+            parent.display()
+        ));
     }
     let mut seed = [0_u8; 32];
-    getrandom::fill(&mut seed).map_err(|error| format!("cannot generate the update signing key: {error}"))?;
+    getrandom::fill(&mut seed)
+        .map_err(|error| format!("cannot generate the update signing key: {error}"))?;
     let signing_key = SigningKey::from_bytes(&seed);
     let encoded = format!("{}\n", hex(&seed));
     let mut options = fs::OpenOptions::new();
@@ -854,8 +1045,15 @@ pub fn generate_key(path: &Path) -> Result<String, String> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(path).map_err(|error| format!("cannot create update private key {}: {error}", path.display()))?;
-    file.write_all(encoded.as_bytes()).and_then(|()| file.sync_all()).map_err(|error| format!("cannot persist the update private key: {error}"))?;
+    let mut file = options.open(path).map_err(|error| {
+        format!(
+            "cannot create update private key {}: {error}",
+            path.display()
+        )
+    })?;
+    file.write_all(encoded.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("cannot persist the update private key: {error}"))?;
     Ok(hex(signing_key.verifying_key().as_bytes()))
 }
 
@@ -869,17 +1067,32 @@ pub fn generate_key(path: &Path) -> Result<String, String> {
 pub fn publish_feed(application: &Application, options: PublishOptions) -> Result<PathBuf, String> {
     let signing_key = read_signing_key(&options.private_key)?;
     let public_key = hex(signing_key.verifying_key().as_bytes());
-    if application.updates.as_ref().is_some_and(|config| config.public_key != public_key) {
-        return Err("the update signing key does not match updates.publicKey of the application".to_owned());
+    if application
+        .updates
+        .as_ref()
+        .is_some_and(|config| config.public_key != public_key)
+    {
+        return Err(
+            "the update signing key does not match updates.publicKey of the application".to_owned(),
+        );
     }
     let mut artifacts = Vec::with_capacity(options.artifacts.len());
     for input in options.artifacts {
-        let path = input.path.canonicalize().map_err(|error| format!("cannot resolve artifact {}: {error}", input.path.display()))?;
+        let path = input.path.canonicalize().map_err(|error| {
+            format!("cannot resolve artifact {}: {error}", input.path.display())
+        })?;
         if !path.is_file() {
             return Err(format!("update artifact is not a file: {}", path.display()));
         }
         let (bytes, sha256) = hash_file(&path)?;
-        artifacts.push(Artifact { platform: input.platform, architecture: input.architecture, kind: input.kind, url: input.url, bytes, sha256 });
+        artifacts.push(Artifact {
+            platform: input.platform,
+            architecture: input.architecture,
+            kind: input.kind,
+            url: input.url,
+            bytes,
+            sha256,
+        });
     }
     let release = Release {
         schema_version: FEED_VERSION,
@@ -892,54 +1105,84 @@ pub fn publish_feed(application: &Application, options: PublishOptions) -> Resul
     };
     release.validate()?;
     let signature = hex(&signing_key.sign(&release.signed_payload()?).to_bytes());
-    let mut encoded =
-        serde_json::to_vec_pretty(&SignedRelease { release, signature }).map_err(|error| format!("cannot serialize the signed update feed: {error}"))?;
+    let mut encoded = serde_json::to_vec_pretty(&SignedRelease { release, signature })
+        .map_err(|error| format!("cannot serialize the signed update feed: {error}"))?;
     encoded.push(b'\n');
     atomic_write(&options.output, &encoded, options.force)?;
     Ok(options.output)
 }
 
 fn read_signing_key(path: &Path) -> Result<SigningKey, String> {
-    let metadata = fs::metadata(path).map_err(|error| format!("cannot inspect update private key {}: {error}", path.display()))?;
+    let metadata = fs::metadata(path).map_err(|error| {
+        format!(
+            "cannot inspect update private key {}: {error}",
+            path.display()
+        )
+    })?;
     if !metadata.is_file() {
-        return Err(format!("update private key is not a file: {}", path.display()));
+        return Err(format!(
+            "update private key is not a file: {}",
+            path.display()
+        ));
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if metadata.permissions().mode() & 0o077 != 0 {
-            return Err("update private key permissions are too broad; use owner-only mode 0600".to_owned());
+            return Err(
+                "update private key permissions are too broad; use owner-only mode 0600".to_owned(),
+            );
         }
     }
-    let source = fs::read_to_string(path).map_err(|error| format!("cannot read the update private key: {error}"))?;
-    Ok(SigningKey::from_bytes(&decode_hex::<32>(source.trim(), "update private key")?))
+    let source = fs::read_to_string(path)
+        .map_err(|error| format!("cannot read the update private key: {error}"))?;
+    Ok(SigningKey::from_bytes(&decode_hex::<32>(
+        source.trim(),
+        "update private key",
+    )?))
 }
 
 fn atomic_write(path: &Path, contents: &[u8], force: bool) -> Result<(), String> {
     if path.exists() && !force {
-        return Err(format!("update feed {} already exists; pass --force to replace it", path.display()));
+        return Err(format!(
+            "update feed {} already exists; pass --force to replace it",
+            path.display()
+        ));
     }
-    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     if !parent.is_dir() {
-        return Err(format!("update feed directory does not exist: {}", parent.display()));
+        return Err(format!(
+            "update feed directory does not exist: {}",
+            parent.display()
+        ));
     }
     let mut entropy = [0_u8; 8];
-    getrandom::fill(&mut entropy).map_err(|error| format!("cannot create the feed staging path: {error}"))?;
+    getrandom::fill(&mut entropy)
+        .map_err(|error| format!("cannot create the feed staging path: {error}"))?;
     let temporary = parent.join(format!(".pam-feed-{}", hex(&entropy)));
-    fs::write(&temporary, contents).map_err(|error| format!("cannot write the update feed staging file: {error}"))?;
+    fs::write(&temporary, contents)
+        .map_err(|error| format!("cannot write the update feed staging file: {error}"))?;
     if !path.exists() || cfg!(unix) {
-        return fs::rename(&temporary, path).map_err(|error| format!("cannot publish the update feed atomically: {error}"));
+        return fs::rename(&temporary, path)
+            .map_err(|error| format!("cannot publish the update feed atomically: {error}"));
     }
     // Windows does not rename over an existing file.
     let backup = parent.join(format!(".pam-feed-backup-{}", hex(&entropy)));
-    fs::rename(path, &backup).map_err(|error| format!("cannot stage the existing update feed: {error}"))?;
+    fs::rename(path, &backup)
+        .map_err(|error| format!("cannot stage the existing update feed: {error}"))?;
     if let Err(error) = fs::rename(&temporary, path) {
         return Err(match fs::rename(&backup, path) {
             Ok(()) => format!("cannot publish the update feed; rollback succeeded: {error}"),
-            Err(rollback) => format!("cannot publish the update feed ({error}) and rollback failed ({rollback})"),
+            Err(rollback) => {
+                format!("cannot publish the update feed ({error}) and rollback failed ({rollback})")
+            }
         });
     }
-    fs::remove_file(&backup).map_err(|error| format!("feed published but the old copy could not be removed: {error}"))
+    fs::remove_file(&backup)
+        .map_err(|error| format!("feed published but the old copy could not be removed: {error}"))
 }
 
 // ---- applying an update ---------------------------------------------------
@@ -975,13 +1218,23 @@ impl ApplyOptions {
         let mut values = HashMap::<String, OsString>::new();
         let mut arguments = arguments.into_iter();
         while let Some(argument) = arguments.next() {
-            let key = argument.to_str().filter(|value| value.starts_with("--")).ok_or("invalid apply-update option")?.to_owned();
-            let value = arguments.next().ok_or_else(|| format!("{key} requires a value"))?;
+            let key = argument
+                .to_str()
+                .filter(|value| value.starts_with("--"))
+                .ok_or("invalid apply-update option")?
+                .to_owned();
+            let value = arguments
+                .next()
+                .ok_or_else(|| format!("{key} requires a value"))?;
             if values.insert(key.clone(), value).is_some() {
                 return Err(format!("{key} may only be specified once"));
             }
         }
-        let mut take = |key: &str| values.remove(key).ok_or_else(|| format!("{key} is required"));
+        let mut take = |key: &str| {
+            values
+                .remove(key)
+                .ok_or_else(|| format!("{key} is required"))
+        };
         let parent_pid = take("--parent")?
             .to_str()
             .and_then(|value| value.parse::<u32>().ok())
@@ -998,7 +1251,13 @@ impl ApplyOptions {
         if let Some(unknown) = values.keys().next() {
             return Err(format!("unknown apply-update option {unknown}"));
         }
-        Ok(Self { parent_pid, bundle, archive, sha256, launcher })
+        Ok(Self {
+            parent_pid,
+            bundle,
+            archive,
+            sha256,
+            launcher,
+        })
     }
 }
 
@@ -1011,21 +1270,33 @@ impl ApplyOptions {
 /// extraction, bundle verification or the swap fails; a failed swap is
 /// rolled back.
 pub fn apply(options: ApplyOptions) -> Result<(), String> {
-    let ApplyOptions { parent_pid, bundle: configured_bundle, archive: configured_archive, sha256, launcher } = options;
+    let ApplyOptions {
+        parent_pid,
+        bundle: configured_bundle,
+        archive: configured_archive,
+        sha256,
+        launcher,
+    } = options;
     let bundle = resolve_bundle_target(&configured_bundle)?;
-    let archive = configured_archive.canonicalize().map_err(|error| format!("cannot resolve the staged update archive: {error}"))?;
+    let archive = configured_archive
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve the staged update archive: {error}"))?;
     verify_file_hash(&archive, &sha256)?;
     wait_for_parent(parent_pid)?;
     if reconcile_interrupted_update(&bundle, &sha256)? == RecoveryOutcome::AlreadyInstalled {
         cleanup_update_stage(&archive)?;
         return relaunch(&bundle, launcher.as_deref());
     }
-    let stage = archive.parent().ok_or("the staged update archive has no parent")?;
+    let stage = archive
+        .parent()
+        .ok_or("the staged update archive has no parent")?;
     let expanded = stage.join("expanded");
     if expanded.exists() {
-        fs::remove_dir_all(&expanded).map_err(|error| format!("cannot reset the update extraction directory: {error}"))?;
+        fs::remove_dir_all(&expanded)
+            .map_err(|error| format!("cannot reset the update extraction directory: {error}"))?;
     }
-    fs::create_dir(&expanded).map_err(|error| format!("cannot create the update extraction directory: {error}"))?;
+    fs::create_dir(&expanded)
+        .map_err(|error| format!("cannot create the update extraction directory: {error}"))?;
     extract_archive(&archive, &expanded)?;
     let replacement = single_extracted_root(&expanded)?;
     let replacing = verify_replacement(&replacement)?;
@@ -1047,7 +1318,9 @@ pub fn apply(options: ApplyOptions) -> Result<(), String> {
     write_update_transaction(&transaction, &sha256)?;
     if let Err(error) = rename_when_released(&bundle, &backup) {
         let _ = fs::remove_file(&transaction);
-        return Err(format!("cannot move the installed bundle to backup: {error}"));
+        return Err(format!(
+            "cannot move the installed bundle to backup: {error}"
+        ));
     }
     if let Err(error) = fs::rename(&replacement, &bundle) {
         return Err(match fs::rename(&backup, &bundle) {
@@ -1055,7 +1328,9 @@ pub fn apply(options: ApplyOptions) -> Result<(), String> {
                 let _ = fs::remove_file(&transaction);
                 format!("cannot install the replacement bundle; rollback succeeded: {error}")
             }
-            Err(rollback) => format!("cannot install the replacement bundle ({error}) and rollback failed ({rollback})"),
+            Err(rollback) => format!(
+                "cannot install the replacement bundle ({error}) and rollback failed ({rollback})"
+            ),
         });
     }
     verify_replacement(&bundle).map_err(|error| {
@@ -1065,10 +1340,14 @@ pub fn apply(options: ApplyOptions) -> Result<(), String> {
                 let _ = fs::remove_file(&transaction);
                 format!("installed bundle verification failed; rollback succeeded: {error}")
             }
-            Err(rollback) => format!("installed bundle verification failed ({error}) and rollback failed ({rollback})"),
+            Err(rollback) => format!(
+                "installed bundle verification failed ({error}) and rollback failed ({rollback})"
+            ),
         }
     })?;
-    fs::remove_file(&transaction).map_err(|error| format!("update installed but the transaction could not be removed: {error}"))?;
+    fs::remove_file(&transaction).map_err(|error| {
+        format!("update installed but the transaction could not be removed: {error}")
+    })?;
     cleanup_update_stage(&archive)?;
     relaunch(&bundle, launcher.as_deref())
 }
@@ -1081,7 +1360,11 @@ fn rename_when_released(from: &Path, to: &Path) -> std::io::Result<()> {
     loop {
         match fs::rename(from, to) {
             Ok(()) => return Ok(()),
-            Err(error) if attempt + 1 < SWAP_ATTEMPTS && error.kind() == std::io::ErrorKind::PermissionDenied && cfg!(windows) => {
+            Err(error)
+                if attempt + 1 < SWAP_ATTEMPTS
+                    && error.kind() == std::io::ErrorKind::PermissionDenied
+                    && cfg!(windows) =>
+            {
                 attempt += 1;
                 std::thread::sleep(Duration::from_millis(250));
             }
@@ -1099,7 +1382,10 @@ fn resolve_bundle_target(configured: &Path) -> Result<PathBuf, String> {
         .ok_or("the installed bundle has no parent")?
         .canonicalize()
         .map_err(|error| format!("cannot resolve the parent of the installed bundle: {error}"))?;
-    let name = configured.file_name().filter(|name| !name.is_empty()).ok_or("the installed bundle has no file name")?;
+    let name = configured
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .ok_or("the installed bundle has no file name")?;
     let bundle = parent.join(name);
     if let Ok(metadata) = bundle.symlink_metadata()
         && (metadata.file_type().is_symlink() || !metadata.is_dir())
@@ -1111,8 +1397,13 @@ fn resolve_bundle_target(configured: &Path) -> Result<PathBuf, String> {
 
 /// The backup, quarantine and journal paths beside a bundle.
 fn transaction_paths(bundle: &Path) -> Result<(PathBuf, PathBuf, PathBuf), String> {
-    let parent = bundle.parent().ok_or("the installed bundle has no parent")?;
-    let name = bundle.file_name().ok_or("the installed bundle has no file name")?.to_string_lossy();
+    let parent = bundle
+        .parent()
+        .ok_or("the installed bundle has no parent")?;
+    let name = bundle
+        .file_name()
+        .ok_or("the installed bundle has no file name")?
+        .to_string_lossy();
     Ok((
         parent.join(format!(".{name}.previous")),
         parent.join(format!(".{name}.failed")),
@@ -1121,11 +1412,17 @@ fn transaction_paths(bundle: &Path) -> Result<(PathBuf, PathBuf, PathBuf), Strin
 }
 
 fn write_update_transaction(path: &Path, sha256: &str) -> Result<(), String> {
-    let transaction = UpdateTransaction { schema_version: 1, archive_sha256: sha256.to_owned() };
-    let bytes = serde_json::to_vec(&transaction).map_err(|error| format!("cannot encode the update transaction: {error}"))?;
+    let transaction = UpdateTransaction {
+        schema_version: 1,
+        archive_sha256: sha256.to_owned(),
+    };
+    let bytes = serde_json::to_vec(&transaction)
+        .map_err(|error| format!("cannot encode the update transaction: {error}"))?;
     let temporary = path.with_extension(format!("json.tmp.{}", std::process::id()));
     if temporary.exists() {
-        fs::remove_file(&temporary).map_err(|error| format!("cannot reset the update transaction staging file: {error}"))?;
+        fs::remove_file(&temporary).map_err(|error| {
+            format!("cannot reset the update transaction staging file: {error}")
+        })?;
     }
     let result = (|| {
         let mut output = fs::OpenOptions::new()
@@ -1133,8 +1430,12 @@ fn write_update_transaction(path: &Path, sha256: &str) -> Result<(), String> {
             .create_new(true)
             .open(&temporary)
             .map_err(|error| format!("cannot create the update transaction: {error}"))?;
-        output.write_all(&bytes).and_then(|()| output.sync_all()).map_err(|error| format!("cannot persist the update transaction: {error}"))?;
-        fs::rename(&temporary, path).map_err(|error| format!("cannot publish the update transaction: {error}"))
+        output
+            .write_all(&bytes)
+            .and_then(|()| output.sync_all())
+            .map_err(|error| format!("cannot persist the update transaction: {error}"))?;
+        fs::rename(&temporary, path)
+            .map_err(|error| format!("cannot publish the update transaction: {error}"))
     })();
     let _ = fs::remove_file(&temporary);
     result
@@ -1147,11 +1448,16 @@ fn read_update_transaction(path: &Path, expected_sha256: &str) -> Result<bool, S
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(format!("cannot inspect the update transaction: {error}")),
     };
-    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > MAX_TRANSACTION_BYTES {
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > MAX_TRANSACTION_BYTES
+    {
         return Err("the update transaction is not a bounded regular file".to_owned());
     }
-    let bytes = fs::read(path).map_err(|error| format!("cannot read the update transaction: {error}"))?;
-    let transaction: UpdateTransaction = serde_json::from_slice(&bytes).map_err(|error| format!("cannot decode the update transaction: {error}"))?;
+    let bytes =
+        fs::read(path).map_err(|error| format!("cannot read the update transaction: {error}"))?;
+    let transaction: UpdateTransaction = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("cannot decode the update transaction: {error}"))?;
     if transaction.schema_version != 1 || transaction.archive_sha256 != expected_sha256 {
         return Err("the update transaction does not match the staged archive".to_owned());
     }
@@ -1160,15 +1466,23 @@ fn read_update_transaction(path: &Path, expected_sha256: &str) -> Result<bool, S
 
 /// Brings the file system back to a known state after a helper that stopped
 /// in the middle of a swap, instead of repeating the swap blindly.
-fn reconcile_interrupted_update(bundle: &Path, expected_sha256: &str) -> Result<RecoveryOutcome, String> {
+fn reconcile_interrupted_update(
+    bundle: &Path,
+    expected_sha256: &str,
+) -> Result<RecoveryOutcome, String> {
     let (backup, failed, transaction) = transaction_paths(bundle)?;
     if !read_update_transaction(&transaction, expected_sha256)? {
         if !bundle.is_dir() {
-            return Err("the installed bundle is missing and no recovery transaction exists".to_owned());
+            return Err(
+                "the installed bundle is missing and no recovery transaction exists".to_owned(),
+            );
         }
         return Ok(RecoveryOutcome::Ready);
     }
-    let finish = |label: &str| fs::remove_file(&transaction).map_err(|error| format!("cannot finish the {label} transaction: {error}"));
+    let finish = |label: &str| {
+        fs::remove_file(&transaction)
+            .map_err(|error| format!("cannot finish the {label} transaction: {error}"))
+    };
     let bundle_exists = scoped_directory_exists(bundle, "installed bundle")?;
     let backup_exists = scoped_directory_exists(&backup, "update recovery backup")?;
     match (bundle_exists, backup_exists) {
@@ -1202,7 +1516,9 @@ fn reconcile_interrupted_update(bundle: &Path, expected_sha256: &str) -> Result<
 }
 
 fn remove_scoped_directory(path: &Path, label: &str) -> Result<(), String> {
-    let metadata = path.symlink_metadata().map_err(|error| format!("cannot inspect the {label}: {error}"))?;
+    let metadata = path
+        .symlink_metadata()
+        .map_err(|error| format!("cannot inspect the {label}: {error}"))?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err(format!("the {label} must be a regular directory"));
     }
@@ -1219,13 +1535,16 @@ fn scoped_directory_exists(path: &Path, label: &str) -> Result<bool, String> {
 }
 
 fn cleanup_update_stage(archive: &Path) -> Result<(), String> {
-    let stage = archive.parent().ok_or("the staged update archive has no parent")?;
+    let stage = archive
+        .parent()
+        .ok_or("the staged update archive has no parent")?;
     let expanded = stage.join("expanded");
     if expanded.exists() {
         remove_scoped_directory(&expanded, "update extraction directory")?;
     }
     if archive.exists() {
-        fs::remove_file(archive).map_err(|error| format!("cannot remove the installed update archive: {error}"))?;
+        fs::remove_file(archive)
+            .map_err(|error| format!("cannot remove the installed update archive: {error}"))?;
     }
     Ok(())
 }
@@ -1239,7 +1558,9 @@ fn relaunch(bundle: &Path, launcher: Option<&Path>) -> Result<(), String> {
         .current_dir(bundle)
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("update installed but the application could not be started again: {error}"))
+        .map_err(|error| {
+            format!("update installed but the application could not be started again: {error}")
+        })
 }
 
 /// Verifies a bundle directory, or on macOS the signature of an `.app` and
@@ -1247,7 +1568,9 @@ fn relaunch(bundle: &Path, launcher: Option<&Path>) -> Result<(), String> {
 fn verify_replacement(root: &Path) -> Result<bundle::BundleManifest, String> {
     if root.extension() == Some(OsStr::new("app")) {
         if !cfg!(target_os = "macos") {
-            return Err("macOS application updates cannot be installed on this platform".to_owned());
+            return Err(
+                "macOS application updates cannot be installed on this platform".to_owned(),
+            );
         }
         let status = Command::new("codesign")
             .args(["--verify", "--deep", "--strict"])
@@ -1255,7 +1578,9 @@ fn verify_replacement(root: &Path) -> Result<bundle::BundleManifest, String> {
             .status()
             .map_err(|error| format!("cannot start the macOS signature verification: {error}"))?;
         if !status.success() {
-            return Err(format!("macOS application signature verification failed with status {status}"));
+            return Err(format!(
+                "macOS application signature verification failed with status {status}"
+            ));
         }
     }
     bundle::verify(&Installed::runtime_directory(root))
@@ -1292,12 +1617,28 @@ fn process_exists(pid: u32) -> Result<bool, String> {
 
 fn extract_archive(archive: &Path, destination: &Path) -> Result<(), String> {
     let status = if cfg!(target_os = "linux") {
-        Command::new("tar").arg("-xzf").arg(archive).arg("-C").arg(destination).args(["--no-same-owner", "--no-same-permissions"]).status()
+        Command::new("tar")
+            .arg("-xzf")
+            .arg(archive)
+            .arg("-C")
+            .arg(destination)
+            .args(["--no-same-owner", "--no-same-permissions"])
+            .status()
     } else if cfg!(target_os = "macos") {
-        Command::new("ditto").args(["-x", "-k"]).arg(archive).arg(destination).status()
+        Command::new("ditto")
+            .args(["-x", "-k"])
+            .arg(archive)
+            .arg(destination)
+            .status()
     } else if cfg!(windows) {
         crate::console::hidden(&mut Command::new("powershell.exe"))
-            .args(["-NoProfile", "-NonInteractive", "-Command", "Expand-Archive", "-LiteralPath"])
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Expand-Archive",
+                "-LiteralPath",
+            ])
             .arg(archive)
             .arg("-DestinationPath")
             .arg(destination)
@@ -1308,7 +1649,9 @@ fn extract_archive(archive: &Path, destination: &Path) -> Result<(), String> {
     }
     .map_err(|error| format!("cannot start the portable archive extraction: {error}"))?;
     if !status.success() {
-        return Err(format!("portable archive extraction failed with status {status}"));
+        return Err(format!(
+            "portable archive extraction failed with status {status}"
+        ));
     }
     Ok(())
 }
@@ -1320,7 +1663,11 @@ fn single_extracted_root(directory: &Path) -> Result<PathBuf, String> {
     let (Some(entry), true) = (entries.pop(), entries.is_empty()) else {
         return Err("a portable update must contain exactly one bundle directory".to_owned());
     };
-    if !entry.file_type().map_err(|error| format!("cannot inspect the extracted update root: {error}"))?.is_dir() {
+    if !entry
+        .file_type()
+        .map_err(|error| format!("cannot inspect the extracted update root: {error}"))?
+        .is_dir()
+    {
         return Err("the root of a portable update must be a directory".to_owned());
     }
     Ok(entry.path())
@@ -1355,7 +1702,9 @@ mod tests {
     }
 
     fn sign(signing_key: &SigningKey, release: Release) -> SignedRelease {
-        let signature = hex(&signing_key.sign(&release.signed_payload().unwrap()).to_bytes());
+        let signature = hex(&signing_key
+            .sign(&release.signed_payload().unwrap())
+            .to_bytes());
         SignedRelease { release, signature }
     }
 
@@ -1386,13 +1735,30 @@ mod tests {
         }
     }
 
-    fn updater(endpoint: String, public_key: String, policy: UpdatePolicy, installed: Option<Installed>) -> (Updater, Arc<Mutex<Vec<Snapshot>>>) {
+    fn updater(
+        endpoint: String,
+        public_key: String,
+        policy: UpdatePolicy,
+        installed: Option<Installed>,
+    ) -> (Updater, Arc<Mutex<Vec<Snapshot>>>) {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
-        let config = UpdateConfig { endpoint, public_key, channel: "stable".to_owned(), policy };
-        let updater = Updater::new(APPLICATION, "0.5.0", Some(config), installed, Arc::new(UreqClient::new()), move |snapshot| {
-            sink.lock().unwrap().push(snapshot.clone());
-        });
+        let config = UpdateConfig {
+            endpoint,
+            public_key,
+            channel: "stable".to_owned(),
+            policy,
+        };
+        let updater = Updater::new(
+            APPLICATION,
+            "0.5.0",
+            Some(config),
+            installed,
+            Arc::new(UreqClient::new()),
+            move |snapshot| {
+                sink.lock().unwrap().push(snapshot.clone());
+            },
+        );
         (updater, seen)
     }
 
@@ -1410,7 +1776,14 @@ mod tests {
     #[test]
     fn verifies_canonical_ed25519_release_payloads() {
         let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
-        let feed = sign(&signing_key, release("0.5.1", "https://updates.pushin.dev/test.tar.gz", b"artifact"));
+        let feed = sign(
+            &signing_key,
+            release(
+                "0.5.1",
+                "https://updates.pushin.dev/test.tar.gz",
+                b"artifact",
+            ),
+        );
         verify_signed_feed(&feed, &public_key(&signing_key)).expect("signature should verify");
         // The feed survives a round trip through its JSON document.
         let document = serde_json::to_string_pretty(&feed).unwrap();
@@ -1419,20 +1792,42 @@ mod tests {
         verify_signed_feed(&parsed, &public_key(&signing_key)).expect("parsed feed should verify");
         // Platforms and kinds travel as the integers 1.x feeds use.
         assert!(document.contains("\"schemaVersion\": 1"));
-        assert!(document.contains(&format!("\"platform\": {}", Platform::current().unwrap() as u8)));
+        assert!(document.contains(&format!(
+            "\"platform\": {}",
+            Platform::current().unwrap() as u8
+        )));
         assert!(document.contains("\"kind\": 1"));
     }
 
     #[test]
     fn rejects_tampered_and_foreign_release_payloads() {
         let signing_key = SigningKey::from_bytes(&[9_u8; 32]);
-        let mut feed = sign(&signing_key, release("0.5.1", "https://updates.pushin.dev/test.tar.gz", b"artifact"));
+        let mut feed = sign(
+            &signing_key,
+            release(
+                "0.5.1",
+                "https://updates.pushin.dev/test.tar.gz",
+                b"artifact",
+            ),
+        );
         let other_key = public_key(&SigningKey::from_bytes(&[10_u8; 32]));
-        assert!(verify_signed_feed(&feed, &other_key).unwrap_err().contains("did not verify"));
+        assert!(
+            verify_signed_feed(&feed, &other_key)
+                .unwrap_err()
+                .contains("did not verify")
+        );
         feed.release.version = "9.9.9".to_owned();
-        assert!(verify_signed_feed(&feed, &public_key(&signing_key)).unwrap_err().contains("did not verify"));
+        assert!(
+            verify_signed_feed(&feed, &public_key(&signing_key))
+                .unwrap_err()
+                .contains("did not verify")
+        );
 
-        let mut insecure = release("0.5.1", "http://updates.pushin.dev/test.tar.gz", b"artifact");
+        let mut insecure = release(
+            "0.5.1",
+            "http://updates.pushin.dev/test.tar.gz",
+            b"artifact",
+        );
         assert!(insecure.validate().is_err());
         insecure.artifacts[0].url = "https://updates.pushin.dev/test.tar.gz".to_owned();
         insecure.artifacts.push(insecure.artifacts[0].clone());
@@ -1448,11 +1843,18 @@ mod tests {
         let root = temporary_directory("update-publish");
         let private_key = root.join("release.key");
         let public = generate_key(&private_key).expect("key should be generated");
-        assert!(generate_key(&private_key).unwrap_err().contains("already exists"));
+        assert!(
+            generate_key(&private_key)
+                .unwrap_err()
+                .contains("already exists")
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            assert_eq!(fs::metadata(&private_key).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(
+                fs::metadata(&private_key).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
         }
         let linux = root.join("application.tar.gz");
         let windows = root.join("application.zip");
@@ -1470,14 +1872,25 @@ mod tests {
                 "--notes-url".into(),
                 "https://updates.pushin.dev/releases/0.5.0".into(),
                 "--artifact".into(),
-                OsString::from(format!("linux,x86_64,portable,{},https://updates.pushin.dev/application.tar.gz", linux.display())),
+                OsString::from(format!(
+                    "linux,x86_64,portable,{},https://updates.pushin.dev/application.tar.gz",
+                    linux.display()
+                )),
                 "--artifact".into(),
-                OsString::from(format!("windows,x86_64,portable,{},https://updates.pushin.dev/application.zip", windows.display())),
+                OsString::from(format!(
+                    "windows,x86_64,portable,{},https://updates.pushin.dev/application.zip",
+                    windows.display()
+                )),
             ]
         };
         let manifest = application("0.5.0", Some(public.clone()));
-        publish_feed(&manifest, PublishOptions::parse(arguments(&output)).unwrap()).expect("feed should be published");
-        let feed: SignedRelease = serde_json::from_slice(&fs::read(&output).unwrap()).expect("feed should be valid JSON");
+        publish_feed(
+            &manifest,
+            PublishOptions::parse(arguments(&output)).unwrap(),
+        )
+        .expect("feed should be published");
+        let feed: SignedRelease =
+            serde_json::from_slice(&fs::read(&output).unwrap()).expect("feed should be valid JSON");
         verify_signed_feed(&feed, &public).expect("published feed should verify");
         assert_eq!(feed.release.application_id, APPLICATION);
         assert_eq!(feed.release.version, "0.5.0");
@@ -1485,22 +1898,41 @@ mod tests {
         assert_eq!(feed.release.artifacts.len(), 2);
         assert_eq!(feed.release.artifacts[0].platform, Platform::Linux);
         assert_eq!(feed.release.artifacts[0].bytes, 14);
-        assert_eq!(feed.release.artifacts[0].sha256, hex(&Sha256::digest(b"linux artifact")));
+        assert_eq!(
+            feed.release.artifacts[0].sha256,
+            hex(&Sha256::digest(b"linux artifact"))
+        );
         assert_eq!(feed.release.artifacts[1].platform, Platform::Windows);
 
         // An existing feed needs --force; a foreign key is refused.
-        assert!(publish_feed(&manifest, PublishOptions::parse(arguments(&output)).unwrap()).unwrap_err().contains("--force"));
+        assert!(
+            publish_feed(
+                &manifest,
+                PublishOptions::parse(arguments(&output)).unwrap()
+            )
+            .unwrap_err()
+            .contains("--force")
+        );
         let mut forced: Vec<OsString> = arguments(&output).into();
         forced.push("--force".into());
-        publish_feed(&manifest, PublishOptions::parse(forced).unwrap()).expect("forced publication");
+        publish_feed(&manifest, PublishOptions::parse(forced).unwrap())
+            .expect("forced publication");
         let foreign = application("0.5.0", Some("ab".repeat(32)));
-        let error = publish_feed(&foreign, PublishOptions::parse(arguments(&root.join("other.json"))).unwrap()).unwrap_err();
+        let error = publish_feed(
+            &foreign,
+            PublishOptions::parse(arguments(&root.join("other.json"))).unwrap(),
+        )
+        .unwrap_err();
         assert!(error.contains("does not match"));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&private_key, fs::Permissions::from_mode(0o644)).unwrap();
-            let error = publish_feed(&manifest, PublishOptions::parse(arguments(&root.join("other.json"))).unwrap()).unwrap_err();
+            let error = publish_feed(
+                &manifest,
+                PublishOptions::parse(arguments(&root.join("other.json"))).unwrap(),
+            )
+            .unwrap_err();
             assert!(error.contains("too broad"));
         }
         let _ = fs::remove_dir_all(&root);
@@ -1508,13 +1940,45 @@ mod tests {
 
     #[test]
     fn publish_options_require_their_fields() {
-        let parse = |arguments: &[&str]| PublishOptions::parse(arguments.iter().map(OsString::from)).err();
-        assert!(parse(&["--key", "k", "--output", "o", "--published-at", "t"]).unwrap().contains("--artifact"));
-        assert!(parse(&["--output", "o", "--published-at", "t", "--artifact", "linux,x86_64,portable,a,b"]).unwrap().contains("--key"));
-        assert!(parse(&["--key", "k", "--key", "k"]).unwrap().contains("once"));
-        assert!(parse(&["--artifact", "plan9,x86_64,portable,a,b"]).unwrap().contains("platform"));
-        assert!(parse(&["--artifact", "linux,x86_64,floppy,a,b"]).unwrap().contains("kind"));
-        assert!(parse(&["--artifact", "linux,x86_64,portable,a"]).unwrap().contains("tuple"));
+        let parse =
+            |arguments: &[&str]| PublishOptions::parse(arguments.iter().map(OsString::from)).err();
+        assert!(
+            parse(&["--key", "k", "--output", "o", "--published-at", "t"])
+                .unwrap()
+                .contains("--artifact")
+        );
+        assert!(
+            parse(&[
+                "--output",
+                "o",
+                "--published-at",
+                "t",
+                "--artifact",
+                "linux,x86_64,portable,a,b"
+            ])
+            .unwrap()
+            .contains("--key")
+        );
+        assert!(
+            parse(&["--key", "k", "--key", "k"])
+                .unwrap()
+                .contains("once")
+        );
+        assert!(
+            parse(&["--artifact", "plan9,x86_64,portable,a,b"])
+                .unwrap()
+                .contains("platform")
+        );
+        assert!(
+            parse(&["--artifact", "linux,x86_64,floppy,a,b"])
+                .unwrap()
+                .contains("kind")
+        );
+        assert!(
+            parse(&["--artifact", "linux,x86_64,portable,a"])
+                .unwrap()
+                .contains("tuple")
+        );
         assert!(parse(&["--verbose"]).unwrap().contains("unknown"));
     }
 
@@ -1522,17 +1986,77 @@ mod tests {
     fn apply_options_are_strict() {
         let parse = |arguments: &[&str]| ApplyOptions::parse(arguments.iter().map(OsString::from));
         let digest = "c".repeat(64);
-        let options = parse(&["--parent", "42", "--bundle", "/opt/app", "--archive", "/tmp/a", "--sha256", &digest, "--launcher", "bin/app"]).unwrap();
-        assert_eq!((options.parent_pid, options.launcher.as_deref()), (42, Some(Path::new("bin/app"))));
-        assert!(parse(&["--parent", "0", "--bundle", "/b", "--archive", "/a", "--sha256", &digest]).is_err());
-        assert!(parse(&["--parent", "1", "--bundle", "/b", "--archive", "/a", "--sha256", "ABC"]).is_err());
+        let options = parse(&[
+            "--parent",
+            "42",
+            "--bundle",
+            "/opt/app",
+            "--archive",
+            "/tmp/a",
+            "--sha256",
+            &digest,
+            "--launcher",
+            "bin/app",
+        ])
+        .unwrap();
+        assert_eq!(
+            (options.parent_pid, options.launcher.as_deref()),
+            (42, Some(Path::new("bin/app")))
+        );
+        assert!(
+            parse(&[
+                "--parent",
+                "0",
+                "--bundle",
+                "/b",
+                "--archive",
+                "/a",
+                "--sha256",
+                &digest
+            ])
+            .is_err()
+        );
+        assert!(
+            parse(&[
+                "--parent",
+                "1",
+                "--bundle",
+                "/b",
+                "--archive",
+                "/a",
+                "--sha256",
+                "ABC"
+            ])
+            .is_err()
+        );
         assert!(parse(&["--parent", "1", "--bundle", "/b", "--archive", "/a"]).is_err());
-        assert!(parse(&["--parent", "1", "--bundle", "/b", "--archive", "/a", "--sha256", &digest, "--extra", "x"]).is_err());
+        assert!(
+            parse(&[
+                "--parent",
+                "1",
+                "--bundle",
+                "/b",
+                "--archive",
+                "/a",
+                "--sha256",
+                &digest,
+                "--extra",
+                "x"
+            ])
+            .is_err()
+        );
     }
 
     #[cfg(target_os = "linux")]
     fn archive_of(staged_root: &Path, name: &str, archive: &Path) -> String {
-        let status = Command::new("tar").arg("-czf").arg(archive).arg("-C").arg(staged_root).arg(name).status().expect("tar should start");
+        let status = Command::new("tar")
+            .arg("-czf")
+            .arg(archive)
+            .arg("-C")
+            .arg(staged_root)
+            .arg(name)
+            .status()
+            .expect("tar should start");
         assert!(status.success());
         hash_file(archive).expect("archive should hash").1
     }
@@ -1545,15 +2069,33 @@ mod tests {
         let staged_root = root.join("staged");
         fs::create_dir(&staged_root).unwrap();
         write_bundle(&installed, APPLICATION, "0.5.0", b"old");
-        write_bundle(&staged_root.join("application-0.5.1-linux-x86_64"), APPLICATION, "0.5.1", b"new");
+        write_bundle(
+            &staged_root.join("application-0.5.1-linux-x86_64"),
+            APPLICATION,
+            "0.5.1",
+            b"new",
+        );
         let archive = root.join("update.tar.gz");
         let sha256 = archive_of(&staged_root, "application-0.5.1-linux-x86_64", &archive);
 
-        apply(ApplyOptions { parent_pid: u32::MAX, bundle: installed.clone(), archive, sha256, launcher: None }).expect("verified update should apply");
+        apply(ApplyOptions {
+            parent_pid: u32::MAX,
+            bundle: installed.clone(),
+            archive,
+            sha256,
+            launcher: None,
+        })
+        .expect("verified update should apply");
 
         assert_eq!(fs::read(installed.join("app/payload.txt")).unwrap(), b"new");
-        assert_eq!(bundle::verify(&installed).unwrap().application.version, "0.5.1");
-        assert_eq!(fs::read(root.join(".application.previous/app/payload.txt")).unwrap(), b"old");
+        assert_eq!(
+            bundle::verify(&installed).unwrap().application.version,
+            "0.5.1"
+        );
+        assert_eq!(
+            fs::read(root.join(".application.previous/app/payload.txt")).unwrap(),
+            b"old"
+        );
         assert!(!root.join("update.tar.gz").exists());
         assert!(!root.join("expanded").exists());
         assert!(!root.join(".application.update-transaction.json").exists());
@@ -1574,10 +2116,21 @@ mod tests {
             fs::create_dir_all(&stage).unwrap();
             let archive = stage.join("update.tar.gz");
             let actual = archive_of(&staged_root, "replacement", &archive);
-            apply(ApplyOptions { parent_pid: u32::MAX, bundle: installed.clone(), archive, sha256: sha256.unwrap_or(actual), launcher: None })
+            apply(ApplyOptions {
+                parent_pid: u32::MAX,
+                bundle: installed.clone(),
+                archive,
+                sha256: sha256.unwrap_or(actual),
+                launcher: None,
+            })
         };
 
-        let error = apply_archive("digest", &|path| write_bundle(path, APPLICATION, "0.5.1", b"new"), Some("d".repeat(64))).unwrap_err();
+        let error = apply_archive(
+            "digest",
+            &|path| write_bundle(path, APPLICATION, "0.5.1", b"new"),
+            Some("d".repeat(64)),
+        )
+        .unwrap_err();
         assert!(error.contains("SHA-256 mismatch"), "{error}");
         let error = apply_archive(
             "tampered",
@@ -1589,7 +2142,12 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("mismatch"), "{error}");
-        let error = apply_archive("foreign", &|path| write_bundle(path, "com.pushin.other", "0.5.1", b"new"), None).unwrap_err();
+        let error = apply_archive(
+            "foreign",
+            &|path| write_bundle(path, "com.pushin.other", "0.5.1", b"new"),
+            None,
+        )
+        .unwrap_err();
         assert!(error.contains("different application"), "{error}");
 
         // Nothing was swapped, journaled or left behind as a backup.
@@ -1609,29 +2167,49 @@ mod tests {
         let (missing_backup, _, missing_transaction) = transaction_paths(&missing_bundle).unwrap();
         write_update_transaction(&missing_transaction, &digest).unwrap();
         fs::rename(&missing_bundle, &missing_backup).unwrap();
-        assert_eq!(reconcile_interrupted_update(&missing_bundle, &digest), Ok(RecoveryOutcome::Ready));
-        assert_eq!(fs::read(missing_bundle.join("app/payload.txt")).unwrap(), b"old");
+        assert_eq!(
+            reconcile_interrupted_update(&missing_bundle, &digest),
+            Ok(RecoveryOutcome::Ready)
+        );
+        assert_eq!(
+            fs::read(missing_bundle.join("app/payload.txt")).unwrap(),
+            b"old"
+        );
         assert!(!missing_transaction.exists());
 
         let installed_root = temporary_directory("update-recover-installed");
         let installed_bundle = installed_root.join("application");
         write_bundle(&installed_bundle, APPLICATION, "0.5.1", b"new");
-        let (installed_backup, _, installed_transaction) = transaction_paths(&installed_bundle).unwrap();
+        let (installed_backup, _, installed_transaction) =
+            transaction_paths(&installed_bundle).unwrap();
         write_bundle(&installed_backup, APPLICATION, "0.5.0", b"old");
         write_update_transaction(&installed_transaction, &digest).unwrap();
-        assert_eq!(reconcile_interrupted_update(&installed_bundle, &digest), Ok(RecoveryOutcome::AlreadyInstalled));
-        assert_eq!(fs::read(installed_backup.join("app/payload.txt")).unwrap(), b"old");
+        assert_eq!(
+            reconcile_interrupted_update(&installed_bundle, &digest),
+            Ok(RecoveryOutcome::AlreadyInstalled)
+        );
+        assert_eq!(
+            fs::read(installed_backup.join("app/payload.txt")).unwrap(),
+            b"old"
+        );
         assert!(!installed_transaction.exists());
 
         let invalid_root = temporary_directory("update-recover-invalid");
         let invalid_bundle = invalid_root.join("application");
         write_bundle(&invalid_bundle, APPLICATION, "0.5.1", b"tampered");
         fs::write(invalid_bundle.join("app/payload.txt"), b"invalid").unwrap();
-        let (invalid_backup, invalid_failed, invalid_transaction) = transaction_paths(&invalid_bundle).unwrap();
+        let (invalid_backup, invalid_failed, invalid_transaction) =
+            transaction_paths(&invalid_bundle).unwrap();
         write_bundle(&invalid_backup, APPLICATION, "0.5.0", b"old");
         write_update_transaction(&invalid_transaction, &digest).unwrap();
-        assert_eq!(reconcile_interrupted_update(&invalid_bundle, &digest), Ok(RecoveryOutcome::Ready));
-        assert_eq!(fs::read(invalid_bundle.join("app/payload.txt")).unwrap(), b"old");
+        assert_eq!(
+            reconcile_interrupted_update(&invalid_bundle, &digest),
+            Ok(RecoveryOutcome::Ready)
+        );
+        assert_eq!(
+            fs::read(invalid_bundle.join("app/payload.txt")).unwrap(),
+            b"old"
+        );
         assert!(invalid_failed.is_dir());
         assert!(!invalid_transaction.exists());
 
@@ -1639,7 +2217,11 @@ mod tests {
         let gone_bundle = gone_root.join("application");
         let (_, _, gone_transaction) = transaction_paths(&gone_bundle).unwrap();
         write_update_transaction(&gone_transaction, &digest).unwrap();
-        assert!(reconcile_interrupted_update(&gone_bundle, &digest).unwrap_err().contains("both missing"));
+        assert!(
+            reconcile_interrupted_update(&gone_bundle, &digest)
+                .unwrap_err()
+                .contains("both missing")
+        );
         assert!(gone_transaction.exists());
 
         for root in [missing_root, installed_root, invalid_root, gone_root] {
@@ -1657,16 +2239,27 @@ mod tests {
         assert!(reconcile_interrupted_update(&bundle, &"b".repeat(64)).is_err());
 
         for suffix in ["one", "two", "three"] {
-            fs::create_dir(root.join(format!(".pam-update-com.example.app-1.0.0-{suffix}"))).unwrap();
+            fs::create_dir(root.join(format!(".pam-update-com.example.app-1.0.0-{suffix}")))
+                .unwrap();
         }
         fs::create_dir(root.join(".pam-update-com.example.other-1.0.0-kept")).unwrap();
         let stage = update_stage(&root, "com.example.app", "1.0.1").expect("a new stage");
         assert!(stage.is_dir());
-        let names: Vec<String> =
-            fs::read_dir(&root).unwrap().filter_map(Result::ok).map(|entry| entry.file_name().to_string_lossy().into_owned()).collect();
-        let retained = names.iter().filter(|name| name.starts_with(".pam-update-com.example.app-")).count();
+        let names: Vec<String> = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        let retained = names
+            .iter()
+            .filter(|name| name.starts_with(".pam-update-com.example.app-"))
+            .count();
         assert_eq!(retained, MAX_RETAINED_UPDATE_STAGES + 1);
-        assert!(names.iter().any(|name| name == ".pam-update-com.example.other-1.0.0-kept"));
+        assert!(
+            names
+                .iter()
+                .any(|name| name == ".pam-update-com.example.other-1.0.0-kept")
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -1684,10 +2277,24 @@ mod tests {
             "/files/artifact" => Served::ok(served_artifact.clone()),
             _ => Served::status(404, ""),
         });
-        *feed.lock().unwrap() = serde_json::to_vec(&sign(&signing_key, release("0.5.1", &server.url("/artifact"), &artifact))).unwrap();
-        let (updater, seen) = updater(server.url("/feed"), public_key(&signing_key), UpdatePolicy::Manual, None);
+        *feed.lock().unwrap() = serde_json::to_vec(&sign(
+            &signing_key,
+            release("0.5.1", &server.url("/artifact"), &artifact),
+        ))
+        .unwrap();
+        let (updater, seen) = updater(
+            server.url("/feed"),
+            public_key(&signing_key),
+            UpdatePolicy::Manual,
+            None,
+        );
         assert_eq!(updater.snapshot().status, Status::Idle);
-        assert!(updater.download().unwrap_err().contains("Check for updates first"));
+        assert!(
+            updater
+                .download()
+                .unwrap_err()
+                .contains("Check for updates first")
+        );
 
         let available = updater.check().expect("signed release should be available");
         assert_eq!(available.status, Status::Available);
@@ -1696,15 +2303,29 @@ mod tests {
         let ready = updater.download().expect("artifact should download");
         assert_eq!(ready.status, Status::Ready);
         assert_eq!(ready.downloaded_bytes, artifact.len() as u64);
-        let archive = updater.lock_state().archive.clone().expect("a staged archive");
+        let archive = updater
+            .lock_state()
+            .archive
+            .clone()
+            .expect("a staged archive");
         assert_eq!(fs::read(&archive).unwrap(), artifact);
         // Outside an installed bundle there is nothing to replace.
         assert!(updater.install().unwrap_err().contains("packaged"));
 
-        let statuses: Vec<Status> = seen.lock().unwrap().iter().map(|snapshot| snapshot.status).collect();
+        let statuses: Vec<Status> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|snapshot| snapshot.status)
+            .collect();
         assert_eq!(statuses.first(), Some(&Status::Checking));
-        assert!(statuses.contains(&Status::Available) && statuses.contains(&Status::Downloading) && statuses.contains(&Status::Ready));
-        fs::remove_dir_all(archive.parent().unwrap()).expect("staging directory should be removable");
+        assert!(
+            statuses.contains(&Status::Available)
+                && statuses.contains(&Status::Downloading)
+                && statuses.contains(&Status::Ready)
+        );
+        fs::remove_dir_all(archive.parent().unwrap())
+            .expect("staging directory should be removable");
     }
 
     #[test]
@@ -1720,15 +2341,28 @@ mod tests {
             "/away" => Served::status(302, "").header("Location", "http://example.com/artifact"),
             _ => Served::status(404, ""),
         });
-        let publish = |release: Release, key: &SigningKey| *feed.lock().unwrap() = serde_json::to_vec(&sign(key, release)).unwrap();
-        let (updater, _) = updater(server.url("/feed"), public_key(&signing_key), UpdatePolicy::Notify, None);
+        let publish = |release: Release, key: &SigningKey| {
+            *feed.lock().unwrap() = serde_json::to_vec(&sign(key, release)).unwrap()
+        };
+        let (updater, _) = updater(
+            server.url("/feed"),
+            public_key(&signing_key),
+            UpdatePolicy::Notify,
+            None,
+        );
 
-        publish(release("0.5.0", &server.url("/artifact"), &artifact), &signing_key);
+        publish(
+            release("0.5.0", &server.url("/artifact"), &artifact),
+            &signing_key,
+        );
         assert_eq!(updater.check().unwrap().status, Status::UpToDate);
         // The notify policy checks and never installs.
         assert!(!updater.run_policy());
 
-        publish(release("0.5.1", &server.url("/artifact"), &artifact), &SigningKey::from_bytes(&[13_u8; 32]));
+        publish(
+            release("0.5.1", &server.url("/artifact"), &artifact),
+            &SigningKey::from_bytes(&[13_u8; 32]),
+        );
         assert!(updater.check().unwrap_err().contains("did not verify"));
         let failed = updater.snapshot();
         assert_eq!(failed.status, Status::Failed);
@@ -1737,19 +2371,39 @@ mod tests {
         let mut foreign = release("0.5.1", &server.url("/artifact"), &artifact);
         foreign.application_id = "com.pushin.other".to_owned();
         publish(foreign, &signing_key);
-        assert!(updater.check().unwrap_err().contains("different application"));
+        assert!(
+            updater
+                .check()
+                .unwrap_err()
+                .contains("different application")
+        );
         let mut beta = release("0.5.1", &server.url("/artifact"), &artifact);
         beta.channel = "beta".to_owned();
         publish(beta, &signing_key);
-        assert!(updater.check().unwrap_err().contains("different update channel"));
+        assert!(
+            updater
+                .check()
+                .unwrap_err()
+                .contains("different update channel")
+        );
         let mut elsewhere = release("0.5.1", &server.url("/artifact"), &artifact);
         elsewhere.artifacts[0].architecture = "riscv64".to_owned();
         publish(elsewhere, &signing_key);
-        assert!(updater.check().unwrap_err().contains("no portable artifact"));
+        assert!(
+            updater
+                .check()
+                .unwrap_err()
+                .contains("no portable artifact")
+        );
         *feed.lock().unwrap() = vec![b' '; MAX_FEED_BYTES as usize + 1];
         assert!(updater.check().unwrap_err().contains("larger than one MiB"));
 
-        for (path, message) in [("/short", "unexpected artifact size"), ("/wrong", "does not match"), ("/missing", "answered 404"), ("/away", "HTTPS")] {
+        for (path, message) in [
+            ("/short", "unexpected artifact size"),
+            ("/wrong", "does not match"),
+            ("/missing", "answered 404"),
+            ("/away", "HTTPS"),
+        ] {
             publish(release("0.5.1", &server.url(path), &artifact), &signing_key);
             assert_eq!(updater.check().unwrap().status, Status::Available);
             let error = updater.download().unwrap_err();
@@ -1757,7 +2411,10 @@ mod tests {
             assert_eq!(updater.snapshot().status, Status::Failed);
         }
         let prefix = format!(".pam-update-{APPLICATION}-");
-        for entry in fs::read_dir(std::env::temp_dir()).unwrap().filter_map(Result::ok) {
+        for entry in fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(Result::ok)
+        {
             if entry.file_name().to_string_lossy().starts_with(&prefix) {
                 let _ = fs::remove_dir_all(entry.path());
             }
@@ -1766,7 +2423,14 @@ mod tests {
 
     #[test]
     fn updates_are_disabled_without_configuration() {
-        let updater = Updater::new(APPLICATION, "1.0.0", None, None, Arc::new(UreqClient::new()), |_| {});
+        let updater = Updater::new(
+            APPLICATION,
+            "1.0.0",
+            None,
+            None,
+            Arc::new(UreqClient::new()),
+            |_| {},
+        );
         assert_eq!(updater.snapshot().status, Status::Disabled);
         assert_eq!(updater.policy(), None);
         assert!(updater.check().unwrap_err().contains("not configured"));
@@ -1776,9 +2440,18 @@ mod tests {
 
     #[test]
     fn redirects_stay_on_absolute_or_same_origin_targets() {
-        assert_eq!(redirect_target("https://a.example/feed?x=1", "/v2/feed").as_deref(), Some("https://a.example/v2/feed"));
-        assert_eq!(redirect_target("https://a.example/feed", "https://cdn.example/feed").as_deref(), Some("https://cdn.example/feed"));
+        assert_eq!(
+            redirect_target("https://a.example/feed?x=1", "/v2/feed").as_deref(),
+            Some("https://a.example/v2/feed")
+        );
+        assert_eq!(
+            redirect_target("https://a.example/feed", "https://cdn.example/feed").as_deref(),
+            Some("https://cdn.example/feed")
+        );
         assert_eq!(redirect_target("https://a.example/feed", "feed2"), None);
-        assert_eq!(redirect_target("https://a.example/feed", "//evil.example/feed"), None);
+        assert_eq!(
+            redirect_target("https://a.example/feed", "//evil.example/feed"),
+            None
+        );
     }
 }

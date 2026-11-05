@@ -8,22 +8,22 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
 use pam_desktop_wire::{NodeKind, PropKey, PropValue};
 
 use crate::animator::Timer;
+use crate::animator::{Curve, Easing, MotionProperty, Owner};
 use crate::backend::{ImageFit, MediaEvent, MediaSource, MediaState, NodeId};
-use crate::context::{event_kind, Ctx, HostCommand};
+use crate::context::{Ctx, HostCommand, event_kind};
 use crate::modules::fetch::{HttpClient, HttpRequest};
-use crate::modules::support::{copy_bounded, sha256_hex, uuid, CopyError, WorkerPool};
 use crate::modules::files;
+use crate::modules::support::{CopyError, WorkerPool, copy_bounded, sha256_hex, uuid};
+use crate::props::PropMap;
 use crate::props::Props;
 use crate::runtime::{Inbound, Inbox};
-use crate::animator::{Curve, Easing, MotionProperty, Owner};
-use crate::props::PropMap;
 use crate::scene::{Change, IdMap, StyleLayer};
 use crate::wiremap::WireMap;
 
@@ -54,8 +54,17 @@ pub struct MediaEnvironment {
 /// Results of the cache downloads, delivered through the inbox.
 #[derive(Debug)]
 pub enum MediaInbound {
-    Progress { node: NodeId, ticket: u64, loaded: u64, total: u64 },
-    Stored { node: NodeId, ticket: u64, result: Result<(PathBuf, u64), String> },
+    Progress {
+        node: NodeId,
+        ticket: u64,
+        loaded: u64,
+        total: u64,
+    },
+    Stored {
+        node: NodeId,
+        ticket: u64,
+        result: Result<(PathBuf, u64), String>,
+    },
 }
 
 /// Where a cached source lives: `<root>/<sha256(identity)>.media`.
@@ -64,23 +73,36 @@ fn cache_file(root: &Path, identity: &str) -> PathBuf {
 }
 
 fn is_fresh(path: &Path, limit: u64, max_age_ms: i64) -> bool {
-    let Ok(metadata) = std::fs::metadata(path) else { return false };
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > limit {
         return false;
     }
     if max_age_ms <= 0 {
         return true;
     }
-    metadata.modified().ok().and_then(|modified| SystemTime::now().duration_since(modified).ok()).is_some_and(|age| age <= Duration::from_millis(max_age_ms as u64))
+    metadata
+        .modified()
+        .ok()
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age <= Duration::from_millis(max_age_ms as u64))
 }
 
 /// Deletes the oldest cached files beyond `budget`, sparing pinned files
 /// and the newest one.
 fn trim_cache(root: &Path, budget: u64) {
-    let Ok(entries) = std::fs::read_dir(root) else { return };
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
     let mut files: Vec<(SystemTime, u64, PathBuf)> = entries
         .filter_map(Result::ok)
-        .filter(|entry| entry.path().extension().is_some_and(|extension| extension == "media"))
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "media")
+        })
         .filter_map(|entry| {
             let metadata = entry.metadata().ok()?;
             Some((metadata.modified().ok()?, metadata.len(), entry.path()))
@@ -100,9 +122,17 @@ fn trim_cache(root: &Path, budget: u64) {
 /// `m:ss`, or `h:mm:ss` from one hour on.
 #[must_use]
 pub fn format_clock(seconds: f64) -> String {
-    let total = if seconds.is_finite() { seconds.max(0.0) as u64 } else { 0 };
+    let total = if seconds.is_finite() {
+        seconds.max(0.0) as u64
+    } else {
+        0
+    };
     let (hours, minutes, seconds) = (total / 3600, total / 60 % 60, total % 60);
-    if hours > 0 { format!("{hours}:{minutes:02}:{seconds:02}") } else { format!("{minutes}:{seconds:02}") }
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -210,9 +240,23 @@ pub struct Media {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn cache_event(ctx: &mut Ctx<'_>, id: NodeId, marker: PropKey, kind: u16, key: &str, loaded: u64, total: u64, disk: bool) {
+fn cache_event(
+    ctx: &mut Ctx<'_>,
+    id: NodeId,
+    marker: PropKey,
+    kind: u16,
+    key: &str,
+    loaded: u64,
+    total: u64,
+    disk: bool,
+) {
     let number = |value: u64| i64::try_from(value).unwrap_or(i64::MAX);
-    let payload = WireMap::new().with("key", key).with("loaded", number(loaded)).with("total", number(total)).with("disk", disk).encode();
+    let payload = WireMap::new()
+        .with("key", key)
+        .with("loaded", number(loaded))
+        .with("total", number(total))
+        .with("disk", disk)
+        .encode();
     ctx.emit_if(id, marker, kind, payload);
 }
 
@@ -262,11 +306,28 @@ impl Media {
             Change::Removed(id, _) => {
                 self.bindings.remove(&id);
             }
-            Change::Created(id, _) | Change::Updated(id, PropKey::MediaClock | PropKey::MediaClockFormat | PropKey::MediaProgress) => {
-                let Some(node) = ctx.scene.node(id) else { return };
+            Change::Created(id, _)
+            | Change::Updated(
+                id,
+                PropKey::MediaClock | PropKey::MediaClockFormat | PropKey::MediaProgress,
+            ) => {
+                let Some(node) = ctx.scene.node(id) else {
+                    return;
+                };
                 let props = node.props();
-                let clock = props.text(PropKey::MediaClock).filter(|reference| !reference.is_empty()).map(|reference| (reference.to_owned(), props.integer_or(PropKey::MediaClockFormat, 1)));
-                let progress = props.text(PropKey::MediaProgress).filter(|reference| !reference.is_empty()).map(str::to_owned);
+                let clock = props
+                    .text(PropKey::MediaClock)
+                    .filter(|reference| !reference.is_empty())
+                    .map(|reference| {
+                        (
+                            reference.to_owned(),
+                            props.integer_or(PropKey::MediaClockFormat, 1),
+                        )
+                    });
+                let progress = props
+                    .text(PropKey::MediaProgress)
+                    .filter(|reference| !reference.is_empty())
+                    .map(str::to_owned);
                 if clock.is_none() && progress.is_none() {
                     if self.bindings.remove(&id).is_some() {
                         // The node owns its text and scale again.
@@ -277,7 +338,14 @@ impl Media {
                     }
                     return;
                 }
-                self.bindings.insert(id, Binding { clock, progress, fraction: 0.0 });
+                self.bindings.insert(
+                    id,
+                    Binding {
+                        clock,
+                        progress,
+                        fraction: 0.0,
+                    },
+                );
             }
             Change::Updated(id, _) | Change::Frame(id) => {
                 if let Some(player) = self.players.get_mut(&id) {
@@ -296,7 +364,12 @@ impl Media {
         }
         if self.dirty {
             self.dirty = false;
-            let dirty: Vec<NodeId> = self.players.iter().filter(|(_, player)| player.dirty).map(|(id, _)| *id).collect();
+            let dirty: Vec<NodeId> = self
+                .players
+                .iter()
+                .filter(|(_, player)| player.dirty)
+                .map(|(id, _)| *id)
+                .collect();
             for id in dirty {
                 self.sync(ctx, id);
             }
@@ -311,7 +384,9 @@ impl Media {
 
     /// Applies the properties of a player.
     fn sync(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let props = node.props();
         let source = props.text_or_empty(PropKey::MediaSource).trim().to_owned();
         let autoplay = props.flag_or(PropKey::MediaAutoPlay, false);
@@ -322,10 +397,13 @@ impl Media {
             props.integer_or(PropKey::MediaCachePolicy, 1),
             props.text_or_empty(PropKey::MediaCacheKey),
             props.integer_or(PropKey::MediaCacheMaxAgeMs, 0),
-            props.flag_or(PropKey::MediaCacheStreaming, false) || props.flag_or(PropKey::MediaCacheDownloadWhilePlaying, false),
+            props.flag_or(PropKey::MediaCacheStreaming, false)
+                || props.flag_or(PropKey::MediaCacheDownloadWhilePlaying, false),
             props.integer_or(PropKey::MediaCacheMaxBytes, 0),
         );
-        let Some(player) = self.players.get_mut(&id) else { return };
+        let Some(player) = self.players.get_mut(&id) else {
+            return;
+        };
         player.dirty = false;
         // The intent follows the property only when the property changes: a
         // pause made with the native controls survives unrelated updates.
@@ -342,7 +420,8 @@ impl Media {
             }
         }
         let source_changed = source != player.source;
-        let reload = source_changed || (cache_signature != player.cache_signature && player.stage != Stage::Idle);
+        let reload = source_changed
+            || (cache_signature != player.cache_signature && player.stage != Stage::Idle);
         player.cache_signature = cache_signature;
         if reload {
             player.cancel.store(true, Ordering::Relaxed);
@@ -375,7 +454,15 @@ impl Media {
                 player.rendered = false;
                 self.posters.push((id, false));
             }
-        } else if !idle_surface && player.stage == Stage::Idle && !player.source.is_empty() && player.resolved.is_none() && player.pushed.as_ref().is_some_and(|state| state.source.is_none()) {
+        } else if !idle_surface
+            && player.stage == Stage::Idle
+            && !player.source.is_empty()
+            && player.resolved.is_none()
+            && player
+                .pushed
+                .as_ref()
+                .is_some_and(|state| state.source.is_none())
+        {
             self.resolve(ctx, id);
         }
         self.autoplay_dirty = true;
@@ -385,42 +472,77 @@ impl Media {
     /// Turns the source string into something the backend can open, going
     /// through the disk cache when the policy asks for it.
     fn resolve(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let props = node.props();
         let policy = props.integer_or(PropKey::MediaCachePolicy, 1);
         let key = props.text_or_empty(PropKey::MediaCacheKey).to_owned();
         let max_age = props.integer_or(PropKey::MediaCacheMaxAgeMs, 0);
-        let streaming = props.flag_or(PropKey::MediaCacheStreaming, false) || props.flag_or(PropKey::MediaCacheDownloadWhilePlaying, false);
-        let max_bytes = u64::try_from(props.integer_or(PropKey::MediaCacheMaxBytes, 0)).unwrap_or(0);
+        let streaming = props.flag_or(PropKey::MediaCacheStreaming, false)
+            || props.flag_or(PropKey::MediaCacheDownloadWhilePlaying, false);
+        let max_bytes =
+            u64::try_from(props.integer_or(PropKey::MediaCacheMaxBytes, 0)).unwrap_or(0);
         let pin = props.flag_or(PropKey::MediaCachePinOffline, false);
-        let checksum = props.text_or_empty(PropKey::MediaCacheChecksum).to_ascii_lowercase();
-        let Some(player) = self.players.get_mut(&id) else { return };
+        let checksum = props
+            .text_or_empty(PropKey::MediaCacheChecksum)
+            .to_ascii_lowercase();
+        let Some(player) = self.players.get_mut(&id) else {
+            return;
+        };
         let source = player.source.clone();
         let lower = source.to_ascii_lowercase();
         let fail = |player: &mut Player, ctx: &mut Ctx<'_>, message: &str| {
             player.stage = Stage::Idle;
             player.resolved = None;
-            ctx.emit_if(id, PropKey::OnMediaError, event_kind::MEDIA_ERROR, WireMap::new().with("message", message).encode());
+            ctx.emit_if(
+                id,
+                PropKey::OnMediaError,
+                event_kind::MEDIA_ERROR,
+                WireMap::new().with("message", message).encode(),
+            );
         };
-        let local = |player: &mut Player, ctx: &mut Ctx<'_>, path: Option<PathBuf>, escaped: &str| match path {
+        let local = |player: &mut Player,
+                     ctx: &mut Ctx<'_>,
+                     path: Option<PathBuf>,
+                     escaped: &str| match path {
             Some(path) if path.is_file() => {
                 player.resolved = Some(MediaSource::File(path));
                 player.stage = Stage::Loaded;
-                ctx.emit_if(id, PropKey::OnMediaLoadStart, event_kind::MEDIA_LOAD_START, Vec::new());
+                ctx.emit_if(
+                    id,
+                    PropKey::OnMediaLoadStart,
+                    event_kind::MEDIA_LOAD_START,
+                    Vec::new(),
+                );
             }
             Some(_) => fail(player, ctx, "Media does not exist."),
             None => fail(player, ctx, escaped),
         };
         if lower.starts_with("https://") || lower.starts_with("http://") {
             let identity = if key.is_empty() { source.clone() } else { key };
-            let cache_key = if identity == source { sha256_hex(source.as_bytes()) } else { identity.clone() };
+            let cache_key = if identity == source {
+                sha256_hex(source.as_bytes())
+            } else {
+                identity.clone()
+            };
             let file = cache_file(&self.environment.cache_root, &identity);
-            let limit = if max_bytes > 0 { max_bytes } else { DEFAULT_FILE_LIMIT };
-            let budget = (if max_bytes > 0 { max_bytes } else { MAX_BUDGET }).clamp(MIN_BUDGET, MAX_BUDGET);
+            let limit = if max_bytes > 0 {
+                max_bytes
+            } else {
+                DEFAULT_FILE_LIMIT
+            };
+            let budget =
+                (if max_bytes > 0 { max_bytes } else { MAX_BUDGET }).clamp(MIN_BUDGET, MAX_BUDGET);
             if policy < 3 {
                 player.resolved = Some(MediaSource::Url(source));
                 player.stage = Stage::Loaded;
-                ctx.emit_if(id, PropKey::OnMediaLoadStart, event_kind::MEDIA_LOAD_START, Vec::new());
+                ctx.emit_if(
+                    id,
+                    PropKey::OnMediaLoadStart,
+                    event_kind::MEDIA_LOAD_START,
+                    Vec::new(),
+                );
                 return;
             }
             let fresh = is_fresh(&file, limit, max_age);
@@ -428,48 +550,115 @@ impl Media {
             // Cache first, except "network first", which always asks the network.
             if fresh && policy != 6 {
                 // A hit refreshes the file's place in the least-recently-used order.
-                let _ = std::fs::File::open(&file).and_then(|handle| handle.set_modified(SystemTime::now()));
-                cache_event(ctx, id, PropKey::OnMediaCacheHit, event_kind::MEDIA_CACHE_HIT, &cache_key, 0, 0, true);
+                let _ = std::fs::File::open(&file)
+                    .and_then(|handle| handle.set_modified(SystemTime::now()));
+                cache_event(
+                    ctx,
+                    id,
+                    PropKey::OnMediaCacheHit,
+                    event_kind::MEDIA_CACHE_HIT,
+                    &cache_key,
+                    0,
+                    0,
+                    true,
+                );
                 player.resolved = Some(MediaSource::File(file));
                 player.stage = Stage::Loaded;
-                ctx.emit_if(id, PropKey::OnMediaLoadStart, event_kind::MEDIA_LOAD_START, Vec::new());
+                ctx.emit_if(
+                    id,
+                    PropKey::OnMediaLoadStart,
+                    event_kind::MEDIA_LOAD_START,
+                    Vec::new(),
+                );
                 return;
             }
             if policy == 8 && stored {
                 // Stale while revalidate: play the old file now, refresh it behind.
-                cache_event(ctx, id, PropKey::OnMediaCacheHit, event_kind::MEDIA_CACHE_HIT, &cache_key, 0, 0, true);
+                cache_event(
+                    ctx,
+                    id,
+                    PropKey::OnMediaCacheHit,
+                    event_kind::MEDIA_CACHE_HIT,
+                    &cache_key,
+                    0,
+                    0,
+                    true,
+                );
                 player.resolved = Some(MediaSource::File(file.clone()));
                 player.stage = Stage::Loaded;
-                ctx.emit_if(id, PropKey::OnMediaLoadStart, event_kind::MEDIA_LOAD_START, Vec::new());
+                ctx.emit_if(
+                    id,
+                    PropKey::OnMediaLoadStart,
+                    event_kind::MEDIA_LOAD_START,
+                    Vec::new(),
+                );
             }
-            cache_event(ctx, id, PropKey::OnMediaCacheMiss, event_kind::MEDIA_CACHE_MISS, &cache_key, 0, 0, false);
+            cache_event(
+                ctx,
+                id,
+                PropKey::OnMediaCacheMiss,
+                event_kind::MEDIA_CACHE_MISS,
+                &cache_key,
+                0,
+                0,
+                false,
+            );
             if policy == 7 {
                 return fail(player, ctx, "Media is not available in the local cache.");
             }
-            let Some(client) = self.environment.client.clone() else { return fail(player, ctx, "Media cache failed.") };
+            let Some(client) = self.environment.client.clone() else {
+                return fail(player, ctx, "Media cache failed.");
+            };
             if player.resolved.is_none() {
                 if streaming {
                     player.resolved = Some(MediaSource::Url(source.clone()));
                     player.stage = Stage::Loaded;
-                    ctx.emit_if(id, PropKey::OnMediaLoadStart, event_kind::MEDIA_LOAD_START, Vec::new());
+                    ctx.emit_if(
+                        id,
+                        PropKey::OnMediaLoadStart,
+                        event_kind::MEDIA_LOAD_START,
+                        Vec::new(),
+                    );
                 } else {
                     player.stage = Stage::Caching;
                 }
             }
-            let (ticket, cancel, inbox, root) = (player.ticket, Arc::clone(&player.cancel), Arc::clone(&self.environment.inbox), self.environment.cache_root.clone());
-            let wants_progress = ctx.scene.node(id).is_some_and(|node| node.handles(PropKey::OnMediaCacheProgress));
+            let (ticket, cancel, inbox, root) = (
+                player.ticket,
+                Arc::clone(&player.cancel),
+                Arc::clone(&self.environment.inbox),
+                self.environment.cache_root.clone(),
+            );
+            let wants_progress = ctx
+                .scene
+                .node(id)
+                .is_some_and(|node| node.handles(PropKey::OnMediaCacheProgress));
             self.pool.run(move || {
-                let mut result = download(client.as_ref(), &root, &source, &file, limit, &cancel, |loaded, total| {
-                    if wants_progress {
-                        inbox.post(Inbound::Media(MediaInbound::Progress { node: id, ticket, loaded, total }));
-                    }
-                });
+                let mut result = download(
+                    client.as_ref(),
+                    &root,
+                    &source,
+                    &file,
+                    limit,
+                    &cancel,
+                    |loaded, total| {
+                        if wants_progress {
+                            inbox.post(Inbound::Media(MediaInbound::Progress {
+                                node: id,
+                                ticket,
+                                loaded,
+                                total,
+                            }));
+                        }
+                    },
+                );
                 // A file that is not the one the application expects is not kept.
                 if let (Ok((path, _)), false) = (&result, checksum.is_empty())
-                    && file_sha256(path).as_deref() != Some(checksum.as_str()) {
-                        let _ = std::fs::remove_file(path);
-                        result = Err(String::from("Media checksum verification failed."));
-                    }
+                    && file_sha256(path).as_deref() != Some(checksum.as_str())
+                {
+                    let _ = std::fs::remove_file(path);
+                    result = Err(String::from("Media checksum verification failed."));
+                }
                 if let Ok((path, _)) = &result {
                     if pin {
                         let _ = std::fs::write(path.with_extension("pin"), b"");
@@ -477,54 +666,136 @@ impl Media {
                     trim_cache(&root, budget);
                 }
                 if !cancel.load(Ordering::Relaxed) {
-                    inbox.post(Inbound::Media(MediaInbound::Stored { node: id, ticket, result }));
+                    inbox.post(Inbound::Media(MediaInbound::Stored {
+                        node: id,
+                        ticket,
+                        result,
+                    }));
                 }
             });
         } else if lower.starts_with("pam-file://") {
             let path = files::resolve_uri(&self.environment.files_root, &source);
-            local(player, ctx, path, "Media path escapes the application sandbox");
+            local(
+                player,
+                ctx,
+                path,
+                "Media path escapes the application sandbox",
+            );
         } else if lower.starts_with("asset://") {
             let relative = &source[8..];
-            let valid = !relative.is_empty() && !relative.contains(['\\', '\0', '?', '#']) && relative.split('/').all(|segment| !segment.is_empty() && segment != "." && segment != "..");
-            local(player, ctx, valid.then(|| self.environment.assets.join(relative)), "Media source is invalid.");
+            let valid = !relative.is_empty()
+                && !relative.contains(['\\', '\0', '?', '#'])
+                && relative
+                    .split('/')
+                    .all(|segment| !segment.is_empty() && segment != "." && segment != "..");
+            local(
+                player,
+                ctx,
+                valid.then(|| self.environment.assets.join(relative)),
+                "Media source is invalid.",
+            );
         } else if lower.starts_with("file://") {
-            let path = source[7..].strip_prefix("localhost").unwrap_or(&source[7..]);
-            local(player, ctx, path.starts_with('/').then(|| PathBuf::from(path)), "Media source is invalid.");
+            let path = source[7..]
+                .strip_prefix("localhost")
+                .unwrap_or(&source[7..]);
+            local(
+                player,
+                ctx,
+                path.starts_with('/').then(|| PathBuf::from(path)),
+                "Media source is invalid.",
+            );
         } else if source.contains("://") {
             fail(player, ctx, "Media source is invalid.");
         } else if Path::new(&source).is_absolute() {
             // Desktop applications hand out absolute paths (file dialogs, drops).
-            local(player, ctx, Some(PathBuf::from(&source)), "Media source is invalid.");
+            local(
+                player,
+                ctx,
+                Some(PathBuf::from(&source)),
+                "Media source is invalid.",
+            );
         } else {
             let path = files::resolve(&self.environment.files_root, &source).ok();
-            local(player, ctx, path, "Media path escapes the application sandbox");
+            local(
+                player,
+                ctx,
+                path,
+                "Media path escapes the application sandbox",
+            );
         }
     }
 
     pub fn on_inbound(&mut self, ctx: &mut Ctx<'_>, message: MediaInbound) {
         match message {
-            MediaInbound::Progress { node, ticket, loaded, total } => {
-                if self.players.get(&node).is_some_and(|player| player.ticket == ticket) {
+            MediaInbound::Progress {
+                node,
+                ticket,
+                loaded,
+                total,
+            } => {
+                if self
+                    .players
+                    .get(&node)
+                    .is_some_and(|player| player.ticket == ticket)
+                {
                     let key = self.cache_key(ctx, node);
-                    cache_event(ctx, node, PropKey::OnMediaCacheProgress, event_kind::MEDIA_CACHE_PROGRESS, &key, loaded, total, true);
+                    cache_event(
+                        ctx,
+                        node,
+                        PropKey::OnMediaCacheProgress,
+                        event_kind::MEDIA_CACHE_PROGRESS,
+                        &key,
+                        loaded,
+                        total,
+                        true,
+                    );
                 }
             }
-            MediaInbound::Stored { node, ticket, result } => {
+            MediaInbound::Stored {
+                node,
+                ticket,
+                result,
+            } => {
                 let key = self.cache_key(ctx, node);
-                let Some(player) = self.players.get_mut(&node).filter(|player| player.ticket == ticket) else { return };
+                let Some(player) = self
+                    .players
+                    .get_mut(&node)
+                    .filter(|player| player.ticket == ticket)
+                else {
+                    return;
+                };
                 match result {
                     Ok((path, bytes)) => {
-                        cache_event(ctx, node, PropKey::OnMediaCacheReady, event_kind::MEDIA_CACHE_READY, &key, bytes, bytes, true);
+                        cache_event(
+                            ctx,
+                            node,
+                            PropKey::OnMediaCacheReady,
+                            event_kind::MEDIA_CACHE_READY,
+                            &key,
+                            bytes,
+                            bytes,
+                            true,
+                        );
                         if player.stage == Stage::Caching {
                             player.resolved = Some(MediaSource::File(path));
                             player.stage = Stage::Loaded;
-                            ctx.emit_if(node, PropKey::OnMediaLoadStart, event_kind::MEDIA_LOAD_START, Vec::new());
+                            ctx.emit_if(
+                                node,
+                                PropKey::OnMediaLoadStart,
+                                event_kind::MEDIA_LOAD_START,
+                                Vec::new(),
+                            );
                         }
                     }
                     Err(message) => {
                         if player.stage == Stage::Caching {
                             player.stage = Stage::Idle;
-                            ctx.emit_if(node, PropKey::OnMediaError, event_kind::MEDIA_ERROR, WireMap::new().with("message", message.as_str()).encode());
+                            ctx.emit_if(
+                                node,
+                                PropKey::OnMediaError,
+                                event_kind::MEDIA_ERROR,
+                                WireMap::new().with("message", message.as_str()).encode(),
+                            );
                         }
                     }
                 }
@@ -536,11 +807,22 @@ impl Media {
     }
 
     fn cache_key(&self, ctx: &Ctx<'_>, id: NodeId) -> String {
-        let authored = ctx.scene.node(id).map(|node| node.props().text_or_empty(PropKey::MediaCacheKey).to_owned()).unwrap_or_default();
+        let authored = ctx
+            .scene
+            .node(id)
+            .map(|node| {
+                node.props()
+                    .text_or_empty(PropKey::MediaCacheKey)
+                    .to_owned()
+            })
+            .unwrap_or_default();
         if !authored.is_empty() {
             return authored;
         }
-        self.players.get(&id).map(|player| sha256_hex(player.source.as_bytes())).unwrap_or_default()
+        self.players
+            .get(&id)
+            .map(|player| sha256_hex(player.source.as_bytes()))
+            .unwrap_or_default()
     }
 
     /// Re-evaluates who may play: hidden players pause (and are released
@@ -559,21 +841,30 @@ impl Media {
         let mut groups: HashMap<String, Vec<Candidate>> = HashMap::new();
         let ids: Vec<NodeId> = self.players.keys().copied().collect();
         for id in &ids {
-            let Some(node) = ctx.scene.node(*id) else { continue };
+            let Some(node) = ctx.scene.node(*id) else {
+                continue;
+            };
             let props = node.props();
             let keep_alive = props.flag_or(PropKey::MediaKeepAliveWhenCovered, false);
             let threshold = props.number_or(PropKey::MediaAutoPlayVisible, 0.0);
-            let threshold = if threshold.is_finite() { threshold.clamp(0.0, 1.0) } else { 0.0 };
+            let threshold = if threshold.is_finite() {
+                threshold.clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
             let group = props.text_or_empty(PropKey::MediaAutoPlayGroup).to_owned();
             let visible = ctx.scene.is_effectively_visible(*id);
-            let Some(player) = self.players.get_mut(id) else { continue };
+            let Some(player) = self.players.get_mut(id) else {
+                continue;
+            };
             // Hidden: pause now, release the decoder later.
             if visible {
                 player.hidden_since = None;
             } else if player.hidden_since.is_none() {
                 player.hidden_since = Some(ctx.now_ms);
                 if !keep_alive {
-                    ctx.timers.schedule(Timer::MediaRelease(*id), ctx.now_ms + HIDDEN_RELEASE_MS);
+                    ctx.timers
+                        .schedule(Timer::MediaRelease(*id), ctx.now_ms + HIDDEN_RELEASE_MS);
                 }
             }
             if threshold <= 0.0 {
@@ -581,9 +872,21 @@ impl Media {
                 player.ungranted_since = None;
                 continue;
             }
-            let fraction = if visible && player.stage != Stage::Idle || player.stage == Stage::Released && visible { ctx.scene.visible_fraction(*id, ctx.viewport) } else { 0.0 };
+            let fraction = if visible && player.stage != Stage::Idle
+                || player.stage == Stage::Released && visible
+            {
+                ctx.scene.visible_fraction(*id, ctx.viewport)
+            } else {
+                0.0
+            };
             let top = ctx.scene.window_origin(*id).y;
-            let candidate = Candidate { id: *id, fraction, threshold, top, granted: player.granted };
+            let candidate = Candidate {
+                id: *id,
+                fraction,
+                threshold,
+                top,
+                granted: player.granted,
+            };
             if group.is_empty() {
                 let floor = (threshold - HYSTERESIS).max(0.01);
                 let keeps = candidate.granted && fraction > 0.0 && fraction + EPSILON >= floor;
@@ -595,7 +898,11 @@ impl Media {
         }
         for (_, mut candidates) in groups {
             candidates.sort_by(|a, b| a.top.total_cmp(&b.top));
-            let keeps = |candidate: &Candidate| candidate.granted && candidate.fraction > 0.0 && candidate.fraction + EPSILON >= (candidate.threshold - HYSTERESIS).max(0.01);
+            let keeps = |candidate: &Candidate| {
+                candidate.granted
+                    && candidate.fraction > 0.0
+                    && candidate.fraction + EPSILON >= (candidate.threshold - HYSTERESIS).max(0.01)
+            };
             let meets = |candidate: &Candidate| candidate.fraction + EPSILON >= candidate.threshold;
             // The player already playing stays while it still qualifies;
             // otherwise the topmost one that does takes over.
@@ -621,7 +928,9 @@ impl Media {
     }
 
     fn grant(&mut self, ctx: &mut Ctx<'_>, id: NodeId, granted: bool) {
-        let Some(player) = self.players.get_mut(&id) else { return };
+        let Some(player) = self.players.get_mut(&id) else {
+            return;
+        };
         if player.granted == granted {
             return;
         }
@@ -630,40 +939,70 @@ impl Media {
             player.ungranted_since = None;
         } else {
             player.ungranted_since = Some(ctx.now_ms);
-            ctx.timers.schedule(Timer::MediaRelease(id), ctx.now_ms + UNGRANTED_RELEASE_MS);
+            ctx.timers
+                .schedule(Timer::MediaRelease(id), ctx.now_ms + UNGRANTED_RELEASE_MS);
         }
     }
 
     pub fn on_timer(&mut self, ctx: &mut Ctx<'_>, timer: Timer, position: Option<(f64, f64)>) {
         match timer {
             Timer::MediaProgress(id) => {
-                let Some(player) = self.players.get_mut(&id) else { return };
+                let Some(player) = self.players.get_mut(&id) else {
+                    return;
+                };
                 player.progress_armed = false;
-                let playing = player.pushed.as_ref().is_some_and(|state| state.playing && state.source.is_some());
+                let playing = player
+                    .pushed
+                    .as_ref()
+                    .is_some_and(|state| state.playing && state.source.is_some());
                 if !playing {
                     return;
                 }
                 if let Some((current, duration)) = position {
                     player.position = current;
-                    let payload = WireMap::new().with("currentTime", current).with("duration", duration).encode();
-                    ctx.emit_if(id, PropKey::OnMediaProgress, event_kind::MEDIA_PROGRESS, payload);
+                    let payload = WireMap::new()
+                        .with("currentTime", current)
+                        .with("duration", duration)
+                        .encode();
+                    ctx.emit_if(
+                        id,
+                        PropKey::OnMediaProgress,
+                        event_kind::MEDIA_PROGRESS,
+                        payload,
+                    );
                     self.update_bindings(ctx, id, current, duration);
                 }
                 self.arm_progress(ctx, id);
             }
             Timer::MediaRelease(id) => {
-                let keep_alive = ctx.scene.node(id).is_some_and(|node| node.props().flag_or(PropKey::MediaKeepAliveWhenCovered, false));
-                let Some(player) = self.players.get_mut(&id) else { return };
-                let hidden = player.hidden_since.is_some_and(|since| ctx.now_ms.saturating_sub(since) >= HIDDEN_RELEASE_MS) && !keep_alive;
-                let ungranted = player.ungranted_since.is_some_and(|since| ctx.now_ms.saturating_sub(since) >= UNGRANTED_RELEASE_MS);
+                let keep_alive = ctx.scene.node(id).is_some_and(|node| {
+                    node.props()
+                        .flag_or(PropKey::MediaKeepAliveWhenCovered, false)
+                });
+                let Some(player) = self.players.get_mut(&id) else {
+                    return;
+                };
+                let hidden = player
+                    .hidden_since
+                    .is_some_and(|since| ctx.now_ms.saturating_sub(since) >= HIDDEN_RELEASE_MS)
+                    && !keep_alive;
+                let ungranted = player
+                    .ungranted_since
+                    .is_some_and(|since| ctx.now_ms.saturating_sub(since) >= UNGRANTED_RELEASE_MS);
                 if (hidden || ungranted) && player.stage == Stage::Loaded {
                     if let Some((current, duration)) = position {
                         // A position at the very end restarts from the beginning.
-                        player.position = if duration > 0.0 && duration - current < 0.25 { 0.0 } else { current };
+                        player.position = if duration > 0.0 && duration - current < 0.25 {
+                            0.0
+                        } else {
+                            current
+                        };
                     }
                     if ungranted {
-                        self.remembered.retain(|(source, _)| *source != player.source);
-                        self.remembered.push((player.source.clone(), player.position));
+                        self.remembered
+                            .retain(|(source, _)| *source != player.source);
+                        self.remembered
+                            .push((player.source.clone(), player.position));
                         if self.remembered.len() > REMEMBERED_POSITIONS {
                             self.remembered.remove(0);
                         }
@@ -686,27 +1025,68 @@ impl Media {
         if self.bindings.is_empty() {
             return;
         }
-        let Some(name) = ctx.scene.node(id).and_then(|node| node.props().text(PropKey::NativeRef)).map(str::to_owned) else { return };
-        let (position, duration) = (if position.is_finite() { position.max(0.0) } else { 0.0 }, if duration.is_finite() { duration.max(0.0) } else { 0.0 });
-        let fraction = if duration > 0.0 { (position / duration).clamp(0.0, 1.0) as f32 } else { 0.0 };
+        let Some(name) = ctx
+            .scene
+            .node(id)
+            .and_then(|node| node.props().text(PropKey::NativeRef))
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        let (position, duration) = (
+            if position.is_finite() {
+                position.max(0.0)
+            } else {
+                0.0
+            },
+            if duration.is_finite() {
+                duration.max(0.0)
+            } else {
+                0.0
+            },
+        );
+        let fraction = if duration > 0.0 {
+            (position / duration).clamp(0.0, 1.0) as f32
+        } else {
+            0.0
+        };
         for (node, binding) in &mut self.bindings {
-            if let Some((_, format)) = binding.clock.as_ref().filter(|(reference, _)| *reference == name) {
+            if let Some((_, format)) = binding
+                .clock
+                .as_ref()
+                .filter(|(reference, _)| *reference == name)
+            {
                 let text = clock_text(*format, position, duration);
                 if ctx.scene.plain_text(*node).as_deref() != Some(text.as_str()) {
                     let mut overlay = PropMap::new();
                     overlay.insert(PropKey::Text, PropValue::String(text));
-                    ctx.scene.set_style_overlay(*node, StyleLayer::Presenter, Some(overlay));
+                    ctx.scene
+                        .set_style_overlay(*node, StyleLayer::Presenter, Some(overlay));
                 }
             }
             if binding.progress.as_deref() == Some(name.as_str()) {
-                let rtl = ctx.scene.node(*node).is_some_and(|node| node.props().integer(PropKey::LayoutDirection) == Some(2));
+                let rtl = ctx
+                    .scene
+                    .node(*node)
+                    .is_some_and(|node| node.props().integer(PropKey::LayoutDirection) == Some(2));
                 // The bar grows from its leading edge.
                 let mut overlay = PropMap::new();
-                overlay.insert(PropKey::TransformOriginX, PropValue::Float(if rtl { 100.0 } else { 0.0 }));
-                ctx.scene.set_style_overlay(*node, StyleLayer::Interaction, Some(overlay));
+                overlay.insert(
+                    PropKey::TransformOriginX,
+                    PropValue::Float(if rtl { 100.0 } else { 0.0 }),
+                );
+                ctx.scene
+                    .set_style_overlay(*node, StyleLayer::Interaction, Some(overlay));
                 let step = fraction - binding.fraction;
                 if step > 0.0 && step < 0.25 && !ctx.reduced_motion {
-                    ctx.animator.start(Owner::MediaBar(*node), binding.fraction, fraction, Curve::timing(PROGRESS_INTERVAL_MS as u32, Easing::Linear), 0, ctx.now_ms);
+                    ctx.animator.start(
+                        Owner::MediaBar(*node),
+                        binding.fraction,
+                        fraction,
+                        Curve::timing(PROGRESS_INTERVAL_MS as u32, Easing::Linear),
+                        0,
+                        ctx.now_ms,
+                    );
                 } else {
                     ctx.animator.cancel(Owner::MediaBar(*node), ctx.now_ms);
                     let mut values = ctx.scene.motion(*node);
@@ -729,21 +1109,36 @@ impl Media {
 
     fn arm_progress(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
         if let Some(player) = self.players.get_mut(&id)
-            && !player.progress_armed {
-                player.progress_armed = true;
-                ctx.timers.schedule(Timer::MediaProgress(id), ctx.now_ms + PROGRESS_INTERVAL_MS);
-            }
+            && !player.progress_armed
+        {
+            player.progress_armed = true;
+            ctx.timers
+                .schedule(Timer::MediaProgress(id), ctx.now_ms + PROGRESS_INTERVAL_MS);
+        }
     }
 
     /// Something the platform player did.
     pub fn on_event(&mut self, ctx: &mut Ctx<'_>, id: NodeId, event: MediaEvent) {
-        let looping = ctx.scene.node(id).is_some_and(|node| node.props().flag_or(PropKey::MediaLoop, false));
-        let Some(player) = self.players.get_mut(&id) else { return };
+        let looping = ctx
+            .scene
+            .node(id)
+            .is_some_and(|node| node.props().flag_or(PropKey::MediaLoop, false));
+        let Some(player) = self.players.get_mut(&id) else {
+            return;
+        };
         match event {
-            MediaEvent::Ready { width, height, duration } => {
+            MediaEvent::Ready {
+                width,
+                height,
+                duration,
+            } => {
                 player.ready = Some(duration);
                 let position = player.seek.1;
-                let payload = WireMap::new().with("naturalWidth", i64::from(width)).with("naturalHeight", i64::from(height)).with("duration", duration).encode();
+                let payload = WireMap::new()
+                    .with("naturalWidth", i64::from(width))
+                    .with("naturalHeight", i64::from(height))
+                    .with("duration", duration)
+                    .encode();
                 ctx.emit_if(id, PropKey::OnMediaReady, event_kind::MEDIA_READY, payload);
                 self.update_bindings(ctx, id, position, duration);
             }
@@ -754,15 +1149,28 @@ impl Media {
                 }
             }
             MediaEvent::Buffering(buffering) => {
-                ctx.emit_if(id, PropKey::OnMediaBuffering, event_kind::MEDIA_BUFFERING, WireMap::new().with("buffering", buffering).encode());
+                ctx.emit_if(
+                    id,
+                    PropKey::OnMediaBuffering,
+                    event_kind::MEDIA_BUFFERING,
+                    WireMap::new().with("buffering", buffering).encode(),
+                );
             }
             MediaEvent::Ended => {
                 if !looping {
                     player.requested = false;
                     if let Some(duration) = player.ready {
                         player.position = 0.0;
-                        let payload = WireMap::new().with("currentTime", duration).with("duration", duration).encode();
-                        ctx.emit_if(id, PropKey::OnMediaProgress, event_kind::MEDIA_PROGRESS, payload);
+                        let payload = WireMap::new()
+                            .with("currentTime", duration)
+                            .with("duration", duration)
+                            .encode();
+                        ctx.emit_if(
+                            id,
+                            PropKey::OnMediaProgress,
+                            event_kind::MEDIA_PROGRESS,
+                            payload,
+                        );
                         self.update_bindings(ctx, id, duration, duration);
                     }
                     ctx.emit_if(id, PropKey::OnMediaEnd, event_kind::MEDIA_END, Vec::new());
@@ -777,8 +1185,17 @@ impl Media {
                     player.rendered = false;
                     self.posters.push((id, false));
                 }
-                let message = if message.is_empty() { String::from("Media playback failed.") } else { message };
-                ctx.emit_if(id, PropKey::OnMediaError, event_kind::MEDIA_ERROR, WireMap::new().with("message", message.as_str()).encode());
+                let message = if message.is_empty() {
+                    String::from("Media playback failed.")
+                } else {
+                    message
+                };
+                ctx.emit_if(
+                    id,
+                    PropKey::OnMediaError,
+                    event_kind::MEDIA_ERROR,
+                    WireMap::new().with("message", message.as_str()).encode(),
+                );
                 self.push(ctx, id);
             }
             // The user played or paused with the native controls.
@@ -794,25 +1211,57 @@ impl Media {
 
     /// Hands the backend the state the player should be in, when it changed.
     fn push(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let props = node.props();
-        let (controls, looping, muted) = (props.flag_or(PropKey::MediaControls, true), props.flag_or(PropKey::MediaLoop, false), props.flag_or(PropKey::MediaMuted, false));
-        let (volume, rate) = (props.number_or(PropKey::MediaVolume, 1.0).clamp(0.0, 1.0), props.number_or(PropKey::MediaPlaybackRate, 1.0).clamp(0.25, 4.0));
+        let (controls, looping, muted) = (
+            props.flag_or(PropKey::MediaControls, true),
+            props.flag_or(PropKey::MediaLoop, false),
+            props.flag_or(PropKey::MediaMuted, false),
+        );
+        let (volume, rate) = (
+            props.number_or(PropKey::MediaVolume, 1.0).clamp(0.0, 1.0),
+            props
+                .number_or(PropKey::MediaPlaybackRate, 1.0)
+                .clamp(0.25, 4.0),
+        );
         let fit = fit(props);
         let visible = ctx.scene.is_effectively_visible(id);
-        let remembered = self.players.get(&id).and_then(|player| self.remembered.iter().find(|(source, _)| *source == player.source).map(|(_, position)| *position));
-        let Some(player) = self.players.get_mut(&id) else { return };
+        let remembered = self.players.get(&id).and_then(|player| {
+            self.remembered
+                .iter()
+                .find(|(source, _)| *source == player.source)
+                .map(|(_, position)| *position)
+        });
+        let Some(player) = self.players.get_mut(&id) else {
+            return;
+        };
         // A released player comes back when it may play again.
-        if player.stage == Stage::Released && visible && player.granted && player.resolved.is_some() {
+        if player.stage == Stage::Released && visible && player.granted && player.resolved.is_some()
+        {
             player.stage = Stage::Loaded;
-            let resume = if player.position > 0.0 { player.position } else { remembered.unwrap_or(0.0) };
+            let resume = if player.position > 0.0 {
+                player.position
+            } else {
+                remembered.unwrap_or(0.0)
+            };
             player.seek = (player.seek.0.wrapping_add(1), resume);
-            ctx.emit_if(id, PropKey::OnMediaLoadStart, event_kind::MEDIA_LOAD_START, Vec::new());
+            ctx.emit_if(
+                id,
+                PropKey::OnMediaLoadStart,
+                event_kind::MEDIA_LOAD_START,
+                Vec::new(),
+            );
         }
         let loaded = player.stage == Stage::Loaded;
         let playing = loaded && player.requested && visible && player.granted;
         let state = MediaState {
-            source: if loaded { player.resolved.clone() } else { None },
+            source: if loaded {
+                player.resolved.clone()
+            } else {
+                None
+            },
             playing,
             seek: player.seek,
             controls,
@@ -823,7 +1272,10 @@ impl Media {
             fit,
         };
         if player.pushed.as_ref() != Some(&state) {
-            ctx.commands.push(HostCommand::SetMedia { id, state: Box::new(state.clone()) });
+            ctx.commands.push(HostCommand::SetMedia {
+                id,
+                state: Box::new(state.clone()),
+            });
             player.pushed = Some(state);
         }
         if playing {
@@ -850,17 +1302,33 @@ fn file_sha256(path: &Path) -> Option<String> {
 }
 
 /// Downloads `url` to `target` through a temporary file in `root`.
-fn download(client: &dyn HttpClient, root: &Path, url: &str, target: &Path, limit: u64, cancel: &AtomicBool, mut progress: impl FnMut(u64, u64)) -> Result<(PathBuf, u64), String> {
+fn download(
+    client: &dyn HttpClient,
+    root: &Path,
+    url: &str,
+    target: &Path,
+    limit: u64,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(u64, u64),
+) -> Result<(PathBuf, u64), String> {
     let request = HttpRequest {
-        headers: vec![(String::from("Accept"), String::from("video/*,audio/*,application/octet-stream"))],
+        headers: vec![(
+            String::from("Accept"),
+            String::from("video/*,audio/*,application/octet-stream"),
+        )],
         connect_timeout: Duration::from_secs(10),
         read_timeout: Duration::from_secs(30),
         follow_redirects: true,
         ..HttpRequest::get(url)
     };
-    let mut response = client.send(request, None, cancel).map_err(|_| String::from("Media cache failed."))?;
+    let mut response = client
+        .send(request, None, cancel)
+        .map_err(|_| String::from("Media cache failed."))?;
     if !(200..300).contains(&response.status) {
-        return Err(format!("Media request failed with HTTP {}.", response.status));
+        return Err(format!(
+            "Media request failed with HTTP {}.",
+            response.status
+        ));
     }
     let declared = response.content_length.unwrap_or(0);
     if declared > limit {
@@ -869,7 +1337,8 @@ fn download(client: &dyn HttpClient, root: &Path, url: &str, target: &Path, limi
     std::fs::create_dir_all(root).map_err(|_| String::from("Media cache failed."))?;
     let partial = root.join(format!("download-{}.tmp", uuid()));
     let result = (|| {
-        let mut output = std::fs::File::create(&partial).map_err(|_| String::from("Media cache failed."))?;
+        let mut output =
+            std::fs::File::create(&partial).map_err(|_| String::from("Media cache failed."))?;
         let mut last = 0_u64;
         let written = copy_bounded(&mut response.body, &mut output, limit, cancel, |received| {
             // One report per 256 KiB keeps the bridge quiet.
@@ -912,7 +1381,10 @@ mod tests {
     fn files_are_hashed_in_chunks() {
         let path = std::env::temp_dir().join(format!("pam-media-hash-{}", uuid()));
         std::fs::write(&path, b"abc").unwrap_or_default();
-        assert_eq!(file_sha256(&path).as_deref(), Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+        assert_eq!(
+            file_sha256(&path).as_deref(),
+            Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        );
         let _ = std::fs::remove_file(&path);
         assert_eq!(file_sha256(&path), None);
     }
@@ -920,7 +1392,12 @@ mod tests {
     #[test]
     fn cache_files_are_named_by_the_identity() {
         let path = cache_file(Path::new("/cache"), "abc");
-        assert_eq!(path, PathBuf::from("/cache/ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad.media"));
+        assert_eq!(
+            path,
+            PathBuf::from(
+                "/cache/ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad.media"
+            )
+        );
     }
 
     #[test]

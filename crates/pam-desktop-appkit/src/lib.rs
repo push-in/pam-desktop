@@ -25,4 +25,4 @@ mod view;
 mod webview;
 mod window;
 
-pub use backend::{run, AppKitBackend};
+pub use backend::{AppKitBackend, run};

@@ -5,7 +5,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{request_map, Module, Reply};
+use super::{Module, Reply, request_map};
 
 const MAX_DELAY_MS: i64 = 86_400_000;
 
@@ -46,19 +46,30 @@ impl Default for Timers {
 impl Timers {
     #[must_use]
     pub fn new() -> Self {
-        Self { shared: Arc::new(Shared { state: Mutex::new(State::default()), wake: Condvar::new() }), started: false }
+        Self {
+            shared: Arc::new(Shared {
+                state: Mutex::new(State::default()),
+                wake: Condvar::new(),
+            }),
+            started: false,
+        }
     }
 
     fn start(&mut self) {
         if !std::mem::replace(&mut self.started, true) {
             let worker = Arc::clone(&self.shared);
-            self.started = thread::Builder::new().name("pam-timers".into()).spawn(move || run(&worker)).is_ok();
+            self.started = thread::Builder::new()
+                .name("pam-timers".into())
+                .spawn(move || run(&worker))
+                .is_ok();
         }
     }
 }
 
 fn run(shared: &Shared) {
-    let Ok(mut state) = shared.state.lock() else { return };
+    let Ok(mut state) = shared.state.lock() else {
+        return;
+    };
     loop {
         if state.closed {
             return;
@@ -73,9 +84,10 @@ fn run(shared: &Shared) {
             state.queue.pop();
             if let Some(pending) = state.pending.remove(&sequence) {
                 if let Some(timer) = pending.timer
-                    && state.by_timer.get(&timer) == Some(&sequence) {
-                        state.by_timer.remove(&timer);
-                    }
+                    && state.by_timer.get(&timer) == Some(&sequence)
+                {
+                    state.by_timer.remove(&timer);
+                }
                 due.push(pending.reply);
             }
         }
@@ -113,10 +125,15 @@ impl Module for Timers {
             Err(error) => return reply.failure(error),
         };
         self.start();
-        let Ok(mut state) = self.shared.state.lock() else { return reply.failure("Timers module is closed") };
+        let Ok(mut state) = self.shared.state.lock() else {
+            return reply.failure("Timers module is closed");
+        };
         match method {
             "after" => {
-                let delay = request.integer("milliseconds").unwrap_or(0).clamp(0, MAX_DELAY_MS) as u64;
+                let delay = request
+                    .integer("milliseconds")
+                    .unwrap_or(0)
+                    .clamp(0, MAX_DELAY_MS) as u64;
                 let timer = request.integer("timer");
                 state.next += 1;
                 let sequence = state.next;
@@ -127,13 +144,21 @@ impl Module for Timers {
                     }
                 }
                 state.pending.insert(sequence, Pending { reply, timer });
-                state.queue.push(std::cmp::Reverse((Instant::now() + Duration::from_millis(delay), sequence)));
+                state.queue.push(std::cmp::Reverse((
+                    Instant::now() + Duration::from_millis(delay),
+                    sequence,
+                )));
                 drop(state);
                 self.shared.wake.notify_one();
             }
             "cancel" => {
-                let Some(timer) = request.integer("timer") else { return reply.failure("Timer id is required") };
-                let cancelled = state.by_timer.remove(&timer).and_then(|sequence| state.pending.remove(&sequence));
+                let Some(timer) = request.integer("timer") else {
+                    return reply.failure("Timer id is required");
+                };
+                let cancelled = state
+                    .by_timer
+                    .remove(&timer)
+                    .and_then(|sequence| state.pending.remove(&sequence));
                 drop(state);
                 if let Some(pending) = cancelled {
                     pending.reply.failure("Timer cancelled");

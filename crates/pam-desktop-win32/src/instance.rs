@@ -7,14 +7,17 @@ use std::rc::Rc;
 
 use pam_desktop_ui::backend::{BackendEvent, MAIN_WINDOW};
 use pam_desktop_ui::shell::WindowCommand;
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, HWND, LPARAM, LRESULT, WPARAM,
+};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowExW, GetWindowThreadProcessId, RegisterClassExW,
-    SendMessageTimeoutW, HWND_MESSAGE, SMTO_ABORTIFHUNG, WINDOW_EX_STYLE, WINDOW_STYLE, WM_COPYDATA, WNDCLASSEXW,
+    AllowSetForegroundWindow, CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowExW,
+    GetWindowThreadProcessId, HWND_MESSAGE, RegisterClassExW, SMTO_ABORTIFHUNG,
+    SendMessageTimeoutW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_COPYDATA, WNDCLASSEXW,
 };
+use windows::core::PCWSTR;
 
 use crate::app::App;
 use crate::util::wide;
@@ -48,7 +51,11 @@ pub enum Launch {
 /// Names must not contain a backslash after their namespace prefix and
 /// are limited in length.
 fn object_name(prefix: &str, application_id: &str) -> Vec<u16> {
-    let id: String = application_id.chars().map(|character| if character == '\\' { '_' } else { character }).take(200).collect();
+    let id: String = application_id
+        .chars()
+        .map(|character| if character == '\\' { '_' } else { character })
+        .take(200)
+        .collect();
     wide(&format!("{prefix}{id}"))
 }
 
@@ -81,17 +88,34 @@ pub fn acquire(application_id: &str, launch_url: Option<&str>) -> Launch {
         // SAFETY: the class name is NUL-terminated; the copy structure and
         // the bytes it points to outlive the synchronous send.
         unsafe {
-            if let Ok(target) = FindWindowExW(Some(HWND_MESSAGE), None, PCWSTR(class.as_ptr()), PCWSTR::null())
-                && !target.is_invalid() {
-                    // This launch has the right to take the foreground;
-                    // the running application gets it.
-                    let mut process = 0_u32;
-                    GetWindowThreadProcessId(target, Some(&mut process));
-                    let _ = AllowSetForegroundWindow(process);
-                    let data = COPYDATASTRUCT { dwData: LINK_MAGIC, cbData: link.len() as u32, lpData: link.as_ptr().cast_mut().cast() };
-                    SendMessageTimeoutW(target, WM_COPYDATA, WPARAM(0), LPARAM(std::ptr::from_ref(&data) as isize), SMTO_ABORTIFHUNG, 5000, None);
-                    return Launch::Handed;
-                }
+            if let Ok(target) = FindWindowExW(
+                Some(HWND_MESSAGE),
+                None,
+                PCWSTR(class.as_ptr()),
+                PCWSTR::null(),
+            ) && !target.is_invalid()
+            {
+                // This launch has the right to take the foreground;
+                // the running application gets it.
+                let mut process = 0_u32;
+                GetWindowThreadProcessId(target, Some(&mut process));
+                let _ = AllowSetForegroundWindow(process);
+                let data = COPYDATASTRUCT {
+                    dwData: LINK_MAGIC,
+                    cbData: link.len() as u32,
+                    lpData: link.as_ptr().cast_mut().cast(),
+                };
+                SendMessageTimeoutW(
+                    target,
+                    WM_COPYDATA,
+                    WPARAM(0),
+                    LPARAM(std::ptr::from_ref(&data) as isize),
+                    SMTO_ABORTIFHUNG,
+                    5000,
+                    None,
+                );
+                return Launch::Handed;
+            }
         }
         // The first launch holds the mutex but is still starting.
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -109,10 +133,17 @@ fn activated(app: &Rc<App>, link: Option<String>) {
     app.pump();
 }
 
-extern "system" fn instance_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+extern "system" fn instance_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     if message == WM_COPYDATA && lparam.0 != 0 {
         let handled = std::panic::catch_unwind(|| {
-            let Some(app) = App::current() else { return false };
+            let Some(app) = App::current() else {
+                return false;
+            };
             // SAFETY: lParam of WM_COPYDATA points to a COPYDATASTRUCT whose
             // data is readable for `cbData` bytes during the message.
             let link = unsafe {
@@ -124,7 +155,12 @@ extern "system" fn instance_proc(hwnd: HWND, message: u32, wparam: WPARAM, lpara
                     None
                 } else {
                     // Anything that is not text is dropped (the window still comes forward).
-                    std::str::from_utf8(std::slice::from_raw_parts(data.lpData.cast::<u8>(), data.cbData as usize)).ok().map(str::to_owned)
+                    std::str::from_utf8(std::slice::from_raw_parts(
+                        data.lpData.cast::<u8>(),
+                        data.cbData as usize,
+                    ))
+                    .ok()
+                    .map(str::to_owned)
                 }
             };
             activated(&app, link.filter(|link| !link.is_empty()));
@@ -153,7 +189,21 @@ pub fn listen(app: &Rc<App>) -> Option<HWND> {
     // the class name outlives both calls.
     unsafe {
         RegisterClassExW(&class);
-        CreateWindowExW(WINDOW_EX_STYLE(0), PCWSTR(class_name.as_ptr()), PCWSTR::null(), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(app.instance), None).ok()
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            PCWSTR(class_name.as_ptr()),
+            PCWSTR::null(),
+            WINDOW_STYLE(0),
+            0,
+            0,
+            0,
+            0,
+            Some(HWND_MESSAGE),
+            None,
+            Some(app.instance),
+            None,
+        )
+        .ok()
     }
 }
 

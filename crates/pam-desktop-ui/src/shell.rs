@@ -63,7 +63,10 @@ impl Accelerator {
                 }
             }
         }
-        Some(Self { modifiers, key: key? })
+        Some(Self {
+            modifiers,
+            key: key?,
+        })
     }
 
     fn key_name(token: &str) -> Option<String> {
@@ -100,12 +103,17 @@ impl Accelerator {
         if !named.is_empty() {
             return Some(named.to_owned());
         }
-        if let Some(number) = lower.strip_prefix('f').and_then(|rest| rest.parse::<u8>().ok()) {
+        if let Some(number) = lower
+            .strip_prefix('f')
+            .and_then(|rest| rest.parse::<u8>().ok())
+        {
             return (1..=24).contains(&number).then(|| format!("F{number}"));
         }
         let mut characters = token.chars();
         match (characters.next(), characters.next()) {
-            (Some(character), None) if !character.is_control() => Some(character.to_lowercase().collect()),
+            (Some(character), None) if !character.is_control() => {
+                Some(character.to_lowercase().collect())
+            }
             _ => None,
         }
     }
@@ -177,7 +185,11 @@ pub enum MenuNode {
         destructive: bool,
     },
     Separator,
-    Submenu { label: String, enabled: bool, children: Vec<MenuNode> },
+    Submenu {
+        label: String,
+        enabled: bool,
+        children: Vec<MenuNode>,
+    },
 }
 
 const MAX_MENU_DEPTH: usize = 6;
@@ -193,7 +205,11 @@ pub fn parse_menu(json: &str) -> Option<Vec<MenuNode>> {
     parse_menu_level(&value, 0, &mut budget)
 }
 
-fn parse_menu_level(value: &serde_json::Value, depth: usize, budget: &mut usize) -> Option<Vec<MenuNode>> {
+fn parse_menu_level(
+    value: &serde_json::Value,
+    depth: usize,
+    budget: &mut usize,
+) -> Option<Vec<MenuNode>> {
     if depth > MAX_MENU_DEPTH {
         return None;
     }
@@ -207,10 +223,18 @@ fn parse_menu_level(value: &serde_json::Value, depth: usize, budget: &mut usize)
             nodes.push(MenuNode::Separator);
             continue;
         }
-        let label = text("label").unwrap_or_default().chars().take(256).collect::<String>();
+        let label = text("label")
+            .unwrap_or_default()
+            .chars()
+            .take(256)
+            .collect::<String>();
         let enabled = flag("enabled").unwrap_or(true);
         if let Some(children) = entry.get("children") {
-            nodes.push(MenuNode::Submenu { label, enabled, children: parse_menu_level(children, depth + 1, budget)? });
+            nodes.push(MenuNode::Submenu {
+                label,
+                enabled,
+                children: parse_menu_level(children, depth + 1, budget)?,
+            });
             continue;
         }
         let role = text("role").and_then(MenuRole::parse);
@@ -221,7 +245,9 @@ fn parse_menu_level(value: &serde_json::Value, depth: usize, budget: &mut usize)
         nodes.push(MenuNode::Item {
             id,
             label,
-            accelerator: text("shortcut").filter(|shortcut| !shortcut.is_empty()).and_then(Accelerator::parse),
+            accelerator: text("shortcut")
+                .filter(|shortcut| !shortcut.is_empty())
+                .and_then(Accelerator::parse),
             enabled,
             checked: flag("checked"),
             role,
@@ -359,12 +385,30 @@ mod tests {
         assert_eq!(save.key, "s");
         assert!(save.matches("S", save.modifiers));
         assert!(!save.matches("s", Modifiers::default()));
-        assert_eq!(Accelerator::parse("Alt+F4").map(|shortcut| shortcut.key), Some("F4".into()));
-        assert_eq!(Accelerator::parse("CmdOrCtrl+KeyP").map(|shortcut| shortcut.key), Some("p".into()));
-        assert_eq!(Accelerator::parse("Ctrl++").map(|shortcut| shortcut.key), Some("+".into()));
-        assert_eq!(Accelerator::parse("Ctrl+Plus").map(|shortcut| shortcut.key), Some("+".into()));
-        assert_eq!(Accelerator::parse("Esc").map(|shortcut| shortcut.key), Some("Escape".into()));
-        assert_eq!(Accelerator::parse("Shift+Left").map(|shortcut| shortcut.key), Some("ArrowLeft".into()));
+        assert_eq!(
+            Accelerator::parse("Alt+F4").map(|shortcut| shortcut.key),
+            Some("F4".into())
+        );
+        assert_eq!(
+            Accelerator::parse("CmdOrCtrl+KeyP").map(|shortcut| shortcut.key),
+            Some("p".into())
+        );
+        assert_eq!(
+            Accelerator::parse("Ctrl++").map(|shortcut| shortcut.key),
+            Some("+".into())
+        );
+        assert_eq!(
+            Accelerator::parse("Ctrl+Plus").map(|shortcut| shortcut.key),
+            Some("+".into())
+        );
+        assert_eq!(
+            Accelerator::parse("Esc").map(|shortcut| shortcut.key),
+            Some("Escape".into())
+        );
+        assert_eq!(
+            Accelerator::parse("Shift+Left").map(|shortcut| shortcut.key),
+            Some("ArrowLeft".into())
+        );
         let portable = Accelerator::parse("CmdOrCtrl+N").expect("valid");
         assert_eq!(portable.modifiers.meta, cfg!(target_os = "macos"));
         assert_eq!(portable.modifiers.control, !cfg!(target_os = "macos"));
@@ -385,13 +429,33 @@ mod tests {
             ]}]"#,
         )
         .expect("valid");
-        let MenuNode::Submenu { label, children, .. } = &menu[0] else { panic!("submenu expected") };
+        let MenuNode::Submenu {
+            label, children, ..
+        } = &menu[0]
+        else {
+            panic!("submenu expected")
+        };
         assert_eq!(label, "File");
         assert_eq!(children.len(), 4);
-        assert!(matches!(&children[0], MenuNode::Item { id, accelerator: Some(_), .. } if id == "new"));
+        assert!(
+            matches!(&children[0], MenuNode::Item { id, accelerator: Some(_), .. } if id == "new")
+        );
         assert_eq!(children[1], MenuNode::Separator);
-        assert!(matches!(&children[2], MenuNode::Item { checked: Some(true), enabled: false, .. }));
-        assert!(matches!(&children[3], MenuNode::Item { role: Some(MenuRole::Quit), .. }));
+        assert!(matches!(
+            &children[2],
+            MenuNode::Item {
+                checked: Some(true),
+                enabled: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &children[3],
+            MenuNode::Item {
+                role: Some(MenuRole::Quit),
+                ..
+            }
+        ));
         // An item needs an id or a role.
         assert!(parse_menu(r#"[{"label":"Broken"}]"#).is_none());
         assert!(parse_menu("{}").is_none());

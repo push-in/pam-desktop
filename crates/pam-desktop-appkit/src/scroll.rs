@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use objc2::rc::Retained;
 use objc2::runtime::NSObject;
-use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAnimationContext, NSBorderType, NSEvent, NSResponder, NSScrollElasticity, NSScrollView,
     NSScrollerStyle, NSView, NSViewBoundsDidChangeNotification,
@@ -75,8 +75,12 @@ impl PamScrollView {
     fn offset(&self) -> Point {
         let clip = self.contentView();
         let bounds = clip.bounds();
-        let document = self.documentView().map_or(CGSize::ZERO, |document| document.frame().size);
-        let limit = |value: f64, content: f64, viewport: f64| value.clamp(0.0, (content - viewport).max(0.0)) as f32;
+        let document = self
+            .documentView()
+            .map_or(CGSize::ZERO, |document| document.frame().size);
+        let limit = |value: f64, content: f64, viewport: f64| {
+            value.clamp(0.0, (content - viewport).max(0.0)) as f32
+        };
         Point::new(
             limit(bounds.origin.x, document.width, bounds.size.width),
             limit(bounds.origin.y, document.height, bounds.size.height),
@@ -87,7 +91,10 @@ impl PamScrollView {
         let ivars = self.ivars();
         let offset = self.offset();
         if ivars.reported.replace(offset) != offset {
-            ivars.events.push(BackendEvent::ScrollChanged { id: ivars.id, offset });
+            ivars.events.push(BackendEvent::ScrollChanged {
+                id: ivars.id,
+                offset,
+            });
         }
     }
 }
@@ -113,7 +120,8 @@ impl ScrollHost {
             pending: Cell::new(None),
         });
         // SAFETY: `initWithFrame:` is the designated initializer of `NSScrollView`.
-        let scroll: Retained<PamScrollView> = unsafe { msg_send![super(this), initWithFrame: CGRect::ZERO] };
+        let scroll: Retained<PamScrollView> =
+            unsafe { msg_send![super(this), initWithFrame: CGRect::ZERO] };
         // The node's own view paints the background and the border.
         scroll.setDrawsBackground(false);
         scroll.setBorderType(NSBorderType::NoBorder);
@@ -139,7 +147,13 @@ impl ScrollHost {
             );
         }
         parent.addSubview(&scroll);
-        let mut host = Self { scroll, document, horizontal: false, viewport: Size::ZERO, content: Size::ZERO };
+        let mut host = Self {
+            scroll,
+            document,
+            horizontal: false,
+            viewport: Size::ZERO,
+            content: Size::ZERO,
+        };
         host.configure(&ScrollConfig::default());
         host
     }
@@ -163,9 +177,15 @@ impl ScrollHost {
     /// exactly as wide as the viewport across it, so it only scrolls one way.
     fn layout_document(&self) {
         let size = if self.horizontal {
-            Size::new(self.content.width.max(self.viewport.width), self.viewport.height)
+            Size::new(
+                self.content.width.max(self.viewport.width),
+                self.viewport.height,
+            )
         } else {
-            Size::new(self.viewport.width, self.content.height.max(self.viewport.height))
+            Size::new(
+                self.viewport.width,
+                self.content.height.max(self.viewport.height),
+            )
         };
         self.programmatic(|| self.document.setFrameSize(cg_size(size)));
         // An offset asked for earlier may be reachable now.
@@ -180,7 +200,10 @@ impl ScrollHost {
     /// The viewport covers the node's box.
     pub fn set_viewport(&mut self, size: Size) {
         self.viewport = size;
-        self.programmatic(|| self.scroll.setFrame(CGRect::new(CGPoint::ZERO, cg_size(size))));
+        self.programmatic(|| {
+            self.scroll
+                .setFrame(CGRect::new(CGPoint::ZERO, cg_size(size)))
+        });
         self.layout_document();
     }
 
@@ -193,11 +216,15 @@ impl ScrollHost {
         self.horizontal = config.horizontal;
         self.scroll.ivars().enabled.set(config.enabled);
         let indicators = config.enabled && config.shows_indicators;
-        self.scroll.setHasVerticalScroller(indicators && !config.horizontal);
-        self.scroll.setHasHorizontalScroller(indicators && config.horizontal);
+        self.scroll
+            .setHasVerticalScroller(indicators && !config.horizontal);
+        self.scroll
+            .setHasHorizontalScroller(indicators && config.horizontal);
         let (along, across) = (NSScrollElasticity::Automatic, NSScrollElasticity::None);
-        self.scroll.setVerticalScrollElasticity(if config.horizontal { across } else { along });
-        self.scroll.setHorizontalScrollElasticity(if config.horizontal { along } else { across });
+        self.scroll
+            .setVerticalScrollElasticity(if config.horizontal { across } else { along });
+        self.scroll
+            .setHorizontalScrollElasticity(if config.horizontal { along } else { across });
         self.layout_document();
     }
 
@@ -232,7 +259,10 @@ impl ScrollHost {
     pub fn scroll_to(&self, offset: Point, animated: bool) {
         let offset = Point::new(offset.x.max(0.0), offset.y.max(0.0));
         let reached = self.move_to(offset, animated);
-        self.scroll.ivars().pending.set((!reached).then_some(offset));
+        self.scroll
+            .ivars()
+            .pending
+            .set((!reached).then_some(offset));
     }
 
     pub fn destroy(&self) {

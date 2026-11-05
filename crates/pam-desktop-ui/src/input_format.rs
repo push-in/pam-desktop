@@ -9,11 +9,18 @@ pub enum Format {
     /// Digits fill the `slot` characters of `pattern`; everything else is literal.
     Pattern { pattern: String, slot: char },
     /// Digits shift in from the right: `1234` with two decimals is `12.34`.
-    Currency { prefix: String, suffix: String, decimals: u8, locale: String },
+    Currency {
+        prefix: String,
+        suffix: String,
+        decimals: u8,
+        locale: String,
+    },
 }
 
 fn digits(text: &str) -> Vec<char> {
-    text.chars().filter(|character| character.is_numeric() && character.is_ascii_digit()).collect()
+    text.chars()
+        .filter(|character| character.is_numeric() && character.is_ascii_digit())
+        .collect()
 }
 
 fn count_digits(text: &str) -> usize {
@@ -22,10 +29,17 @@ fn count_digits(text: &str) -> usize {
 
 /// Thousands and decimal separators of a BCP-47 locale.
 fn separators(locale: &str) -> (&'static str, &'static str) {
-    let language = locale.split(['-', '_', '.']).next().unwrap_or("").to_ascii_lowercase();
+    let language = locale
+        .split(['-', '_', '.'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     match language.as_str() {
-        "pt" | "de" | "es" | "it" | "nl" | "id" | "tr" | "da" | "el" | "hr" | "sl" | "ro" | "vi" => (".", ","),
-        "fr" | "nb" | "no" | "sv" | "fi" | "cs" | "sk" | "pl" | "ru" | "uk" | "bg" | "hu" => ("\u{202f}", ","),
+        "pt" | "de" | "es" | "it" | "nl" | "id" | "tr" | "da" | "el" | "hr" | "sl" | "ro"
+        | "vi" => (".", ","),
+        "fr" | "nb" | "no" | "sv" | "fi" | "cs" | "sk" | "pl" | "ru" | "uk" | "bg" | "hu" => {
+            ("\u{202f}", ",")
+        }
         "ch" => ("'", "."),
         _ => (",", "."),
     }
@@ -72,21 +86,31 @@ impl Format {
                 }
                 output
             }
-            Self::Currency { prefix, suffix, decimals, locale } => {
+            Self::Currency {
+                prefix,
+                suffix,
+                decimals,
+                locale,
+            } => {
                 let digits: Vec<char> = digits(value).into_iter().take(36).collect();
                 if digits.is_empty() {
                     return String::new();
                 }
                 let decimals = usize::from(*decimals);
                 // Normalize to ASCII digits and drop leading zeros of the integer part.
-                let mut ascii: String = digits.iter().filter_map(|digit| digit.to_digit(10)).map(|digit| char::from(b'0' + digit as u8)).collect();
+                let mut ascii: String = digits
+                    .iter()
+                    .filter_map(|digit| digit.to_digit(10))
+                    .map(|digit| char::from(b'0' + digit as u8))
+                    .collect();
                 while ascii.len() <= decimals {
                     ascii.insert(0, '0');
                 }
                 let (whole, fraction) = ascii.split_at(ascii.len() - decimals);
                 let whole = whole.trim_start_matches('0');
                 let whole = if whole.is_empty() { "0" } else { whole };
-                let (thousands, decimal) = separators(if locale.is_empty() { "en-US" } else { locale });
+                let (thousands, decimal) =
+                    separators(if locale.is_empty() { "en-US" } else { locale });
                 let mut grouped = String::new();
                 for (index, character) in whole.chars().enumerate() {
                     if index > 0 && (whole.len() - index) % 3 == 0 {
@@ -94,7 +118,9 @@ impl Format {
                     }
                     grouped.push(character);
                 }
-                let mut output = String::with_capacity(prefix.len() + grouped.len() + decimals + suffix.len() + 1);
+                let mut output = String::with_capacity(
+                    prefix.len() + grouped.len() + decimals + suffix.len() + 1,
+                );
                 output.push_str(prefix);
                 output.push_str(&grouped);
                 if decimals > 0 {
@@ -119,7 +145,8 @@ impl Format {
         let deletion = proposed.len() < previous.chars().count();
         // Deleting a literal removes the digit before it: otherwise the mask
         // would put the literal straight back and the caret would be stuck.
-        if deletion && count_digits(&proposed.iter().collect::<String>()) == count_digits(previous) {
+        if deletion && count_digits(&proposed.iter().collect::<String>()) == count_digits(previous)
+        {
             let before: Vec<usize> = proposed[..caret]
                 .iter()
                 .enumerate()
@@ -131,7 +158,10 @@ impl Format {
                 caret -= 1;
             }
         }
-        let digits_before = proposed[..caret.min(proposed.len())].iter().filter(|character| character.is_ascii_digit()).count();
+        let digits_before = proposed[..caret.min(proposed.len())]
+            .iter()
+            .filter(|character| character.is_ascii_digit())
+            .count();
         let proposed: String = proposed.into_iter().collect();
         let formatted = self.format(&proposed);
         let length = formatted.chars().count();
@@ -166,7 +196,10 @@ mod tests {
     use super::*;
 
     fn phone() -> Format {
-        Format::Pattern { pattern: "(##) #####-####".into(), slot: '#' }
+        Format::Pattern {
+            pattern: "(##) #####-####".into(),
+            slot: '#',
+        }
     }
 
     #[test]
@@ -183,12 +216,22 @@ mod tests {
 
     #[test]
     fn currency_shifts_digits_in_from_the_right() {
-        let brl = Format::Currency { prefix: "R$ ".into(), suffix: String::new(), decimals: 2, locale: "pt-BR".into() };
+        let brl = Format::Currency {
+            prefix: "R$ ".into(),
+            suffix: String::new(),
+            decimals: 2,
+            locale: "pt-BR".into(),
+        };
         assert_eq!(brl.format("1"), "R$ 0,01");
         assert_eq!(brl.format("12"), "R$ 0,12");
         assert_eq!(brl.format("123456"), "R$ 1.234,56");
         assert_eq!(brl.format("R$ 1.234,567"), "R$ 12.345,67");
-        let usd = Format::Currency { prefix: "$".into(), suffix: " USD".into(), decimals: 0, locale: "en-US".into() };
+        let usd = Format::Currency {
+            prefix: "$".into(),
+            suffix: " USD".into(),
+            decimals: 0,
+            locale: "en-US".into(),
+        };
         assert_eq!(usd.format("1234567"), "$1,234,567 USD");
         assert_eq!(usd.format(""), "");
     }
@@ -199,7 +242,10 @@ mod tests {
         // "(11" + typing "9" at the end.
         assert_eq!(format.edit("(11", "(119", 4), ("(11) 9".to_owned(), 6));
         // Inserting a digit in the middle keeps the caret after it.
-        assert_eq!(format.edit("(11) 9", "(121) 9", 3), ("(12) 19".to_owned(), 3));
+        assert_eq!(
+            format.edit("(11) 9", "(121) 9", 3),
+            ("(12) 19".to_owned(), 3)
+        );
     }
 
     #[test]
@@ -215,7 +261,12 @@ mod tests {
 
     #[test]
     fn currency_caret_goes_to_the_end() {
-        let format = Format::Currency { prefix: String::new(), suffix: String::new(), decimals: 2, locale: "en-US".into() };
+        let format = Format::Currency {
+            prefix: String::new(),
+            suffix: String::new(),
+            decimals: 2,
+            locale: "en-US".into(),
+        };
         assert_eq!(format.edit("0.12", "0.123", 5), ("1.23".to_owned(), 4));
     }
 }

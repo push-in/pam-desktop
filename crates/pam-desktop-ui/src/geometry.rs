@@ -33,7 +33,10 @@ pub struct Size {
 }
 
 impl Size {
-    pub const ZERO: Self = Self { width: 0.0, height: 0.0 };
+    pub const ZERO: Self = Self {
+        width: 0.0,
+        height: 0.0,
+    };
 
     #[must_use]
     pub const fn new(width: f32, height: f32) -> Self {
@@ -55,11 +58,21 @@ pub struct Rect {
 }
 
 impl Rect {
-    pub const ZERO: Self = Self { x: 0.0, y: 0.0, width: 0.0, height: 0.0 };
+    pub const ZERO: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        width: 0.0,
+        height: 0.0,
+    };
 
     #[must_use]
     pub const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     #[must_use]
@@ -130,7 +143,12 @@ impl Rect {
 
     #[must_use]
     pub fn inset_by(self, insets: Insets) -> Self {
-        self.outset_by(Insets::new(-insets.left, -insets.top, -insets.right, -insets.bottom))
+        self.outset_by(Insets::new(
+            -insets.left,
+            -insets.top,
+            -insets.right,
+            -insets.bottom,
+        ))
     }
 
     #[must_use]
@@ -157,17 +175,31 @@ impl Rect {
         }
         let x = self.x.min(other.x);
         let y = self.y.min(other.y);
-        Self::new(x, y, self.right().max(other.right()) - x, self.bottom().max(other.bottom()) - y)
+        Self::new(
+            x,
+            y,
+            self.right().max(other.right()) - x,
+            self.bottom().max(other.bottom()) - y,
+        )
     }
 
     /// Snaps the edges to the device pixel grid so 1px borders and text stay crisp.
     #[must_use]
     pub fn snapped(self, scale: f32) -> Self {
-        let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
         let snap = |value: f32| (value * scale).round() / scale;
         let x = snap(self.x);
         let y = snap(self.y);
-        Self::new(x, y, (snap(self.right()) - x).max(0.0), (snap(self.bottom()) - y).max(0.0))
+        Self::new(
+            x,
+            y,
+            (snap(self.right()) - x).max(0.0),
+            (snap(self.bottom()) - y).max(0.0),
+        )
     }
 }
 
@@ -180,11 +212,21 @@ pub struct Insets {
 }
 
 impl Insets {
-    pub const ZERO: Self = Self { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 };
+    pub const ZERO: Self = Self {
+        left: 0.0,
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+    };
 
     #[must_use]
     pub const fn new(left: f32, top: f32, right: f32, bottom: f32) -> Self {
-        Self { left, top, right, bottom }
+        Self {
+            left,
+            top,
+            right,
+            bottom,
+        }
     }
 
     #[must_use]
@@ -226,23 +268,51 @@ impl Default for Affine {
 }
 
 impl Affine {
-    pub const IDENTITY: Self = Self { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: 0.0, ty: 0.0 };
+    pub const IDENTITY: Self = Self {
+        a: 1.0,
+        b: 0.0,
+        c: 0.0,
+        d: 1.0,
+        tx: 0.0,
+        ty: 0.0,
+    };
 
     #[must_use]
     pub const fn translation(tx: f32, ty: f32) -> Self {
-        Self { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx, ty }
+        Self {
+            a: 1.0,
+            b: 0.0,
+            c: 0.0,
+            d: 1.0,
+            tx,
+            ty,
+        }
     }
 
     #[must_use]
     pub const fn scaling(sx: f32, sy: f32) -> Self {
-        Self { a: sx, b: 0.0, c: 0.0, d: sy, tx: 0.0, ty: 0.0 }
+        Self {
+            a: sx,
+            b: 0.0,
+            c: 0.0,
+            d: sy,
+            tx: 0.0,
+            ty: 0.0,
+        }
     }
 
     /// Clockwise rotation in degrees (y axis points down).
     #[must_use]
     pub fn rotation(degrees: f32) -> Self {
         let (sin, cos) = degrees.to_radians().sin_cos();
-        Self { a: cos, b: sin, c: -sin, d: cos, tx: 0.0, ty: 0.0 }
+        Self {
+            a: cos,
+            b: sin,
+            c: -sin,
+            d: cos,
+            tx: 0.0,
+            ty: 0.0,
+        }
     }
 
     #[must_use]
@@ -271,7 +341,9 @@ impl Affine {
     /// The same transform applied around `origin` instead of (0, 0).
     #[must_use]
     pub fn around(&self, origin: Point) -> Self {
-        Self::translation(-origin.x, -origin.y).then(self).then(&Self::translation(origin.x, origin.y))
+        Self::translation(-origin.x, -origin.y)
+            .then(self)
+            .then(&Self::translation(origin.x, origin.y))
     }
 
     #[must_use]
@@ -297,7 +369,14 @@ impl Affine {
         let b = -self.b / det;
         let c = -self.c / det;
         let d = self.a / det;
-        Some(Self { a, b, c, d, tx: -(a * self.tx + c * self.ty), ty: -(b * self.tx + d * self.ty) })
+        Some(Self {
+            a,
+            b,
+            c,
+            d,
+            tx: -(a * self.tx + c * self.ty),
+            ty: -(b * self.tx + d * self.ty),
+        })
     }
 
     /// Axis-aligned bounds of a transformed rectangle.

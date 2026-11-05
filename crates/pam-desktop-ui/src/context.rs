@@ -107,25 +107,68 @@ pub struct OutEvent {
 pub enum HostCommand {
     /// Moves keyboard focus to a node, or clears it.
     Focus(Option<NodeId>),
-    ScrollTo { id: NodeId, offset: Point, animated: bool },
-    InputConfig { id: NodeId, config: Box<crate::backend::InputConfig> },
-    InputText { id: NodeId, text: String, selection: Option<(u32, u32)> },
-    InputSelection { id: NodeId, start: u32, end: u32 },
+    ScrollTo {
+        id: NodeId,
+        offset: Point,
+        animated: bool,
+    },
+    InputConfig {
+        id: NodeId,
+        config: Box<crate::backend::InputConfig>,
+    },
+    InputText {
+        id: NodeId,
+        text: String,
+        selection: Option<(u32, u32)>,
+    },
+    InputSelection {
+        id: NodeId,
+        start: u32,
+        end: u32,
+    },
     /// The press being handled grabbed a window drag region.
     BeginWindowDrag,
     /// Decodes an image; `max_dimension` bounds its longest side in pixels.
-    LoadImage { key: crate::backend::ImageKey, source: crate::backend::ImageSource, max_dimension: Option<u32> },
+    LoadImage {
+        key: crate::backend::ImageKey,
+        source: crate::backend::ImageSource,
+        max_dimension: Option<u32>,
+    },
     ReleaseImage(crate::backend::ImageKey),
-    SetImage { id: NodeId, content: Option<crate::backend::ImageContent> },
-    SetDrawing { id: NodeId, commands: Vec<crate::backend::DrawCommand> },
-    SetTextSelection { id: NodeId, range: Option<(u32, u32)> },
+    SetImage {
+        id: NodeId,
+        content: Option<crate::backend::ImageContent>,
+    },
+    SetDrawing {
+        id: NodeId,
+        commands: Vec<crate::backend::DrawCommand>,
+    },
+    SetTextSelection {
+        id: NodeId,
+        range: Option<(u32, u32)>,
+    },
     /// Starts a system drag of text from the press being handled.
-    BeginTextDrag { source: NodeId, text: String },
-    SetMedia { id: NodeId, state: Box<crate::backend::MediaState> },
-    OpenWindow { window: crate::backend::WindowId, config: Box<crate::backend::WindowConfig> },
-    SetWindowRoot { window: crate::backend::WindowId, root: Option<NodeId> },
+    BeginTextDrag {
+        source: NodeId,
+        text: String,
+    },
+    SetMedia {
+        id: NodeId,
+        state: Box<crate::backend::MediaState>,
+    },
+    OpenWindow {
+        window: crate::backend::WindowId,
+        config: Box<crate::backend::WindowConfig>,
+    },
+    SetWindowRoot {
+        window: crate::backend::WindowId,
+        root: Option<NodeId>,
+    },
     CloseWindow(crate::backend::WindowId),
-    SetWebView { id: NodeId, state: Box<crate::backend::WebViewState> },
+    SetWebView {
+        id: NodeId,
+        state: Box<crate::backend::WebViewState>,
+    },
 }
 
 pub struct Ctx<'a> {
@@ -143,13 +186,20 @@ pub struct Ctx<'a> {
 
 impl Ctx<'_> {
     pub fn emit(&mut self, node: NodeId, kind: u16, payload: Vec<u8>) {
-        self.events.push(OutEvent { node, kind, payload });
+        self.events.push(OutEvent {
+            node,
+            kind,
+            payload,
+        });
     }
 
     /// Emits only when the node carries the handler marker property, like
     /// every host of the protocol does.
     pub fn emit_if(&mut self, node: NodeId, marker: PropKey, kind: u16, payload: Vec<u8>) -> bool {
-        let handled = self.scene.node(node).is_some_and(|node| node.handles(marker));
+        let handled = self
+            .scene
+            .node(node)
+            .is_some_and(|node| node.handles(marker));
         if handled {
             self.emit(node, kind, payload);
         }

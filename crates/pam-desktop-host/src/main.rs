@@ -1,7 +1,10 @@
 //! `pam-desktop`: the native host of PAM Desktop applications.
 
 // A release build is a windowed program on Windows: see `console`.
-#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 mod bundle;
 mod console;
@@ -47,14 +50,25 @@ fn php_command() -> (PathBuf, Vec<OsString>) {
     }
     let on_path = |name: &str| {
         std::env::var_os("PATH").and_then(|paths| {
-            std::env::split_paths(&paths).map(|directory| directory.join(name)).find(|candidate| candidate.is_file())
+            std::env::split_paths(&paths)
+                .map(|directory| directory.join(name))
+                .find(|candidate| candidate.is_file())
         })
     };
-    let executable = |name: &str| if cfg!(windows) { format!("{name}.exe") } else { name.to_owned() };
+    let executable = |name: &str| {
+        if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.to_owned()
+        }
+    };
     if let Some(pam) = on_path(&executable("pam")) {
         return (pam, vec![OsString::from("exec")]);
     }
-    (on_path(&executable("php")).unwrap_or_else(|| PathBuf::from("php")), Vec::new())
+    (
+        on_path(&executable("php")).unwrap_or_else(|| PathBuf::from("php")),
+        Vec::new(),
+    )
 }
 
 /// The worker bootstrap shipped with the PHP package.
@@ -78,7 +92,10 @@ fn worker_bootstrap(project: &Path) -> Option<PathBuf> {
 /// directory is the project. `link` is the URL the application was opened
 /// with, when the system passed one.
 fn run(target: &Path, development: bool, link: Option<String>) -> ExitCode {
-    let directory = target.is_dir().then(|| target.canonicalize().ok()).flatten();
+    let directory = target
+        .is_dir()
+        .then(|| target.canonicalize().ok())
+        .flatten();
     let entry = match &directory {
         Some(directory) => directory.join(Manifest::load(directory).entry()),
         None => target.to_path_buf(),
@@ -87,9 +104,13 @@ fn run(target: &Path, development: bool, link: Option<String>) -> ExitCode {
         eprintln!("pam-desktop: {} does not exist", entry.display());
         return ExitCode::from(66);
     };
-    let project = directory.unwrap_or_else(|| entry.parent().map(Path::to_path_buf).unwrap_or_default());
+    let project =
+        directory.unwrap_or_else(|| entry.parent().map(Path::to_path_buf).unwrap_or_default());
     let Some(bootstrap) = worker_bootstrap(&project) else {
-        eprintln!("pam-desktop: the pushinbr/pam-desktop package is not installed in {}", project.display());
+        eprintln!(
+            "pam-desktop: the pushinbr/pam-desktop package is not installed in {}",
+            project.display()
+        );
         return ExitCode::from(69);
     };
     let (program, mut arguments) = php_command();
@@ -105,30 +126,62 @@ fn run(target: &Path, development: bool, link: Option<String>) -> ExitCode {
     let manifest = Manifest::load(&project);
     let application_id = manifest.application_id();
     let mut environment = vec![
-        ("PAM_DESKTOP_PROJECT_ROOT".into(), project.display().to_string()),
+        (
+            "PAM_DESKTOP_PROJECT_ROOT".into(),
+            project.display().to_string(),
+        ),
         ("PAM_DESKTOP_APPLICATION_ID".into(), application_id.clone()),
     ];
     // Navigation state, hot reload checkpoints and module storage are per application.
-    let app_paths = if development { AppPaths::for_development(&project) } else { AppPaths::for_application(&application_id) }
-        .with_overrides();
+    let app_paths = if development {
+        AppPaths::for_development(&project)
+    } else {
+        AppPaths::for_application(&application_id)
+    }
+    .with_overrides();
     if let Err(error) = app_paths.create() {
         eprintln!("pam-desktop: cannot create the application directories: {error}");
         return ExitCode::from(73);
     }
     environment.extend(app_paths.environment());
-    let http_client: Arc<dyn pam_desktop_ui::modules::fetch::HttpClient> = Arc::new(UreqClient::new());
+    let http_client: Arc<dyn pam_desktop_ui::modules::fetch::HttpClient> =
+        Arc::new(UreqClient::new());
     let config = RuntimeConfig {
-        worker: WorkerCommand { program, arguments, entry, working_directory: Some(project.clone()), environment },
+        worker: WorkerCommand {
+            program,
+            arguments,
+            entry,
+            working_directory: Some(project.clone()),
+            environment,
+        },
         window: manifest.window(),
         platform,
         development,
-        watch: if development { vec![project.clone()] } else { Vec::new() },
-        directories: Directories { data: app_paths.data.clone(), cache: app_paths.cache.clone(), state: app_paths.state.clone(), assets: project.clone() },
+        watch: if development {
+            vec![project.clone()]
+        } else {
+            Vec::new()
+        },
+        directories: Directories {
+            data: app_paths.data.clone(),
+            cache: app_paths.cache.clone(),
+            state: app_paths.state.clone(),
+            assets: project.clone(),
+        },
         app_version: manifest.text("version").unwrap_or_default(),
         build_number: manifest.text("build").unwrap_or_default(),
-        launch_url: link.or_else(|| std::env::var("PAM_DESKTOP_LAUNCH_URL").ok()).filter(|url| !url.is_empty()),
+        launch_url: link
+            .or_else(|| std::env::var("PAM_DESKTOP_LAUNCH_URL").ok())
+            .filter(|url| !url.is_empty()),
         single_instance: manifest.single_instance(development),
-        modules: modules::host_modules(&app_paths.data, &app_paths.cache, &application_id, Arc::clone(&http_client), development, &manifest),
+        modules: modules::host_modules(
+            &app_paths.data,
+            &app_paths.cache,
+            &application_id,
+            Arc::clone(&http_client),
+            development,
+            &manifest,
+        ),
         http_client: Some(http_client),
     };
 
@@ -189,12 +242,23 @@ fn run_update_key(arguments: &[OsString]) -> Result<(), String> {
 }
 
 fn run_publish_update(mut arguments: Vec<OsString>) -> Result<(), String> {
-    let has_project = arguments.first().is_some_and(|argument| argument.to_str().is_some_and(|argument| !argument.starts_with('-')));
-    let project = if has_project { PathBuf::from(arguments.remove(0)) } else { PathBuf::from(".") };
+    let has_project = arguments.first().is_some_and(|argument| {
+        argument
+            .to_str()
+            .is_some_and(|argument| !argument.starts_with('-'))
+    });
+    let project = if has_project {
+        PathBuf::from(arguments.remove(0))
+    } else {
+        PathBuf::from(".")
+    };
     let options = updater::PublishOptions::parse(arguments)?;
-    let project = project.canonicalize().map_err(|error| format!("cannot resolve {}: {error}", project.display()))?;
-    let application =
-        Manifest::read(&project)?.application().map_err(|error| format!("{}: {error}", project.join(manifest::FILE_NAME).display()))?;
+    let project = project
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve {}: {error}", project.display()))?;
+    let application = Manifest::read(&project)?
+        .application()
+        .map_err(|error| format!("{}: {error}", project.join(manifest::FILE_NAME).display()))?;
     let output = updater::publish_feed(&application, options)?;
     println!("[ok] Signed update feed: {}", output.display());
     Ok(())
@@ -211,22 +275,34 @@ fn main() -> ExitCode {
     }) {
         return launch.run();
     }
-    match arguments.next().as_deref().and_then(|argument| argument.to_str()) {
+    match arguments
+        .next()
+        .as_deref()
+        .and_then(|argument| argument.to_str())
+    {
         Some(command @ ("run" | "dev")) => {
-            let target = arguments.next().map_or_else(|| PathBuf::from("."), PathBuf::from);
+            let target = arguments
+                .next()
+                .map_or_else(|| PathBuf::from("."), PathBuf::from);
             let link = arguments.next().and_then(|link| link.into_string().ok());
             run(&target, command == "dev", link)
         }
-        Some("init") => report(scaffold::InitOptions::parse(arguments).and_then(|options| scaffold::init(&options)).map(|lines| {
-            for line in lines {
-                println!("{line}");
-            }
-        })),
+        Some("init") => report(
+            scaffold::InitOptions::parse(arguments)
+                .and_then(|options| scaffold::init(&options))
+                .map(|lines| {
+                    for line in lines {
+                        println!("{line}");
+                    }
+                }),
+        ),
         Some("build") => report(run_build(arguments)),
         Some("update-key") => report(run_update_key(&arguments.collect::<Vec<_>>())),
         Some("publish-update") => report(run_publish_update(arguments.collect())),
         // Private: the running application starts it from a copy of the host.
-        Some("apply-update") => report(updater::ApplyOptions::parse(arguments).and_then(updater::apply)),
+        Some("apply-update") => {
+            report(updater::ApplyOptions::parse(arguments).and_then(updater::apply))
+        }
         Some("--version" | "-V") => {
             println!("pam-desktop {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS

@@ -109,7 +109,9 @@ fn valid_key(key: &str) -> bool {
     !bytes.is_empty()
         && bytes.len() <= 255
         && bytes[0].is_ascii_alphabetic()
-        && bytes.iter().all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
 }
 
 impl WireMap {
@@ -133,10 +135,11 @@ impl WireMap {
             return;
         }
         if let WireValue::Float(number) = value
-            && !number.is_finite() {
-                self.values.insert(key.to_owned(), WireValue::Float(0.0));
-                return;
-            }
+            && !number.is_finite()
+        {
+            self.values.insert(key.to_owned(), WireValue::Float(0.0));
+            return;
+        }
         self.values.insert(key.to_owned(), value);
     }
 
@@ -244,19 +247,24 @@ impl WireMap {
         if payload.len() > MAX_WIRE_MAP_BYTES {
             return Err(WireMapError::TooLarge);
         }
-        let mut reader = Reader { bytes: payload, offset: 0 };
+        let mut reader = Reader {
+            bytes: payload,
+            offset: 0,
+        };
         let count = reader.u16()?;
         let mut values = BTreeMap::new();
         for _ in 0..count {
             let key_length = usize::from(reader.u16()?);
-            let key = std::str::from_utf8(reader.take(key_length)?).map_err(|_| WireMapError::InvalidKey)?;
+            let key = std::str::from_utf8(reader.take(key_length)?)
+                .map_err(|_| WireMapError::InvalidKey)?;
             if !valid_key(key) {
                 return Err(WireMapError::InvalidKey);
             }
             let value = match reader.u8()? {
                 1 => {
                     let length = reader.u32()? as usize;
-                    let text = std::str::from_utf8(reader.take(length)?).map_err(|_| WireMapError::InvalidValue)?;
+                    let text = std::str::from_utf8(reader.take(length)?)
+                        .map_err(|_| WireMapError::InvalidValue)?;
                     WireValue::Text(text.to_owned())
                 }
                 2 => WireValue::Integer(i64::from_le_bytes(reader.array()?)),
@@ -296,8 +304,14 @@ struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     fn take(&mut self, length: usize) -> Result<&'a [u8], WireMapError> {
-        let end = self.offset.checked_add(length).ok_or(WireMapError::Truncated)?;
-        let slice = self.bytes.get(self.offset..end).ok_or(WireMapError::Truncated)?;
+        let end = self
+            .offset
+            .checked_add(length)
+            .ok_or(WireMapError::Truncated)?;
+        let slice = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or(WireMapError::Truncated)?;
         self.offset = end;
         Ok(slice)
     }
@@ -324,7 +338,10 @@ impl<'a> Reader<'a> {
 /// Packed string list: `u32 count · (u32 length · UTF-8)*`.
 #[must_use]
 pub fn decode_string_list(payload: &[u8]) -> Option<Vec<String>> {
-    let mut reader = Reader { bytes: payload, offset: 0 };
+    let mut reader = Reader {
+        bytes: payload,
+        offset: 0,
+    };
     let count = reader.u32().ok()? as usize;
     if count > 100_000 {
         return None;
@@ -332,7 +349,11 @@ pub fn decode_string_list(payload: &[u8]) -> Option<Vec<String>> {
     let mut items = Vec::with_capacity(count.min(4096));
     for _ in 0..count {
         let length = reader.u32().ok()? as usize;
-        items.push(std::str::from_utf8(reader.take(length).ok()?).ok()?.to_owned());
+        items.push(
+            std::str::from_utf8(reader.take(length).ok()?)
+                .ok()?
+                .to_owned(),
+        );
     }
     (reader.offset == payload.len()).then_some(items)
 }
@@ -356,15 +377,36 @@ mod tests {
     #[test]
     fn encodes_like_the_php_sdk() {
         // php -r 'echo bin2hex(Pam\Desktop\Internal\Wire::map(["b"=>true,"a"=>"x","n"=>7,"f"=>1.5]));'
-        let map = WireMap::new().with("b", true).with("a", "x").with("n", 7_i64).with("f", 1.5_f64);
+        let map = WireMap::new()
+            .with("b", true)
+            .with("a", "x")
+            .with("n", 7_i64)
+            .with("f", 1.5_f64);
         let expected = concat!(
             "0400",
-            "0100", "61", "01", "01000000", "78",
-            "0100", "62", "04", "01",
-            "0100", "66", "03", "000000000000f83f",
-            "0100", "6e", "02", "0700000000000000",
+            "0100",
+            "61",
+            "01",
+            "01000000",
+            "78",
+            "0100",
+            "62",
+            "04",
+            "01",
+            "0100",
+            "66",
+            "03",
+            "000000000000f83f",
+            "0100",
+            "6e",
+            "02",
+            "0700000000000000",
         );
-        let hex: String = map.encode().iter().map(|byte| format!("{byte:02x}")).collect();
+        let hex: String = map
+            .encode()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         assert_eq!(hex, expected);
         assert_eq!(WireMap::decode(&map.encode()), Ok(map));
     }
@@ -372,19 +414,28 @@ mod tests {
     #[test]
     fn rejects_malformed_payloads() {
         assert_eq!(WireMap::decode(&[1, 0]), Err(WireMapError::Truncated));
-        assert_eq!(WireMap::decode(&[0, 0, 9]), Err(WireMapError::TrailingBytes));
+        assert_eq!(
+            WireMap::decode(&[0, 0, 9]),
+            Err(WireMapError::TrailingBytes)
+        );
         let mut duplicate = vec![2, 0];
         for _ in 0..2 {
             duplicate.extend_from_slice(&[1, 0, b'a', 4, 1]);
         }
         assert_eq!(WireMap::decode(&duplicate), Err(WireMapError::DuplicateKey));
-        assert_eq!(WireMap::decode(&[1, 0, 1, 0, b'1', 4, 1]), Err(WireMapError::InvalidKey));
+        assert_eq!(
+            WireMap::decode(&[1, 0, 1, 0, b'1', 4, 1]),
+            Err(WireMapError::InvalidKey)
+        );
     }
 
     #[test]
     fn string_lists_round_trip() {
         let items = ["um", "dois", "três"];
-        assert_eq!(decode_string_list(&encode_string_list(&items)).as_deref(), Some(&items.map(str::to_owned)[..]));
+        assert_eq!(
+            decode_string_list(&encode_string_list(&items)).as_deref(),
+            Some(&items.map(str::to_owned)[..])
+        );
         assert!(decode_string_list(&[1, 0, 0, 0]).is_none());
     }
 }

@@ -7,7 +7,10 @@
 
 use crate::color::Color;
 use crate::geometry::{Insets, Point, Rect, Size};
-use crate::shell::{Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand, WindowState};
+use crate::shell::{
+    Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand,
+    WindowState,
+};
 use crate::style::{Decoration, LayerState};
 use crate::text::{TextBlock, TextMetrics};
 
@@ -112,24 +115,56 @@ pub enum BackendEvent {
     Pointer(PointerEvent),
     Key(KeyEvent),
     /// The user asked to go back (mouse back button, system back gesture).
-    BackRequested { window: WindowId },
+    BackRequested {
+        window: WindowId,
+    },
     /// Keyboard focus entered or left a focusable view.
-    FocusChanged { id: NodeId, focused: bool },
-    Input { id: NodeId, event: InputEvent },
+    FocusChanged {
+        id: NodeId,
+        focused: bool,
+    },
+    Input {
+        id: NodeId,
+        event: InputEvent,
+    },
     /// A menu bar or tray menu item was chosen.
-    MenuAction { id: String },
+    MenuAction {
+        id: String,
+    },
     /// A registered shortcut fired.
-    Shortcut { id: String },
+    Shortcut {
+        id: String,
+    },
     /// The tray icon itself was activated.
     TrayActivated,
-    NotificationActivated { id: String },
+    NotificationActivated {
+        id: String,
+    },
     /// Files were dropped on a window.
-    FilesDropped { window: WindowId, position: Point, paths: Vec<std::path::PathBuf> },
-    WindowStateChanged { window: WindowId, state: WindowState },
-    WindowResized { window: WindowId, size: Size, scale: f32 },
-    WindowCloseRequested { window: WindowId },
-    WindowFocusChanged { window: WindowId, focused: bool },
-    AppearanceChanged { dark: bool },
+    FilesDropped {
+        window: WindowId,
+        position: Point,
+        paths: Vec<std::path::PathBuf>,
+    },
+    WindowStateChanged {
+        window: WindowId,
+        state: WindowState,
+    },
+    WindowResized {
+        window: WindowId,
+        size: Size,
+        scale: f32,
+    },
+    WindowCloseRequested {
+        window: WindowId,
+    },
+    WindowFocusChanged {
+        window: WindowId,
+        focused: bool,
+    },
+    AppearanceChanged {
+        dark: bool,
+    },
     /// The text scale or the reduced motion setting of the system changed:
     /// the core reads `Backend::window_metrics` again.
     MetricsChanged,
@@ -137,31 +172,73 @@ pub enum BackendEvent {
     /// activated, or a second launch handed its URL to this instance.
     OpenUrl(String),
     /// A display frame for running animations (monotonic milliseconds).
-    Frame { time_ms: u64 },
+    Frame {
+        time_ms: u64,
+    },
     /// The deadline asked with `schedule_wake` passed.
     Wake,
-    ScrollChanged { id: NodeId, offset: Point },
+    ScrollChanged {
+        id: NodeId,
+        offset: Point,
+    },
     /// Wheel or two-finger scrolling that no scrolling view consumed, in
     /// logical units (positive `y` scrolls the content up).
-    Wheel { window: WindowId, position: Point, delta: Point, modifiers: Modifiers },
+    Wheel {
+        window: WindowId,
+        position: Point,
+        delta: Point,
+        modifiers: Modifiers,
+    },
     /// A pinch: `scale` is relative to the start of the gesture (1 = none).
-    Magnify { window: WindowId, position: Point, phase: GesturePhase, scale: f32 },
+    Magnify {
+        window: WindowId,
+        position: Point,
+        phase: GesturePhase,
+        scale: f32,
+    },
     /// A two-finger rotation, in radians since the start of the gesture
     /// (positive is clockwise).
-    Rotate { window: WindowId, position: Point, phase: GesturePhase, radians: f32 },
+    Rotate {
+        window: WindowId,
+        position: Point,
+        phase: GesturePhase,
+        radians: f32,
+    },
     /// Plain text was dropped on a window (from this or another application).
-    TextDropped { window: WindowId, position: Point, text: String },
+    TextDropped {
+        window: WindowId,
+        position: Point,
+        text: String,
+    },
     /// The drag started with `begin_text_drag` ended; `dropped` tells
     /// whether a target accepted it.
-    DragFinished { source: NodeId, dropped: bool },
-    Media { id: NodeId, event: MediaEvent },
-    WebView { id: NodeId, event: WebViewEvent },
+    DragFinished {
+        source: NodeId,
+        dropped: bool,
+    },
+    Media {
+        id: NodeId,
+        event: MediaEvent,
+    },
+    WebView {
+        id: NodeId,
+        event: WebViewEvent,
+    },
     /// Assistive technology ran an action on a view: `activate` (the default
     /// press) or the name of one of its custom actions.
-    AccessibilityAction { id: NodeId, name: String },
+    AccessibilityAction {
+        id: NodeId,
+        name: String,
+    },
     /// An image finished decoding; `size` is in image pixels.
-    ImageLoaded { key: ImageKey, size: Size },
-    ImageFailed { key: ImageKey, message: String },
+    ImageLoaded {
+        key: ImageKey,
+        size: Size,
+    },
+    ImageFailed {
+        key: ImageKey,
+        message: String,
+    },
 }
 
 /// What the field is for: backends map it to input hints, on-screen
@@ -255,14 +332,24 @@ impl Default for InputConfig {
 pub enum InputEvent {
     /// The text changed by typing, pasting, deleting or an input method.
     /// Never sent for text set through `set_input_text`.
-    Edited { text: String, selection: (u32, u32) },
-    SelectionChanged { start: u32, end: u32 },
+    Edited {
+        text: String,
+        selection: (u32, u32),
+    },
+    SelectionChanged {
+        start: u32,
+        end: u32,
+    },
     /// A key about to edit the text: `"Enter"`, `"Backspace"` or the inserted text.
-    KeyPressed { key: String },
+    KeyPressed {
+        key: String,
+    },
     /// Enter in a single-line field, or in an editor with `submit_on_enter`.
     Submitted,
     /// Size of the laid out text, for controls that grow with their content.
-    ContentSizeChanged { size: Size },
+    ContentSizeChanged {
+        size: Size,
+    },
 }
 
 /// Identifies a decoded image owned by the backend.
@@ -326,7 +413,11 @@ pub struct MediaState {
 pub enum MediaEvent {
     /// The media is prepared: video size in pixels (0 for audio) and
     /// duration in seconds (0 when unknown).
-    Ready { width: u32, height: u32, duration: f64 },
+    Ready {
+        width: u32,
+        height: u32,
+        duration: f64,
+    },
     /// The first video frame is on screen.
     Rendered,
     /// Playback stalled waiting for data, or resumed.
@@ -391,13 +482,31 @@ pub enum WebViewEvent {
 #[derive(Clone, Debug, PartialEq)]
 pub enum DrawCommand {
     /// A filled rectangle; `radius` rounds every corner with a circular arc.
-    Rect { rect: Rect, radius: f32, color: Color },
-    Circle { center: Point, radius: f32, color: Color },
+    Rect {
+        rect: Rect,
+        radius: f32,
+        color: Color,
+    },
+    Circle {
+        center: Point,
+        radius: f32,
+        color: Color,
+    },
     /// A segment with round caps. A zero width is one device pixel.
-    Line { from: Point, to: Point, width: f32, color: Color },
+    Line {
+        from: Point,
+        to: Point,
+        width: f32,
+        color: Color,
+    },
     /// A polyline with round caps and joins; a single point is a dot.
     /// `erase` clears what the current group holds instead of painting.
-    Stroke { points: Vec<Point>, width: f32, color: Color, erase: bool },
+    Stroke {
+        points: Vec<Point>,
+        width: f32,
+        color: Color,
+        erase: bool,
+    },
     /// Opens an offscreen group clipped to `clip`: erasing strokes only
     /// reach what the group holds, never what is under the view.
     PushGroup { clip: Rect },
@@ -454,7 +563,11 @@ pub struct ScrollConfig {
 
 impl Default for ScrollConfig {
     fn default() -> Self {
-        Self { horizontal: false, enabled: true, shows_indicators: true }
+        Self {
+            horizontal: false,
+            enabled: true,
+            shows_indicators: true,
+        }
     }
 }
 
@@ -475,7 +588,15 @@ pub struct WindowConfig {
 
 impl Default for WindowConfig {
     fn default() -> Self {
-        Self { title: String::from("PAM Desktop"), size: Size::new(960.0, 640.0), min_size: None, resizable: true, decorated: true, parent: None, modal: false }
+        Self {
+            title: String::from("PAM Desktop"),
+            size: Size::new(960.0, 640.0),
+            min_size: None,
+            resizable: true,
+            decorated: true,
+            parent: None,
+            modal: false,
+        }
     }
 }
 
@@ -503,7 +624,14 @@ pub struct WindowMetrics {
 
 impl Default for WindowMetrics {
     fn default() -> Self {
-        Self { size: Size::new(960.0, 640.0), scale: 1.0, font_scale: 1.0, dark: false, refresh_rate: 60.0, reduced_motion: false }
+        Self {
+            size: Size::new(960.0, 640.0),
+            scale: 1.0,
+            font_scale: 1.0,
+            dark: false,
+            refresh_rate: 60.0,
+            reduced_motion: false,
+        }
     }
 }
 
@@ -537,7 +665,11 @@ pub trait Backend {
     fn set_focusable(&mut self, id: NodeId, focusable: bool);
     /// What assistive technology is told about a view; `None` restores the
     /// plain defaults (a group, or static text when the view shows text).
-    fn set_accessibility(&mut self, id: NodeId, accessibility: Option<&crate::accessibility::Accessibility>);
+    fn set_accessibility(
+        &mut self,
+        id: NodeId,
+        accessibility: Option<&crate::accessibility::Accessibility>,
+    );
     /// Moves keyboard focus to a view, or clears it with `None`.
     fn focus(&mut self, id: Option<NodeId>);
 
@@ -628,7 +760,12 @@ pub trait Backend {
     fn clipboard_text(&mut self, done: Box<dyn FnOnce(Option<String>)>);
     /// Shows a native message dialog. `done` receives the index of the
     /// pressed button, or `None` when it was dismissed another way.
-    fn show_alert(&mut self, window: WindowId, alert: &AlertConfig, done: Box<dyn FnOnce(Option<usize>)>);
+    fn show_alert(
+        &mut self,
+        window: WindowId,
+        alert: &AlertConfig,
+        done: Box<dyn FnOnce(Option<usize>)>,
+    );
     /// Forces light (`Some(false)`) or dark (`Some(true)`) native chrome, or
     /// follows the system (`None`).
     fn set_appearance(&mut self, dark: Option<bool>);
@@ -639,12 +776,23 @@ pub trait Backend {
     fn set_menu_bar(&mut self, menu: &[MenuNode]);
     /// Opens a context menu at `position` (window coordinates). `done`
     /// receives the id of the chosen item, or `None` when dismissed.
-    fn popup_menu(&mut self, window: WindowId, position: Point, menu: &[MenuNode], done: Box<dyn FnOnce(Option<String>)>);
+    fn popup_menu(
+        &mut self,
+        window: WindowId,
+        position: Point,
+        menu: &[MenuNode],
+        done: Box<dyn FnOnce(Option<String>)>,
+    );
     /// Shows, updates or removes (`None`) the status area icon.
     fn set_tray(&mut self, tray: Option<&TrayConfig>);
     /// Opens a native file dialog; `done` receives the chosen paths (empty
     /// when cancelled).
-    fn pick_files(&mut self, window: WindowId, config: &FileDialogConfig, done: Box<dyn FnOnce(Vec<std::path::PathBuf>)>);
+    fn pick_files(
+        &mut self,
+        window: WindowId,
+        config: &FileDialogConfig,
+        done: Box<dyn FnOnce(Vec<std::path::PathBuf>)>,
+    );
     fn notify(&mut self, notification: &NotificationConfig);
     fn window_command(&mut self, window: WindowId, command: &WindowCommand);
     fn window_state(&self, window: WindowId) -> WindowState;

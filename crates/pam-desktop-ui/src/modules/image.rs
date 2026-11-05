@@ -126,7 +126,15 @@ fn fetch(
     headers: &[(String, String)],
     cancel: &AtomicBool,
 ) -> Result<(PathBuf, u64), String> {
-    fetch_reporting(client, cache_root, url, key, headers, cancel, &mut |_, _| {})
+    fetch_reporting(
+        client,
+        cache_root,
+        url,
+        key,
+        headers,
+        cancel,
+        &mut |_, _| {},
+    )
 }
 
 /// [`fetch`], reporting the bytes received so far and the declared total

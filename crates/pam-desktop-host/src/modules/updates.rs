@@ -40,7 +40,10 @@ impl Events {
 
     fn reset(&self) {
         let fresh = Arc::new(WatchChannel::new());
-        let stale = std::mem::replace(&mut *self.channel.lock().unwrap_or_else(PoisonError::into_inner), fresh);
+        let stale = std::mem::replace(
+            &mut *self.channel.lock().unwrap_or_else(PoisonError::into_inner),
+            fresh,
+        );
         stale.close();
     }
 }
@@ -89,13 +92,33 @@ impl Updates {
         development: bool,
         exit: impl Fn() + Send + Sync + 'static,
     ) -> Self {
-        let events = Arc::new(Events { channel: Mutex::new(Arc::new(WatchChannel::new())), policy: config.as_ref().map(|config| config.policy) });
+        let events = Arc::new(Events {
+            channel: Mutex::new(Arc::new(WatchChannel::new())),
+            policy: config.as_ref().map(|config| config.policy),
+        });
         let listener = Arc::clone(&events);
-        let updater = Updater::new(application_id, version, config, installed, client, move |snapshot| listener.publish(snapshot));
-        let module = Self { updater, events, worker: SerialWorker::new("pam-updates"), exit: Arc::new(exit) };
+        let updater = Updater::new(
+            application_id,
+            version,
+            config,
+            installed,
+            client,
+            move |snapshot| listener.publish(snapshot),
+        );
+        let module = Self {
+            updater,
+            events,
+            worker: SerialWorker::new("pam-updates"),
+            exit: Arc::new(exit),
+        };
         // A development run is not an installed bundle: there is nothing an
         // unattended check could lead to.
-        if !development && module.updater.policy().is_some_and(|policy| policy != UpdatePolicy::Manual) {
+        if !development
+            && module
+                .updater
+                .policy()
+                .is_some_and(|policy| policy != UpdatePolicy::Manual)
+        {
             let (updater, exit) = (module.updater.clone(), Arc::clone(&module.exit));
             module.worker.run(move || {
                 if updater.run_policy() {
@@ -107,8 +130,17 @@ impl Updates {
         module
     }
 
-    fn operation(&self, reply: Reply, operation: fn(&Updater) -> Result<Snapshot, String>, exits: bool) {
-        let (updater, exit, policy) = (self.updater.clone(), Arc::clone(&self.exit), self.events.policy);
+    fn operation(
+        &self,
+        reply: Reply,
+        operation: fn(&Updater) -> Result<Snapshot, String>,
+        exits: bool,
+    ) {
+        let (updater, exit, policy) = (
+            self.updater.clone(),
+            Arc::clone(&self.exit),
+            self.events.policy,
+        );
         self.worker.run(move || match operation(&updater) {
             Ok(snapshot) => {
                 reply.map(&wire(&snapshot, policy));
@@ -160,7 +192,12 @@ mod tests {
 
     fn success(answer: &Receiver<(u8, Vec<u8>)>) -> WireMap {
         let (status, payload) = answer.recv_timeout(WAIT).expect("an answer");
-        assert_eq!(status, MODULE_SUCCESS, "{}", String::from_utf8_lossy(&payload));
+        assert_eq!(
+            status,
+            MODULE_SUCCESS,
+            "{}",
+            String::from_utf8_lossy(&payload)
+        );
         WireMap::decode(&payload).expect("a WireMap")
     }
 
@@ -170,11 +207,23 @@ mod tests {
         String::from_utf8(payload).expect("a message")
     }
 
-    fn module(config: Option<UpdateConfig>, development: bool, exits: &Arc<AtomicUsize>) -> Updates {
+    fn module(
+        config: Option<UpdateConfig>,
+        development: bool,
+        exits: &Arc<AtomicUsize>,
+    ) -> Updates {
         let exits = Arc::clone(exits);
-        Updates::new("com.pushin.test", "1.0.0", config, None, Arc::new(UreqClient::new()), development, move || {
-            exits.fetch_add(1, Ordering::SeqCst);
-        })
+        Updates::new(
+            "com.pushin.test",
+            "1.0.0",
+            config,
+            None,
+            Arc::new(UreqClient::new()),
+            development,
+            move || {
+                exits.fetch_add(1, Ordering::SeqCst);
+            },
+        )
     }
 
     #[test]
@@ -196,20 +245,35 @@ mod tests {
     #[test]
     fn the_long_poll_reports_changes_and_restarts_with_the_worker() {
         let server = TestServer::start(|_| Served::ok(b"not a feed".to_vec()));
-        let config = UpdateConfig { endpoint: server.url("/feed"), public_key: "ab".repeat(32), channel: "stable".into(), policy: UpdatePolicy::Manual };
+        let config = UpdateConfig {
+            endpoint: server.url("/feed"),
+            public_key: "ab".repeat(32),
+            channel: "stable".into(),
+            policy: UpdatePolicy::Manual,
+        };
         let exits = Arc::new(AtomicUsize::new(0));
         let mut module = module(Some(config), false, &exits);
-        assert_eq!(success(&call(&mut module, "state")).text("policy"), Some("manual"));
+        assert_eq!(
+            success(&call(&mut module, "state")).text("policy"),
+            Some("manual")
+        );
         // The manual policy asks for nothing by itself.
         assert!(server.requests().is_empty());
 
         let parked = call(&mut module, "next");
         assert_eq!(failure(&call(&mut module, "next")), PENDING_READ);
         assert!(failure(&call(&mut module, "check")).contains("not valid"));
-        assert_eq!(success(&parked).text("state"), Some(Status::Checking.keyword()));
+        assert_eq!(
+            success(&parked).text("state"),
+            Some(Status::Checking.keyword())
+        );
         let failed = success(&call(&mut module, "next"));
         assert_eq!(failed.text("state"), Some(Status::Failed.keyword()));
-        assert!(failed.text("error").is_some_and(|error| error.contains("not valid")));
+        assert!(
+            failed
+                .text("error")
+                .is_some_and(|error| error.contains("not valid"))
+        );
 
         // A restarted worker starts a new poll; the old one ends.
         let stale = call(&mut module, "next");
@@ -217,15 +281,22 @@ mod tests {
         assert_eq!(failure(&stale), STOPPED);
         let fresh = call(&mut module, "next");
         assert!(failure(&call(&mut module, "check")).contains("not valid"));
-        assert_eq!(success(&fresh).text("state"), Some(Status::Checking.keyword()));
+        assert_eq!(
+            success(&fresh).text("state"),
+            Some(Status::Checking.keyword())
+        );
         assert_eq!(exits.load(Ordering::SeqCst), 0);
     }
 
     #[test]
     fn the_policy_checks_at_startup_outside_development() {
         let server = TestServer::start(|_| Served::ok(b"not a feed".to_vec()));
-        let config =
-            |policy| UpdateConfig { endpoint: server.url("/feed"), public_key: "ab".repeat(32), channel: "stable".into(), policy };
+        let config = |policy| UpdateConfig {
+            endpoint: server.url("/feed"),
+            public_key: "ab".repeat(32),
+            channel: "stable".into(),
+            policy,
+        };
         let exits = Arc::new(AtomicUsize::new(0));
 
         let mut development = module(Some(config(UpdatePolicy::Automatic)), true, &exits);
@@ -236,7 +307,10 @@ mod tests {
         let mut installed = module(Some(config(UpdatePolicy::Notify)), false, &exits);
         assert!(failure(&call(&mut installed, "download")).contains("Check for updates first"));
         assert_eq!(server.requests().len(), 1);
-        assert_eq!(success(&call(&mut installed, "state")).text("state"), Some(Status::Failed.keyword()));
+        assert_eq!(
+            success(&call(&mut installed, "state")).text("state"),
+            Some(Status::Failed.keyword())
+        );
         assert_eq!(exits.load(Ordering::SeqCst), 0);
     }
 }

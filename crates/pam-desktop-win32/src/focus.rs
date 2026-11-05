@@ -14,14 +14,22 @@ use crate::scene::Scene;
 
 /// Whether the view keeps the Win32 focus in a child window of its own.
 fn is_native(scene: &Scene, id: NodeId) -> bool {
-    scene.views.get(&id).is_some_and(|view| view.input.is_some() || view.web.is_some())
+    scene
+        .views
+        .get(&id)
+        .is_some_and(|view| view.input.is_some() || view.web.is_some())
 }
 
 /// A focus request for a control that does not exist yet is void once
 /// the focus is asked to go elsewhere.
 fn cancel_pending(state: &mut State) {
     for id in &state.scene.natives {
-        if let Some(input) = state.scene.views.get_mut(id).and_then(|view| view.input.as_mut()) {
+        if let Some(input) = state
+            .scene
+            .views
+            .get_mut(id)
+            .and_then(|view| view.input.as_mut())
+        {
             input.cancel_focus();
         }
     }
@@ -55,7 +63,9 @@ pub fn set(app: &Rc<App>, id: Option<NodeId>) {
             Some((hwnd, previous_box))
         })
         .flatten();
-    let Some((hwnd, previous_box)) = target else { return };
+    let Some((hwnd, previous_box)) = target else {
+        return;
+    };
     // SAFETY: `hwnd` is a live window of this thread; moving the focus
     // dispatches messages and no state borrow is held.
     unsafe {
@@ -64,7 +74,10 @@ pub fn set(app: &Rc<App>, id: Option<NodeId>) {
         }
     }
     if let Some(previous) = previous_box {
-        app.emit(BackendEvent::FocusChanged { id: previous, focused: false });
+        app.emit(BackendEvent::FocusChanged {
+            id: previous,
+            focused: false,
+        });
     }
     app.emit(BackendEvent::FocusChanged { id, focused: true });
     crate::accessibility::focus_changed(app, id);
@@ -75,14 +88,20 @@ fn clear(app: &Rc<App>) {
         cancel_pending(state);
         let previous = state.scene.focus?;
         let native = is_native(&state.scene, previous);
-        let hwnd = state.scene.window_of(previous).and_then(|window| state.scene.windows.get(&window)).map(|entry| entry.hwnd);
+        let hwnd = state
+            .scene
+            .window_of(previous)
+            .and_then(|window| state.scene.windows.get(&window))
+            .map(|entry| entry.hwnd);
         if !native {
             state.scene.focus = None;
             state.scene.damage_view(previous);
         }
         Some((previous, native, hwnd))
     });
-    let Some(Some((previous, native, hwnd))) = previous else { return };
+    let Some(Some((previous, native, hwnd))) = previous else {
+        return;
+    };
     if native {
         // Taking the Win32 focus back makes the control report the loss.
         if let Some(hwnd) = hwnd {
@@ -95,7 +114,10 @@ fn clear(app: &Rc<App>) {
             }
         }
     } else {
-        app.emit(BackendEvent::FocusChanged { id: previous, focused: false });
+        app.emit(BackendEvent::FocusChanged {
+            id: previous,
+            focused: false,
+        });
     }
 }
 
@@ -110,7 +132,10 @@ pub fn native_changed(app: &Rc<App>, id: NodeId, focused: bool) {
             if let Some(previous) = previous.filter(|previous| *previous != id) {
                 // A focused box loses the focus to the control.
                 if !is_native(&state.scene, previous) {
-                    state.events.push(BackendEvent::FocusChanged { id: previous, focused: false });
+                    state.events.push(BackendEvent::FocusChanged {
+                        id: previous,
+                        focused: false,
+                    });
                     state.scene.damage_view(previous);
                 }
             }
@@ -122,11 +147,16 @@ pub fn native_changed(app: &Rc<App>, id: NodeId, focused: bool) {
 }
 
 fn collect(scene: &Scene, id: NodeId, out: &mut Vec<NodeId>, depth: usize) {
-    let Some(view) = scene.views.get(&id) else { return };
+    let Some(view) = scene.views.get(&id) else {
+        return;
+    };
     if !view.layer.visible || view.layer.opacity <= 0.001 || depth > 512 {
         return;
     }
-    if view.focusable || view.web.is_some() || view.input.as_ref().is_some_and(|input| input.is_enabled()) {
+    if view.focusable
+        || view.web.is_some()
+        || view.input.as_ref().is_some_and(|input| input.is_enabled())
+    {
         out.push(id);
     }
     for child in &view.children {
@@ -138,11 +168,24 @@ fn collect(scene: &Scene, id: NodeId, out: &mut Vec<NodeId>, depth: usize) {
 /// covers the window (a modal) hides the layers under it from the keyboard.
 fn candidates(scene: &Scene, window: WindowId) -> Vec<NodeId> {
     let mut found = Vec::new();
-    let Some(entry) = scene.windows.get(&window) else { return found };
-    let layers: Vec<NodeId> = entry.root.iter().chain(entry.overlays.iter()).copied().collect();
+    let Some(entry) = scene.windows.get(&window) else {
+        return found;
+    };
+    let layers: Vec<NodeId> = entry
+        .root
+        .iter()
+        .chain(entry.overlays.iter())
+        .copied()
+        .collect();
     let bounds = Rect::from_size(entry.size);
     let covers = |id: &NodeId| {
-        scene.views.get(id).is_some_and(|view| view.layer.visible && view.frame.x <= 0.5 && view.frame.y <= 0.5 && view.frame.right() >= bounds.right() - 0.5 && view.frame.bottom() >= bounds.bottom() - 0.5)
+        scene.views.get(id).is_some_and(|view| {
+            view.layer.visible
+                && view.frame.x <= 0.5
+                && view.frame.y <= 0.5
+                && view.frame.right() >= bounds.right() - 0.5
+                && view.frame.bottom() >= bounds.bottom() - 0.5
+        })
     };
     let first = layers.iter().rposition(covers).unwrap_or(0);
     for layer in &layers[first..] {
@@ -153,11 +196,15 @@ fn candidates(scene: &Scene, window: WindowId) -> Vec<NodeId> {
 
 /// Scrolls the scroll views around `id` so it is inside their viewports.
 fn reveal(state: &mut State, id: NodeId) {
-    let Some(view) = state.scene.views.get(&id) else { return };
+    let Some(view) = state.scene.views.get(&id) else {
+        return;
+    };
     let mut rect = view.frame;
     let mut ancestor = view.parent;
     while let Some(current_id) = ancestor {
-        let Some(current) = state.scene.views.get(&current_id) else { break };
+        let Some(current) = state.scene.views.get(&current_id) else {
+            break;
+        };
         let frame = current.frame;
         ancestor = current.parent;
         match current.scroll.as_ref().map(|scroll| scroll.offset) {
@@ -195,7 +242,10 @@ pub fn advance(app: &Rc<App>, window: WindowId, forward: bool) -> bool {
             if order.is_empty() {
                 return None;
             }
-            let current = state.scene.focus.and_then(|focus| order.iter().position(|id| *id == focus));
+            let current = state
+                .scene
+                .focus
+                .and_then(|focus| order.iter().position(|id| *id == focus));
             let index = match (current, forward) {
                 (Some(index), true) => (index + 1) % order.len(),
                 (Some(index), false) => (index + order.len() - 1) % order.len(),

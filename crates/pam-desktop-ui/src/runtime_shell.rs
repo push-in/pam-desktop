@@ -7,14 +7,14 @@ use std::path::PathBuf;
 
 use pam_desktop_wire::PropKey;
 
-use crate::backend::{Backend, NodeId, MAIN_WINDOW};
+use crate::backend::{Backend, MAIN_WINDOW, NodeId};
 use crate::context::event_kind;
 use crate::geometry::{Point, Size};
-use crate::modules::{request_map, Reply};
+use crate::modules::{Reply, request_map};
 use crate::runtime::Runtime;
 use crate::shell::{
-    parse_menu, Accelerator, FileDialogConfig, FileDialogKind, FileFilter, MenuNode, NotificationConfig, Shortcut, TrayConfig,
-    WindowCommand, WindowState,
+    Accelerator, FileDialogConfig, FileDialogKind, FileFilter, MenuNode, NotificationConfig,
+    Shortcut, TrayConfig, WindowCommand, WindowState, parse_menu,
 };
 use crate::wiremap::WireMap;
 
@@ -34,7 +34,11 @@ pub struct Shell {
 impl Shell {
     /// Queues an event for PHP: `type`, `id` and a JSON `data` string.
     pub(crate) fn emit(&mut self, kind: &str, id: &str, data: &str) {
-        let event = WireMap::new().with("type", kind).with("id", id).with("data", data).encode();
+        let event = WireMap::new()
+            .with("type", kind)
+            .with("id", id)
+            .with("data", data)
+            .encode();
         match self.waiter.take() {
             Some(waiter) => waiter.success(event),
             None => {
@@ -55,7 +59,11 @@ impl Shell {
     }
 
     /// App-scoped shortcuts are matched here, on keys no control consumed.
-    pub(crate) fn shortcut_for(&self, key: &str, modifiers: crate::backend::Modifiers) -> Option<String> {
+    pub(crate) fn shortcut_for(
+        &self,
+        key: &str,
+        modifiers: crate::backend::Modifiers,
+    ) -> Option<String> {
         self.shortcuts
             .iter()
             .find(|shortcut| !shortcut.global && shortcut.accelerator.matches(key, modifiers))
@@ -76,19 +84,33 @@ fn state_json(state: WindowState, size: Size) -> String {
 }
 
 fn parse_filters(json: &str) -> Vec<FileFilter> {
-    let Ok(serde_json::Value::Array(entries)) = serde_json::from_str::<serde_json::Value>(json) else { return Vec::new() };
+    let Ok(serde_json::Value::Array(entries)) = serde_json::from_str::<serde_json::Value>(json)
+    else {
+        return Vec::new();
+    };
     entries
         .iter()
         .take(32)
         .filter_map(|entry| {
-            let name = entry.get("name")?.as_str()?.chars().take(128).collect::<String>();
+            let name = entry
+                .get("name")?
+                .as_str()?
+                .chars()
+                .take(128)
+                .collect::<String>();
             let extensions: Vec<String> = entry
                 .get("extensions")?
                 .as_array()?
                 .iter()
                 .filter_map(serde_json::Value::as_str)
                 .map(|extension| extension.trim_start_matches('.').to_ascii_lowercase())
-                .filter(|extension| !extension.is_empty() && extension.len() <= 16 && extension.chars().all(|c| c.is_ascii_alphanumeric() || c == '*'))
+                .filter(|extension| {
+                    !extension.is_empty()
+                        && extension.len() <= 16
+                        && extension
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '*')
+                })
                 .take(64)
                 .collect();
             (!extensions.is_empty()).then_some(FileFilter { name, extensions })
@@ -129,28 +151,47 @@ impl<B: Backend> Runtime<B> {
                     return reply.failure("The tray menu is malformed");
                 };
                 let tray = TrayConfig {
-                    icon: request.text("icon").filter(|icon| !icon.is_empty()).map(PathBuf::from),
-                    tooltip: request.text("tooltip").unwrap_or_default().chars().take(256).collect(),
+                    icon: request
+                        .text("icon")
+                        .filter(|icon| !icon.is_empty())
+                        .map(PathBuf::from),
+                    tooltip: request
+                        .text("tooltip")
+                        .unwrap_or_default()
+                        .chars()
+                        .take(256)
+                        .collect(),
                     menu,
                 };
                 self.backend.set_tray(Some(&tray));
                 reply.done();
             }
             "shortcuts" => {
-                let Ok(serde_json::Value::Array(entries)) = serde_json::from_str::<serde_json::Value>(request.text("items").unwrap_or("[]")) else {
+                let Ok(serde_json::Value::Array(entries)) = serde_json::from_str::<serde_json::Value>(
+                    request.text("items").unwrap_or("[]"),
+                ) else {
                     return reply.failure("Shortcuts are malformed");
                 };
                 let mut shortcuts = Vec::new();
                 for entry in entries.iter().take(256) {
-                    let id = entry.get("id").and_then(serde_json::Value::as_str).unwrap_or_default();
-                    let accelerator = entry.get("shortcut").and_then(serde_json::Value::as_str).and_then(Accelerator::parse);
+                    let id = entry
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default();
+                    let accelerator = entry
+                        .get("shortcut")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(Accelerator::parse);
                     let (Some(accelerator), false) = (accelerator, id.is_empty()) else {
                         return reply.failure("A shortcut needs an id and a valid key combination");
                     };
                     shortcuts.push(Shortcut {
                         id: id.to_owned(),
                         accelerator,
-                        global: entry.get("global").and_then(serde_json::Value::as_bool).unwrap_or(false),
+                        global: entry
+                            .get("global")
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(false),
                     });
                 }
                 self.backend.set_shortcuts(&shortcuts);
@@ -171,30 +212,62 @@ impl<B: Backend> Runtime<B> {
                 };
                 let config = FileDialogConfig {
                     kind,
-                    title: request.text("title").unwrap_or_default().chars().take(256).collect(),
-                    default_name: request.text("defaultName").unwrap_or_default().chars().take(255).collect(),
-                    directory: request.text("directory").filter(|directory| !directory.is_empty()).map(PathBuf::from),
+                    title: request
+                        .text("title")
+                        .unwrap_or_default()
+                        .chars()
+                        .take(256)
+                        .collect(),
+                    default_name: request
+                        .text("defaultName")
+                        .unwrap_or_default()
+                        .chars()
+                        .take(255)
+                        .collect(),
+                    directory: request
+                        .text("directory")
+                        .filter(|directory| !directory.is_empty())
+                        .map(PathBuf::from),
                     filters: parse_filters(request.text("filters").unwrap_or("[]")),
                 };
                 self.backend.pick_files(
                     MAIN_WINDOW,
                     &config,
                     Box::new(move |paths| {
-                        let paths: Vec<String> = paths.iter().map(|path| path.display().to_string()).collect();
-                        let json = serde_json::to_string(&paths).unwrap_or_else(|_| String::from("[]"));
+                        let paths: Vec<String> = paths
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect();
+                        let json =
+                            serde_json::to_string(&paths).unwrap_or_else(|_| String::from("[]"));
                         reply.map(&WireMap::new().with("paths", json));
                     }),
                 );
             }
             "notify" => {
-                let title: String = request.text("title").unwrap_or_default().chars().take(256).collect();
+                let title: String = request
+                    .text("title")
+                    .unwrap_or_default()
+                    .chars()
+                    .take(256)
+                    .collect();
                 if title.is_empty() {
                     return reply.failure("A notification needs a title");
                 }
                 self.backend.notify(&NotificationConfig {
-                    id: request.text("id").unwrap_or_default().chars().take(128).collect(),
+                    id: request
+                        .text("id")
+                        .unwrap_or_default()
+                        .chars()
+                        .take(128)
+                        .collect(),
                     title,
-                    body: request.text("body").unwrap_or_default().chars().take(4096).collect(),
+                    body: request
+                        .text("body")
+                        .unwrap_or_default()
+                        .chars()
+                        .take(4096)
+                        .collect(),
                 });
                 reply.done();
             }
@@ -210,13 +283,27 @@ impl<B: Backend> Runtime<B> {
     }
 
     fn window_method(&mut self, request: &WireMap, reply: Reply) {
-        let number = |key: &str| request.number(key).map(|value| value as f32).filter(|value| value.is_finite());
+        let number = |key: &str| {
+            request
+                .number(key)
+                .map(|value| value as f32)
+                .filter(|value| value.is_finite())
+        };
         let size = || match (number("width"), number("height")) {
-            (Some(width), Some(height)) if width >= 1.0 && height >= 1.0 => Some(Size::new(width.min(16_384.0), height.min(16_384.0))),
+            (Some(width), Some(height)) if width >= 1.0 && height >= 1.0 => {
+                Some(Size::new(width.min(16_384.0), height.min(16_384.0)))
+            }
             _ => None,
         };
         let command = match request.text("command").unwrap_or_default() {
-            "title" => WindowCommand::SetTitle(request.text("title").unwrap_or_default().chars().take(512).collect()),
+            "title" => WindowCommand::SetTitle(
+                request
+                    .text("title")
+                    .unwrap_or_default()
+                    .chars()
+                    .take(512)
+                    .collect(),
+            ),
             "size" => match size() {
                 Some(size) => WindowCommand::SetSize(size),
                 None => return reply.failure("A window size needs a width and a height"),
@@ -226,13 +313,19 @@ impl<B: Backend> Runtime<B> {
             "minimize" => WindowCommand::Minimize,
             "maximize" => WindowCommand::Maximize,
             "restore" => WindowCommand::Restore,
-            "fullScreen" => WindowCommand::SetFullScreen(request.boolean("enabled").unwrap_or(true)),
+            "fullScreen" => {
+                WindowCommand::SetFullScreen(request.boolean("enabled").unwrap_or(true))
+            }
             "focus" => WindowCommand::Focus,
             "center" => WindowCommand::Center,
-            "alwaysOnTop" => WindowCommand::SetAlwaysOnTop(request.boolean("enabled").unwrap_or(true)),
+            "alwaysOnTop" => {
+                WindowCommand::SetAlwaysOnTop(request.boolean("enabled").unwrap_or(true))
+            }
             "show" => WindowCommand::Show,
             "hide" => WindowCommand::Hide,
-            "progress" => WindowCommand::SetProgress(number("value").map(|value| value.clamp(0.0, 1.0))),
+            "progress" => {
+                WindowCommand::SetProgress(number("value").map(|value| value.clamp(0.0, 1.0)))
+            }
             "interceptClose" => {
                 self.shell.intercepts_close = request.boolean("enabled").unwrap_or(true);
                 return reply.done();
@@ -277,20 +370,30 @@ impl<B: Backend> Runtime<B> {
     }
 
     pub(crate) fn files_dropped(&mut self, position: Point, paths: &[PathBuf]) {
-        let paths: Vec<String> = paths.iter().map(|path| path.display().to_string()).collect();
+        let paths: Vec<String> = paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
         // The element under the pointer (or an ancestor) may take the drop.
         let mut current = self.scene.hit_test(position);
         while let Some(id) = current {
-            let Some(node) = self.scene.node(id) else { break };
+            let Some(node) = self.scene.node(id) else {
+                break;
+            };
             if node.handles(PropKey::OnFilesDrop) {
                 let json = serde_json::to_string(&paths).unwrap_or_else(|_| String::from("[]"));
                 let origin = self.scene.window_origin(id);
-                let payload = WireMap::new().with("paths", json).with("x", position.x - origin.x).with("y", position.y - origin.y).encode();
+                let payload = WireMap::new()
+                    .with("paths", json)
+                    .with("x", position.x - origin.x)
+                    .with("y", position.y - origin.y)
+                    .encode();
                 return self.send_event(id, event_kind::FILES_DROP, &payload);
             }
             current = (node.parent != 0).then_some(node.parent);
         }
-        let data = serde_json::json!({ "paths": paths, "x": position.x, "y": position.y }).to_string();
+        let data =
+            serde_json::json!({ "paths": paths, "x": position.x, "y": position.y }).to_string();
         self.shell.emit("drop", "files", &data);
     }
 
@@ -304,10 +407,17 @@ impl<B: Backend> Runtime<B> {
     /// Opens the menu declared by `from` or its nearest ancestor, at
     /// `position` or else in the middle of the element. Answers whether a
     /// menu opened.
-    pub(crate) fn open_context_menu_of(&mut self, window: crate::backend::WindowId, from: NodeId, position: Option<Point>) -> bool {
+    pub(crate) fn open_context_menu_of(
+        &mut self,
+        window: crate::backend::WindowId,
+        from: NodeId,
+        position: Option<Point>,
+    ) -> bool {
         let mut current = from;
         let target = loop {
-            let Some(node) = self.scene.node(current) else { return false };
+            let Some(node) = self.scene.node(current) else {
+                return false;
+            };
             if node.props().bytes(PropKey::ContextMenuItems).is_some() {
                 break current;
             }
@@ -316,11 +426,23 @@ impl<B: Backend> Runtime<B> {
             }
             current = node.parent;
         };
-        let Some(node) = self.scene.node(target) else { return false };
-        let Some(menu) = node.props().bytes(PropKey::ContextMenuItems).and_then(context_menu).filter(|menu| !menu.is_empty()) else { return false };
+        let Some(node) = self.scene.node(target) else {
+            return false;
+        };
+        let Some(menu) = node
+            .props()
+            .bytes(PropKey::ContextMenuItems)
+            .and_then(context_menu)
+            .filter(|menu| !menu.is_empty())
+        else {
+            return false;
+        };
         let position = position.unwrap_or_else(|| {
             let origin = self.scene.window_origin(target);
-            Point::new(origin.x + node.frame.width / 2.0, origin.y + node.frame.height / 2.0)
+            Point::new(
+                origin.x + node.frame.width / 2.0,
+                origin.y + node.frame.height / 2.0,
+            )
         });
         let inbox = std::sync::Arc::clone(&self.inbox);
         self.backend.popup_menu(
@@ -337,7 +459,11 @@ impl<B: Backend> Runtime<B> {
     }
 
     pub(crate) fn context_menu_chosen(&mut self, node: NodeId, id: &str) {
-        if self.scene.node(node).is_some_and(|node| node.handles(PropKey::OnMenuAction)) {
+        if self
+            .scene
+            .node(node)
+            .is_some_and(|node| node.handles(PropKey::OnMenuAction))
+        {
             let payload = WireMap::new().with("id", id).encode();
             self.send_event(node, event_kind::MENU_ACTION, &payload);
         }
@@ -356,7 +482,8 @@ fn context_menu_level(value: &serde_json::Value, depth: usize) -> Option<Vec<Men
     if depth > 3 {
         return None;
     }
-    let flag = |entry: &serde_json::Value, key: &str| entry.get(key).and_then(serde_json::Value::as_bool);
+    let flag =
+        |entry: &serde_json::Value, key: &str| entry.get(key).and_then(serde_json::Value::as_bool);
     Some(
         entries
             .iter()
@@ -368,7 +495,11 @@ fn context_menu_level(value: &serde_json::Value, depth: usize) -> Option<Vec<Men
                 let label: String = entry.get("title")?.as_str()?.chars().take(256).collect();
                 let enabled = flag(entry, "disabled") != Some(true);
                 if let Some(children) = entry.get("children") {
-                    return Some(MenuNode::Submenu { label, enabled, children: context_menu_level(children, depth + 1)? });
+                    return Some(MenuNode::Submenu {
+                        label,
+                        enabled,
+                        children: context_menu_level(children, depth + 1)?,
+                    });
                 }
                 Some(MenuNode::Item {
                     id: entry.get("id")?.as_str()?.to_owned(),
@@ -390,8 +521,16 @@ mod tests {
 
     #[test]
     fn filters_keep_only_safe_extensions() {
-        let filters = parse_filters(r#"[{"name":"Images","extensions":[".PNG","jpg","../x",""]},{"name":"Empty","extensions":[]}]"#);
-        assert_eq!(filters, vec![FileFilter { name: "Images".into(), extensions: vec!["png".into(), "jpg".into()] }]);
+        let filters = parse_filters(
+            r#"[{"name":"Images","extensions":[".PNG","jpg","../x",""]},{"name":"Empty","extensions":[]}]"#,
+        );
+        assert_eq!(
+            filters,
+            vec![FileFilter {
+                name: "Images".into(),
+                extensions: vec!["png".into(), "jpg".into()]
+            }]
+        );
         assert!(parse_filters("not json").is_empty());
     }
 
@@ -400,7 +539,14 @@ mod tests {
         let menu = context_menu(br#"[{"id":"copy","title":"Copy"},{"id":"delete","title":"Delete","destructive":true,"disabled":true},{"title":"No id"}]"#)
             .expect("valid");
         assert_eq!(menu.len(), 2);
-        assert!(matches!(&menu[1], MenuNode::Item { destructive: true, enabled: false, .. }));
+        assert!(matches!(
+            &menu[1],
+            MenuNode::Item {
+                destructive: true,
+                enabled: false,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -413,7 +559,10 @@ mod tests {
         shell.emit("shortcut", "search", "{}");
         let (status, payload) = receiver.try_recv().expect("delivered to the waiter");
         assert_eq!(status, crate::runtime::MODULE_SUCCESS);
-        assert_eq!(WireMap::decode(&payload).unwrap().text("id"), Some("search"));
+        assert_eq!(
+            WireMap::decode(&payload).unwrap().text("id"),
+            Some("search")
+        );
         for index in 0..80 {
             shell.emit("menu", &index.to_string(), "{}");
         }

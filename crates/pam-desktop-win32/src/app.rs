@@ -18,14 +18,17 @@ use std::time::Instant;
 use pam_desktop_ui::backend::BackendEvent;
 use pam_desktop_ui::color::Color;
 use pam_desktop_ui::runtime::{self, EventQueue};
-use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Dwm::DwmFlush;
-use windows::Win32::Graphics::Gdi::{GetSysColor, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT};
-use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, IsIconic, IsWindowVisible, KillTimer, PostMessageW, RegisterClassExW, SetTimer, HWND_MESSAGE, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_APP, WM_HOTKEY, WM_TIMER, WNDCLASSEXW,
+use windows::Win32::Graphics::Gdi::{
+    COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor,
 };
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, DestroyWindow, HWND_MESSAGE, IsIconic, IsWindowVisible,
+    KillTimer, PostMessageW, RegisterClassExW, SetTimer, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+    WM_HOTKEY, WM_TIMER, WNDCLASSEXW,
+};
+use windows::core::{PCWSTR, w};
 
 use crate::gfx::Graphics;
 use crate::images::Images;
@@ -82,7 +85,12 @@ pub enum Mail {
     /// A toast notification was activated.
     Notification(String),
     /// A Media Foundation engine event: player token, event, parameters.
-    Media { player: u64, event: u32, first: usize, second: u32 },
+    Media {
+        player: u64,
+        event: u32,
+        first: usize,
+        second: u32,
+    },
 }
 
 pub struct Mailbox {
@@ -99,19 +107,32 @@ impl Mailbox {
         // SAFETY: posting to a window handle is valid from any thread; a
         // stale handle only makes the call fail.
         unsafe {
-            let _ = PostMessageW(Some(HWND(self.hwnd as *mut _)), WM_APP_MAIL, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(
+                Some(HWND(self.hwnd as *mut _)),
+                WM_APP_MAIL,
+                WPARAM(0),
+                LPARAM(0),
+            );
         }
     }
 
     fn take(&self) -> Vec<Mail> {
-        self.queue.lock().map(|mut queue| std::mem::take(&mut *queue)).unwrap_or_default()
+        self.queue
+            .lock()
+            .map(|mut queue| std::mem::take(&mut *queue))
+            .unwrap_or_default()
     }
 
     /// Wakes the UI thread so it drains the runtime's inbox.
     pub fn wake(&self) {
         // SAFETY: as in `post`.
         unsafe {
-            let _ = PostMessageW(Some(HWND(self.hwnd as *mut _)), WM_APP_WAKE, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(
+                Some(HWND(self.hwnd as *mut _)),
+                WM_APP_WAKE,
+                WPARAM(0),
+                LPARAM(0),
+            );
         }
     }
 }
@@ -135,38 +156,56 @@ pub struct FrameClock {
 
 impl FrameClock {
     fn new(hwnd: HWND) -> Self {
-        let shared = Arc::new(ClockShared { state: Mutex::new(ClockState { requested: false, stopped: false }), signal: Condvar::new(), hwnd: hwnd.0 as isize });
-        let thread_shared = Arc::clone(&shared);
-        let spawned = std::thread::Builder::new().name("pam-frame-clock".into()).spawn(move || loop {
-            {
-                let Ok(mut state) = thread_shared.state.lock() else { return };
-                while !state.requested && !state.stopped {
-                    state = match thread_shared.signal.wait(state) {
-                        Ok(state) => state,
-                        Err(_) => return,
-                    };
-                }
-                if state.stopped {
-                    return;
-                }
-                state.requested = false;
-            }
-            let started = Instant::now();
-            // SAFETY: DwmFlush blocks until the compositor's next pass and
-            // has no preconditions; PostMessageW is valid from any thread.
-            unsafe {
-                if DwmFlush().is_err() {
-                    std::thread::sleep(std::time::Duration::from_millis(16));
-                }
-                // With the display off or in some remote sessions the flush
-                // returns at once: frames are never delivered faster than this.
-                let waited = started.elapsed();
-                if waited < MIN_FRAME_INTERVAL {
-                    std::thread::sleep(MIN_FRAME_INTERVAL - waited);
-                }
-                let _ = PostMessageW(Some(HWND(thread_shared.hwnd as *mut _)), WM_APP_FRAME, WPARAM(0), LPARAM(0));
-            }
+        let shared = Arc::new(ClockShared {
+            state: Mutex::new(ClockState {
+                requested: false,
+                stopped: false,
+            }),
+            signal: Condvar::new(),
+            hwnd: hwnd.0 as isize,
         });
+        let thread_shared = Arc::clone(&shared);
+        let spawned = std::thread::Builder::new()
+            .name("pam-frame-clock".into())
+            .spawn(move || {
+                loop {
+                    {
+                        let Ok(mut state) = thread_shared.state.lock() else {
+                            return;
+                        };
+                        while !state.requested && !state.stopped {
+                            state = match thread_shared.signal.wait(state) {
+                                Ok(state) => state,
+                                Err(_) => return,
+                            };
+                        }
+                        if state.stopped {
+                            return;
+                        }
+                        state.requested = false;
+                    }
+                    let started = Instant::now();
+                    // SAFETY: DwmFlush blocks until the compositor's next pass and
+                    // has no preconditions; PostMessageW is valid from any thread.
+                    unsafe {
+                        if DwmFlush().is_err() {
+                            std::thread::sleep(std::time::Duration::from_millis(16));
+                        }
+                        // With the display off or in some remote sessions the flush
+                        // returns at once: frames are never delivered faster than this.
+                        let waited = started.elapsed();
+                        if waited < MIN_FRAME_INTERVAL {
+                            std::thread::sleep(MIN_FRAME_INTERVAL - waited);
+                        }
+                        let _ = PostMessageW(
+                            Some(HWND(thread_shared.hwnd as *mut _)),
+                            WM_APP_FRAME,
+                            WPARAM(0),
+                            LPARAM(0),
+                        );
+                    }
+                }
+            });
         // Without the thread, frames never arrive; animations then jump to
         // their end through the core's timers. Nothing else depends on it.
         drop(spawned);
@@ -215,9 +254,23 @@ impl Theme {
         };
         if dark {
             // The classic system colors have no dark variant.
-            Self { dark, window: Color::rgba(32, 32, 32, 255), text: Color::rgba(255, 255, 255, 255), highlight, highlight_text, accent: highlight }
+            Self {
+                dark,
+                window: Color::rgba(32, 32, 32, 255),
+                text: Color::rgba(255, 255, 255, 255),
+                highlight,
+                highlight_text,
+                accent: highlight,
+            }
         } else {
-            Self { dark, window, text, highlight, highlight_text, accent: highlight }
+            Self {
+                dark,
+                window,
+                text,
+                highlight,
+                highlight_text,
+                accent: highlight,
+            }
         }
     }
 }
@@ -268,7 +321,10 @@ impl State {
     fn any_window_visible(&self) -> bool {
         self.scene.windows.values().any(|entry| {
             // SAFETY: plain queries on live windows; they send no message.
-            entry.presented && unsafe { IsWindowVisible(entry.hwnd).as_bool() && !IsIconic(entry.hwnd).as_bool() }
+            entry.presented
+                && unsafe {
+                    IsWindowVisible(entry.hwnd).as_bool() && !IsIconic(entry.hwnd).as_bool()
+                }
         })
     }
 
@@ -281,7 +337,12 @@ impl State {
 
     pub fn scrolling(&mut self) -> ScrollContext<'_> {
         let now_ms = self.now_ms();
-        ScrollContext { scene: &mut self.scene, events: &self.events, now_ms, reduced_motion: self.reduced_motion }
+        ScrollContext {
+            scene: &mut self.scene,
+            events: &self.events,
+            now_ms,
+            reduced_motion: self.reduced_motion,
+        }
     }
 
     /// Schedules what active scroll views need next: a tick while one
@@ -291,21 +352,33 @@ impl State {
         let mut animating = false;
         let mut deadline: Option<u64> = None;
         for id in &self.scene.active_scrolls {
-            let Some(scroll) = self.scene.views.get(id).and_then(|view| view.scroll.as_ref()) else { continue };
+            let Some(scroll) = self
+                .scene
+                .views
+                .get(id)
+                .and_then(|view| view.scroll.as_ref())
+            else {
+                continue;
+            };
             if scroll.animation != crate::scroll::Animation::None {
                 animating = true;
             } else if scroll.bar_opacity > 0.0 && !scroll.bar_held {
                 if now >= scroll.bar_deadline {
                     animating = true;
                 } else {
-                    deadline = Some(deadline.map_or(scroll.bar_deadline, |known| known.min(scroll.bar_deadline)));
+                    deadline = Some(
+                        deadline
+                            .map_or(scroll.bar_deadline, |known| known.min(scroll.bar_deadline)),
+                    );
                 }
             }
         }
         if animating {
             self.request_tick();
         } else if let Some(deadline) = deadline {
-            let delay = u32::try_from(deadline.saturating_sub(now)).unwrap_or(u32::MAX).max(1);
+            let delay = u32::try_from(deadline.saturating_sub(now))
+                .unwrap_or(u32::MAX)
+                .max(1);
             // SAFETY: SetTimer on our own window; it replaces a pending timer with the same id.
             unsafe { SetTimer(Some(self.message_window), TIMER_BARS, delay, None) };
         }
@@ -381,7 +454,11 @@ impl App {
 
     /// Creates the message window, the graphics factories and the shared
     /// state, and installs them for this thread.
-    pub fn install(instance: HINSTANCE, application_id: &str, events: Rc<EventQueue>) -> windows::core::Result<Rc<Self>> {
+    pub fn install(
+        instance: HINSTANCE,
+        application_id: &str,
+        events: Rc<EventQueue>,
+    ) -> windows::core::Result<Rc<Self>> {
         let class = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(message_proc),
@@ -394,13 +471,32 @@ impl App {
         let message_window = unsafe {
             // Registering twice (a second `run` in the same process) fails harmlessly.
             RegisterClassExW(&class);
-            CreateWindowExW(WINDOW_EX_STYLE(0), MESSAGE_CLASS, PCWSTR::null(), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(instance), None)?
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                MESSAGE_CLASS,
+                PCWSTR::null(),
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                Some(HWND_MESSAGE),
+                None,
+                Some(instance),
+                None,
+            )?
         };
         let graphics = Graphics::new()?;
         let text = TextEngine::new(&graphics.dwrite);
         let system_dark = crate::shell::system_prefers_dark();
-        let events = Rc::new(Outbox { queue: events, pending: Cell::new(false) });
-        let mailbox = Arc::new(Mailbox { queue: Mutex::new(Vec::new()), hwnd: message_window.0 as isize });
+        let events = Rc::new(Outbox {
+            queue: events,
+            pending: Cell::new(false),
+        });
+        let mailbox = Arc::new(Mailbox {
+            queue: Mutex::new(Vec::new()),
+            hwnd: message_window.0 as isize,
+        });
         let state = State {
             graphics,
             text,
@@ -459,14 +555,20 @@ impl App {
     /// rule): the operation is skipped instead of aborting the process.
     pub fn state(&self) -> Option<RefMut<'_, State>> {
         let state = self.state.try_borrow_mut().ok();
-        debug_assert!(state.is_some(), "pam-desktop-win32: state borrowed re-entrantly");
+        debug_assert!(
+            state.is_some(),
+            "pam-desktop-win32: state borrowed re-entrantly"
+        );
         state
     }
 
     /// Runs `call` with the state when it is free (window procedures that
     /// may be entered while a borrow is held fall back to the default).
     pub fn with_state<T>(&self, call: impl FnOnce(&mut State) -> T) -> Option<T> {
-        self.state.try_borrow_mut().ok().map(|mut state| call(&mut state))
+        self.state
+            .try_borrow_mut()
+            .ok()
+            .map(|mut state| call(&mut state))
     }
 
     pub fn now_ms(&self) -> u64 {
@@ -558,7 +660,12 @@ impl App {
         if !self.tasks_posted.replace(true) {
             // SAFETY: posting to our own message window.
             unsafe {
-                let _ = PostMessageW(Some(self.message_window), WM_APP_TASKS, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(
+                    Some(self.message_window),
+                    WM_APP_TASKS,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
             }
         }
     }
@@ -567,7 +674,9 @@ impl App {
         self.tasks_posted.set(false);
         loop {
             // The queue borrow ends before the task runs: tasks may defer more.
-            let Some(task) = self.tasks.borrow_mut().pop_front() else { break };
+            let Some(task) = self.tasks.borrow_mut().pop_front() else {
+                break;
+            };
             task(self);
         }
         // Tasks answer the runtime through callbacks.
@@ -582,7 +691,11 @@ impl App {
             let now = state.now_ms();
             let elapsed = now.saturating_sub(state.last_tick_ms);
             // After a pause the first tick is one nominal frame, not the pause.
-            let elapsed_ms = if elapsed == 0 || elapsed > 100 { 16.0 } else { elapsed as f32 };
+            let elapsed_ms = if elapsed == 0 || elapsed > 100 {
+                16.0
+            } else {
+                elapsed as f32
+            };
             state.last_tick_ms = now;
             let mut again = state.scrolling().tick(elapsed_ms);
             again |= crate::media::tick(state);
@@ -607,7 +720,12 @@ impl App {
             match mail {
                 Mail::Image(decoded) => crate::images::decoded(self, decoded),
                 Mail::Notification(id) => self.emit(BackendEvent::NotificationActivated { id }),
-                Mail::Media { player, event, first, second } => crate::media::on_engine_event(self, player, event, first, second),
+                Mail::Media {
+                    player,
+                    event,
+                    first,
+                    second,
+                } => crate::media::on_engine_event(self, player, event, first, second),
             }
         }
     }
@@ -619,7 +737,12 @@ impl App {
         unsafe {
             if delay_ms == 0 {
                 let _ = KillTimer(Some(self.message_window), TIMER_WAKE);
-                let _ = PostMessageW(Some(self.message_window), WM_TIMER, WPARAM(TIMER_WAKE), LPARAM(0));
+                let _ = PostMessageW(
+                    Some(self.message_window),
+                    WM_TIMER,
+                    WPARAM(TIMER_WAKE),
+                    LPARAM(0),
+                );
             } else {
                 SetTimer(Some(self.message_window), TIMER_WAKE, delay_ms, None);
             }
@@ -628,9 +751,16 @@ impl App {
 }
 
 /// Window procedure of the message-only window.
-extern "system" fn message_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+extern "system" fn message_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
     let handled = std::panic::catch_unwind(|| {
-        let Some(app) = App::current() else { return false };
+        let Some(app) = App::current() else {
+            return false;
+        };
         match message {
             WM_APP_WAKE => app.mark_pending(),
             WM_APP_PUMP => app.pump_posted.set(false),

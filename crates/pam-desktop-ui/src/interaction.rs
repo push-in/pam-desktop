@@ -10,7 +10,7 @@ use pam_desktop_wire::{NodeKind, PropKey, PropValue};
 use crate::animator::{Curve, Easing, Owner, Timer};
 use crate::backend::{KeyEvent, NodeId, PointerButton, PointerEvent, PointerPhase, ViewClass};
 use crate::color::Color;
-use crate::context::{event_kind, Ctx, HostCommand};
+use crate::context::{Ctx, HostCommand, event_kind};
 use crate::geometry::{Affine, Insets, Point, Rect};
 use crate::props::PropMap;
 use crate::scene::{Action, Change, IdMap, LayerOverride, LayerSlot, StyleLayer};
@@ -59,12 +59,15 @@ struct StateStyles {
 impl StateStyles {
     /// `{"<state>": {"<propKey>": number, …}, …}`
     fn parse(json: &str) -> Self {
-        let Ok(serde_json::Value::Object(states)) = serde_json::from_str::<serde_json::Value>(json) else {
+        let Ok(serde_json::Value::Object(states)) = serde_json::from_str::<serde_json::Value>(json)
+        else {
             return Self::default();
         };
         let mut parsed = Vec::new();
         for (state, rules) in states {
-            let (Ok(state), Some(rules)) = (state.parse::<u8>(), rules.as_object()) else { continue };
+            let (Ok(state), Some(rules)) = (state.parse::<u8>(), rules.as_object()) else {
+                continue;
+            };
             if !(STATE_PRESSED..=STATE_HOVERED).contains(&state) {
                 continue;
             }
@@ -82,7 +85,10 @@ impl StateStyles {
                     Ok(56) => PropKey::Elevation,
                     _ => continue,
                 };
-                let colour = matches!(key, PropKey::BackgroundColor | PropKey::TextColor | PropKey::BorderColor);
+                let colour = matches!(
+                    key,
+                    PropKey::BackgroundColor | PropKey::TextColor | PropKey::BorderColor
+                );
                 let value = match (colour, value.as_i64(), value.as_f64()) {
                     (true, Some(integer), _) => PropValue::Integer(integer),
                     (true, None, Some(number)) => PropValue::Integer(number as i64),
@@ -99,7 +105,10 @@ impl StateStyles {
     }
 
     fn get(&self, state: u8) -> Option<&PropMap> {
-        self.states.iter().find(|(id, _)| *id == state).map(|(_, props)| props)
+        self.states
+            .iter()
+            .find(|(id, _)| *id == state)
+            .map(|(_, props)| props)
     }
 }
 
@@ -139,8 +148,11 @@ fn pointer_payload(ctx: &Ctx<'_>, node: NodeId, position: Point) -> Vec<u8> {
 /// Whether presses on this node show the default dim/scale feedback.
 fn shows_feedback(ctx: &Ctx<'_>, id: NodeId) -> bool {
     ctx.scene.node(id).is_some_and(|node| {
-        let pressable_kind = matches!(node.kind, NodeKind::Button | NodeKind::Pressable) && node.action.is_none();
-        let authored = node.handles(PropKey::PressOpacity) || node.handles(PropKey::PressScale) || node.handles(PropKey::PressBackgroundColor);
+        let pressable_kind =
+            matches!(node.kind, NodeKind::Button | NodeKind::Pressable) && node.action.is_none();
+        let authored = node.handles(PropKey::PressOpacity)
+            || node.handles(PropKey::PressScale)
+            || node.handles(PropKey::PressBackgroundColor);
         // A surface that also takes a double tap would flash on each tap.
         (pressable_kind || authored) && !node.handles(PropKey::OnDoubleTap)
     })
@@ -149,7 +161,10 @@ fn shows_feedback(ctx: &Ctx<'_>, id: NodeId) -> bool {
 impl Interaction {
     #[must_use]
     pub fn new(dark: bool) -> Self {
-        Self { dark, ..Self::default() }
+        Self {
+            dark,
+            ..Self::default()
+        }
     }
 
     pub fn on_change(&mut self, ctx: &mut Ctx<'_>, change: Change) {
@@ -166,8 +181,18 @@ impl Interaction {
                 self.restyle(ctx, id);
             }
             Change::Updated(id, PropKey::OnClickOutside) => self.watch_outside(ctx, id),
-            Change::Updated(id, PropKey::BackgroundColor | PropKey::BackgroundGradient | PropKey::TextColor | PropKey::BorderWidth) => {
-                if ctx.scene.node(id).is_some_and(|node| node.kind == NodeKind::Button) {
+            Change::Updated(
+                id,
+                PropKey::BackgroundColor
+                | PropKey::BackgroundGradient
+                | PropKey::TextColor
+                | PropKey::BorderWidth,
+            ) => {
+                if ctx
+                    .scene
+                    .node(id)
+                    .is_some_and(|node| node.kind == NodeKind::Button)
+                {
                     self.restyle(ctx, id);
                 }
             }
@@ -195,7 +220,11 @@ impl Interaction {
     }
 
     fn read_styles(&mut self, ctx: &Ctx<'_>, id: NodeId) {
-        match ctx.scene.node(id).and_then(|node| node.props().text(PropKey::NativeStateStyles)) {
+        match ctx
+            .scene
+            .node(id)
+            .and_then(|node| node.props().text(PropKey::NativeStateStyles))
+        {
             Some(json) if !json.is_empty() => {
                 self.styles.insert(id, StateStyles::parse(json));
             }
@@ -206,7 +235,10 @@ impl Interaction {
     }
 
     fn watch_outside(&mut self, ctx: &Ctx<'_>, id: NodeId) {
-        let watches = ctx.scene.node(id).is_some_and(|node| node.handles(PropKey::OnClickOutside));
+        let watches = ctx
+            .scene
+            .node(id)
+            .is_some_and(|node| node.handles(PropKey::OnClickOutside));
         let known = self.outside_observers.contains(&id);
         if watches && !known {
             self.outside_observers.push(id);
@@ -217,7 +249,13 @@ impl Interaction {
 
     /// The appearance of a button the application did not style: a neutral
     /// control surface, like a native push button.
-    fn default_button(&self, ctx: &Ctx<'_>, id: NodeId, hovered: bool, pressed: bool) -> Option<PropMap> {
+    fn default_button(
+        &self,
+        ctx: &Ctx<'_>,
+        id: NodeId,
+        hovered: bool,
+        pressed: bool,
+    ) -> Option<PropMap> {
         let node = ctx.scene.node(id)?;
         if node.kind != NodeKind::Button || node.is_synthetic() {
             return None;
@@ -230,9 +268,19 @@ impl Interaction {
             return None;
         }
         let (rest, hover, down, text) = if self.dark {
-            (0xFF3A_3A3C_u32, 0xFF48_484A_u32, 0xFF54_5456_u32, 0xFFFF_FFFF_u32)
+            (
+                0xFF3A_3A3C_u32,
+                0xFF48_484A_u32,
+                0xFF54_5456_u32,
+                0xFFFF_FFFF_u32,
+            )
         } else {
-            (0xFFE9_E9EB_u32, 0xFFDE_DEE2_u32, 0xFFD1_D1D6_u32, 0xFF1C_1C1E_u32)
+            (
+                0xFFE9_E9EB_u32,
+                0xFFDE_DEE2_u32,
+                0xFFD1_D1D6_u32,
+                0xFF1C_1C1E_u32,
+            )
         };
         let background = if pressed {
             down
@@ -242,7 +290,10 @@ impl Interaction {
             rest
         };
         let mut props = PropMap::new();
-        props.insert(PropKey::BackgroundColor, PropValue::Integer(i64::from(background)));
+        props.insert(
+            PropKey::BackgroundColor,
+            PropValue::Integer(i64::from(background)),
+        );
         props.insert(PropKey::TextColor, PropValue::Integer(i64::from(text)));
         if !node.handles(PropKey::BorderRadius) {
             props.insert(PropKey::BorderRadius, PropValue::Integer(6));
@@ -252,13 +303,21 @@ impl Interaction {
 
     /// Recomputes the style overlay of a node from its interaction state.
     fn restyle(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let pressed = self.press.is_some_and(|press| press.node == id && press.inside);
+        let pressed = self
+            .press
+            .is_some_and(|press| press.node == id && press.inside);
         let hovered = self.hovered.contains(&id);
         let focused = self.focused == Some(id);
-        let mut overlay = self.default_button(ctx, id, hovered, pressed).unwrap_or_default();
+        let mut overlay = self
+            .default_button(ctx, id, hovered, pressed)
+            .unwrap_or_default();
         if let Some(styles) = self.styles.get(&id) {
             // Later states win: hover, then focus, then pressed.
-            for (active, state) in [(hovered, STATE_HOVERED), (focused, STATE_FOCUSED), (pressed, STATE_PRESSED)] {
+            for (active, state) in [
+                (hovered, STATE_HOVERED),
+                (focused, STATE_FOCUSED),
+                (pressed, STATE_PRESSED),
+            ] {
                 if !active {
                     continue;
                 }
@@ -266,7 +325,9 @@ impl Interaction {
                     for (key, value) in props {
                         // The pressed dim and scale run as an animated layer
                         // (PHP mirrors them in PressOpacity / PressScale).
-                        if state == STATE_PRESSED && matches!(key, PropKey::Opacity | PropKey::ScaleX | PropKey::ScaleY) {
+                        if state == STATE_PRESSED
+                            && matches!(key, PropKey::Opacity | PropKey::ScaleX | PropKey::ScaleY)
+                        {
                             continue;
                         }
                         overlay.insert(*key, value.clone());
@@ -275,10 +336,14 @@ impl Interaction {
             }
         }
         if let Some(fill) = self.press_fills.get(&id) {
-            overlay.insert(PropKey::BackgroundColor, PropValue::Integer(i64::from(fill.to_argb())));
+            overlay.insert(
+                PropKey::BackgroundColor,
+                PropValue::Integer(i64::from(fill.to_argb())),
+            );
         }
         let has_overlay = !overlay.is_empty();
-        ctx.scene.set_style_overlay(id, StyleLayer::Interaction, has_overlay.then_some(overlay));
+        ctx.scene
+            .set_style_overlay(id, StyleLayer::Interaction, has_overlay.then_some(overlay));
         let tracked = self.styled.contains(&id);
         if has_overlay && !tracked {
             self.styled.push(id);
@@ -289,7 +354,12 @@ impl Interaction {
 
     /// Appearance changed (dark mode): default buttons follow.
     pub fn refresh_defaults(&mut self, ctx: &mut Ctx<'_>) {
-        let buttons: Vec<NodeId> = ctx.scene.nodes().filter(|node| node.kind == NodeKind::Button).map(|node| node.id).collect();
+        let buttons: Vec<NodeId> = ctx
+            .scene
+            .nodes()
+            .filter(|node| node.kind == NodeKind::Button)
+            .map(|node| node.id)
+            .collect();
         for id in buttons {
             self.restyle(ctx, id);
         }
@@ -307,7 +377,10 @@ impl Interaction {
                 return None;
             }
             if node.is_pressable() {
-                return node.props().flag_or(PropKey::Enabled, true).then_some(current);
+                return node
+                    .props()
+                    .flag_or(PropKey::Enabled, true)
+                    .then_some(current);
             }
             if node.parent == 0 || node.kind == NodeKind::Modal {
                 return None;
@@ -333,12 +406,15 @@ impl Interaction {
 
     /// The node's box on screen grown by its hit slop and press retention.
     fn retention_bounds(ctx: &Ctx<'_>, id: NodeId) -> Rect {
-        let Some(node) = ctx.scene.node(id) else { return Rect::ZERO };
+        let Some(node) = ctx.scene.node(id) else {
+            return Rect::ZERO;
+        };
         let origin = ctx.scene.window_origin(id);
         let props = node.props();
         let slop = props.number_or(PropKey::HitSlop, 0.0).max(0.0);
         let edge = |slop_key, retention_key, default: f32| {
-            props.number(slop_key).map_or(slop, |value| value.max(0.0)) + props.number_or(retention_key, default).max(0.0)
+            props.number(slop_key).map_or(slop, |value| value.max(0.0))
+                + props.number_or(retention_key, default).max(0.0)
         };
         Rect::new(origin.x, origin.y, node.frame.width, node.frame.height).outset_by(Insets::new(
             edge(PropKey::HitSlopLeft, PropKey::PressRetentionLeft, 20.0),
@@ -354,26 +430,40 @@ impl Interaction {
             return;
         }
         let owner = Owner::Press(id);
-        let from = ctx.animator.cancel(owner, ctx.now_ms).unwrap_or(if pressed { 0.0 } else { 1.0 });
+        let from = ctx
+            .animator
+            .cancel(owner, ctx.now_ms)
+            .unwrap_or(if pressed { 0.0 } else { 1.0 });
         let to = if pressed { 1.0 } else { 0.0 };
         if ctx.reduced_motion {
             self.on_press_sample(ctx, id, to);
         } else {
             let duration = if pressed { PRESS_IN_MS } else { PRESS_OUT_MS };
-            ctx.animator.start(owner, from, to, Curve::timing(duration, Easing::EASE_OUT), 0, ctx.now_ms);
+            ctx.animator.start(
+                owner,
+                from,
+                to,
+                Curve::timing(duration, Easing::EASE_OUT),
+                0,
+                ctx.now_ms,
+            );
         }
     }
 
     /// Frame-clock sample of the press feedback (0 released, 1 pressed).
     pub fn on_press_sample(&mut self, ctx: &mut Ctx<'_>, id: NodeId, amount: f32) {
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let props = node.props();
         let unstyled_button = self.default_button(ctx, id, false, false).is_some();
         // A default button already changes its surface colour when pressed.
         let target_opacity = if unstyled_button && !node.handles(PropKey::PressOpacity) {
             1.0
         } else {
-            props.number_or(PropKey::PressOpacity, DEFAULT_PRESS_OPACITY).clamp(0.0, 1.0)
+            props
+                .number_or(PropKey::PressOpacity, DEFAULT_PRESS_OPACITY)
+                .clamp(0.0, 1.0)
         };
         let target_scale = props.number_or(PropKey::PressScale, 1.0).clamp(0.01, 4.0);
         let size = node.frame.size();
@@ -381,14 +471,20 @@ impl Interaction {
         layer.opacity = 1.0 + (target_opacity - 1.0) * amount;
         if target_scale != 1.0 {
             let scale = 1.0 + (target_scale - 1.0) * amount;
-            layer.transform = Affine::scaling(scale, scale).around(Point::new(size.width / 2.0, size.height / 2.0));
+            layer.transform = Affine::scaling(scale, scale)
+                .around(Point::new(size.width / 2.0, size.height / 2.0));
         }
         // PressBackgroundColor fades the fill towards the pressed colour.
-        let press_fill = props.color(PropKey::PressBackgroundColor).map(|pressed_color| {
-            let base = props.color(PropKey::BackgroundColor).unwrap_or(Color::TRANSPARENT);
-            base.lerp(pressed_color, amount)
-        });
-        ctx.scene.set_layer_override(id, LayerSlot::Interaction, layer);
+        let press_fill = props
+            .color(PropKey::PressBackgroundColor)
+            .map(|pressed_color| {
+                let base = props
+                    .color(PropKey::BackgroundColor)
+                    .unwrap_or(Color::TRANSPARENT);
+                base.lerp(pressed_color, amount)
+            });
+        ctx.scene
+            .set_layer_override(id, LayerSlot::Interaction, layer);
         if let Some(fill) = press_fill {
             if amount > 0.0 {
                 self.press_fills.insert(id, fill);
@@ -416,15 +512,36 @@ impl Interaction {
         }
         let previous = std::mem::replace(&mut self.hovered, chain);
         let position = position.unwrap_or(Point::ZERO);
-        for id in previous.iter().filter(|id| !self.hovered.contains(id)).copied().collect::<Vec<_>>() {
-            if self.styles.contains_key(&id) || ctx.scene.node(id).is_some_and(|node| node.kind == NodeKind::Button) {
+        for id in previous
+            .iter()
+            .filter(|id| !self.hovered.contains(id))
+            .copied()
+            .collect::<Vec<_>>()
+        {
+            if self.styles.contains_key(&id)
+                || ctx
+                    .scene
+                    .node(id)
+                    .is_some_and(|node| node.kind == NodeKind::Button)
+            {
                 self.restyle(ctx, id);
             }
             let payload = pointer_payload(ctx, id, position);
             ctx.emit_if(id, PropKey::OnHoverOut, event_kind::HOVER_OUT, payload);
         }
-        for id in self.hovered.iter().filter(|id| !previous.contains(id)).copied().collect::<Vec<_>>() {
-            if self.styles.contains_key(&id) || ctx.scene.node(id).is_some_and(|node| node.kind == NodeKind::Button) {
+        for id in self
+            .hovered
+            .iter()
+            .filter(|id| !previous.contains(id))
+            .copied()
+            .collect::<Vec<_>>()
+        {
+            if self.styles.contains_key(&id)
+                || ctx
+                    .scene
+                    .node(id)
+                    .is_some_and(|node| node.kind == NodeKind::Button)
+            {
                 self.restyle(ctx, id);
             }
             let payload = pointer_payload(ctx, id, position);
@@ -470,7 +587,9 @@ impl Interaction {
 
     fn pointer_down(&mut self, ctx: &mut Ctx<'_>, position: Point) {
         self.cancel_press(ctx);
-        let Some(hit) = ctx.scene.hit_test(position) else { return };
+        let Some(hit) = ctx.scene.hit_test(position) else {
+            return;
+        };
         if let Some(target) = Self::nearest_with(ctx, hit, PropKey::OnTouchStart) {
             let payload = pointer_payload(ctx, target, position);
             ctx.emit(target, event_kind::TOUCH_START, payload);
@@ -480,18 +599,32 @@ impl Interaction {
             let drags = Self::nearest_with(ctx, hit, PropKey::WindowDrag)
                 .and_then(|region| ctx.scene.node(region))
                 .is_some_and(|region| region.props().flag_or(PropKey::WindowDrag, false));
-            if drags && !ctx.scene.node(hit).is_some_and(|node| matches!(node.class, ViewClass::Input | ViewClass::TextArea)) {
+            if drags
+                && !ctx.scene.node(hit).is_some_and(|node| {
+                    matches!(node.class, ViewClass::Input | ViewClass::TextArea)
+                })
+            {
                 ctx.commands.push(HostCommand::BeginWindowDrag);
             }
             return;
         };
-        let Some(scene_node) = ctx.scene.node(node) else { return };
+        let Some(scene_node) = ctx.scene.node(node) else {
+            return;
+        };
         let props = scene_node.props();
-        let delay_in = props.integer_or(PropKey::PressDelayInMs, 0).clamp(0, 60_000) as u64;
-        let delay_long = props.integer_or(PropKey::PressDelayLongMs, DEFAULT_LONG_PRESS_MS).clamp(1, 60_000) as u64;
+        let delay_in = props
+            .integer_or(PropKey::PressDelayInMs, 0)
+            .clamp(0, 60_000) as u64;
+        let delay_long = props
+            .integer_or(PropKey::PressDelayLongMs, DEFAULT_LONG_PRESS_MS)
+            .clamp(1, 60_000) as u64;
         // A pressable without a long press lends it to the nearest one that has it.
-        let long_press_target = Self::nearest_with(ctx, node, PropKey::OnLongPress)
-            .filter(|target| ctx.scene.node(*target).is_some_and(crate::scene::SceneNode::is_pressable));
+        let long_press_target =
+            Self::nearest_with(ctx, node, PropKey::OnLongPress).filter(|target| {
+                ctx.scene
+                    .node(*target)
+                    .is_some_and(crate::scene::SceneNode::is_pressable)
+            });
         self.press = Some(Press {
             node,
             started: position,
@@ -505,15 +638,19 @@ impl Interaction {
         if delay_in == 0 {
             self.send_press_in(ctx, position);
         } else {
-            ctx.timers.schedule(Timer::PressIn(node), ctx.now_ms + delay_in);
+            ctx.timers
+                .schedule(Timer::PressIn(node), ctx.now_ms + delay_in);
         }
         if long_press_target.is_some() {
-            ctx.timers.schedule(Timer::LongPress(node), ctx.now_ms + delay_in + delay_long);
+            ctx.timers
+                .schedule(Timer::LongPress(node), ctx.now_ms + delay_in + delay_long);
         }
     }
 
     fn send_press_in(&mut self, ctx: &mut Ctx<'_>, position: Point) {
-        let Some(press) = self.press.as_mut() else { return };
+        let Some(press) = self.press.as_mut() else {
+            return;
+        };
         if press.in_sent {
             return;
         }
@@ -544,12 +681,27 @@ impl Interaction {
             let payload = pointer_payload(ctx, press.node, position);
             if inside {
                 // Coming back re-arms the press.
-                ctx.emit_if(press.node, PropKey::OnPressIn, event_kind::PRESS_IN, payload);
+                ctx.emit_if(
+                    press.node,
+                    PropKey::OnPressIn,
+                    event_kind::PRESS_IN,
+                    payload,
+                );
             } else {
                 ctx.timers.cancel(Timer::LongPress(press.node));
-                ctx.emit_if(press.node, PropKey::OnPressOut, event_kind::PRESS_OUT, payload);
+                ctx.emit_if(
+                    press.node,
+                    PropKey::OnPressOut,
+                    event_kind::PRESS_OUT,
+                    payload,
+                );
             }
-        } else if inside && ctx.scene.node(press.node).is_some_and(|node| node.handles(PropKey::OnPressMove)) {
+        } else if inside
+            && ctx
+                .scene
+                .node(press.node)
+                .is_some_and(|node| node.handles(PropKey::OnPressMove))
+        {
             let payload = pointer_payload(ctx, press.node, position);
             ctx.emit(press.node, event_kind::PRESS_MOVE, payload);
         }
@@ -566,18 +718,34 @@ impl Interaction {
         }
         self.set_pressed_visual(ctx, press.node, false);
         let node = ctx.scene.node(press.node)?;
-        let (handles_press, handles_double_tap, action) =
-            (node.handles(PropKey::OnPress), node.handles(PropKey::OnDoubleTap), node.action);
+        let (handles_press, handles_double_tap, action) = (
+            node.handles(PropKey::OnPress),
+            node.handles(PropKey::OnDoubleTap),
+            node.action,
+        );
         let is_switch = node.kind == NodeKind::Switch;
-        let double_tap_delay = node.props().integer_or(PropKey::PressDoubleTapDelayMs, DEFAULT_DOUBLE_TAP_MS).clamp(80, 1000) as u64;
+        let double_tap_delay = node
+            .props()
+            .integer_or(PropKey::PressDoubleTapDelayMs, DEFAULT_DOUBLE_TAP_MS)
+            .clamp(80, 1000) as u64;
         if !press.inside {
             return None;
         }
         let payload = pointer_payload(ctx, press.node, position);
         if !press.in_sent {
-            ctx.emit_if(press.node, PropKey::OnPressIn, event_kind::PRESS_IN, payload.clone());
+            ctx.emit_if(
+                press.node,
+                PropKey::OnPressIn,
+                event_kind::PRESS_IN,
+                payload.clone(),
+            );
         }
-        ctx.emit_if(press.node, PropKey::OnPressOut, event_kind::PRESS_OUT, payload.clone());
+        ctx.emit_if(
+            press.node,
+            PropKey::OnPressOut,
+            event_kind::PRESS_OUT,
+            payload.clone(),
+        );
         // A handled long press replaces the press of its release.
         if press.long_pressed {
             return None;
@@ -599,9 +767,16 @@ impl Interaction {
                 ctx.timers.cancel(Timer::DeferredPress(press.node));
                 ctx.emit(press.node, event_kind::DOUBLE_TAP, payload);
             } else {
-                self.last_tap = Some(Tap { node: press.node, at_ms: ctx.now_ms, position });
+                self.last_tap = Some(Tap {
+                    node: press.node,
+                    at_ms: ctx.now_ms,
+                    position,
+                });
                 if handles_press {
-                    ctx.timers.schedule(Timer::DeferredPress(press.node), ctx.now_ms + double_tap_delay);
+                    ctx.timers.schedule(
+                        Timer::DeferredPress(press.node),
+                        ctx.now_ms + double_tap_delay,
+                    );
                 }
             }
             return None;
@@ -613,14 +788,21 @@ impl Interaction {
     }
 
     fn cancel_press(&mut self, ctx: &mut Ctx<'_>) {
-        let Some(press) = self.press.take() else { return };
+        let Some(press) = self.press.take() else {
+            return;
+        };
         ctx.timers.cancel(Timer::LongPress(press.node));
         ctx.timers.cancel(Timer::PressIn(press.node));
         self.set_pressed_visual(ctx, press.node, false);
         if press.inside && press.in_sent {
             let position = self.pointer.unwrap_or(press.started);
             let payload = pointer_payload(ctx, press.node, position);
-            ctx.emit_if(press.node, PropKey::OnPressOut, event_kind::PRESS_OUT, payload);
+            ctx.emit_if(
+                press.node,
+                PropKey::OnPressOut,
+                event_kind::PRESS_OUT,
+                payload,
+            );
         }
     }
 
@@ -629,12 +811,17 @@ impl Interaction {
         if self.outside_observers.is_empty() {
             return;
         }
-        let payload = WireMap::new().with("pageX", position.x).with("pageY", position.y).encode();
+        let payload = WireMap::new()
+            .with("pageX", position.x)
+            .with("pageY", position.y)
+            .encode();
         for observer in self.outside_observers.clone() {
             if !ctx.scene.is_effectively_visible(observer) {
                 continue;
             }
-            let Some(node) = ctx.scene.node(observer) else { continue };
+            let Some(node) = ctx.scene.node(observer) else {
+                continue;
+            };
             let origin = ctx.scene.window_origin(observer);
             let bounds = Rect::new(origin.x, origin.y, node.frame.width, node.frame.height);
             if !bounds.contains(position) {
@@ -652,8 +839,16 @@ impl Interaction {
                 }
             }
             Timer::LongPress(node) => {
-                let Some(press) = self.press.as_mut().filter(|press| press.node == node && press.inside) else { return };
-                let Some(target) = press.long_press_target else { return };
+                let Some(press) = self
+                    .press
+                    .as_mut()
+                    .filter(|press| press.node == node && press.inside)
+                else {
+                    return;
+                };
+                let Some(target) = press.long_press_target else {
+                    return;
+                };
                 press.long_pressed = true;
                 let position = self.pointer.unwrap_or(press.started);
                 let payload = pointer_payload(ctx, target, position);
@@ -661,7 +856,10 @@ impl Interaction {
             }
             Timer::DeferredPress(node) => {
                 // No second tap arrived: the single press goes through.
-                let position = self.last_tap.filter(|tap| tap.node == node).map_or(Point::ZERO, |tap| tap.position);
+                let position = self
+                    .last_tap
+                    .filter(|tap| tap.node == node)
+                    .map_or(Point::ZERO, |tap| tap.position);
                 self.last_tap = None;
                 let payload = pointer_payload(ctx, node, position);
                 ctx.emit_if(node, PropKey::OnPress, event_kind::PRESS, payload);
@@ -720,7 +918,10 @@ impl Interaction {
             return Some(Action::Toggle { id: focused });
         }
         let origin = ctx.scene.window_origin(focused);
-        let center = Point::new(origin.x + node.frame.width / 2.0, origin.y + node.frame.height / 2.0);
+        let center = Point::new(
+            origin.x + node.frame.width / 2.0,
+            origin.y + node.frame.height / 2.0,
+        );
         let payload = pointer_payload(ctx, focused, center);
         ctx.emit_if(focused, PropKey::OnPress, event_kind::PRESS, payload);
         None
@@ -729,7 +930,11 @@ impl Interaction {
     /// `KeyDown` / `KeyUp` for the focused element's nearest listener, or for
     /// every visible listener when nothing has focus (screen level handlers).
     pub fn report_key(&mut self, ctx: &mut Ctx<'_>, key: &KeyEvent) {
-        let (marker, kind) = if key.pressed { (PropKey::OnKeyDown, event_kind::KEY_DOWN) } else { (PropKey::OnKeyUp, event_kind::KEY_UP) };
+        let (marker, kind) = if key.pressed {
+            (PropKey::OnKeyDown, event_kind::KEY_DOWN)
+        } else {
+            (PropKey::OnKeyUp, event_kind::KEY_UP)
+        };
         let payload = WireMap::new()
             .with("key", key.key.as_str())
             .with("shift", key.modifiers.shift)
@@ -738,7 +943,10 @@ impl Interaction {
             .with("meta", key.modifiers.meta)
             .with("repeat", key.repeat)
             .encode();
-        match self.focused.and_then(|focused| Self::nearest_with(ctx, focused, marker)) {
+        match self
+            .focused
+            .and_then(|focused| Self::nearest_with(ctx, focused, marker))
+        {
             Some(target) => ctx.emit(target, kind, payload),
             None => {
                 let listeners: Vec<NodeId> = ctx
@@ -769,11 +977,16 @@ mod tests {
 
     #[test]
     fn state_styles_keep_only_host_states_and_known_properties() {
-        let styles = StateStyles::parse(r#"{"1":{"38":0.5,"10":4278190335},"3":{"11":-1,"999":1},"5":{"38":0.1}}"#);
+        let styles = StateStyles::parse(
+            r#"{"1":{"38":0.5,"10":4278190335},"3":{"11":-1,"999":1},"5":{"38":0.1}}"#,
+        );
         assert_eq!(styles.states.len(), 2);
         let pressed = styles.get(STATE_PRESSED).expect("pressed");
         assert_eq!(pressed.get(&PropKey::Opacity), Some(&PropValue::Float(0.5)));
-        assert_eq!(pressed.get(&PropKey::BackgroundColor), Some(&PropValue::Integer(4_278_190_335)));
+        assert_eq!(
+            pressed.get(&PropKey::BackgroundColor),
+            Some(&PropValue::Integer(4_278_190_335))
+        );
         assert_eq!(styles.get(STATE_HOVERED).expect("hover").len(), 1);
         assert!(styles.get(5).is_none());
         assert!(StateStyles::parse("not json").states.is_empty());

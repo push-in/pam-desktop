@@ -24,4 +24,4 @@ mod view;
 #[cfg(feature = "webview")]
 mod webview;
 
-pub use backend::{run, GtkBackend};
+pub use backend::{GtkBackend, run};

@@ -27,39 +27,61 @@ pub fn status() -> Status {
 mod platform {
     use std::fs;
 
-    use super::{Status, NETWORK_ETHERNET, NETWORK_NONE, NETWORK_OTHER, NETWORK_WIFI};
+    use super::{NETWORK_ETHERNET, NETWORK_NONE, NETWORK_OTHER, NETWORK_WIFI, Status};
 
     pub fn status() -> Status {
         let (battery_level, charging) = battery();
-        Status { battery_level, charging, network: network(), low_power: low_power() }
+        Status {
+            battery_level,
+            charging,
+            network: network(),
+            low_power: low_power(),
+        }
     }
 
     fn battery() -> (f64, bool) {
-        let Ok(entries) = fs::read_dir("/sys/class/power_supply") else { return (-1.0, false) };
+        let Ok(entries) = fs::read_dir("/sys/class/power_supply") else {
+            return (-1.0, false);
+        };
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
-            if fs::read_to_string(path.join("type")).unwrap_or_default().trim() != "Battery" {
+            if fs::read_to_string(path.join("type"))
+                .unwrap_or_default()
+                .trim()
+                != "Battery"
+            {
                 continue;
             }
             // Peripherals (mice, headsets) report batteries too.
             if fs::read_to_string(path.join("scope")).is_ok_and(|scope| scope.trim() == "Device") {
                 continue;
             }
-            let Some(capacity) = fs::read_to_string(path.join("capacity")).ok().and_then(|value| value.trim().parse::<f64>().ok()) else {
+            let Some(capacity) = fs::read_to_string(path.join("capacity"))
+                .ok()
+                .and_then(|value| value.trim().parse::<f64>().ok())
+            else {
                 continue;
             };
             let status = fs::read_to_string(path.join("status")).unwrap_or_default();
-            return ((capacity / 100.0).clamp(0.0, 1.0), matches!(status.trim(), "Charging" | "Full"));
+            return (
+                (capacity / 100.0).clamp(0.0, 1.0),
+                matches!(status.trim(), "Charging" | "Full"),
+            );
         }
         (-1.0, false)
     }
 
     fn network() -> i64 {
-        let Ok(entries) = fs::read_dir("/sys/class/net") else { return NETWORK_OTHER };
+        let Ok(entries) = fs::read_dir("/sys/class/net") else {
+            return NETWORK_OTHER;
+        };
         let mut connected = NETWORK_NONE;
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
-            if entry.file_name() == "lo" || !fs::read_to_string(path.join("operstate")).is_ok_and(|state| state.trim() == "up") {
+            if entry.file_name() == "lo"
+                || !fs::read_to_string(path.join("operstate"))
+                    .is_ok_and(|state| state.trim() == "up")
+            {
                 continue;
             }
             if path.join("wireless").exists() {
@@ -73,7 +95,8 @@ mod platform {
 
     /// The firmware power profile, where the machine exposes one.
     fn low_power() -> bool {
-        fs::read_to_string("/sys/firmware/acpi/platform_profile").is_ok_and(|profile| matches!(profile.trim(), "low-power" | "quiet"))
+        fs::read_to_string("/sys/firmware/acpi/platform_profile")
+            .is_ok_and(|profile| matches!(profile.trim(), "low-power" | "quiet"))
     }
 }
 
@@ -87,7 +110,7 @@ mod macos {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
-    use super::{Status, NETWORK_ETHERNET, NETWORK_NONE, NETWORK_WIFI};
+    use super::{NETWORK_ETHERNET, NETWORK_NONE, NETWORK_WIFI, Status};
 
     /// The system tools are asked at most this often.
     const FRESH: Duration = Duration::from_secs(10);
@@ -95,7 +118,9 @@ mod macos {
     static KNOWN: Mutex<Option<(Instant, Status)>> = Mutex::new(None);
 
     pub fn status() -> Status {
-        let mut known = KNOWN.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut known = KNOWN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((asked, status)) = *known
             && asked.elapsed() < FRESH
         {
@@ -127,10 +152,22 @@ mod macos {
     pub(super) fn parse_battery(text: &str) -> (f64, bool) {
         for line in text.lines().filter(|line| line.contains("InternalBattery")) {
             let Some(end) = line.find('%') else { continue };
-            let digits = line[..end].rsplit(|character: char| !character.is_ascii_digit()).next().unwrap_or_default();
-            let Ok(percent) = digits.parse::<f64>() else { continue };
-            let state = line[end..].split(';').nth(1).map(str::trim).unwrap_or_default();
-            return ((percent / 100.0).clamp(0.0, 1.0), matches!(state, "charging" | "charged" | "finishing charge"));
+            let digits = line[..end]
+                .rsplit(|character: char| !character.is_ascii_digit())
+                .next()
+                .unwrap_or_default();
+            let Ok(percent) = digits.parse::<f64>() else {
+                continue;
+            };
+            let state = line[end..]
+                .split(';')
+                .nth(1)
+                .map(str::trim)
+                .unwrap_or_default();
+            return (
+                (percent / 100.0).clamp(0.0, 1.0),
+                matches!(state, "charging" | "charged" | "finishing charge"),
+            );
         }
         (-1.0, false)
     }
@@ -145,10 +182,17 @@ mod macos {
 
     fn network() -> i64 {
         let route = output("/sbin/route", &["-n", "get", "default"]);
-        let Some(interface) = route.lines().find_map(|line| line.trim().strip_prefix("interface:")).map(str::trim) else {
+        let Some(interface) = route
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("interface:"))
+            .map(str::trim)
+        else {
             return NETWORK_NONE;
         };
-        if is_wifi(&output("/usr/sbin/networksetup", &["-listallhardwareports"]), interface) {
+        if is_wifi(
+            &output("/usr/sbin/networksetup", &["-listallhardwareports"]),
+            interface,
+        ) {
             NETWORK_WIFI
         } else {
             NETWORK_ETHERNET
@@ -161,7 +205,10 @@ mod macos {
         for line in ports.lines() {
             if let Some(name) = line.strip_prefix("Hardware Port:") {
                 port = name.trim();
-            } else if line.strip_prefix("Device:").is_some_and(|device| device.trim() == interface) {
+            } else if line
+                .strip_prefix("Device:")
+                .is_some_and(|device| device.trim() == interface)
+            {
                 return port.contains("Wi-Fi") || port.contains("AirPort");
             }
         }
@@ -172,12 +219,14 @@ mod macos {
 #[cfg(target_os = "windows")]
 mod platform {
     use windows_sys::Win32::NetworkManagement::IpHelper::{
-        GetAdaptersAddresses, GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST,
-        IP_ADAPTER_ADDRESSES_LH,
+        GAA_FLAG_INCLUDE_GATEWAYS, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
+        GAA_FLAG_SKIP_MULTICAST, GetAdaptersAddresses, IP_ADAPTER_ADDRESSES_LH,
     };
     use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 
-    use super::{Status, NETWORK_CELLULAR, NETWORK_ETHERNET, NETWORK_NONE, NETWORK_OTHER, NETWORK_WIFI};
+    use super::{
+        NETWORK_CELLULAR, NETWORK_ETHERNET, NETWORK_NONE, NETWORK_OTHER, NETWORK_WIFI, Status,
+    };
 
     const ERROR_BUFFER_OVERFLOW: u32 = 111;
     const AF_UNSPEC: u32 = 0;
@@ -201,19 +250,35 @@ mod platform {
         };
         let (battery_level, charging, low_power) = match power {
             Some(power) => {
-                let present = power.BatteryFlag != BATTERY_UNKNOWN && power.BatteryFlag & BATTERY_ABSENT == 0 && power.BatteryLifePercent <= 100;
-                let level = if present { f64::from(power.BatteryLifePercent) / 100.0 } else { -1.0 };
-                let charging = present && (power.BatteryFlag & BATTERY_CHARGING != 0 || (power.ACLineStatus == 1 && power.BatteryLifePercent == 100));
+                let present = power.BatteryFlag != BATTERY_UNKNOWN
+                    && power.BatteryFlag & BATTERY_ABSENT == 0
+                    && power.BatteryLifePercent <= 100;
+                let level = if present {
+                    f64::from(power.BatteryLifePercent) / 100.0
+                } else {
+                    -1.0
+                };
+                let charging = present
+                    && (power.BatteryFlag & BATTERY_CHARGING != 0
+                        || (power.ACLineStatus == 1 && power.BatteryLifePercent == 100));
                 (level, charging, power.SystemStatusFlag == 1)
             }
             None => (-1.0, false, false),
         };
-        Status { battery_level, charging, network: network(), low_power }
+        Status {
+            battery_level,
+            charging,
+            network: network(),
+            low_power,
+        }
     }
 
     /// The best connected adapter that has a gateway.
     fn network() -> i64 {
-        let flags = GAA_FLAG_INCLUDE_GATEWAYS | GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+        let flags = GAA_FLAG_INCLUDE_GATEWAYS
+            | GAA_FLAG_SKIP_ANYCAST
+            | GAA_FLAG_SKIP_MULTICAST
+            | GAA_FLAG_SKIP_DNS_SERVER;
         let mut size: u32 = 16 * 1024;
         for _ in 0..3 {
             // 8-byte words keep the buffer aligned for the adapter records.
@@ -229,13 +294,18 @@ mod platform {
                         let mut adapter = first.cast_const();
                         while let Some(current) = adapter.as_ref() {
                             adapter = current.Next;
-                            if current.OperStatus != OPER_STATUS_UP || current.IfType == IF_TYPE_LOOPBACK || current.FirstGatewayAddress.is_null() {
+                            if current.OperStatus != OPER_STATUS_UP
+                                || current.IfType == IF_TYPE_LOOPBACK
+                                || current.FirstGatewayAddress.is_null()
+                            {
                                 continue;
                             }
                             match current.IfType {
                                 IF_TYPE_ETHERNET => return NETWORK_ETHERNET,
                                 IF_TYPE_WIFI => best = NETWORK_WIFI,
-                                IF_TYPE_WWAN | IF_TYPE_WWAN2 if best != NETWORK_WIFI => best = NETWORK_CELLULAR,
+                                IF_TYPE_WWAN | IF_TYPE_WWAN2 if best != NETWORK_WIFI => {
+                                    best = NETWORK_CELLULAR
+                                }
                                 _ if best == NETWORK_NONE => best = NETWORK_OTHER,
                                 _ => {}
                             }
@@ -253,10 +323,15 @@ mod platform {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 mod platform {
-    use super::{Status, NETWORK_OTHER};
+    use super::{NETWORK_OTHER, Status};
 
     pub fn status() -> Status {
-        Status { battery_level: -1.0, charging: false, network: NETWORK_OTHER, low_power: false }
+        Status {
+            battery_level: -1.0,
+            charging: false,
+            network: NETWORK_OTHER,
+            low_power: false,
+        }
     }
 }
 
@@ -280,9 +355,14 @@ mod tests {
         assert_eq!(macos::parse_battery(draining), (0.07, false));
         let full = " -InternalBattery-0 (id=1)\t100%; charged; 0:00 remaining present: true";
         assert_eq!(macos::parse_battery(full), (1.0, true));
-        assert_eq!(macos::parse_battery("Now drawing from 'AC Power'\n"), (-1.0, false));
+        assert_eq!(
+            macos::parse_battery("Now drawing from 'AC Power'\n"),
+            (-1.0, false)
+        );
 
-        assert!(macos::parse_low_power("Battery Power:\n lowpowermode         1\n sleep                1\n"));
+        assert!(macos::parse_low_power(
+            "Battery Power:\n lowpowermode         1\n sleep                1\n"
+        ));
         assert!(!macos::parse_low_power(" lowpowermode         0\n"));
         assert!(!macos::parse_low_power(" sleep 1\n"));
     }

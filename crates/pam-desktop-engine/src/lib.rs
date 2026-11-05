@@ -38,7 +38,7 @@ pub use ffi::{
 };
 pub use layout::set_host_switch_size;
 pub use layout::{TAB_BAR_BOTTOM_HEIGHT, TAB_BAR_RAIL_WIDTH, TAB_BAR_TOP_HEIGHT};
-pub use surface::{set_surface_size, SurfacePolicy};
+pub use surface::{SurfacePolicy, set_surface_size};
 pub use text_measure::{PamTextMeasureCallback, PamTextMeasureRequest, PamTextMeasureResult};
 
 #[derive(Debug)]

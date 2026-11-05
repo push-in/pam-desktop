@@ -41,7 +41,10 @@ pub fn layout_of(widget: &impl IsA<gtk::Widget>) -> Option<ChildLayout> {
 pub fn set_layout(widget: &impl IsA<gtk::Widget>, update: impl FnOnce(&mut ChildLayout)) {
     LAYOUTS.with(|layouts| {
         let mut layouts = layouts.borrow_mut();
-        let layout = layouts.entry(key(widget)).or_insert(ChildLayout { frame: Rect::ZERO, transform: Affine::IDENTITY });
+        let layout = layouts.entry(key(widget)).or_insert(ChildLayout {
+            frame: Rect::ZERO,
+            transform: Affine::IDENTITY,
+        });
         update(layout);
     });
 }
@@ -133,7 +136,11 @@ mod imp {
 
         fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
             let extent = self.state.borrow().content_size.map_or(0, |size| {
-                let value = if orientation == gtk::Orientation::Horizontal { size.width } else { size.height };
+                let value = if orientation == gtk::Orientation::Horizontal {
+                    size.width
+                } else {
+                    size.height
+                };
                 value.ceil().max(0.0) as i32
             });
             (extent, extent, -1, -1)
@@ -159,11 +166,13 @@ mod imp {
                 match layout_of(&current) {
                     Some(layout) => {
                         let frame = layout.frame;
-                        let mut transform = gsk::Transform::new().translate(&graphene::Point::new(frame.x, frame.y));
+                        let mut transform = gsk::Transform::new()
+                            .translate(&graphene::Point::new(frame.x, frame.y));
                         if !layout.transform.is_identity() {
                             let affine = layout.transform;
                             if affine.is_translation() {
-                                transform = transform.translate(&graphene::Point::new(affine.tx, affine.ty));
+                                transform = transform
+                                    .translate(&graphene::Point::new(affine.tx, affine.ty));
                             } else {
                                 transform = transform.matrix(&graphene::Matrix::from_2d(
                                     f64::from(affine.a),
@@ -176,9 +185,11 @@ mod imp {
                             }
                         }
                         // Native children keep at least their minimum size.
-                        let (minimum_width, _, _, _) = current.measure(gtk::Orientation::Horizontal, -1);
+                        let (minimum_width, _, _, _) =
+                            current.measure(gtk::Orientation::Horizontal, -1);
                         let allocated_width = (frame.width.ceil() as i32).max(minimum_width);
-                        let (minimum_height, _, _, _) = current.measure(gtk::Orientation::Vertical, allocated_width);
+                        let (minimum_height, _, _, _) =
+                            current.measure(gtk::Orientation::Vertical, allocated_width);
                         let allocated_height = (frame.height.ceil() as i32).max(minimum_height);
                         current.allocate(allocated_width, allocated_height, -1, Some(transform));
                     }
@@ -208,7 +219,11 @@ mod imp {
             let clip = state.decoration.clip;
             if clip {
                 let [left, top, right, bottom] = state.decoration.border.widths;
-                let padding_box = paint::rounded(size, state.decoration.radii, Insets::new(left, top, right, bottom));
+                let padding_box = paint::rounded(
+                    size,
+                    state.decoration.radii,
+                    Insets::new(left, top, right, bottom),
+                );
                 snapshot.push_rounded_clip(&padding_box);
             }
             if let Some(image) = &state.image {
@@ -216,8 +231,13 @@ mod imp {
             }
             if !state.drawing.is_empty() && !size.is_empty() {
                 // Cairo clips the drawing to the bounds given here.
-                let context = snapshot.append_cairo(&graphene::Rect::new(0.0, 0.0, size.width, size.height));
-                paint::paint_drawing(&context, &state.drawing, 1.0 / f64::from(widget.scale_factor().max(1)));
+                let context =
+                    snapshot.append_cairo(&graphene::Rect::new(0.0, 0.0, size.width, size.height));
+                paint::paint_drawing(
+                    &context,
+                    &state.drawing,
+                    1.0 / f64::from(widget.scale_factor().max(1)),
+                );
             }
             if let Some(text_state) = state.text.as_mut() {
                 let (left, top) = text_state.place(size);
@@ -225,7 +245,12 @@ mod imp {
                 snapshot.save();
                 snapshot.translate(&graphene::Point::new(left, top));
                 if let Some(shadow) = text_state.content.block.shadow {
-                    snapshot.push_shadow(&[gsk::Shadow::new(paint::rgba(shadow.color), shadow.offset.x, shadow.offset.y, shadow.radius)]);
+                    snapshot.push_shadow(&[gsk::Shadow::new(
+                        paint::rgba(shadow.color),
+                        shadow.offset.x,
+                        shadow.offset.y,
+                        shadow.radius,
+                    )]);
                     snapshot.append_layout(&text_state.layout, &color);
                     snapshot.pop();
                 } else {
@@ -272,7 +297,12 @@ fn paint_image(snapshot: &gtk::Snapshot, size: Size, decoration: &Decoration, im
         ImageFit::Repeat => Rect::new(area.x, area.y, natural.width, natural.height),
         _ => {
             let (width, height) = (natural.width * scale, natural.height * scale);
-            Rect::new(area.x + (area.width - width) / 2.0, area.y + (area.height - height) / 2.0, width, height)
+            Rect::new(
+                area.x + (area.width - width) / 2.0,
+                area.y + (area.height - height) / 2.0,
+                width,
+                height,
+            )
         }
     };
     let bounds = graphene::Rect::new(target.x, target.y, target.width, target.height);
@@ -357,7 +387,12 @@ impl PamView {
         let next = content.map(|content| {
             let layout = self.create_pango_layout(None);
             text::configure(&layout, &content.block);
-            TextState { content: content.clone(), layout, wrapped_to: f32::NAN, selection: None }
+            TextState {
+                content: content.clone(),
+                layout,
+                wrapped_to: f32::NAN,
+                selection: None,
+            }
         });
         self.with_state(|state| state.text = next);
         self.queue_draw();
@@ -382,7 +417,11 @@ impl PamView {
     pub fn text_index_at(&self, x: f32, y: f32) -> Option<u32> {
         let fallback = Size::new(self.width() as f32, self.height() as f32);
         self.with_state(|state| {
-            let size = if state.size.is_empty() { fallback } else { state.size };
+            let size = if state.size.is_empty() {
+                fallback
+            } else {
+                state.size
+            };
             let text = state.text.as_mut()?;
             let (left, top) = text.place(size);
             Some(text::index_at(&text.layout, x - left, y - top))

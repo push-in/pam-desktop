@@ -122,7 +122,11 @@ impl BundleTarget {
         } else {
             "glibc"
         };
-        Self { operating_system: std::env::consts::OS.to_owned(), architecture: std::env::consts::ARCH.to_owned(), abi: abi.to_owned() }
+        Self {
+            operating_system: std::env::consts::OS.to_owned(),
+            architecture: std::env::consts::ARCH.to_owned(),
+            abi: abi.to_owned(),
+        }
     }
 }
 
@@ -141,7 +145,8 @@ pub struct BundleFile {
 ///
 /// When the file cannot be read.
 pub fn hash_file(path: &Path) -> Result<(u64, String), String> {
-    let mut file = File::open(path).map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    let mut file =
+        File::open(path).map_err(|error| format!("cannot open {}: {error}", path.display()))?;
     let mut digest = Sha256::new();
     let mut buffer = vec![0_u8; 128 * 1024];
     let mut bytes = 0_u64;
@@ -177,7 +182,12 @@ pub fn verify_file_hash(path: &Path, expected: &str) -> Result<(), String> {
 ///
 /// When the path is empty, absolute or has `.`/`..` components.
 pub fn validate_relative_path(path: &Path, label: &str) -> Result<(), String> {
-    if path.as_os_str().is_empty() || path.is_absolute() || path.components().any(|component| !matches!(component, Component::Normal(_))) {
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
         return Err(format!("{label} must be a normalized relative path"));
     }
     Ok(())
@@ -191,18 +201,34 @@ pub fn validate_relative_path(path: &Path, label: &str) -> Result<(), String> {
 ///
 /// When the tree cannot be read or holds a symbolic link or a special file.
 pub fn files(root: &Path) -> Result<Vec<(String, PathBuf)>, String> {
-    fn visit(root: &Path, directory: &Path, files: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
-        for entry in fs::read_dir(directory).map_err(|error| format!("cannot read bundle directory {}: {error}", directory.display()))? {
+    fn visit(
+        root: &Path,
+        directory: &Path,
+        files: &mut Vec<(String, PathBuf)>,
+    ) -> Result<(), String> {
+        for entry in fs::read_dir(directory).map_err(|error| {
+            format!(
+                "cannot read bundle directory {}: {error}",
+                directory.display()
+            )
+        })? {
             let entry = entry.map_err(|error| format!("cannot read bundle entry: {error}"))?;
             let path = entry.path();
-            let file_type = entry.file_type().map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
             if file_type.is_symlink() {
-                return Err(format!("bundle contains a symbolic link: {}", path.display()));
+                return Err(format!(
+                    "bundle contains a symbolic link: {}",
+                    path.display()
+                ));
             }
             if file_type.is_dir() {
                 visit(root, &path, files)?;
             } else if file_type.is_file() {
-                let relative = path.strip_prefix(root).map_err(|_| "bundle path escaped its root".to_owned())?;
+                let relative = path
+                    .strip_prefix(root)
+                    .map_err(|_| "bundle path escaped its root".to_owned())?;
                 if relative == Path::new(MANIFEST) {
                     continue;
                 }
@@ -212,7 +238,10 @@ pub fn files(root: &Path) -> Result<Vec<(String, PathBuf)>, String> {
                     .replace('\\', "/");
                 files.push((relative, path));
             } else {
-                return Err(format!("bundle contains a special file: {}", path.display()));
+                return Err(format!(
+                    "bundle contains a special file: {}",
+                    path.display()
+                ));
             }
         }
         Ok(())
@@ -231,11 +260,19 @@ pub fn files(root: &Path) -> Result<Vec<(String, PathBuf)>, String> {
 pub fn write_manifest(root: &Path, mut manifest: BundleManifest) -> Result<(), String> {
     manifest.files = files(root)?
         .into_iter()
-        .map(|(relative, path)| hash_file(&path).map(|(bytes, sha256)| BundleFile { path: relative, bytes, sha256 }))
+        .map(|(relative, path)| {
+            hash_file(&path).map(|(bytes, sha256)| BundleFile {
+                path: relative,
+                bytes,
+                sha256,
+            })
+        })
         .collect::<Result<_, _>>()?;
-    let mut encoded = serde_json::to_vec_pretty(&manifest).map_err(|error| format!("cannot serialize the bundle manifest: {error}"))?;
+    let mut encoded = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("cannot serialize the bundle manifest: {error}"))?;
     encoded.push(b'\n');
-    fs::write(root.join(MANIFEST), encoded).map_err(|error| format!("cannot write the bundle manifest: {error}"))
+    fs::write(root.join(MANIFEST), encoded)
+        .map_err(|error| format!("cannot write the bundle manifest: {error}"))
 }
 
 /// Reads and validates the shape of `manifest.json`.
@@ -246,14 +283,20 @@ pub fn write_manifest(root: &Path, mut manifest: BundleManifest) -> Result<(), S
 /// invalid application.
 pub fn read_manifest(root: &Path) -> Result<BundleManifest, String> {
     let path = root.join(MANIFEST);
-    let metadata = fs::symlink_metadata(&path).map_err(|error| format!("cannot open the bundle manifest: {error}"))?;
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|error| format!("cannot open the bundle manifest: {error}"))?;
     if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES {
         return Err("the bundle manifest is not a regular file within the size limit".to_owned());
     }
-    let bytes = fs::read(&path).map_err(|error| format!("cannot read the bundle manifest: {error}"))?;
-    let manifest: BundleManifest = serde_json::from_slice(&bytes).map_err(|error| format!("invalid bundle manifest: {error}"))?;
+    let bytes =
+        fs::read(&path).map_err(|error| format!("cannot read the bundle manifest: {error}"))?;
+    let manifest: BundleManifest = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid bundle manifest: {error}"))?;
     if manifest.schema_version != SCHEMA_VERSION {
-        return Err(format!("bundle manifest schema {} is unsupported; expected {SCHEMA_VERSION}", manifest.schema_version));
+        return Err(format!(
+            "bundle manifest schema {} is unsupported; expected {SCHEMA_VERSION}",
+            manifest.schema_version
+        ));
     }
     validate_identifier(&manifest.application.identifier)?;
     validate_version(&manifest.application.version)?;
@@ -274,8 +317,14 @@ pub fn verify(root: &Path) -> Result<BundleManifest, String> {
     let mut expected = std::collections::HashMap::with_capacity(manifest.files.len());
     for file in &manifest.files {
         validate_relative_path(Path::new(&file.path), "bundle file")?;
-        if expected.insert(file.path.as_str(), (file.bytes, file.sha256.as_str())).is_some() {
-            return Err(format!("bundle manifest path {:?} is duplicated", file.path));
+        if expected
+            .insert(file.path.as_str(), (file.bytes, file.sha256.as_str()))
+            .is_some()
+        {
+            return Err(format!(
+                "bundle manifest path {:?} is duplicated",
+                file.path
+            ));
         }
     }
     let actual = files(root)?;
@@ -283,8 +332,13 @@ pub fn verify(root: &Path) -> Result<BundleManifest, String> {
         return Err("bundle contents do not match its manifest".to_owned());
     }
     for (relative, path) in actual {
-        let (bytes, sha256) = expected.remove(relative.as_str()).ok_or_else(|| format!("bundle contains an undeclared file: {relative}"))?;
-        let length = path.metadata().map_err(|error| format!("cannot inspect bundle file {relative}: {error}"))?.len();
+        let (bytes, sha256) = expected
+            .remove(relative.as_str())
+            .ok_or_else(|| format!("bundle contains an undeclared file: {relative}"))?;
+        let length = path
+            .metadata()
+            .map_err(|error| format!("cannot inspect bundle file {relative}: {error}"))?
+            .len();
         if length != bytes {
             return Err(format!("bundle file size mismatch: {relative}"));
         }
@@ -313,11 +367,24 @@ impl Installed {
     /// host may be running from a shared cache or a development checkout.
     #[must_use]
     pub fn discover(application_id: &str) -> Option<Self> {
-        let variable = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty()).map(PathBuf::from);
-        let configured = variable("PAM_DESKTOP_UPDATE_ROOT").or_else(|| variable("PAM_DESKTOP_BUNDLE_ROOT"));
-        let inferred = || std::env::current_exe().ok().and_then(|executable| executable.parent()?.parent().map(Path::to_path_buf));
+        let variable = |name: &str| {
+            std::env::var_os(name)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        };
+        let configured =
+            variable("PAM_DESKTOP_UPDATE_ROOT").or_else(|| variable("PAM_DESKTOP_BUNDLE_ROOT"));
+        let inferred = || {
+            std::env::current_exe()
+                .ok()
+                .and_then(|executable| executable.parent()?.parent().map(Path::to_path_buf))
+        };
         let root = configured.or_else(inferred)?.canonicalize().ok()?;
-        Self::at(root, application_id, variable("PAM_DESKTOP_LAUNCHER").as_deref())
+        Self::at(
+            root,
+            application_id,
+            variable("PAM_DESKTOP_LAUNCHER").as_deref(),
+        )
     }
 
     fn at(root: PathBuf, application_id: &str, launcher: Option<&Path>) -> Option<Self> {
@@ -326,14 +393,20 @@ impl Installed {
         if manifest.application.identifier != application_id {
             return None;
         }
-        let launcher = launcher.and_then(|path| path.canonicalize().ok()).and_then(|path| path.strip_prefix(&root).ok().map(Path::to_path_buf));
+        let launcher = launcher
+            .and_then(|path| path.canonicalize().ok())
+            .and_then(|path| path.strip_prefix(&root).ok().map(Path::to_path_buf));
         Some(Self { root, launcher })
     }
 
     /// Where the bundle layout starts inside `root`.
     #[must_use]
     pub fn runtime_directory(root: &Path) -> PathBuf {
-        if root.extension().is_some_and(|extension| extension == "app") { root.join("Contents/Resources/runtime") } else { root.to_path_buf() }
+        if root.extension().is_some_and(|extension| extension == "app") {
+            root.join("Contents/Resources/runtime")
+        } else {
+            root.to_path_buf()
+        }
     }
 }
 
@@ -352,7 +425,10 @@ impl Launch {
     /// script cannot be the executable of a desktop application there.
     #[must_use]
     pub fn for_executable(executable: &Path, arguments: &[OsString]) -> Option<Self> {
-        if executable.file_stem().is_some_and(|stem| stem == "pam-desktop") {
+        if executable
+            .file_stem()
+            .is_some_and(|stem| stem == "pam-desktop")
+        {
             return None;
         }
         let bin = executable.parent()?;
@@ -361,14 +437,27 @@ impl Launch {
             return None;
         }
         let manifest = read_manifest(root).ok()?;
-        let relative = executable.strip_prefix(root).ok()?.to_str()?.replace('\\', "/");
+        let relative = executable
+            .strip_prefix(root)
+            .ok()?
+            .to_str()?
+            .replace('\\', "/");
         (manifest.launcher == relative).then(|| Self::new(root, &manifest, executable, arguments))
     }
 
-    fn new(root: &Path, manifest: &BundleManifest, launcher: &Path, arguments: &[OsString]) -> Self {
+    fn new(
+        root: &Path,
+        manifest: &BundleManifest,
+        launcher: &Path,
+        arguments: &[OsString],
+    ) -> Self {
         let project = root.join(&manifest.project);
         let wrapper = root.join("bin").join(PHP_WRAPPER);
-        let php = if wrapper.is_file() { wrapper } else { root.join(PHP_BIN).join(&manifest.runtime.php_binary) };
+        let php = if wrapper.is_file() {
+            wrapper
+        } else {
+            root.join(PHP_BIN).join(&manifest.runtime.php_binary)
+        };
         let mut environment = vec![
             ("PAM_DESKTOP_BUNDLE", OsString::from("1")),
             ("PAM_DESKTOP_BUNDLE_ROOT", root.as_os_str().to_owned()),
@@ -376,14 +465,22 @@ impl Launch {
             ("PAM_DESKTOP_PHP", php.into_os_string()),
             ("PHPRC", root.join(PHP_INI).into_os_string()),
             ("PHP_INI_SCAN_DIR", OsString::new()),
-            (PHP_EXTENSION_DIR_VARIABLE, root.join(PHP_EXTENSIONS).into_os_string()),
+            (
+                PHP_EXTENSION_DIR_VARIABLE,
+                root.join(PHP_EXTENSIONS).into_os_string(),
+            ),
         ];
         // A link or file the system opened the application with.
-        if let Some(url) = arguments.first().filter(|_| std::env::var_os("PAM_DESKTOP_LAUNCH_URL").is_none()) {
+        if let Some(url) = arguments
+            .first()
+            .filter(|_| std::env::var_os("PAM_DESKTOP_LAUNCH_URL").is_none())
+        {
             environment.push(("PAM_DESKTOP_LAUNCH_URL", url.clone()));
         }
         Self {
-            program: root.join("bin").join(format!("pam-desktop{}", std::env::consts::EXE_SUFFIX)),
+            program: root
+                .join("bin")
+                .join(format!("pam-desktop{}", std::env::consts::EXE_SUFFIX)),
             arguments: vec![OsString::from("run"), project.clone().into_os_string()],
             directory: project,
             environment,
@@ -399,9 +496,15 @@ impl Launch {
             command.env(name, value);
         }
         match command.status() {
-            Ok(status) => status.code().and_then(|code| u8::try_from(code).ok()).map_or(ExitCode::FAILURE, ExitCode::from),
+            Ok(status) => status
+                .code()
+                .and_then(|code| u8::try_from(code).ok())
+                .map_or(ExitCode::FAILURE, ExitCode::from),
             Err(error) => {
-                eprintln!("pam-desktop: cannot start {}: {error}", self.program.display());
+                eprintln!(
+                    "pam-desktop: cannot start {}: {error}",
+                    self.program.display()
+                );
                 ExitCode::FAILURE
             }
         }
@@ -430,7 +533,11 @@ pub mod test_support {
             project: String::from("app"),
             entry: String::from("app/index.php"),
             launcher: String::from("bin/fixture"),
-            runtime: BundleRuntime { pam_desktop: env!("CARGO_PKG_VERSION").to_owned(), php: String::from("8.5.0"), php_binary: String::from("php") },
+            runtime: BundleRuntime {
+                pam_desktop: env!("CARGO_PKG_VERSION").to_owned(),
+                php: String::from("8.5.0"),
+                php_binary: String::from("php"),
+            },
             target: BundleTarget::current(),
             source_date_epoch: 0,
             files: Vec::new(),
@@ -459,10 +566,17 @@ mod tests {
         fs::write(root.join("app/manifest.json"), b"{}").unwrap();
         write_manifest(&root, manifest("com.pushin.test", "1.0.0")).unwrap();
         let verified = verify(&root).expect("bundle should verify");
-        let paths: Vec<&str> = verified.files.iter().map(|file| file.path.as_str()).collect();
+        let paths: Vec<&str> = verified
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect();
         assert_eq!(paths, ["app/manifest.json", "app/payload.txt"]);
         assert_eq!(verified.files[1].bytes, 8);
-        assert_eq!(verified.files[1].sha256, pam_desktop_ui::modules::support::sha256_hex(b"verified"));
+        assert_eq!(
+            verified.files[1].sha256,
+            pam_desktop_ui::modules::support::sha256_hex(b"verified")
+        );
 
         fs::write(root.join("app/payload.txt"), b"tampered").unwrap();
         assert!(verify(&root).unwrap_err().contains("SHA-256 mismatch"));
@@ -482,7 +596,8 @@ mod tests {
         let root = temporary_directory("bundle-schema");
         write_bundle(&root, "com.pushin.test", "1.0.0", b"x");
         let rewrite = |change: &dyn Fn(&mut serde_json::Value)| {
-            let mut document: serde_json::Value = serde_json::from_slice(&fs::read(root.join(MANIFEST)).unwrap()).unwrap();
+            let mut document: serde_json::Value =
+                serde_json::from_slice(&fs::read(root.join(MANIFEST)).unwrap()).unwrap();
             change(&mut document);
             fs::write(root.join(MANIFEST), serde_json::to_vec(&document).unwrap()).unwrap();
         };
@@ -492,7 +607,11 @@ mod tests {
             document["schemaVersion"] = SCHEMA_VERSION.into();
             document["files"][0]["path"] = "../outside".into();
         });
-        assert!(verify(&root).unwrap_err().contains("normalized relative path"));
+        assert!(
+            verify(&root)
+                .unwrap_err()
+                .contains("normalized relative path")
+        );
         rewrite(&|document| {
             document["files"][0]["path"] = "app/payload.txt".into();
             document["application"]["identifier"] = "Not An Id".into();
@@ -521,19 +640,40 @@ mod tests {
 
     #[test]
     fn an_installed_bundle_belongs_to_its_application() {
-        let directory = temporary_directory("bundle-installed").canonicalize().unwrap();
+        let directory = temporary_directory("bundle-installed")
+            .canonicalize()
+            .unwrap();
         let root = directory.join("fixture");
         write_bundle(&root, "com.pushin.test", "1.0.0", b"x");
         fs::create_dir_all(root.join("bin")).unwrap();
         fs::write(root.join("bin/fixture"), b"#!/bin/sh\n").unwrap();
-        let installed = Installed::at(root.clone(), "com.pushin.test", Some(&root.join("bin/fixture"))).expect("the bundle is ours");
+        let installed = Installed::at(
+            root.clone(),
+            "com.pushin.test",
+            Some(&root.join("bin/fixture")),
+        )
+        .expect("the bundle is ours");
         assert_eq!(installed.root, root);
-        assert_eq!(installed.launcher.as_deref(), Some(Path::new("bin/fixture")));
+        assert_eq!(
+            installed.launcher.as_deref(),
+            Some(Path::new("bin/fixture"))
+        );
         // A launcher outside the bundle is not relaunched.
-        assert_eq!(Installed::at(root.clone(), "com.pushin.test", Some(&directory)).unwrap().launcher, None);
+        assert_eq!(
+            Installed::at(root.clone(), "com.pushin.test", Some(&directory))
+                .unwrap()
+                .launcher,
+            None
+        );
         assert_eq!(Installed::at(root.clone(), "com.pushin.other", None), None);
-        assert_eq!(Installed::at(directory.join("missing"), "com.pushin.test", None), None);
-        assert_eq!(Installed::runtime_directory(Path::new("/Applications/Fixture.app")), Path::new("/Applications/Fixture.app/Contents/Resources/runtime"));
+        assert_eq!(
+            Installed::at(directory.join("missing"), "com.pushin.test", None),
+            None
+        );
+        assert_eq!(
+            Installed::runtime_directory(Path::new("/Applications/Fixture.app")),
+            Path::new("/Applications/Fixture.app/Contents/Resources/runtime")
+        );
         let _ = fs::remove_dir_all(&directory);
     }
 
@@ -543,20 +683,52 @@ mod tests {
         write_bundle(&root, "com.pushin.test", "1.0.0", b"x");
         let launcher = root.join("bin/fixture");
         let arguments = [OsString::from("myapp://open/42")];
-        let launch = Launch::for_executable(&launcher, &arguments).expect("the launcher of the bundle");
-        assert_eq!(launch.program, root.join("bin").join(format!("pam-desktop{}", std::env::consts::EXE_SUFFIX)));
-        assert_eq!(launch.arguments, [OsString::from("run"), root.join("app").into_os_string()]);
+        let launch =
+            Launch::for_executable(&launcher, &arguments).expect("the launcher of the bundle");
+        assert_eq!(
+            launch.program,
+            root.join("bin")
+                .join(format!("pam-desktop{}", std::env::consts::EXE_SUFFIX))
+        );
+        assert_eq!(
+            launch.arguments,
+            [OsString::from("run"), root.join("app").into_os_string()]
+        );
         assert_eq!(launch.directory, root.join("app"));
-        let variable = |name: &str| launch.environment.iter().find(|(key, _)| *key == name).map(|(_, value)| value.clone());
-        assert_eq!(variable("PAM_DESKTOP_PHP"), Some(root.join("runtime/php/bin/php").into_os_string()));
-        assert_eq!(variable("PAM_DESKTOP_BUNDLE_ROOT"), Some(root.clone().into_os_string()));
-        assert_eq!(variable("PAM_DESKTOP_LAUNCHER"), Some(launcher.clone().into_os_string()));
-        assert_eq!(variable("PHPRC"), Some(root.join("etc/php.ini").into_os_string()));
+        let variable = |name: &str| {
+            launch
+                .environment
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(
+            variable("PAM_DESKTOP_PHP"),
+            Some(root.join("runtime/php/bin/php").into_os_string())
+        );
+        assert_eq!(
+            variable("PAM_DESKTOP_BUNDLE_ROOT"),
+            Some(root.clone().into_os_string())
+        );
+        assert_eq!(
+            variable("PAM_DESKTOP_LAUNCHER"),
+            Some(launcher.clone().into_os_string())
+        );
+        assert_eq!(
+            variable("PHPRC"),
+            Some(root.join("etc/php.ini").into_os_string())
+        );
         assert_eq!(variable("PHP_INI_SCAN_DIR"), Some(OsString::new()));
-        assert_eq!(variable("PAM_DESKTOP_LAUNCH_URL"), Some(OsString::from("myapp://open/42")));
+        assert_eq!(
+            variable("PAM_DESKTOP_LAUNCH_URL"),
+            Some(OsString::from("myapp://open/42"))
+        );
 
         // The host itself, another file of `bin` and a host outside a bundle are not launchers.
-        assert_eq!(Launch::for_executable(&root.join("bin/pam-desktop"), &[]), None);
+        assert_eq!(
+            Launch::for_executable(&root.join("bin/pam-desktop"), &[]),
+            None
+        );
         assert_eq!(Launch::for_executable(&root.join("bin/other"), &[]), None);
         assert_eq!(Launch::for_executable(&root.join("app/fixture"), &[]), None);
         let _ = fs::remove_dir_all(&root);

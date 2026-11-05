@@ -37,8 +37,11 @@ pub fn rounded(size: Size, radii: Radii, insets: Insets) -> gsk::RoundedRect {
 }
 
 fn stops(gradient: &Gradient) -> Vec<gsk::ColorStop> {
-    let mut stops: Vec<gsk::ColorStop> =
-        gradient.stops.iter().map(|stop| gsk::ColorStop::new(stop.offset.clamp(0.0, 1.0), rgba(stop.color))).collect();
+    let mut stops: Vec<gsk::ColorStop> = gradient
+        .stops
+        .iter()
+        .map(|stop| gsk::ColorStop::new(stop.offset.clamp(0.0, 1.0), rgba(stop.color)))
+        .collect();
     if stops.len() == 1 {
         let color = *stops[0].color();
         stops.push(gsk::ColorStop::new(1.0, color));
@@ -54,7 +57,9 @@ fn append_gradient(snapshot: &gtk::Snapshot, size: Size, gradient: &Gradient) {
     }
     match &gradient.shape {
         GradientShape::Linear { .. } | GradientShape::LinearPoints { .. } => {
-            let Some((start, end)) = gradient.line(size) else { return };
+            let Some((start, end)) = gradient.line(size) else {
+                return;
+            };
             let start = graphene::Point::new(start.x, start.y);
             let end = graphene::Point::new(end.x, end.y);
             if gradient.repeating {
@@ -63,15 +68,22 @@ fn append_gradient(snapshot: &gtk::Snapshot, size: Size, gradient: &Gradient) {
                 snapshot.append_linear_gradient(&area, &start, &end, &stops);
             }
         }
-        GradientShape::Radial { center, radius_x, radius_y } => {
+        GradientShape::Radial {
+            center,
+            radius_x,
+            radius_y,
+        } => {
             let center = graphene::Point::new(center.x * size.width, center.y * size.height);
             // Farthest-corner sizing, like the CSS default.
             let horizontal = (radius_x * size.width * std::f32::consts::SQRT_2).max(1.0);
             let vertical = (radius_y * size.height * std::f32::consts::SQRT_2).max(1.0);
             if gradient.repeating {
-                snapshot.append_repeating_radial_gradient(&area, &center, horizontal, vertical, 0.0, 1.0, &stops);
+                snapshot.append_repeating_radial_gradient(
+                    &area, &center, horizontal, vertical, 0.0, 1.0, &stops,
+                );
             } else {
-                snapshot.append_radial_gradient(&area, &center, horizontal, vertical, 0.0, 1.0, &stops);
+                snapshot
+                    .append_radial_gradient(&area, &center, horizontal, vertical, 0.0, 1.0, &stops);
             }
         }
         GradientShape::Conic { center, angle } => {
@@ -87,8 +99,19 @@ pub fn paint_background(snapshot: &gtk::Snapshot, size: Size, decoration: &Decor
         return;
     }
     let outline = rounded(size, decoration.radii, Insets::ZERO);
-    for shadow in decoration.shadows.iter().filter(|shadow| !shadow.inset && !shadow.color.is_transparent()) {
-        snapshot.append_outset_shadow(&outline, &rgba(shadow.color), shadow.offset.x, shadow.offset.y, shadow.spread, shadow.blur);
+    for shadow in decoration
+        .shadows
+        .iter()
+        .filter(|shadow| !shadow.inset && !shadow.color.is_transparent())
+    {
+        snapshot.append_outset_shadow(
+            &outline,
+            &rgba(shadow.color),
+            shadow.offset.x,
+            shadow.offset.y,
+            shadow.spread,
+            shadow.blur,
+        );
     }
     let has_fill = !decoration.background.is_transparent() || !decoration.gradients.is_empty();
     let has_inset = decoration.shadows.iter().any(|shadow| shadow.inset);
@@ -109,8 +132,19 @@ pub fn paint_background(snapshot: &gtk::Snapshot, size: Size, decoration: &Decor
     if rounded_corners {
         snapshot.pop();
     }
-    for shadow in decoration.shadows.iter().filter(|shadow| shadow.inset && !shadow.color.is_transparent()) {
-        snapshot.append_inset_shadow(&outline, &rgba(shadow.color), shadow.offset.x, shadow.offset.y, shadow.spread, shadow.blur);
+    for shadow in decoration
+        .shadows
+        .iter()
+        .filter(|shadow| shadow.inset && !shadow.color.is_transparent())
+    {
+        snapshot.append_inset_shadow(
+            &outline,
+            &rgba(shadow.color),
+            shadow.offset.x,
+            shadow.offset.y,
+            shadow.spread,
+            shadow.blur,
+        );
     }
 }
 
@@ -126,7 +160,11 @@ pub fn paint_border(snapshot: &gtk::Snapshot, size: Size, decoration: &Decoratio
         // The gradient shows only through the border ring.
         snapshot.push_mask(gsk::MaskMode::Alpha);
         let opaque = gdk::RGBA::new(0.0, 0.0, 0.0, 1.0);
-        snapshot.append_border(&outline, &[top, right, bottom, left], &[opaque, opaque, opaque, opaque]);
+        snapshot.append_border(
+            &outline,
+            &[top, right, bottom, left],
+            &[opaque, opaque, opaque, opaque],
+        );
         snapshot.pop();
         append_gradient(snapshot, size, gradient);
         snapshot.pop();
@@ -141,7 +179,12 @@ pub fn paint_border(snapshot: &gtk::Snapshot, size: Size, decoration: &Decoratio
         snapshot.append_border(
             &outline,
             &[top, right, bottom, left],
-            &[rgba(top_color), rgba(right_color), rgba(bottom_color), rgba(left_color)],
+            &[
+                rgba(top_color),
+                rgba(right_color),
+                rgba(bottom_color),
+                rgba(left_color),
+            ],
         );
         return;
     }
@@ -160,33 +203,62 @@ pub fn paint_border(snapshot: &gtk::Snapshot, size: Size, decoration: &Decoratio
     } else {
         stroke.set_dash(&[width * 3.0, width * 2.0]);
     }
-    let color = border.colors.iter().copied().find(|color| !color.is_transparent()).unwrap_or(Color::TRANSPARENT);
+    let color = border
+        .colors
+        .iter()
+        .copied()
+        .find(|color| !color.is_transparent())
+        .unwrap_or(Color::TRANSPARENT);
     snapshot.append_stroke(&path, &stroke, &rgba(color));
 }
 
 /// Rasterises a drawing surface with Cairo. `hairline` is the width of one
 /// device pixel in logical units.
-pub fn paint_drawing(context: &gtk::cairo::Context, commands: &[pam_desktop_ui::backend::DrawCommand], hairline: f64) {
+pub fn paint_drawing(
+    context: &gtk::cairo::Context,
+    commands: &[pam_desktop_ui::backend::DrawCommand],
+    hairline: f64,
+) {
     use gtk::cairo::{LineCap, LineJoin, Operator};
     use pam_desktop_ui::backend::DrawCommand;
     use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
     let source = |color: pam_desktop_ui::color::Color| {
         let [red, green, blue, alpha] = color.to_f32();
-        context.set_source_rgba(f64::from(red), f64::from(green), f64::from(blue), f64::from(alpha));
+        context.set_source_rgba(
+            f64::from(red),
+            f64::from(green),
+            f64::from(blue),
+            f64::from(alpha),
+        );
     };
     let mut groups = 0_u32;
     for command in commands {
         // Cairo keeps going after an error; a failed command just draws nothing.
         match command {
-            DrawCommand::Rect { rect, radius, color } => {
-                let (x, y, width, height) = (f64::from(rect.x), f64::from(rect.y), f64::from(rect.width), f64::from(rect.height));
+            DrawCommand::Rect {
+                rect,
+                radius,
+                color,
+            } => {
+                let (x, y, width, height) = (
+                    f64::from(rect.x),
+                    f64::from(rect.y),
+                    f64::from(rect.width),
+                    f64::from(rect.height),
+                );
                 let radius = f64::from(*radius).min(width / 2.0).min(height / 2.0);
                 source(*color);
                 if radius > 0.0 {
                     context.new_sub_path();
                     context.arc(x + width - radius, y + radius, radius, -FRAC_PI_2, 0.0);
-                    context.arc(x + width - radius, y + height - radius, radius, 0.0, FRAC_PI_2);
+                    context.arc(
+                        x + width - radius,
+                        y + height - radius,
+                        radius,
+                        0.0,
+                        FRAC_PI_2,
+                    );
                     context.arc(x + radius, y + height - radius, radius, FRAC_PI_2, PI);
                     context.arc(x + radius, y + radius, radius, PI, PI + FRAC_PI_2);
                     context.close_path();
@@ -195,27 +267,63 @@ pub fn paint_drawing(context: &gtk::cairo::Context, commands: &[pam_desktop_ui::
                 }
                 let _ = context.fill();
             }
-            DrawCommand::Circle { center, radius, color } => {
+            DrawCommand::Circle {
+                center,
+                radius,
+                color,
+            } => {
                 source(*color);
                 context.new_sub_path();
-                context.arc(f64::from(center.x), f64::from(center.y), f64::from(*radius), 0.0, TAU);
+                context.arc(
+                    f64::from(center.x),
+                    f64::from(center.y),
+                    f64::from(*radius),
+                    0.0,
+                    TAU,
+                );
                 let _ = context.fill();
             }
-            DrawCommand::Line { from, to, width, color } => {
+            DrawCommand::Line {
+                from,
+                to,
+                width,
+                color,
+            } => {
                 source(*color);
                 context.set_line_cap(LineCap::Round);
-                context.set_line_width(if *width > 0.0 { f64::from(*width) } else { hairline });
+                context.set_line_width(if *width > 0.0 {
+                    f64::from(*width)
+                } else {
+                    hairline
+                });
                 context.move_to(f64::from(from.x), f64::from(from.y));
                 context.line_to(f64::from(to.x), f64::from(to.y));
                 let _ = context.stroke();
             }
-            DrawCommand::Stroke { points, width, color, erase } => {
-                let Some(first) = points.first() else { continue };
+            DrawCommand::Stroke {
+                points,
+                width,
+                color,
+                erase,
+            } => {
+                let Some(first) = points.first() else {
+                    continue;
+                };
                 source(*color);
-                context.set_operator(if *erase { Operator::Clear } else { Operator::Over });
+                context.set_operator(if *erase {
+                    Operator::Clear
+                } else {
+                    Operator::Over
+                });
                 if points.len() == 1 {
                     context.new_sub_path();
-                    context.arc(f64::from(first.x), f64::from(first.y), f64::from(*width) / 2.0, 0.0, TAU);
+                    context.arc(
+                        f64::from(first.x),
+                        f64::from(first.y),
+                        f64::from(*width) / 2.0,
+                        0.0,
+                        TAU,
+                    );
                     let _ = context.fill();
                 } else {
                     context.set_line_cap(LineCap::Round);
@@ -231,7 +339,12 @@ pub fn paint_drawing(context: &gtk::cairo::Context, commands: &[pam_desktop_ui::
             }
             DrawCommand::PushGroup { clip } => {
                 let _ = context.save();
-                context.rectangle(f64::from(clip.x), f64::from(clip.y), f64::from(clip.width), f64::from(clip.height));
+                context.rectangle(
+                    f64::from(clip.x),
+                    f64::from(clip.y),
+                    f64::from(clip.width),
+                    f64::from(clip.height),
+                );
                 context.clip();
                 context.push_group();
                 groups += 1;

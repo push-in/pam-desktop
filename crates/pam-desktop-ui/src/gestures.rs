@@ -8,7 +8,7 @@ use pam_desktop_wire::{PropKey, PropValue};
 
 use crate::animator::{Curve, Easing, MotionProperty, Owner, Spring, Timer};
 use crate::backend::{GesturePhase, NodeId, PointerButton, PointerEvent, PointerPhase};
-use crate::context::{event_kind, Ctx};
+use crate::context::{Ctx, event_kind};
 use crate::geometry::{Point, Size};
 use crate::props::PropMap;
 use crate::scene::{Change, IdMap, StyleLayer};
@@ -56,8 +56,17 @@ impl Length {
     fn parse(token: &str) -> Option<Self> {
         let token = token.trim();
         match token.strip_suffix('%') {
-            Some(percent) => percent.trim().parse::<f32>().ok().filter(|value| value.is_finite()).map(Self::Percent),
-            None => token.parse::<f32>().ok().filter(|value| value.is_finite()).map(Self::Units),
+            Some(percent) => percent
+                .trim()
+                .parse::<f32>()
+                .ok()
+                .filter(|value| value.is_finite())
+                .map(Self::Percent),
+            None => token
+                .parse::<f32>()
+                .ok()
+                .filter(|value| value.is_finite())
+                .map(Self::Units),
         }
     }
 
@@ -80,8 +89,16 @@ impl Settle {
         if let Some(spring) = Spring::from_token(token) {
             return Some(Self::Spring(spring));
         }
-        let mut fields = token.trim().strip_prefix("timing")?.trim_start_matches(':').splitn(2, ':');
-        let duration = fields.next().and_then(|value| value.parse::<u32>().ok()).unwrap_or(200).min(10_000);
+        let mut fields = token
+            .trim()
+            .strip_prefix("timing")?
+            .trim_start_matches(':')
+            .splitn(2, ':');
+        let duration = fields
+            .next()
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(200)
+            .min(10_000);
         let easing = fields.next().map_or(Easing::OutCubic, Easing::from_token);
         Some(Self::Timing(duration, easing))
     }
@@ -145,7 +162,12 @@ impl Drag {
             touch: None,
             snap_on_release: true,
             snaps: vec![Length::Units(0.0)],
-            settle: Settle::Spring(Spring { stiffness: 260.0, damping: 22.0, mass: 1.0, velocity: 0.0 }),
+            settle: Settle::Spring(Spring {
+                stiffness: 260.0,
+                damping: 22.0,
+                mass: 1.0,
+                velocity: 0.0,
+            }),
             settles: Vec::new(),
             holds: Vec::new(),
             threshold: 0.0,
@@ -155,9 +177,16 @@ impl Drag {
         };
         let mut unbounded = false;
         for line in text.split(['\n', ';']) {
-            let Some((key, value)) = line.split_once('=') else { continue };
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
             let (key, value) = (key.trim(), value.trim());
-            let number = || value.parse::<f32>().ok().filter(|number| number.is_finite());
+            let number = || {
+                value
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|number| number.is_finite())
+            };
             match key {
                 "axis" => drag.horizontal = value != "y",
                 "min" => drag.min = number(),
@@ -173,7 +202,12 @@ impl Drag {
                     }
                 }
                 "settle" => drag.settle = Settle::parse(value).unwrap_or(drag.settle),
-                "hold" => drag.holds = value.split(',').filter_map(|index| index.trim().parse().ok()).collect(),
+                "hold" => {
+                    drag.holds = value
+                        .split(',')
+                        .filter_map(|index| index.trim().parse().ok())
+                        .collect()
+                }
                 "threshold" => drag.threshold = number().unwrap_or(0.0).max(0.0),
                 "velocity" => drag.velocity = number().unwrap_or(0.0).max(0.0),
                 "group" => drag.group = value.to_owned(),
@@ -194,7 +228,13 @@ impl Drag {
                         };
                         let (input, output) = (lengths(input), lengths(output));
                         if input.len() >= 2 && input.len() == output.len() {
-                            drag.drivers.push(Driver { reference: reference.to_owned(), driven, raw: key == "driveRaw", input, output });
+                            drag.drivers.push(Driver {
+                                reference: reference.to_owned(),
+                                driven,
+                                raw: key == "driveRaw",
+                                input,
+                                output,
+                            });
                         }
                     }
                 }
@@ -203,16 +243,28 @@ impl Drag {
                     if let [reference, format, decimals, input, output] = fields[..] {
                         let (input, output) = (lengths(input), lengths(output));
                         if input.len() >= 2 && input.len() == output.len() {
-                            let driven = Driven::Text(format.parse().unwrap_or(1), decimals.parse::<u8>().unwrap_or(0).min(3));
-                            drag.drivers.push(Driver { reference: reference.to_owned(), driven, raw: false, input, output });
+                            let driven = Driven::Text(
+                                format.parse().unwrap_or(1),
+                                decimals.parse::<u8>().unwrap_or(0).min(3),
+                            );
+                            drag.drivers.push(Driver {
+                                reference: reference.to_owned(),
+                                driven,
+                                raw: false,
+                                input,
+                                output,
+                            });
                         }
                     }
                 }
                 _ => {
-                    if let Some(index) = key.strip_prefix("settle.").and_then(|index| index.parse::<usize>().ok())
-                        && let Some(settle) = Settle::parse(value) {
-                            drag.settles.push((index, settle));
-                        }
+                    if let Some(index) = key
+                        .strip_prefix("settle.")
+                        .and_then(|index| index.parse::<usize>().ok())
+                        && let Some(settle) = Settle::parse(value)
+                    {
+                        drag.settles.push((index, settle));
+                    }
                 }
             }
         }
@@ -227,18 +279,23 @@ impl Drag {
     fn clamp(&self, raw: f32) -> f32 {
         let mut position = raw;
         if let Some(max) = self.max
-            && position > max {
-                position = max + (position - max) * self.rubber;
-            }
+            && position > max
+        {
+            position = max + (position - max) * self.rubber;
+        }
         if let Some(min) = self.min
-            && position < min {
-                position = min + (position - min) * self.rubber;
-            }
+            && position < min
+        {
+            position = min + (position - min) * self.rubber;
+        }
         position
     }
 
     fn settle_for(&self, index: usize) -> Settle {
-        self.settles.iter().find(|(snap, _)| *snap == index).map_or(self.settle, |(_, settle)| *settle)
+        self.settles
+            .iter()
+            .find(|(snap, _)| *snap == index)
+            .map_or(self.settle, |(_, settle)| *settle)
     }
 }
 
@@ -253,16 +310,32 @@ fn interpolate(input: &[f32], output: &[f32], value: f32, extrapolate: bool) -> 
         output[index] + (output[index + 1] - output[index]) * (value - input[index]) / span
     };
     let ascending = input[last] >= input[0];
-    let before = if ascending { value <= input[0] } else { value >= input[0] };
-    let after = if ascending { value >= input[last] } else { value <= input[last] };
+    let before = if ascending {
+        value <= input[0]
+    } else {
+        value >= input[0]
+    };
+    let after = if ascending {
+        value >= input[last]
+    } else {
+        value <= input[last]
+    };
     if before {
         return if extrapolate { segment(0) } else { output[0] };
     }
     if after {
-        return if extrapolate { segment(last - 1) } else { output[last] };
+        return if extrapolate {
+            segment(last - 1)
+        } else {
+            output[last]
+        };
     }
     for index in 0..last {
-        let (low, high) = if ascending { (input[index], input[index + 1]) } else { (input[index + 1], input[index]) };
+        let (low, high) = if ascending {
+            (input[index], input[index + 1])
+        } else {
+            (input[index + 1], input[index])
+        };
         if value >= low && value <= high {
             return segment(index);
         }
@@ -285,11 +358,21 @@ struct Pose {
 }
 
 impl Pose {
-    const IDENTITY: Self = Self { x: 0.0, y: 0.0, scale: 1.0, rotation: 0.0 };
+    const IDENTITY: Self = Self {
+        x: 0.0,
+        y: 0.0,
+        scale: 1.0,
+        rotation: 0.0,
+    };
 
     fn lerp(self, other: Self, t: f32) -> Self {
         let mix = |from: f32, to: f32| from + (to - from) * t;
-        Self { x: mix(self.x, other.x), y: mix(self.y, other.y), scale: mix(self.scale, other.scale), rotation: mix(self.rotation, other.rotation) }
+        Self {
+            x: mix(self.x, other.x),
+            y: mix(self.y, other.y),
+            scale: mix(self.scale, other.scale),
+            rotation: mix(self.rotation, other.rotation),
+        }
     }
 }
 
@@ -406,7 +489,10 @@ fn payload(sample: &Sample, timestamp: u64) -> Vec<u8> {
         .with("snapIndex", sample.snap_index)
         .with("thresholdReached", sample.threshold);
     if let Some(pose) = sample.native {
-        map = map.with("nativeScale", pose.scale).with("nativeTranslationX", pose.x).with("nativeTranslationY", pose.y);
+        map = map
+            .with("nativeScale", pose.scale)
+            .with("nativeTranslationX", pose.x)
+            .with("nativeTranslationY", pose.y);
     }
     map.encode()
 }
@@ -427,7 +513,11 @@ impl Gestures {
     pub fn on_change(&mut self, ctx: &mut Ctx<'_>, change: Change) {
         match change {
             Change::Created(id, _) => {
-                if ctx.scene.node(id).is_some_and(|node| node.handles(PropKey::GestureType)) {
+                if ctx
+                    .scene
+                    .node(id)
+                    .is_some_and(|node| node.handles(PropKey::GestureType))
+                {
                     self.track(id);
                 }
             }
@@ -447,7 +537,11 @@ impl Gestures {
                 if self.pinch.as_ref().is_some_and(|pinch| pinch.id == id) {
                     self.pinch = None;
                 }
-                if self.rotation.as_ref().is_some_and(|rotation| rotation.id == id) {
+                if self
+                    .rotation
+                    .as_ref()
+                    .is_some_and(|rotation| rotation.id == id)
+                {
                     self.rotation = None;
                 }
             }
@@ -489,7 +583,12 @@ impl Gestures {
             return;
         }
         self.dirty = false;
-        let dirty: Vec<NodeId> = self.detectors.iter().filter(|(_, detector)| detector.dirty).map(|(id, _)| *id).collect();
+        let dirty: Vec<NodeId> = self
+            .detectors
+            .iter()
+            .filter(|(_, detector)| detector.dirty)
+            .map(|(id, _)| *id)
+            .collect();
         for id in dirty {
             self.sync(ctx, id);
         }
@@ -497,38 +596,73 @@ impl Gestures {
 
     /// Reads the detector's properties.
     fn sync(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(node) = ctx.scene.node(id) else { return };
+        let Some(node) = ctx.scene.node(id) else {
+            return;
+        };
         let props = node.props();
-        let Some(kind) = props.integer(PropKey::GestureType).and_then(Kind::from_wire) else {
+        let Some(kind) = props
+            .integer(PropKey::GestureType)
+            .and_then(Kind::from_wire)
+        else {
             self.detectors.remove(&id);
             return;
         };
-        let drag = (kind == Kind::Pan).then(|| Drag::parse(props.text_or_empty(PropKey::GestureDrag))).flatten();
-        let native = (props.flag_or(PropKey::GestureNativeTransform, false) && drag.is_none()).then(|| {
-            let min_scale = props.number_or(PropKey::GestureNativeMinScale, 1.0).max(0.01);
-            Native {
-                min_scale,
-                max_scale: props.number_or(PropKey::GestureNativeMaxScale, 4.0).max(min_scale),
-                limit_x: props.number_or(PropKey::GestureNativeTranslationLimitX, 0.0).max(0.0),
-                reset_on_end: props.flag_or(PropKey::GestureNativeResetOnEnd, false),
-                focal: props.flag_or(PropKey::GestureNativeFocalZoom, false),
-                bounds: props.flag_or(PropKey::GestureNativeBounds, false),
-                aspect: props.number_or(PropKey::GestureNativeContentAspect, 0.0).max(0.0),
-            }
-        });
+        let drag = (kind == Kind::Pan)
+            .then(|| Drag::parse(props.text_or_empty(PropKey::GestureDrag)))
+            .flatten();
+        let native = (props.flag_or(PropKey::GestureNativeTransform, false) && drag.is_none())
+            .then(|| {
+                let min_scale = props
+                    .number_or(PropKey::GestureNativeMinScale, 1.0)
+                    .max(0.01);
+                Native {
+                    min_scale,
+                    max_scale: props
+                        .number_or(PropKey::GestureNativeMaxScale, 4.0)
+                        .max(min_scale),
+                    limit_x: props
+                        .number_or(PropKey::GestureNativeTranslationLimitX, 0.0)
+                        .max(0.0),
+                    reset_on_end: props.flag_or(PropKey::GestureNativeResetOnEnd, false),
+                    focal: props.flag_or(PropKey::GestureNativeFocalZoom, false),
+                    bounds: props.flag_or(PropKey::GestureNativeBounds, false),
+                    aspect: props
+                        .number_or(PropKey::GestureNativeContentAspect, 0.0)
+                        .max(0.0),
+                }
+            });
         let default_distance = match kind {
             Kind::Swipe => 48.0,
             Kind::Pan => 8.0,
             _ => TAP_SLOP,
         };
-        let (enabled, min_pointers, direction) = (props.flag_or(PropKey::GestureEnabled, true), props.integer_or(PropKey::GestureMinPointers, 1), props.integer_or(PropKey::GestureDirection, 1));
-        let min_distance = props.number(PropKey::GestureMinDistance).unwrap_or(default_distance).max(0.0);
-        let min_duration = props.integer_or(PropKey::GestureMinDurationMs, if kind == Kind::LongPress { 500 } else { 0 }).clamp(0, 60_000) as u64;
+        let (enabled, min_pointers, direction) = (
+            props.flag_or(PropKey::GestureEnabled, true),
+            props.integer_or(PropKey::GestureMinPointers, 1),
+            props.integer_or(PropKey::GestureDirection, 1),
+        );
+        let min_distance = props
+            .number(PropKey::GestureMinDistance)
+            .unwrap_or(default_distance)
+            .max(0.0);
+        let min_duration = props
+            .integer_or(
+                PropKey::GestureMinDurationMs,
+                if kind == Kind::LongPress { 500 } else { 0 },
+            )
+            .clamp(0, 60_000) as u64;
         let snap_request = props.integer(PropKey::GestureDragSnapIndex).unwrap_or(-1);
         let reset_key = props.integer_or(PropKey::GestureNativeResetKey, 0);
-        let Some(detector) = self.detectors.get_mut(&id) else { return };
+        let Some(detector) = self.detectors.get_mut(&id) else {
+            return;
+        };
         detector.dirty = false;
-        (detector.kind, detector.enabled, detector.min_pointers, detector.direction) = (kind, enabled, min_pointers, direction);
+        (
+            detector.kind,
+            detector.enabled,
+            detector.min_pointers,
+            detector.direction,
+        ) = (kind, enabled, min_pointers, direction);
         (detector.min_distance, detector.min_duration) = (min_distance, min_duration);
         let drag_changed = detector.drag != drag;
         detector.drag = drag;
@@ -536,11 +670,17 @@ impl Gestures {
         if detector.reset_key != reset_key {
             detector.reset_key = reset_key;
             let surface = self.surface(ctx, id);
-            if self.detectors.get(&surface).is_some_and(|owner| owner.pose != Pose::IDENTITY) {
+            if self
+                .detectors
+                .get(&surface)
+                .is_some_and(|owner| owner.pose != Pose::IDENTITY)
+            {
                 self.return_pose(ctx, surface, Pose::IDENTITY);
             }
         }
-        let Some(detector) = self.detectors.get_mut(&id) else { return };
+        let Some(detector) = self.detectors.get_mut(&id) else {
+            return;
+        };
         if detector.snap_request != snap_request {
             detector.snap_request = snap_request;
             if snap_request >= 0 && detector.drag.is_some() {
@@ -548,7 +688,12 @@ impl Gestures {
                 return;
             }
         }
-        if drag_changed && self.detectors.get(&id).is_some_and(|detector| detector.drag.is_some()) {
+        if drag_changed
+            && self
+                .detectors
+                .get(&id)
+                .is_some_and(|detector| detector.drag.is_some())
+        {
             // A new contract keeps the target where it is and refreshes the drivers.
             self.write_drag(ctx, id);
         }
@@ -556,10 +701,19 @@ impl Gestures {
 
     // ---- pointer gestures --------------------------------------------------
 
-    fn detector_at(&self, ctx: &Ctx<'_>, position: Point, accepts: impl Fn(&Detector) -> bool) -> Option<NodeId> {
+    fn detector_at(
+        &self,
+        ctx: &Ctx<'_>,
+        position: Point,
+        accepts: impl Fn(&Detector) -> bool,
+    ) -> Option<NodeId> {
         let mut current = ctx.scene.hit_test(position)?;
         loop {
-            if self.detectors.get(&current).is_some_and(|detector| detector.enabled && accepts(detector)) {
+            if self
+                .detectors
+                .get(&current)
+                .is_some_and(|detector| detector.enabled && accepts(detector))
+            {
                 return Some(current);
             }
             let node = ctx.scene.node(current)?;
@@ -592,7 +746,10 @@ impl Gestures {
         match pointer.phase {
             PointerPhase::Down if pointer.button == PointerButton::Primary => {
                 // A mouse is one pointer: detectors that need more never start.
-                let id = self.detector_at(ctx, pointer.position, |detector| !matches!(detector.kind, Kind::Pinch | Kind::Rotation) && detector.min_pointers <= 1);
+                let id = self.detector_at(ctx, pointer.position, |detector| {
+                    !matches!(detector.kind, Kind::Pinch | Kind::Rotation)
+                        && detector.min_pointers <= 1
+                });
                 self.active = id.map(|id| Active {
                     id,
                     start: pointer.position,
@@ -604,21 +761,34 @@ impl Gestures {
                     pending: None,
                 });
                 if let Some(detector) = id.and_then(|id| self.detectors.get(&id))
-                    && detector.kind == Kind::LongPress {
-                        ctx.timers.schedule(Timer::GestureHold, ctx.now_ms + detector.min_duration.max(1));
-                    }
+                    && detector.kind == Kind::LongPress
+                {
+                    ctx.timers.schedule(
+                        Timer::GestureHold,
+                        ctx.now_ms + detector.min_duration.max(1),
+                    );
+                }
                 Outcome::Ignored
             }
             PointerPhase::Move => self.on_move(ctx, pointer.position),
-            PointerPhase::Up if pointer.button == PointerButton::Primary => self.on_up(ctx, pointer.position),
+            PointerPhase::Up if pointer.button == PointerButton::Primary => {
+                self.on_up(ctx, pointer.position)
+            }
             PointerPhase::Cancel => {
-                let Some(active) = self.active.take() else { return Outcome::Ignored };
+                let Some(active) = self.active.take() else {
+                    return Outcome::Ignored;
+                };
                 ctx.timers.cancel(Timer::GestureHold);
                 if !active.recognised {
                     return Outcome::Ignored;
                 }
                 let sample = self.sample(ctx, &active, 4, active.last);
-                ctx.emit_if(active.id, PropKey::OnGestureCancel, event_kind::GESTURE_CANCEL, payload(&sample, ctx.now_ms));
+                ctx.emit_if(
+                    active.id,
+                    PropKey::OnGestureCancel,
+                    event_kind::GESTURE_CANCEL,
+                    payload(&sample, ctx.now_ms),
+                );
                 self.release_drag(ctx, active.id, 0.0, true);
                 self.release_native(ctx, active.id);
                 Outcome::Consumed
@@ -628,12 +798,20 @@ impl Gestures {
     }
 
     fn on_move(&mut self, ctx: &mut Ctx<'_>, position: Point) -> Outcome {
-        let Some(active) = &mut self.active else { return Outcome::Ignored };
+        let Some(active) = &mut self.active else {
+            return Outcome::Ignored;
+        };
         let elapsed = ctx.now_ms.saturating_sub(active.last_ms);
         if elapsed > 0 {
             // Smoothed, in logical units per second.
-            let instant = Point::new((position.x - active.last.x) * 1000.0 / elapsed as f32, (position.y - active.last.y) * 1000.0 / elapsed as f32);
-            active.velocity = Point::new(active.velocity.x * 0.4 + instant.x * 0.6, active.velocity.y * 0.4 + instant.y * 0.6);
+            let instant = Point::new(
+                (position.x - active.last.x) * 1000.0 / elapsed as f32,
+                (position.y - active.last.y) * 1000.0 / elapsed as f32,
+            );
+            active.velocity = Point::new(
+                active.velocity.x * 0.4 + instant.x * 0.6,
+                active.velocity.y * 0.4 + instant.y * 0.6,
+            );
             active.last_ms = ctx.now_ms;
         }
         let previous = active.last;
@@ -642,12 +820,17 @@ impl Gestures {
         let (dx, dy) = (position.x - active.start.x, position.y - active.start.y);
         let held = ctx.now_ms.saturating_sub(active.started_ms);
         let recognised = active.recognised;
-        let Some(detector) = self.detectors.get(&id) else { return Outcome::Ignored };
+        let Some(detector) = self.detectors.get(&id) else {
+            return Outcome::Ignored;
+        };
         let kind = detector.kind;
         if !recognised {
             match kind {
                 Kind::Pan => {
-                    if held < detector.min_duration || dx.hypot(dy) < detector.min_distance || !direction_ok(detector.direction, dx, dy) {
+                    if held < detector.min_duration
+                        || dx.hypot(dy) < detector.min_distance
+                        || !direction_ok(detector.direction, dx, dy)
+                    {
                         return Outcome::Ignored;
                     }
                 }
@@ -670,10 +853,17 @@ impl Gestures {
             Point::new(position.x - origin.x, position.y - origin.y)
         };
         self.update_drag(ctx, id, Point::new(dx, dy), local);
-        self.pan_native(ctx, id, Point::new(position.x - previous.x, position.y - previous.y));
+        self.pan_native(
+            ctx,
+            id,
+            Point::new(position.x - previous.x, position.y - previous.y),
+        );
         if let Some(active) = self.active.take() {
             let sample = self.sample(ctx, &active, 2, position);
-            self.active = Some(Active { pending: Some(payload(&sample, ctx.now_ms)), ..active });
+            self.active = Some(Active {
+                pending: Some(payload(&sample, ctx.now_ms)),
+                ..active
+            });
         }
         Outcome::Consumed
     }
@@ -689,51 +879,109 @@ impl Gestures {
         self.begin_native(ctx, id);
         if let Some(active) = self.active.take() {
             let sample = self.sample(ctx, &active, 1, position);
-            ctx.emit_if(id, PropKey::OnGestureBegin, event_kind::GESTURE_BEGIN, payload(&sample, ctx.now_ms));
-            self.active = Some(Active { recognised: true, ..active });
+            ctx.emit_if(
+                id,
+                PropKey::OnGestureBegin,
+                event_kind::GESTURE_BEGIN,
+                payload(&sample, ctx.now_ms),
+            );
+            self.active = Some(Active {
+                recognised: true,
+                ..active
+            });
         }
     }
 
     fn on_up(&mut self, ctx: &mut Ctx<'_>, position: Point) -> Outcome {
-        let Some(mut active) = self.active.take() else { return Outcome::Ignored };
+        let Some(mut active) = self.active.take() else {
+            return Outcome::Ignored;
+        };
         ctx.timers.cancel(Timer::GestureHold);
         let id = active.id;
-        let Some(detector) = self.detectors.get(&id) else { return Outcome::Ignored };
+        let Some(detector) = self.detectors.get(&id) else {
+            return Outcome::Ignored;
+        };
         let (dx, dy) = (position.x - active.start.x, position.y - active.start.y);
         let held = ctx.now_ms.saturating_sub(active.started_ms);
         if !active.recognised {
             // Discrete gestures are decided on release.
             let recognised = match detector.kind {
-                Kind::Tap => held >= detector.min_duration && dx.hypot(dy) <= detector.min_distance.max(TAP_SLOP) && direction_ok(detector.direction, dx, dy),
-                Kind::Swipe => dx.hypot(dy) >= detector.min_distance && direction_ok(detector.direction, dx, dy),
+                Kind::Tap => {
+                    held >= detector.min_duration
+                        && dx.hypot(dy) <= detector.min_distance.max(TAP_SLOP)
+                        && direction_ok(detector.direction, dx, dy)
+                }
+                Kind::Swipe => {
+                    dx.hypot(dy) >= detector.min_distance
+                        && direction_ok(detector.direction, dx, dy)
+                }
                 _ => false,
             };
             if recognised {
                 let begin = self.sample(ctx, &active, 1, position);
-                ctx.emit_if(id, PropKey::OnGestureBegin, event_kind::GESTURE_BEGIN, payload(&begin, ctx.now_ms));
+                ctx.emit_if(
+                    id,
+                    PropKey::OnGestureBegin,
+                    event_kind::GESTURE_BEGIN,
+                    payload(&begin, ctx.now_ms),
+                );
                 let end = Sample { state: 3, ..begin };
-                ctx.emit_if(id, PropKey::OnGestureEnd, event_kind::GESTURE_END, payload(&end, ctx.now_ms));
+                ctx.emit_if(
+                    id,
+                    PropKey::OnGestureEnd,
+                    event_kind::GESTURE_END,
+                    payload(&end, ctx.now_ms),
+                );
             }
             return Outcome::Ignored;
         }
         if let Some(update) = active.pending.take() {
-            ctx.emit_if(id, PropKey::OnGestureUpdate, event_kind::GESTURE_UPDATE, update);
+            ctx.emit_if(
+                id,
+                PropKey::OnGestureUpdate,
+                event_kind::GESTURE_UPDATE,
+                update,
+            );
         }
-        let axis_velocity = if self.detectors.get(&id).and_then(|detector| detector.drag.as_ref()).is_some_and(|drag| drag.horizontal) { active.velocity.x } else { active.velocity.y };
+        let axis_velocity = if self
+            .detectors
+            .get(&id)
+            .and_then(|detector| detector.drag.as_ref())
+            .is_some_and(|drag| drag.horizontal)
+        {
+            active.velocity.x
+        } else {
+            active.velocity.y
+        };
         let snap_index = self.release_drag(ctx, id, axis_velocity, false);
         self.release_native(ctx, id);
         let mut sample = self.sample(ctx, &active, 3, position);
         sample.snap_index = snap_index;
-        sample.threshold = self.detectors.get(&id).is_some_and(|detector| detector.threshold_reached);
-        ctx.emit_if(id, PropKey::OnGestureEnd, event_kind::GESTURE_END, payload(&sample, ctx.now_ms));
+        sample.threshold = self
+            .detectors
+            .get(&id)
+            .is_some_and(|detector| detector.threshold_reached);
+        ctx.emit_if(
+            id,
+            PropKey::OnGestureEnd,
+            event_kind::GESTURE_END,
+            payload(&sample, ctx.now_ms),
+        );
         Outcome::Consumed
     }
 
     /// The long press was held long enough. `true` means the press in
     /// progress must be cancelled.
     pub fn on_hold(&mut self, ctx: &mut Ctx<'_>) -> bool {
-        let Some(active) = &self.active else { return false };
-        if active.recognised || self.detectors.get(&active.id).is_none_or(|detector| detector.kind != Kind::LongPress) {
+        let Some(active) = &self.active else {
+            return false;
+        };
+        if active.recognised
+            || self
+                .detectors
+                .get(&active.id)
+                .is_none_or(|detector| detector.kind != Kind::LongPress)
+        {
             return false;
         }
         let (id, position) = (active.id, active.last);
@@ -744,15 +992,30 @@ impl Gestures {
     /// Sends the coalesced update of the gesture in progress.
     pub fn flush(&mut self, ctx: &mut Ctx<'_>) {
         if let Some(active) = &mut self.active
-            && let Some(update) = active.pending.take() {
-                ctx.emit_if(active.id, PropKey::OnGestureUpdate, event_kind::GESTURE_UPDATE, update);
-            }
+            && let Some(update) = active.pending.take()
+        {
+            ctx.emit_if(
+                active.id,
+                PropKey::OnGestureUpdate,
+                event_kind::GESTURE_UPDATE,
+                update,
+            );
+        }
     }
 
     // ---- trackpad gestures -------------------------------------------------
 
     #[allow(clippy::too_many_arguments)]
-    fn continuous(&self, ctx: &Ctx<'_>, id: NodeId, kind: Kind, state: i64, position: Point, scale: f32, rotation: f32) -> Sample {
+    fn continuous(
+        &self,
+        ctx: &Ctx<'_>,
+        id: NodeId,
+        kind: Kind,
+        state: i64,
+        position: Point,
+        scale: f32,
+        rotation: f32,
+    ) -> Sample {
         let origin = ctx.scene.window_origin(id);
         Sample {
             kind,
@@ -770,15 +1033,38 @@ impl Gestures {
     }
 
     /// A pinch from the trackpad: `scale` is relative to the gesture start.
-    pub fn on_magnify(&mut self, ctx: &mut Ctx<'_>, position: Point, phase: GesturePhase, scale: f32) {
-        let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    pub fn on_magnify(
+        &mut self,
+        ctx: &mut Ctx<'_>,
+        position: Point,
+        phase: GesturePhase,
+        scale: f32,
+    ) {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
         match phase {
             GesturePhase::Begin => {
-                let Some(id) = self.detector_at(ctx, position, |detector| detector.kind == Kind::Pinch) else { return };
+                let Some(id) =
+                    self.detector_at(ctx, position, |detector| detector.kind == Kind::Pinch)
+                else {
+                    return;
+                };
                 self.begin_native(ctx, id);
-                self.pinch = Some(Continuous { id, position, value: 1.0 });
+                self.pinch = Some(Continuous {
+                    id,
+                    position,
+                    value: 1.0,
+                });
                 let sample = self.continuous(ctx, id, Kind::Pinch, 1, position, 1.0, 0.0);
-                ctx.emit_if(id, PropKey::OnGestureBegin, event_kind::GESTURE_BEGIN, payload(&sample, ctx.now_ms));
+                ctx.emit_if(
+                    id,
+                    PropKey::OnGestureBegin,
+                    event_kind::GESTURE_BEGIN,
+                    payload(&sample, ctx.now_ms),
+                );
             }
             GesturePhase::Update => {
                 let Some(pinch) = &mut self.pinch else { return };
@@ -787,14 +1073,33 @@ impl Gestures {
                 let id = pinch.id;
                 self.zoom_native(ctx, id, scale, position);
                 let sample = self.continuous(ctx, id, Kind::Pinch, 2, position, scale, 0.0);
-                ctx.emit_if(id, PropKey::OnGestureUpdate, event_kind::GESTURE_UPDATE, payload(&sample, ctx.now_ms));
+                ctx.emit_if(
+                    id,
+                    PropKey::OnGestureUpdate,
+                    event_kind::GESTURE_UPDATE,
+                    payload(&sample, ctx.now_ms),
+                );
             }
             GesturePhase::End | GesturePhase::Cancel => {
-                let Some(pinch) = self.pinch.take() else { return };
+                let Some(pinch) = self.pinch.take() else {
+                    return;
+                };
                 self.release_native(ctx, pinch.id);
                 let cancelled = phase == GesturePhase::Cancel;
-                let sample = self.continuous(ctx, pinch.id, Kind::Pinch, if cancelled { 4 } else { 3 }, pinch.position, pinch.value, 0.0);
-                let (marker, kind) = if cancelled { (PropKey::OnGestureCancel, event_kind::GESTURE_CANCEL) } else { (PropKey::OnGestureEnd, event_kind::GESTURE_END) };
+                let sample = self.continuous(
+                    ctx,
+                    pinch.id,
+                    Kind::Pinch,
+                    if cancelled { 4 } else { 3 },
+                    pinch.position,
+                    pinch.value,
+                    0.0,
+                );
+                let (marker, kind) = if cancelled {
+                    (PropKey::OnGestureCancel, event_kind::GESTURE_CANCEL)
+                } else {
+                    (PropKey::OnGestureEnd, event_kind::GESTURE_END)
+                };
                 ctx.emit_if(pinch.id, marker, kind, payload(&sample, ctx.now_ms));
             }
         }
@@ -807,9 +1112,12 @@ impl Gestures {
         if self.pinch.is_none() {
             self.on_magnify(ctx, position, GesturePhase::Begin, 1.0);
         }
-        let Some(current) = self.pinch.as_ref().map(|pinch| pinch.value) else { return false };
+        let Some(current) = self.pinch.as_ref().map(|pinch| pinch.value) else {
+            return false;
+        };
         self.on_magnify(ctx, position, GesturePhase::Update, current * factor);
-        ctx.timers.schedule(Timer::GestureIdle, ctx.now_ms + WHEEL_IDLE_MS);
+        ctx.timers
+            .schedule(Timer::GestureIdle, ctx.now_ms + WHEEL_IDLE_MS);
         true
     }
 
@@ -821,31 +1129,71 @@ impl Gestures {
     }
 
     /// A two-finger rotation from the trackpad, in radians since its start.
-    pub fn on_rotate(&mut self, ctx: &mut Ctx<'_>, position: Point, phase: GesturePhase, radians: f32) {
+    pub fn on_rotate(
+        &mut self,
+        ctx: &mut Ctx<'_>,
+        position: Point,
+        phase: GesturePhase,
+        radians: f32,
+    ) {
         let radians = if radians.is_finite() { radians } else { 0.0 };
         match phase {
             GesturePhase::Begin => {
-                let Some(id) = self.detector_at(ctx, position, |detector| detector.kind == Kind::Rotation) else { return };
+                let Some(id) =
+                    self.detector_at(ctx, position, |detector| detector.kind == Kind::Rotation)
+                else {
+                    return;
+                };
                 self.begin_native(ctx, id);
-                self.rotation = Some(Continuous { id, position, value: 0.0 });
+                self.rotation = Some(Continuous {
+                    id,
+                    position,
+                    value: 0.0,
+                });
                 let sample = self.continuous(ctx, id, Kind::Rotation, 1, position, 1.0, 0.0);
-                ctx.emit_if(id, PropKey::OnGestureBegin, event_kind::GESTURE_BEGIN, payload(&sample, ctx.now_ms));
+                ctx.emit_if(
+                    id,
+                    PropKey::OnGestureBegin,
+                    event_kind::GESTURE_BEGIN,
+                    payload(&sample, ctx.now_ms),
+                );
             }
             GesturePhase::Update => {
-                let Some(rotation) = &mut self.rotation else { return };
+                let Some(rotation) = &mut self.rotation else {
+                    return;
+                };
                 rotation.value = radians;
                 rotation.position = position;
                 let id = rotation.id;
                 self.rotate_native(ctx, id, radians);
                 let sample = self.continuous(ctx, id, Kind::Rotation, 2, position, 1.0, radians);
-                ctx.emit_if(id, PropKey::OnGestureUpdate, event_kind::GESTURE_UPDATE, payload(&sample, ctx.now_ms));
+                ctx.emit_if(
+                    id,
+                    PropKey::OnGestureUpdate,
+                    event_kind::GESTURE_UPDATE,
+                    payload(&sample, ctx.now_ms),
+                );
             }
             GesturePhase::End | GesturePhase::Cancel => {
-                let Some(rotation) = self.rotation.take() else { return };
+                let Some(rotation) = self.rotation.take() else {
+                    return;
+                };
                 self.release_native(ctx, rotation.id);
                 let cancelled = phase == GesturePhase::Cancel;
-                let sample = self.continuous(ctx, rotation.id, Kind::Rotation, if cancelled { 4 } else { 3 }, rotation.position, 1.0, rotation.value);
-                let (marker, kind) = if cancelled { (PropKey::OnGestureCancel, event_kind::GESTURE_CANCEL) } else { (PropKey::OnGestureEnd, event_kind::GESTURE_END) };
+                let sample = self.continuous(
+                    ctx,
+                    rotation.id,
+                    Kind::Rotation,
+                    if cancelled { 4 } else { 3 },
+                    rotation.position,
+                    1.0,
+                    rotation.value,
+                );
+                let (marker, kind) = if cancelled {
+                    (PropKey::OnGestureCancel, event_kind::GESTURE_CANCEL)
+                } else {
+                    (PropKey::OnGestureEnd, event_kind::GESTURE_END)
+                };
                 ctx.emit_if(rotation.id, marker, kind, payload(&sample, ctx.now_ms));
             }
         }
@@ -862,23 +1210,49 @@ impl Gestures {
     }
 
     fn extent(ctx: &Ctx<'_>, target: Option<NodeId>, horizontal: bool) -> f32 {
-        target.and_then(|target| ctx.scene.node(target)).map_or(0.0, |node| if horizontal { node.frame.width } else { node.frame.height })
+        target
+            .and_then(|target| ctx.scene.node(target))
+            .map_or(0.0, |node| {
+                if horizontal {
+                    node.frame.width
+                } else {
+                    node.frame.height
+                }
+            })
     }
 
     fn snaps(ctx: &Ctx<'_>, id: NodeId, drag: &Drag) -> Vec<f32> {
-        let extent = Self::extent(ctx, Self::drag_target(ctx, id, &drag.target), drag.horizontal);
+        let extent = Self::extent(
+            ctx,
+            Self::drag_target(ctx, id, &drag.target),
+            drag.horizontal,
+        );
         drag.snaps.iter().map(|snap| snap.resolve(extent)).collect()
     }
 
     fn begin_drag(&mut self, ctx: &mut Ctx<'_>, id: NodeId, local: Point) {
-        let Some(drag) = self.detectors.get(&id).and_then(|detector| detector.drag.clone()) else { return };
-        let position = ctx.animator.cancel(Owner::Gesture(id), ctx.now_ms).or_else(|| self.detectors.get(&id).map(|detector| detector.position)).unwrap_or(0.0);
+        let Some(drag) = self
+            .detectors
+            .get(&id)
+            .and_then(|detector| detector.drag.clone())
+        else {
+            return;
+        };
+        let position = ctx
+            .animator
+            .cancel(Owner::Gesture(id), ctx.now_ms)
+            .or_else(|| self.detectors.get(&id).map(|detector| detector.position))
+            .unwrap_or(0.0);
         let snaps = Self::snaps(ctx, id, &drag);
         let start = match drag.touch {
             Some(inset) => (if drag.horizontal { local.x } else { local.y }) - inset,
             None => position,
         };
-        let origin = snaps.iter().enumerate().min_by(|a, b| (a.1 - start).abs().total_cmp(&(b.1 - start).abs())).map_or(0, |(index, _)| index);
+        let origin = snaps
+            .iter()
+            .enumerate()
+            .min_by(|a, b| (a.1 - start).abs().total_cmp(&(b.1 - start).abs()))
+            .map_or(0, |(index, _)| index);
         if let Some(detector) = self.detectors.get_mut(&id) {
             detector.settling = None;
             detector.start = start;
@@ -891,7 +1265,14 @@ impl Gestures {
             let others: Vec<NodeId> = self
                 .detectors
                 .iter()
-                .filter(|(other, detector)| **other != id && detector.drag.as_ref().is_some_and(|other| other.group == drag.group) && detector.position != 0.0)
+                .filter(|(other, detector)| {
+                    **other != id
+                        && detector
+                            .drag
+                            .as_ref()
+                            .is_some_and(|other| other.group == drag.group)
+                        && detector.position != 0.0
+                })
                 .map(|(other, _)| *other)
                 .collect();
             for other in others {
@@ -901,18 +1282,32 @@ impl Gestures {
     }
 
     fn update_drag(&mut self, ctx: &mut Ctx<'_>, id: NodeId, translation: Point, local: Point) {
-        let Some(detector) = self.detectors.get_mut(&id) else { return };
+        let Some(detector) = self.detectors.get_mut(&id) else {
+            return;
+        };
         let Some(drag) = &detector.drag else { return };
-        let delta = if drag.horizontal { translation.x } else { translation.y };
+        let delta = if drag.horizontal {
+            translation.x
+        } else {
+            translation.y
+        };
         let raw = match drag.touch {
             Some(inset) => (if drag.horizontal { local.x } else { local.y }) - inset,
             None => detector.start + delta,
         };
         detector.raw = raw;
         detector.position = drag.clamp(raw);
-        let (threshold, origin, position, drag) = (drag.threshold, detector.origin, detector.position, drag.clone());
+        let (threshold, origin, position, drag) = (
+            drag.threshold,
+            detector.origin,
+            detector.position,
+            drag.clone(),
+        );
         if threshold > 0.0 {
-            let snap = Self::snaps(ctx, id, &drag).get(origin).copied().unwrap_or(0.0);
+            let snap = Self::snaps(ctx, id, &drag)
+                .get(origin)
+                .copied()
+                .unwrap_or(0.0);
             if let Some(detector) = self.detectors.get_mut(&id) {
                 detector.threshold_reached = (position - snap).abs() >= threshold;
             }
@@ -922,34 +1317,70 @@ impl Gestures {
 
     /// Decides where a released drag rests and starts the settle animation.
     /// Returns the snap index reported by `End` (-1 for a free drag).
-    fn release_drag(&mut self, ctx: &mut Ctx<'_>, id: NodeId, velocity: f32, cancelled: bool) -> i64 {
-        let Some(detector) = self.detectors.get(&id) else { return -1 };
-        let Some(drag) = detector.drag.clone() else { return -1 };
+    fn release_drag(
+        &mut self,
+        ctx: &mut Ctx<'_>,
+        id: NodeId,
+        velocity: f32,
+        cancelled: bool,
+    ) -> i64 {
+        let Some(detector) = self.detectors.get(&id) else {
+            return -1;
+        };
+        let Some(drag) = detector.drag.clone() else {
+            return -1;
+        };
         let (position, origin) = (detector.position, detector.origin);
         if !drag.snap_on_release {
-            ctx.emit_if(id, PropKey::OnGestureSettle, event_kind::GESTURE_SETTLE, WireMap::new().with("snapIndex", -1_i64).with("position", position).encode());
+            ctx.emit_if(
+                id,
+                PropKey::OnGestureSettle,
+                event_kind::GESTURE_SETTLE,
+                WireMap::new()
+                    .with("snapIndex", -1_i64)
+                    .with("position", position)
+                    .encode(),
+            );
             return -1;
         }
         let snaps = Self::snaps(ctx, id, &drag);
         let origin_snap = snaps.get(origin).copied().unwrap_or(0.0);
         let displacement = position - origin_snap;
-        let fast = drag.velocity > 0.0 && velocity.abs() >= drag.velocity && (displacement == 0.0 || velocity.signum() == displacement.signum());
+        let fast = drag.velocity > 0.0
+            && velocity.abs() >= drag.velocity
+            && (displacement == 0.0 || velocity.signum() == displacement.signum());
         let far = drag.threshold > 0.0 && displacement.abs() >= drag.threshold;
         let index = if cancelled || !(fast || far) {
             origin
         } else {
             // The nearest snap strictly beyond the origin in the direction of travel.
-            let direction = if fast { velocity.signum() } else { displacement.signum() };
+            let direction = if fast {
+                velocity.signum()
+            } else {
+                displacement.signum()
+            };
             snaps
                 .iter()
                 .enumerate()
                 .filter(|(_, snap)| (**snap - origin_snap) * direction > 0.0)
-                .min_by(|a, b| (a.1 - origin_snap).abs().total_cmp(&(b.1 - origin_snap).abs()))
+                .min_by(|a, b| {
+                    (a.1 - origin_snap)
+                        .abs()
+                        .total_cmp(&(b.1 - origin_snap).abs())
+                })
                 .map_or(origin, |(index, _)| index)
         };
         if drag.holds.contains(&index) {
             // Stay where the pointer let go; the application takes over.
-            ctx.emit_if(id, PropKey::OnGestureSettle, event_kind::GESTURE_SETTLE, WireMap::new().with("snapIndex", index as i64).with("position", position).encode());
+            ctx.emit_if(
+                id,
+                PropKey::OnGestureSettle,
+                event_kind::GESTURE_SETTLE,
+                WireMap::new()
+                    .with("snapIndex", index as i64)
+                    .with("position", position)
+                    .encode(),
+            );
             return index as i64;
         }
         self.settle_to(ctx, id, index, velocity);
@@ -958,11 +1389,20 @@ impl Gestures {
 
     /// Animates the drag target to a snap point.
     fn settle_to(&mut self, ctx: &mut Ctx<'_>, id: NodeId, index: usize, velocity: f32) {
-        let Some(detector) = self.detectors.get(&id) else { return };
-        let Some(drag) = detector.drag.clone() else { return };
+        let Some(detector) = self.detectors.get(&id) else {
+            return;
+        };
+        let Some(drag) = detector.drag.clone() else {
+            return;
+        };
         let snaps = Self::snaps(ctx, id, &drag);
-        let Some(target) = snaps.get(index).copied() else { return };
-        let from = ctx.animator.cancel(Owner::Gesture(id), ctx.now_ms).unwrap_or(detector.position);
+        let Some(target) = snaps.get(index).copied() else {
+            return;
+        };
+        let from = ctx
+            .animator
+            .cancel(Owner::Gesture(id), ctx.now_ms)
+            .unwrap_or(detector.position);
         if let Some(detector) = self.detectors.get_mut(&id) {
             detector.settling = Some((index as i64, from, target));
         }
@@ -973,47 +1413,96 @@ impl Gestures {
             Settle::Spring(spring) => Curve::spring(Spring { velocity, ..spring }, from, target),
             Settle::Timing(duration, easing) => Curve::timing(duration.max(1), easing),
         };
-        ctx.animator.start(Owner::Gesture(id), from, target, curve, 0, ctx.now_ms);
+        ctx.animator
+            .start(Owner::Gesture(id), from, target, curve, 0, ctx.now_ms);
     }
 
     /// A frame of a settle animation.
     pub fn on_sample(&mut self, ctx: &mut Ctx<'_>, id: NodeId, value: f32, finished: bool) {
-        let Some(detector) = self.detectors.get_mut(&id) else { return };
+        let Some(detector) = self.detectors.get_mut(&id) else {
+            return;
+        };
         detector.position = value;
         detector.raw = value;
         let settled = finished.then(|| detector.settling.take()).flatten();
         self.write_drag(ctx, id);
         if let Some((index, _, target)) = settled {
-            ctx.emit_if(id, PropKey::OnGestureSettle, event_kind::GESTURE_SETTLE, WireMap::new().with("snapIndex", index).with("position", target).encode());
+            ctx.emit_if(
+                id,
+                PropKey::OnGestureSettle,
+                event_kind::GESTURE_SETTLE,
+                WireMap::new()
+                    .with("snapIndex", index)
+                    .with("position", target)
+                    .encode(),
+            );
         }
     }
 
     /// Writes the drag position to the target and runs the drivers.
     fn write_drag(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(detector) = self.detectors.get(&id) else { return };
+        let Some(detector) = self.detectors.get(&id) else {
+            return;
+        };
         let Some(drag) = &detector.drag else { return };
         let (position, raw) = (detector.position, detector.raw);
-        let Some(target) = Self::drag_target(ctx, id, &drag.target) else { return };
+        let Some(target) = Self::drag_target(ctx, id, &drag.target) else {
+            return;
+        };
         let mut values = ctx.scene.motion(target);
-        values.set(if drag.horizontal { MotionProperty::TranslateX } else { MotionProperty::TranslateY }, Some(position));
+        values.set(
+            if drag.horizontal {
+                MotionProperty::TranslateX
+            } else {
+                MotionProperty::TranslateY
+            },
+            Some(position),
+        );
         ctx.scene.set_motion(target, values);
         let extent = Self::extent(ctx, Some(target), drag.horizontal);
         for driver in &drag.drivers {
-            let driven = if driver.reference.is_empty() { Some(target) } else { ctx.scene.find_native_ref(id, &driver.reference) };
+            let driven = if driver.reference.is_empty() {
+                Some(target)
+            } else {
+                ctx.scene.find_native_ref(id, &driver.reference)
+            };
             let Some(driven) = driven else { continue };
-            let input: Vec<f32> = driver.input.iter().map(|point| point.resolve(extent)).collect();
+            let input: Vec<f32> = driver
+                .input
+                .iter()
+                .map(|point| point.resolve(extent))
+                .collect();
             // Outputs given in percent refer to the driven node itself.
-            let driven_size = ctx.scene.node(driven).map_or(Size::ZERO, |node| node.frame.size());
+            let driven_size = ctx
+                .scene
+                .node(driven)
+                .map_or(Size::ZERO, |node| node.frame.size());
             let output_extent = match driver.driven {
                 Driven::Property(MotionProperty::TranslateY) => driven_size.height,
                 _ => driven_size.width,
             };
-            let output: Vec<f32> = driver.output.iter().map(|point| point.resolve(output_extent)).collect();
-            let value = interpolate(&input, &output, if driver.raw { raw } else { position }, driver.raw);
+            let output: Vec<f32> = driver
+                .output
+                .iter()
+                .map(|point| point.resolve(output_extent))
+                .collect();
+            let value = interpolate(
+                &input,
+                &output,
+                if driver.raw { raw } else { position },
+                driver.raw,
+            );
             match &driver.driven {
                 Driven::Property(property) => {
                     let mut values = ctx.scene.motion(driven);
-                    values.set(*property, Some(if *property == MotionProperty::Opacity { value.clamp(0.0, 1.0) } else { value }));
+                    values.set(
+                        *property,
+                        Some(if *property == MotionProperty::Opacity {
+                            value.clamp(0.0, 1.0)
+                        } else {
+                            value
+                        }),
+                    );
                     ctx.scene.set_motion(driven, values);
                 }
                 Driven::Scale => {
@@ -1024,20 +1513,29 @@ impl Gestures {
                 }
                 Driven::BorderRadius => {
                     let mut overlay = PropMap::new();
-                    overlay.insert(PropKey::BorderRadius, PropValue::Float(f64::from(value.max(0.0))));
+                    overlay.insert(
+                        PropKey::BorderRadius,
+                        PropValue::Float(f64::from(value.max(0.0))),
+                    );
                     overlay.insert(PropKey::Overflow, PropValue::Integer(2));
-                    ctx.scene.set_style_overlay(driven, StyleLayer::Presenter, Some(overlay));
+                    ctx.scene
+                        .set_style_overlay(driven, StyleLayer::Presenter, Some(overlay));
                 }
                 Driven::Text(format, decimals) => {
                     let text = match format {
                         2 => clock(value),
-                        3 => format!("{} / {}", clock(value), clock(output.last().copied().unwrap_or(0.0))),
+                        3 => format!(
+                            "{} / {}",
+                            clock(value),
+                            clock(output.last().copied().unwrap_or(0.0))
+                        ),
                         _ => format!("{value:.*}", usize::from(*decimals)),
                     };
                     if ctx.scene.plain_text(driven).as_deref() != Some(text.as_str()) {
                         let mut overlay = PropMap::new();
                         overlay.insert(PropKey::Text, PropValue::String(text));
-                        ctx.scene.set_style_overlay(driven, StyleLayer::Presenter, Some(overlay));
+                        ctx.scene
+                            .set_style_overlay(driven, StyleLayer::Presenter, Some(overlay));
                     }
                 }
             }
@@ -1052,9 +1550,19 @@ impl Gestures {
     fn surface(&self, ctx: &Ctx<'_>, id: NodeId) -> NodeId {
         let mut current = id;
         for _ in 0..4 {
-            let inner = ctx.scene.node(current).and_then(|node| node.children.first().copied());
+            let inner = ctx
+                .scene
+                .node(current)
+                .and_then(|node| node.children.first().copied());
             match inner {
-                Some(inner) if self.detectors.get(&inner).is_some_and(|detector| detector.native.is_some()) => current = inner,
+                Some(inner)
+                    if self
+                        .detectors
+                        .get(&inner)
+                        .is_some_and(|detector| detector.native.is_some()) =>
+                {
+                    current = inner
+                }
                 _ => break,
             }
         }
@@ -1068,7 +1576,9 @@ impl Gestures {
     /// The pose reported in gesture events of `id`, when it transforms natively.
     fn native_pose(&self, ctx: &Ctx<'_>, id: NodeId) -> Option<Pose> {
         self.native_of(id)?;
-        self.detectors.get(&self.surface(ctx, id)).map(|detector| detector.pose)
+        self.detectors
+            .get(&self.surface(ctx, id))
+            .map(|detector| detector.pose)
     }
 
     fn begin_native(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
@@ -1076,7 +1586,9 @@ impl Gestures {
             return;
         }
         let surface = self.surface(ctx, id);
-        let Some(owner) = self.detectors.get_mut(&surface) else { return };
+        let Some(owner) = self.detectors.get_mut(&surface) else {
+            return;
+        };
         if owner.returning.take().is_some() {
             // Take over a release animation where it is.
             ctx.animator.cancel(Owner::GesturePose(surface), ctx.now_ms);
@@ -1085,9 +1597,13 @@ impl Gestures {
     }
 
     fn pan_native(&mut self, ctx: &mut Ctx<'_>, id: NodeId, delta: Point) {
-        let Some(native) = self.native_of(id) else { return };
+        let Some(native) = self.native_of(id) else {
+            return;
+        };
         let surface = self.surface(ctx, id);
-        let Some(owner) = self.detectors.get_mut(&surface) else { return };
+        let Some(owner) = self.detectors.get_mut(&surface) else {
+            return;
+        };
         owner.pose.x += delta.x;
         owner.pose.y += delta.y;
         if native.limit_x > 0.0 {
@@ -1100,15 +1616,28 @@ impl Gestures {
     }
 
     fn zoom_native(&mut self, ctx: &mut Ctx<'_>, id: NodeId, scale: f32, focal: Point) {
-        let Some(native) = self.native_of(id) else { return };
+        let Some(native) = self.native_of(id) else {
+            return;
+        };
         let surface = self.surface(ctx, id);
-        let Some(target) = ctx.scene.node(surface).and_then(|node| node.children.first().copied()) else { return };
+        let Some(target) = ctx
+            .scene
+            .node(surface)
+            .and_then(|node| node.children.first().copied())
+        else {
+            return;
+        };
         // The pivot of the content: its untranslated centre, in window coordinates.
         let pivot = ctx.scene.node(target).map_or(Point::ZERO, |node| {
             let own = ctx.scene.window_origin(target);
-            Point::new(own.x + node.frame.width / 2.0, own.y + node.frame.height / 2.0)
+            Point::new(
+                own.x + node.frame.width / 2.0,
+                own.y + node.frame.height / 2.0,
+            )
         });
-        let Some(owner) = self.detectors.get_mut(&surface) else { return };
+        let Some(owner) = self.detectors.get_mut(&surface) else {
+            return;
+        };
         let (base, previous) = (owner.base, owner.pose);
         let next = (base.scale * scale).clamp(native.min_scale, native.max_scale);
         if native.focal && previous.scale > 0.0 {
@@ -1139,13 +1668,26 @@ impl Gestures {
     /// Keeps the scaled content covering the viewport of detector `id` (or
     /// centred when smaller).
     fn bound(&mut self, ctx: &mut Ctx<'_>, id: NodeId, surface: NodeId, native: Native) {
-        let Some(viewport) = ctx.scene.node(id).map(|node| node.frame.size()) else { return };
-        let child = ctx.scene.node(surface).and_then(|node| node.children.first().copied()).and_then(|target| ctx.scene.node(target)).map(|node| node.frame.size());
+        let Some(viewport) = ctx.scene.node(id).map(|node| node.frame.size()) else {
+            return;
+        };
+        let child = ctx
+            .scene
+            .node(surface)
+            .and_then(|node| node.children.first().copied())
+            .and_then(|target| ctx.scene.node(target))
+            .map(|node| node.frame.size());
         let Some(child) = child else { return };
-        let Some(owner) = self.detectors.get_mut(&surface) else { return };
+        let Some(owner) = self.detectors.get_mut(&surface) else {
+            return;
+        };
         // The picture inside the child, contain-fit to the given aspect ratio.
         let content = if native.aspect > 0.0 && child.height > 0.0 {
-            if child.width / child.height > native.aspect { Size::new(child.height * native.aspect, child.height) } else { Size::new(child.width, child.width / native.aspect) }
+            if child.width / child.height > native.aspect {
+                Size::new(child.height * native.aspect, child.height)
+            } else {
+                Size::new(child.width, child.width / native.aspect)
+            }
         } else {
             child
         };
@@ -1165,8 +1707,16 @@ impl Gestures {
 
     /// Applies the pose held by `surface` to its content.
     fn write_pose(&mut self, ctx: &mut Ctx<'_>, surface: NodeId) {
-        let Some(pose) = self.detectors.get(&surface).map(|detector| detector.pose) else { return };
-        let Some(target) = ctx.scene.node(surface).and_then(|node| node.children.first().copied()) else { return };
+        let Some(pose) = self.detectors.get(&surface).map(|detector| detector.pose) else {
+            return;
+        };
+        let Some(target) = ctx
+            .scene
+            .node(surface)
+            .and_then(|node| node.children.first().copied())
+        else {
+            return;
+        };
         let mut values = ctx.scene.motion(target);
         let identity = pose == Pose::IDENTITY;
         values.set(MotionProperty::TranslateX, (!identity).then_some(pose.x));
@@ -1179,9 +1729,13 @@ impl Gestures {
 
     /// The gesture ended: the content goes back, or settles inside its bounds.
     fn release_native(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
-        let Some(native) = self.native_of(id) else { return };
+        let Some(native) = self.native_of(id) else {
+            return;
+        };
         let surface = self.surface(ctx, id);
-        let Some(owner) = self.detectors.get(&surface) else { return };
+        let Some(owner) = self.detectors.get(&surface) else {
+            return;
+        };
         if native.reset_on_end {
             let base = owner.base;
             return self.return_pose(ctx, surface, base);
@@ -1197,7 +1751,9 @@ impl Gestures {
                 owner.pose = rest;
             }
             self.bound(ctx, id, surface, native);
-            let Some(owner) = self.detectors.get_mut(&surface) else { return };
+            let Some(owner) = self.detectors.get_mut(&surface) else {
+                return;
+            };
             let rest = owner.pose;
             owner.pose = current;
             if rest != current {
@@ -1208,21 +1764,44 @@ impl Gestures {
 
     /// Animates the content of `surface` to `rest`.
     fn return_pose(&mut self, ctx: &mut Ctx<'_>, surface: NodeId, rest: Pose) {
-        let Some(owner) = self.detectors.get_mut(&surface) else { return };
+        let Some(owner) = self.detectors.get_mut(&surface) else {
+            return;
+        };
         if ctx.reduced_motion {
             owner.pose = rest;
             owner.returning = None;
             return self.write_pose(ctx, surface);
         }
         owner.returning = Some((owner.pose, rest));
-        ctx.animator.start(Owner::GesturePose(surface), 0.0, 1.0, Curve::timing(NATIVE_RESET_MS, Easing::OutCubic), 0, ctx.now_ms);
+        ctx.animator.start(
+            Owner::GesturePose(surface),
+            0.0,
+            1.0,
+            Curve::timing(NATIVE_RESET_MS, Easing::OutCubic),
+            0,
+            ctx.now_ms,
+        );
     }
 
     /// A frame of a release or reset animation of the content.
-    pub fn on_pose_sample(&mut self, ctx: &mut Ctx<'_>, surface: NodeId, progress: f32, finished: bool) {
-        let Some(owner) = self.detectors.get_mut(&surface) else { return };
-        let Some((from, to)) = owner.returning else { return };
-        owner.pose = if finished { to } else { from.lerp(to, progress) };
+    pub fn on_pose_sample(
+        &mut self,
+        ctx: &mut Ctx<'_>,
+        surface: NodeId,
+        progress: f32,
+        finished: bool,
+    ) {
+        let Some(owner) = self.detectors.get_mut(&surface) else {
+            return;
+        };
+        let Some((from, to)) = owner.returning else {
+            return;
+        };
+        owner.pose = if finished {
+            to
+        } else {
+            from.lerp(to, progress)
+        };
         if finished {
             owner.returning = None;
         }
@@ -1236,14 +1815,21 @@ mod tests {
 
     #[test]
     fn drags_parse_their_contract() {
-        let drag = Drag::parse("axis=y\nmin=0\nrubber=0.5\nsnaps=0,100%\nsettle=spring:230:22:0.72\nsettle.1=timing:190:ease-out\nhold=1\nthreshold=120\nvelocity=900\ndrive=|scale|0,50%|1,0.955\ndriveRaw=card|opacity|0,100|1,0\ntext=label|2|0|0,100|0,60");
+        let drag = Drag::parse(
+            "axis=y\nmin=0\nrubber=0.5\nsnaps=0,100%\nsettle=spring:230:22:0.72\nsettle.1=timing:190:ease-out\nhold=1\nthreshold=120\nvelocity=900\ndrive=|scale|0,50%|1,0.955\ndriveRaw=card|opacity|0,100|1,0\ntext=label|2|0|0,100|0,60",
+        );
         let drag = drag.unwrap_or_else(|| panic!("the drag must parse"));
         assert!(!drag.horizontal);
         assert_eq!((drag.min, drag.max, drag.rubber), (Some(0.0), None, 0.5));
         assert_eq!(drag.snaps, vec![Length::Units(0.0), Length::Percent(100.0)]);
-        assert!(matches!(drag.settle_for(0), Settle::Spring(spring) if spring.stiffness == 230.0 && spring.mass == 0.72));
+        assert!(
+            matches!(drag.settle_for(0), Settle::Spring(spring) if spring.stiffness == 230.0 && spring.mass == 0.72)
+        );
         assert!(matches!(drag.settle_for(1), Settle::Timing(190, _)));
-        assert_eq!((drag.holds.clone(), drag.threshold, drag.velocity), (vec![1], 120.0, 900.0));
+        assert_eq!(
+            (drag.holds.clone(), drag.threshold, drag.velocity),
+            (vec![1], 120.0, 900.0)
+        );
         assert_eq!(drag.drivers.len(), 3);
         assert!(drag.drivers[1].raw && drag.drivers[1].reference == "card");
         assert_eq!(drag.drivers[2].driven, Driven::Text(2, 0));

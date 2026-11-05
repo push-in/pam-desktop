@@ -15,8 +15,8 @@ use pam_desktop_ui::modules::support::hex;
 use sha2::{Digest, Sha256};
 
 use crate::bundle::{
-    self, BundleApplication, BundleManifest, BundleRuntime, BundleTarget, BundleUpdates, PHP_BIN, PHP_EXTENSION_DIR_VARIABLE, PHP_EXTENSIONS,
-    PHP_INI, PHP_LIB, PHP_WRAPPER,
+    self, BundleApplication, BundleManifest, BundleRuntime, BundleTarget, BundleUpdates, PHP_BIN,
+    PHP_EXTENSION_DIR_VARIABLE, PHP_EXTENSIONS, PHP_INI, PHP_LIB, PHP_WRAPPER,
 };
 use crate::manifest::{self, Application, Category, Manifest};
 
@@ -26,7 +26,14 @@ const MAX_ICON_BYTES: u64 = 2 * 1024 * 1024;
 const BOOTSTRAP: &str = "packages/desktop/bin/pam-desktop-worker";
 const VENDOR_PACKAGE: &str = "vendor/pushinbr/pam-desktop";
 /// What an application of this repository's checkout needs from the PHP package.
-const CHECKOUT_PACKAGE_FILES: [&str; 6] = ["bin/pam-desktop-worker", "src", "resources", "composer.json", "LICENSE", "LICENSE-APACHE"];
+const CHECKOUT_PACKAGE_FILES: [&str; 6] = [
+    "bin/pam-desktop-worker",
+    "src",
+    "resources",
+    "composer.json",
+    "LICENSE",
+    "LICENSE-APACHE",
+];
 
 /// Shipped when the manifest names no icon.
 const DEFAULT_ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
@@ -103,7 +110,9 @@ impl BuildOptions {
                 }
                 Some("--force") => force = true,
                 Some("--sign") => sign = true,
-                Some(value) if value.starts_with('-') => return Err(format!("unknown build option {value:?}")),
+                Some(value) if value.starts_with('-') => {
+                    return Err(format!("unknown build option {value:?}"));
+                }
                 _ => {
                     if project.replace(PathBuf::from(argument)).is_some() {
                         return Err("build accepts only one application".to_owned());
@@ -111,7 +120,13 @@ impl BuildOptions {
                 }
             }
         }
-        Ok(BuildCommand::Build(Self { project: project.unwrap_or_else(|| PathBuf::from(".")), output, formats, force, sign }))
+        Ok(BuildCommand::Build(Self {
+            project: project.unwrap_or_else(|| PathBuf::from(".")),
+            output,
+            formats,
+            force,
+            sign,
+        }))
     }
 }
 
@@ -137,7 +152,11 @@ fn parse_format(value: &str) -> Result<Vec<PackageFormat>, String> {
             } else if cfg!(target_os = "windows") {
                 formats.extend([PackageFormat::Msix, PackageFormat::Msi]);
             } else {
-                formats.extend([PackageFormat::Debian, PackageFormat::AppImage, PackageFormat::Rpm]);
+                formats.extend([
+                    PackageFormat::Debian,
+                    PackageFormat::AppImage,
+                    PackageFormat::Rpm,
+                ]);
             }
             formats
         }
@@ -173,13 +192,25 @@ struct Toolchain {
 /// exists without `--force`.
 pub fn build(options: &BuildOptions) -> Result<BuildResult, String> {
     if !matches!(std::env::consts::OS, "linux" | "windows" | "macos") {
-        return Err(format!("PAM Desktop packaging does not support {}", std::env::consts::OS));
+        return Err(format!(
+            "PAM Desktop packaging does not support {}",
+            std::env::consts::OS
+        ));
     }
-    let host = std::env::current_exe().map_err(|error| format!("cannot resolve the pam-desktop executable: {error}"))?;
+    let host = std::env::current_exe()
+        .map_err(|error| format!("cannot resolve the pam-desktop executable: {error}"))?;
     let (php, php_arguments) = crate::php_command();
     let search_path = std::env::var_os("PATH").unwrap_or_default();
     let php = resolve_executable(&php, &search_path)?;
-    build_with(options, &Toolchain { host, php, php_arguments, search_path })
+    build_with(
+        options,
+        &Toolchain {
+            host,
+            php,
+            php_arguments,
+            search_path,
+        },
+    )
 }
 
 fn build_with(options: &BuildOptions, toolchain: &Toolchain) -> Result<BuildResult, String> {
@@ -197,14 +228,39 @@ fn build_with(options: &BuildOptions, toolchain: &Toolchain) -> Result<BuildResu
     let workspace = BuildWorkspace::create(&output)?;
     let icon = resolve_icon(&project, &workspace.path)?;
     // Named as it was found (`php`), not as the link resolves (`php8.5`).
-    let php_name = toolchain.php.file_name().and_then(OsStr::to_str).ok_or("the PHP runtime name must be valid UTF-8")?;
-    let runtime = PhpRuntime::probe(&php, php_name, &toolchain.php_arguments, application.extensions.as_deref())?;
+    let php_name = toolchain
+        .php
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or("the PHP runtime name must be valid UTF-8")?;
+    let runtime = PhpRuntime::probe(
+        &php,
+        php_name,
+        &toolchain.php_arguments,
+        application.extensions.as_deref(),
+    )?;
     let bundle = workspace.path.join(&names.bundle);
-    let context = BundleContext { project: &project, names: &names, icon: &icon, host: &host, runtime: &runtime, output: &output, sign: options.sign };
+    let context = BundleContext {
+        project: &project,
+        names: &names,
+        icon: &icon,
+        host: &host,
+        runtime: &runtime,
+        output: &output,
+        sign: options.sign,
+    };
     let system = materialize_bundle(&context, &bundle)?;
 
     let source_date_epoch = source_date_epoch()?;
-    let package = PackageContext { workspace: &workspace.path, bundle: &bundle, application, names: &names, icon: &icon, system: &system, sign: options.sign };
+    let package = PackageContext {
+        workspace: &workspace.path,
+        bundle: &bundle,
+        application,
+        names: &names,
+        icon: &icon,
+        system: &system,
+        sign: options.sign,
+    };
     let mut staged = Vec::new();
     for format in &options.formats {
         let (name, destination) = match format {
@@ -221,7 +277,9 @@ fn build_with(options: &BuildOptions, toolchain: &Toolchain) -> Result<BuildResu
         let artifact = workspace.path.join(name);
         match format {
             PackageFormat::Directory => {}
-            PackageFormat::Portable => create_portable_archive(&package, &artifact, source_date_epoch)?,
+            PackageFormat::Portable => {
+                create_portable_archive(&package, &artifact, source_date_epoch)?
+            }
             PackageFormat::Debian => create_debian_package(&package, &artifact, source_date_epoch)?,
             PackageFormat::AppImage => create_appimage_package(&package, &artifact)?,
             PackageFormat::Rpm => create_rpm_package(&package, &artifact)?,
@@ -241,19 +299,33 @@ fn build_with(options: &BuildOptions, toolchain: &Toolchain) -> Result<BuildResu
     let mut artifacts = Vec::with_capacity(staged.len());
     for (source, destination) in staged {
         let destination = destination.ok_or("internal package destination is missing")?;
-        fs::rename(&source, &destination)
-            .map_err(|error| format!("cannot publish artifact {} as {}: {error}", source.display(), destination.display()))?;
+        fs::rename(&source, &destination).map_err(|error| {
+            format!(
+                "cannot publish artifact {} as {}: {error}",
+                source.display(),
+                destination.display()
+            )
+        })?;
         artifacts.push(destination);
     }
     Ok(BuildResult { artifacts })
 }
 
 fn validate_platform_formats(options: &BuildOptions) -> Result<(), String> {
-    let requested = |formats: &[PackageFormat]| formats.iter().any(|format| options.formats.contains(format));
+    let requested = |formats: &[PackageFormat]| {
+        formats
+            .iter()
+            .any(|format| options.formats.contains(format))
+    };
     if options.formats.is_empty() {
         return Err("at least one package format is required".to_owned());
     }
-    if requested(&[PackageFormat::Debian, PackageFormat::AppImage, PackageFormat::Rpm]) && !cfg!(target_os = "linux") {
+    if requested(&[
+        PackageFormat::Debian,
+        PackageFormat::AppImage,
+        PackageFormat::Rpm,
+    ]) && !cfg!(target_os = "linux")
+    {
         return Err("the appimage, deb and rpm formats are only available on Linux".to_owned());
     }
     if requested(&[PackageFormat::Dmg, PackageFormat::Pkg]) && !cfg!(target_os = "macos") {
@@ -263,7 +335,10 @@ fn validate_platform_formats(options: &BuildOptions) -> Result<(), String> {
         return Err("the msix and msi formats are only available on Windows".to_owned());
     }
     if options.sign && cfg!(target_os = "linux") {
-        return Err("--sign is available for macOS codesigning/notarization and Windows Authenticode".to_owned());
+        return Err(
+            "--sign is available for macOS codesigning/notarization and Windows Authenticode"
+                .to_owned(),
+        );
     }
     Ok(())
 }
@@ -278,16 +353,28 @@ fn require_tools(options: &BuildOptions, search_path: &OsStr) -> Result<(), Stri
     for format in &options.formats {
         match format {
             PackageFormat::Directory => {}
-            PackageFormat::Portable if cfg!(target_os = "linux") => tools.extend([("tar", "install GNU tar"), ("gzip", "install gzip")]),
-            PackageFormat::Portable if cfg!(target_os = "macos") => tools.push(("ditto", "part of macOS")),
+            PackageFormat::Portable if cfg!(target_os = "linux") => {
+                tools.extend([("tar", "install GNU tar"), ("gzip", "install gzip")])
+            }
+            PackageFormat::Portable if cfg!(target_os = "macos") => {
+                tools.push(("ditto", "part of macOS"))
+            }
             PackageFormat::Portable => tools.push(("powershell", "part of Windows")),
             PackageFormat::Debian => tools.push(("dpkg-deb", "install dpkg")),
-            PackageFormat::AppImage => tools.push(("appimagetool", "install the official AppImageKit appimagetool")),
+            PackageFormat::AppImage => tools.push((
+                "appimagetool",
+                "install the official AppImageKit appimagetool",
+            )),
             PackageFormat::Rpm => tools.push(("rpmbuild", "install rpm-build")),
             PackageFormat::Dmg => tools.push(("hdiutil", "part of macOS")),
             PackageFormat::Pkg => tools.push(("pkgbuild", "install the Xcode command-line tools")),
-            PackageFormat::Msix => tools.extend([("makeappx", "install the Windows SDK"), ("powershell", "part of Windows")]),
-            PackageFormat::Msi => tools.push(("wix", "install WiX Toolset 5 and place wix on PATH")),
+            PackageFormat::Msix => tools.extend([
+                ("makeappx", "install the Windows SDK"),
+                ("powershell", "part of Windows"),
+            ]),
+            PackageFormat::Msi => {
+                tools.push(("wix", "install WiX Toolset 5 and place wix on PATH"))
+            }
         }
     }
     if options.sign && cfg!(target_os = "macos") {
@@ -303,19 +390,26 @@ fn require_tools(options: &BuildOptions, search_path: &OsStr) -> Result<(), Stri
     }
     for (name, hint) in tools {
         if find_tool(name, search_path).is_none() {
-            return Err(format!("{name} is required ({hint}) and was not found on PATH"));
+            return Err(format!(
+                "{name} is required ({hint}) and was not found on PATH"
+            ));
         }
     }
     Ok(())
 }
 
 fn require_variable(name: &str, purpose: &str) -> Result<String, String> {
-    std::env::var(name).ok().filter(|value| !value.is_empty()).ok_or_else(|| format!("{name} is required for {purpose}"))
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("{name} is required for {purpose}"))
 }
 
 fn find_tool(name: &str, search_path: &OsStr) -> Option<PathBuf> {
     let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
-    std::env::split_paths(search_path).map(|directory| directory.join(&file)).find(|candidate| candidate.is_file())
+    std::env::split_paths(search_path)
+        .map(|directory| directory.join(&file))
+        .find(|candidate| candidate.is_file())
 }
 
 // ---- the project ----------------------------------------------------------
@@ -336,40 +430,81 @@ struct Project {
 
 impl Project {
     fn discover(target: &Path) -> Result<Self, String> {
-        let target = target.canonicalize().map_err(|error| format!("cannot resolve {}: {error}", target.display()))?;
+        let target = target
+            .canonicalize()
+            .map_err(|error| format!("cannot resolve {}: {error}", target.display()))?;
         let (root, entry_override) = if target.is_dir() {
             (target, None)
         } else {
-            let name = target.file_name().and_then(OsStr::to_str).ok_or("the entry script name must be valid UTF-8")?.to_owned();
-            (target.parent().map(Path::to_path_buf).unwrap_or_default(), Some(name))
+            let name = target
+                .file_name()
+                .and_then(OsStr::to_str)
+                .ok_or("the entry script name must be valid UTF-8")?
+                .to_owned();
+            (
+                target.parent().map(Path::to_path_buf).unwrap_or_default(),
+                Some(name),
+            )
         };
         let manifest = Manifest::read(&root)?;
-        let mut application = manifest.application().map_err(|error| format!("{}: {error}", root.join(manifest::FILE_NAME).display()))?;
+        let mut application = manifest
+            .application()
+            .map_err(|error| format!("{}: {error}", root.join(manifest::FILE_NAME).display()))?;
         if let Some(entry) = entry_override {
             application.entry = entry;
         }
         if !root.join(&application.entry).is_file() {
-            return Err(format!("the entry script {} does not exist", root.join(&application.entry).display()));
+            return Err(format!(
+                "the entry script {} does not exist",
+                root.join(&application.entry).display()
+            ));
         }
         if matches!(application.executable(), "pam-desktop" | PHP_WRAPPER) {
-            return Err(format!("applicationId cannot end in {:?}: the bundle uses that file name itself", application.executable()));
+            return Err(format!(
+                "applicationId cannot end in {:?}: the bundle uses that file name itself",
+                application.executable()
+            ));
         }
 
         if root.join("vendor/autoload.php").is_file() {
-            return Ok(Self { source_root: root.clone(), relative: PathBuf::new(), include: None, root, manifest, application });
+            return Ok(Self {
+                source_root: root.clone(),
+                relative: PathBuf::new(),
+                include: None,
+                root,
+                manifest,
+                application,
+            });
         }
         // An application of this repository's checkout (the examples) shares
         // the autoloader and the PHP package of the checkout.
-        let checkout =
-            root.ancestors().skip(1).find(|ancestor| ancestor.join("vendor/autoload.php").is_file() && ancestor.join(BOOTSTRAP).is_file());
+        let checkout = root.ancestors().skip(1).find(|ancestor| {
+            ancestor.join("vendor/autoload.php").is_file() && ancestor.join(BOOTSTRAP).is_file()
+        });
         let Some(checkout) = checkout else {
-            return Err(format!("vendor/autoload.php is missing in {}; run `composer install` in the project", root.display()));
+            return Err(format!(
+                "vendor/autoload.php is missing in {}; run `composer install` in the project",
+                root.display()
+            ));
         };
-        let relative = root.strip_prefix(checkout).map_err(|error| error.to_string())?.to_path_buf();
-        let package = Path::new(BOOTSTRAP).ancestors().nth(2).unwrap_or_else(|| Path::new(""));
+        let relative = root
+            .strip_prefix(checkout)
+            .map_err(|error| error.to_string())?
+            .to_path_buf();
+        let package = Path::new(BOOTSTRAP)
+            .ancestors()
+            .nth(2)
+            .unwrap_or_else(|| Path::new(""));
         let mut include = vec![PathBuf::from("vendor"), relative.clone()];
         include.extend(CHECKOUT_PACKAGE_FILES.iter().map(|file| package.join(file)));
-        Ok(Self { source_root: checkout.to_path_buf(), relative, include: Some(include), root, manifest, application })
+        Ok(Self {
+            source_root: checkout.to_path_buf(),
+            relative,
+            include: Some(include),
+            root,
+            manifest,
+            application,
+        })
     }
 
     /// The project directory relative to the bundle, with forward slashes.
@@ -379,33 +514,53 @@ impl Project {
 
     /// The entry script relative to the bundle, with forward slashes.
     fn bundle_entry(&self) -> Result<String, String> {
-        let entry: PathBuf = Path::new(&self.application.entry).components().filter(|component| matches!(component, Component::Normal(_))).collect();
+        let entry: PathBuf = Path::new(&self.application.entry)
+            .components()
+            .filter(|component| matches!(component, Component::Normal(_)))
+            .collect();
         portable_path(&Path::new("app").join(&self.relative).join(entry))
     }
 }
 
 fn portable_path(path: &Path) -> Result<String, String> {
     let path: PathBuf = path.components().collect();
-    path.to_str().map(|value| value.replace('\\', "/")).ok_or_else(|| format!("path is not valid UTF-8: {}", path.display()))
+    path.to_str()
+        .map(|value| value.replace('\\', "/"))
+        .ok_or_else(|| format!("path is not valid UTF-8: {}", path.display()))
 }
 
 /// The icon to ship: the manifest's, validated, or the generic one.
 fn resolve_icon(project: &Project, workspace: &Path) -> Result<PathBuf, String> {
     let Some(icon) = &project.application.icon else {
         let path = workspace.join("default-icon.svg");
-        fs::write(&path, DEFAULT_ICON).map_err(|error| format!("cannot write the default icon: {error}"))?;
+        fs::write(&path, DEFAULT_ICON)
+            .map_err(|error| format!("cannot write the default icon: {error}"))?;
         return Ok(path);
     };
     let declared = project.root.join(icon);
-    let resolved = declared.canonicalize().map_err(|error| format!("cannot resolve the application icon {}: {error}", declared.display()))?;
+    let resolved = declared.canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve the application icon {}: {error}",
+            declared.display()
+        )
+    })?;
     if !resolved.starts_with(&project.root) {
-        return Err(format!("the application icon must be inside the project: {}", resolved.display()));
+        return Err(format!(
+            "the application icon must be inside the project: {}",
+            resolved.display()
+        ));
     }
-    let metadata = resolved.metadata().map_err(|error| format!("cannot inspect the icon {}: {error}", resolved.display()))?;
+    let metadata = resolved
+        .metadata()
+        .map_err(|error| format!("cannot inspect the icon {}: {error}", resolved.display()))?;
     if !metadata.is_file() || metadata.len() > MAX_ICON_BYTES {
-        return Err(format!("the application icon must be a file no larger than {MAX_ICON_BYTES} bytes: {}", resolved.display()));
+        return Err(format!(
+            "the application icon must be a file no larger than {MAX_ICON_BYTES} bytes: {}",
+            resolved.display()
+        ));
     }
-    let contents = fs::read(&resolved).map_err(|error| format!("cannot read the icon {}: {error}", resolved.display()))?;
+    let contents = fs::read(&resolved)
+        .map_err(|error| format!("cannot read the icon {}: {error}", resolved.display()))?;
     match icon_extension(&resolved)?.as_str() {
         "png" => validate_png_icon(&contents)?,
         "svg" => validate_svg_icon(&contents)?,
@@ -415,12 +570,20 @@ fn resolve_icon(project: &Project, workspace: &Path) -> Result<PathBuf, String> 
 }
 
 fn icon_extension(icon: &Path) -> Result<String, String> {
-    icon.extension().and_then(OsStr::to_str).map(str::to_ascii_lowercase).ok_or_else(|| "the application icon has no extension".to_owned())
+    icon.extension()
+        .and_then(OsStr::to_str)
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| "the application icon has no extension".to_owned())
 }
 
 fn validate_png_icon(contents: &[u8]) -> Result<(), String> {
     const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
-    let dimension = |range: std::ops::Range<usize>| contents.get(range).and_then(|bytes| bytes.try_into().ok()).map(u32::from_be_bytes);
+    let dimension = |range: std::ops::Range<usize>| {
+        contents
+            .get(range)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u32::from_be_bytes)
+    };
     if contents.get(..8) != Some(PNG_SIGNATURE) || contents.get(12..16) != Some(b"IHDR") {
         return Err("the application PNG icon has an invalid header".to_owned());
     }
@@ -431,7 +594,8 @@ fn validate_png_icon(contents: &[u8]) -> Result<(), String> {
 }
 
 fn validate_svg_icon(contents: &[u8]) -> Result<(), String> {
-    let source = std::str::from_utf8(contents).map_err(|_| "the application SVG icon must contain valid UTF-8".to_owned())?;
+    let source = std::str::from_utf8(contents)
+        .map_err(|_| "the application SVG icon must contain valid UTF-8".to_owned())?;
     let normalized = source.to_ascii_lowercase();
     if !normalized.contains("<svg")
         || normalized.contains("<script")
@@ -465,10 +629,20 @@ impl ArtifactNames {
         let executable = application.executable().to_owned();
         let version = &application.version;
         let architecture = std::env::consts::ARCH.to_owned();
-        let bundle = format!("{executable}-{version}-{}-{architecture}", std::env::consts::OS);
-        let portable = if cfg!(target_os = "linux") { format!("{bundle}.tar.gz") } else { format!("{bundle}.zip") };
+        let bundle = format!(
+            "{executable}-{version}-{}-{architecture}",
+            std::env::consts::OS
+        );
+        let portable = if cfg!(target_os = "linux") {
+            format!("{bundle}.tar.gz")
+        } else {
+            format!("{bundle}.zip")
+        };
         let debian = if cfg!(target_os = "linux") {
-            format!("{executable}_{version}_{}.deb", debian_architecture(&architecture)?)
+            format!(
+                "{executable}_{version}_{}.deb",
+                debian_architecture(&architecture)?
+            )
         } else {
             format!("{executable}-{version}-{architecture}.deb")
         };
@@ -502,7 +676,9 @@ struct ArtifactDestinations {
 
 impl ArtifactDestinations {
     fn new(output: &Path, names: &ArtifactNames, formats: &BTreeSet<PackageFormat>) -> Self {
-        let destination = |format: PackageFormat, name: &str| formats.contains(&format).then(|| output.join(name));
+        let destination = |format: PackageFormat, name: &str| {
+            formats.contains(&format).then(|| output.join(name))
+        };
         Self {
             directory: destination(PackageFormat::Directory, &names.bundle),
             portable: destination(PackageFormat::Portable, &names.portable),
@@ -517,9 +693,19 @@ impl ArtifactDestinations {
     }
 
     fn paths(&self) -> impl Iterator<Item = &PathBuf> {
-        [&self.directory, &self.portable, &self.debian, &self.appimage, &self.rpm, &self.dmg, &self.pkg, &self.msix, &self.msi]
-            .into_iter()
-            .flatten()
+        [
+            &self.directory,
+            &self.portable,
+            &self.debian,
+            &self.appimage,
+            &self.rpm,
+            &self.dmg,
+            &self.pkg,
+            &self.msix,
+            &self.msi,
+        ]
+        .into_iter()
+        .flatten()
     }
 
     fn ensure_available(&self, force: bool) -> Result<(), String> {
@@ -527,7 +713,10 @@ impl ArtifactDestinations {
             return Ok(());
         }
         match self.paths().find(|path| path.exists()) {
-            Some(existing) => Err(format!("artifact {} already exists; pass --force to replace this exact build", existing.display())),
+            Some(existing) => Err(format!(
+                "artifact {} already exists; pass --force to replace this exact build",
+                existing.display()
+            )),
             None => Ok(()),
         }
     }
@@ -537,8 +726,13 @@ impl ArtifactDestinations {
             return Ok(());
         }
         for path in self.paths().filter(|path| path.exists()) {
-            let metadata = fs::symlink_metadata(path).map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
-            let removed = if metadata.is_dir() && !metadata.file_type().is_symlink() { fs::remove_dir_all(path) } else { fs::remove_file(path) };
+            let metadata = fs::symlink_metadata(path)
+                .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+            let removed = if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                fs::remove_dir_all(path)
+            } else {
+                fs::remove_file(path)
+            };
             removed.map_err(|error| format!("cannot replace {}: {error}", path.display()))?;
         }
         Ok(())
@@ -553,9 +747,19 @@ struct BuildWorkspace {
 impl BuildWorkspace {
     fn create(output: &Path) -> Result<Self, String> {
         let mut random = [0_u8; 8];
-        getrandom::fill(&mut random).map_err(|error| format!("cannot name the build workspace: {error}"))?;
-        let path = output.join(format!(".pam-desktop-build-{}-{}", std::process::id(), hex(&random)));
-        fs::create_dir(&path).map_err(|error| format!("cannot create the build workspace {}: {error}", path.display()))?;
+        getrandom::fill(&mut random)
+            .map_err(|error| format!("cannot name the build workspace: {error}"))?;
+        let path = output.join(format!(
+            ".pam-desktop-build-{}-{}",
+            std::process::id(),
+            hex(&random)
+        ));
+        fs::create_dir(&path).map_err(|error| {
+            format!(
+                "cannot create the build workspace {}: {error}",
+                path.display()
+            )
+        })?;
         Ok(Self { path })
     }
 }
@@ -582,7 +786,12 @@ struct PhpRuntime {
 impl PhpRuntime {
     /// Asks the runtime for its version and extensions. A runtime that does
     /// not answer (`pam`, a static build) is shipped as a single binary.
-    fn probe(binary: &Path, file_name: &str, arguments: &[OsString], wanted: Option<&[String]>) -> Result<Self, String> {
+    fn probe(
+        binary: &Path,
+        file_name: &str,
+        arguments: &[OsString],
+        wanted: Option<&[String]>,
+    ) -> Result<Self, String> {
         if cfg!(windows) && !arguments.is_empty() {
             return Err(format!(
                 "{} needs arguments the bundled launcher cannot pass on Windows; set PAM_DESKTOP_PHP to a php.exe",
@@ -597,11 +806,19 @@ impl PhpRuntime {
             extensions: Vec::new(),
         };
         let probe = "echo json_encode(['version' => PHP_VERSION, 'extensionDir' => ini_get('extension_dir'), 'extensions' => get_loaded_extensions()]);";
-        let answer = if arguments.is_empty() { Command::new(binary).args(["-r", probe]).output().ok() } else { None };
-        let answer = answer.filter(|output| output.status.success()).and_then(|output| serde_json::from_slice::<serde_json::Value>(&output.stdout).ok());
+        let answer = if arguments.is_empty() {
+            Command::new(binary).args(["-r", probe]).output().ok()
+        } else {
+            None
+        };
+        let answer = answer
+            .filter(|output| output.status.success())
+            .and_then(|output| serde_json::from_slice::<serde_json::Value>(&output.stdout).ok());
         let Some(answer) = answer else {
             // `pam --version` ends in its version; other runtimes stay unknown.
-            if !arguments.is_empty() && let Some(version) = binary_version(binary) {
+            if !arguments.is_empty()
+                && let Some(version) = binary_version(binary)
+            {
                 runtime.version = version;
             }
             return Ok(runtime);
@@ -609,18 +826,37 @@ impl PhpRuntime {
         if let Some(version) = answer.get("version").and_then(serde_json::Value::as_str) {
             runtime.version = version.to_owned();
         }
-        let directory = answer.get("extensionDir").and_then(serde_json::Value::as_str).map(PathBuf::from).unwrap_or_default();
+        let directory = answer
+            .get("extensionDir")
+            .and_then(serde_json::Value::as_str)
+            .map(PathBuf::from)
+            .unwrap_or_default();
         let loaded: Vec<String> = answer
             .get("extensions")
             .and_then(serde_json::Value::as_array)
-            .map(|names| names.iter().filter_map(serde_json::Value::as_str).map(str::to_ascii_lowercase).collect())
+            .map(|names| {
+                names
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_ascii_lowercase)
+                    .collect()
+            })
             .unwrap_or_default();
         let shared = |name: &str| {
-            let file = if cfg!(windows) { format!("php_{name}.dll") } else { format!("{name}.so") };
-            Some(directory.join(file)).filter(|path| !directory.as_os_str().is_empty() && path.is_file())
+            let file = if cfg!(windows) {
+                format!("php_{name}.dll")
+            } else {
+                format!("{name}.so")
+            };
+            Some(directory.join(file))
+                .filter(|path| !directory.as_os_str().is_empty() && path.is_file())
         };
         // Loaded extensions first, in the order PHP sorted their dependencies.
-        let mut names: Vec<&str> = loaded.iter().map(String::as_str).filter(|name| wanted.is_none_or(|wanted| wanted.iter().any(|item| item == name))).collect();
+        let mut names: Vec<&str> = loaded
+            .iter()
+            .map(String::as_str)
+            .filter(|name| wanted.is_none_or(|wanted| wanted.iter().any(|item| item == name)))
+            .collect();
         for name in wanted.unwrap_or_default() {
             if !loaded.contains(name) {
                 names.push(name);
@@ -631,17 +867,25 @@ impl PhpRuntime {
                 Some(path) => runtime.extensions.push((name.to_owned(), path)),
                 // Compiled into the binary: nothing to ship.
                 None if loaded.iter().any(|item| item == name) => {}
-                None => return Err(format!("the PHP extension {name:?} is not available in {}", binary.display())),
+                None => {
+                    return Err(format!(
+                        "the PHP extension {name:?} is not available in {}",
+                        binary.display()
+                    ));
+                }
             }
         }
         Ok(runtime)
     }
 
     fn ini(&self) -> String {
-        let mut ini = String::from("expose_php=Off\ndisplay_errors=Off\nlog_errors=On\nmemory_limit=512M\n");
+        let mut ini =
+            String::from("expose_php=Off\ndisplay_errors=Off\nlog_errors=On\nmemory_limit=512M\n");
         if !self.extensions.is_empty() {
             // A bundle does not know where it will be installed.
-            ini.push_str(&format!("extension_dir=\"${{{PHP_EXTENSION_DIR_VARIABLE}}}\"\n"));
+            ini.push_str(&format!(
+                "extension_dir=\"${{{PHP_EXTENSION_DIR_VARIABLE}}}\"\n"
+            ));
             for (name, _) in &self.extensions {
                 ini.push_str(&format!("extension={name}\n"));
             }
@@ -652,8 +896,16 @@ impl PhpRuntime {
 
 /// The last word `--version` prints, as `pam` reports its version.
 fn binary_version(binary: &Path) -> Option<String> {
-    let output = Command::new(binary).arg("--version").output().ok().filter(|output| output.status.success())?;
-    String::from_utf8(output.stdout).ok()?.split_whitespace().last().map(str::to_owned)
+    let output = Command::new(binary)
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    String::from_utf8(output.stdout)
+        .ok()?
+        .split_whitespace()
+        .last()
+        .map(str::to_owned)
 }
 
 // ---- the bundle -----------------------------------------------------------
@@ -675,14 +927,18 @@ struct SystemDependencies {
     rpm: Vec<&'static str>,
 }
 
-fn materialize_bundle(context: &BundleContext<'_>, bundle: &Path) -> Result<SystemDependencies, String> {
+fn materialize_bundle(
+    context: &BundleContext<'_>,
+    bundle: &Path,
+) -> Result<SystemDependencies, String> {
     let project = context.project;
     let application = &project.application;
     let app = bundle.join("app");
     let bin = bundle.join("bin");
     let php_bin = bundle.join(PHP_BIN);
     for directory in [&app, &bin, &php_bin, &bundle.join("etc")] {
-        fs::create_dir_all(directory).map_err(|error| format!("cannot create {}: {error}", directory.display()))?;
+        fs::create_dir_all(directory)
+            .map_err(|error| format!("cannot create {}: {error}", directory.display()))?;
     }
 
     copy_project(project, context.output, &app)?;
@@ -695,26 +951,41 @@ fn materialize_bundle(context: &BundleContext<'_>, bundle: &Path) -> Result<Syst
 
     let exe = std::env::consts::EXE_SUFFIX;
     copy_binary(context.host, &bin.join(format!("pam-desktop{exe}")))?;
-    copy_binary(&context.runtime.binary, &php_bin.join(&context.runtime.file_name))?;
-    let extension_sources: Vec<&Path> = context.runtime.extensions.iter().map(|(_, path)| path.as_path()).collect();
+    copy_binary(
+        &context.runtime.binary,
+        &php_bin.join(&context.runtime.file_name),
+    )?;
+    let extension_sources: Vec<&Path> = context
+        .runtime
+        .extensions
+        .iter()
+        .map(|(_, path)| path.as_path())
+        .collect();
     if !extension_sources.is_empty() {
         let extensions = bundle.join(PHP_EXTENSIONS);
         fs::create_dir_all(&extensions).map_err(|error| error.to_string())?;
         for source in &extension_sources {
-            let name = source.file_name().ok_or("a PHP extension has no file name")?;
-            fs::copy(source, extensions.join(name)).map_err(|error| format!("cannot bundle {}: {error}", source.display()))?;
+            let name = source
+                .file_name()
+                .ok_or("a PHP extension has no file name")?;
+            fs::copy(source, extensions.join(name))
+                .map_err(|error| format!("cannot bundle {}: {error}", source.display()))?;
         }
     }
 
     let launcher = bin.join(format!("{}{exe}", context.names.executable));
     let mut system = SystemDependencies::default();
     if cfg!(target_os = "linux") {
-        let php_objects = std::iter::once(context.runtime.binary.as_path()).chain(extension_sources.iter().copied());
+        let php_objects = std::iter::once(context.runtime.binary.as_path())
+            .chain(extension_sources.iter().copied());
         copy_libraries(&linux_libraries(php_objects)?, &bundle.join(PHP_LIB))?;
         let host_libraries = linux_libraries([context.host])?;
         let platform = platform_libraries(&host_libraries)?;
         system = system_dependencies(host_libraries.keys());
-        let own: BTreeMap<OsString, PathBuf> = host_libraries.into_iter().filter(|(name, _)| !platform.contains(name)).collect();
+        let own: BTreeMap<OsString, PathBuf> = host_libraries
+            .into_iter()
+            .filter(|(name, _)| !platform.contains(name))
+            .collect();
         copy_libraries(&own, &bundle.join("lib"))?;
     } else if cfg!(target_os = "macos") {
         copy_adjacent_libraries(context.host, &bundle.join("lib"), "dylib")?;
@@ -733,19 +1004,28 @@ fn materialize_bundle(context: &BundleContext<'_>, bundle: &Path) -> Result<Syst
         write_script(&bin.join(PHP_WRAPPER), &php_wrapper(context.runtime)?)?;
         write_script(&launcher, &launcher_script(&bundled_project_path)?)?;
     }
-    fs::write(bundle.join(PHP_INI), context.runtime.ini()).map_err(|error| format!("cannot write the bundled php.ini: {error}"))?;
+    fs::write(bundle.join(PHP_INI), context.runtime.ini())
+        .map_err(|error| format!("cannot write the bundled php.ini: {error}"))?;
 
     let icon_destination = bundle_icon_path(bundle, application, context.icon)?;
     if let Some(parent) = icon_destination.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    fs::copy(context.icon, &icon_destination)
-        .map_err(|error| format!("cannot copy the icon {} to {}: {error}", context.icon.display(), icon_destination.display()))?;
+    fs::copy(context.icon, &icon_destination).map_err(|error| {
+        format!(
+            "cannot copy the icon {} to {}: {error}",
+            context.icon.display(),
+            icon_destination.display()
+        )
+    })?;
     if cfg!(target_os = "linux") {
         let applications = bundle.join("share/applications");
         fs::create_dir_all(&applications).map_err(|error| error.to_string())?;
-        fs::write(applications.join(format!("{}.desktop.in", application.identifier)), desktop_entry(application, "@PAM_EXEC@"))
-            .map_err(|error| format!("cannot write the desktop entry template: {error}"))?;
+        fs::write(
+            applications.join(format!("{}.desktop.in", application.identifier)),
+            desktop_entry(application, "@PAM_EXEC@"),
+        )
+        .map_err(|error| format!("cannot write the desktop entry template: {error}"))?;
         write_portable_scripts(bundle, application, context.icon)?;
     }
     if context.sign && cfg!(target_os = "windows") {
@@ -797,7 +1077,11 @@ fn bundled_bootstrap(app: &Path, relative: &Path) -> Option<PathBuf> {
     if vendored.is_file() {
         return Some(vendored);
     }
-    project.ancestors().take_while(|ancestor| ancestor.starts_with(app)).map(|ancestor| ancestor.join(BOOTSTRAP)).find(|candidate| candidate.is_file())
+    project
+        .ancestors()
+        .take_while(|ancestor| ancestor.starts_with(app))
+        .map(|ancestor| ancestor.join(BOOTSTRAP))
+        .find(|candidate| candidate.is_file())
 }
 
 /// Writes what the build resolved into the bundled manifest, so the
@@ -808,8 +1092,16 @@ fn complete_bundled_manifest(project: &Project, bundled_project: &Path) -> Resul
     let application = &project.application;
     let mut document = project.manifest.document().clone();
     let resolved = [
-        ("applicationId", &application.identifier, project.manifest.text("applicationId")),
-        ("version", &application.version, project.manifest.text("version")),
+        (
+            "applicationId",
+            &application.identifier,
+            project.manifest.text("applicationId"),
+        ),
+        (
+            "version",
+            &application.version,
+            project.manifest.text("version"),
+        ),
         ("entry", &application.entry, Some(project.manifest.entry())),
     ];
     let mut changed = false;
@@ -837,11 +1129,22 @@ fn copy_project(project: &Project, output: &Path, app: &Path) -> Result<(), Stri
     let context = CopyContext {
         source_root: &project.source_root,
         build_output: output,
-        excludes: project.application.exclude.iter().map(|path| project.relative.join(path)).collect(),
+        excludes: project
+            .application
+            .exclude
+            .iter()
+            .map(|path| project.relative.join(path))
+            .collect(),
     };
     let mut active = HashSet::new();
     let Some(include) = &project.include else {
-        return copy_directory(&context, &project.source_root, app, Path::new(""), &mut active);
+        return copy_directory(
+            &context,
+            &project.source_root,
+            app,
+            Path::new(""),
+            &mut active,
+        );
     };
     for relative in include {
         let source = project.source_root.join(relative);
@@ -850,13 +1153,16 @@ fn copy_project(project: &Project, output: &Path, app: &Path) -> Result<(), Stri
             continue;
         }
         if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent).map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
         }
         if source.is_dir() {
-            fs::create_dir_all(&destination).map_err(|error| format!("cannot create {}: {error}", destination.display()))?;
+            fs::create_dir_all(&destination)
+                .map_err(|error| format!("cannot create {}: {error}", destination.display()))?;
             copy_directory(&context, &source, &destination, relative, &mut active)?;
         } else {
-            fs::copy(&source, &destination).map_err(|error| format!("cannot copy {}: {error}", source.display()))?;
+            fs::copy(&source, &destination)
+                .map_err(|error| format!("cannot copy {}: {error}", source.display()))?;
         }
     }
     Ok(())
@@ -869,16 +1175,23 @@ fn copy_directory(
     relative: &Path,
     active: &mut HashSet<PathBuf>,
 ) -> Result<(), String> {
-    let canonical = source.canonicalize().map_err(|error| format!("cannot resolve {}: {error}", source.display()))?;
+    let canonical = source
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve {}: {error}", source.display()))?;
     if canonical.starts_with(context.build_output) {
         return Ok(());
     }
     if !active.insert(canonical.clone()) {
-        return Err(format!("bundle symlink cycle detected at {}", source.display()));
+        return Err(format!(
+            "bundle symlink cycle detected at {}",
+            source.display()
+        ));
     }
 
     let result = (|| {
-        for entry in fs::read_dir(source).map_err(|error| format!("cannot read {}: {error}", source.display()))? {
+        for entry in fs::read_dir(source)
+            .map_err(|error| format!("cannot read {}: {error}", source.display()))?
+        {
             let entry = entry.map_err(|error| error.to_string())?;
             let path = entry.path();
             let child_relative = relative.join(entry.file_name());
@@ -886,16 +1199,22 @@ fn copy_directory(
                 continue;
             }
             let target = destination.join(entry.file_name());
-            let file_type = entry.file_type().map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
             if file_type.is_dir() {
-                let canonical = path.canonicalize().map_err(|error| format!("cannot resolve {}: {error}", path.display()))?;
+                let canonical = path
+                    .canonicalize()
+                    .map_err(|error| format!("cannot resolve {}: {error}", path.display()))?;
                 if canonical.starts_with(context.build_output) {
                     continue;
                 }
-                fs::create_dir(&target).map_err(|error| format!("cannot create {}: {error}", target.display()))?;
+                fs::create_dir(&target)
+                    .map_err(|error| format!("cannot create {}: {error}", target.display()))?;
                 copy_directory(context, &path, &target, &child_relative, active)?;
             } else if file_type.is_file() {
-                fs::copy(&path, &target).map_err(|error| format!("cannot copy {}: {error}", path.display()))?;
+                fs::copy(&path, &target)
+                    .map_err(|error| format!("cannot copy {}: {error}", path.display()))?;
             } else if file_type.is_symlink() {
                 copy_project_symlink(context, &path, &target, &child_relative, active)?;
             } else {
@@ -918,19 +1237,32 @@ fn copy_project_symlink(
     relative: &Path,
     active: &mut HashSet<PathBuf>,
 ) -> Result<(), String> {
-    let canonical = source.canonicalize().map_err(|error| format!("cannot resolve symlink {}: {error}", source.display()))?;
-    let vendored = relative.components().any(|component| component.as_os_str() == "vendor");
+    let canonical = source
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve symlink {}: {error}", source.display()))?;
+    let vendored = relative
+        .components()
+        .any(|component| component.as_os_str() == "vendor");
     if !canonical.starts_with(context.source_root) && !vendored {
-        return Err(format!("bundle symlink escapes the project outside vendor: {}", source.display()));
+        return Err(format!(
+            "bundle symlink escapes the project outside vendor: {}",
+            source.display()
+        ));
     }
     if canonical.starts_with(context.build_output) {
-        return Err(format!("bundle symlink points into the build output: {}", source.display()));
+        return Err(format!(
+            "bundle symlink points into the build output: {}",
+            source.display()
+        ));
     }
     if canonical.is_dir() {
-        fs::create_dir(destination).map_err(|error| format!("cannot create {}: {error}", destination.display()))?;
+        fs::create_dir(destination)
+            .map_err(|error| format!("cannot create {}: {error}", destination.display()))?;
         copy_directory(context, &canonical, destination, relative, active)
     } else if canonical.is_file() {
-        fs::copy(&canonical, destination).map(|_| ()).map_err(|error| format!("cannot materialize {}: {error}", source.display()))
+        fs::copy(&canonical, destination)
+            .map(|_| ())
+            .map_err(|error| format!("cannot materialize {}: {error}", source.display()))
     } else {
         Err(format!("unsupported project symlink: {}", source.display()))
     }
@@ -942,8 +1274,13 @@ fn sanitize_composer_metadata(project: &Path) -> Result<(), String> {
     let manifest_path = project.join("composer.json");
     if manifest_path.is_file() {
         let mut manifest = read_json_object(&manifest_path)?;
-        if let Some(repositories) = manifest.get_mut("repositories").and_then(serde_json::Value::as_array_mut) {
-            repositories.retain(|repository| repository.get("type").and_then(serde_json::Value::as_str) != Some("path"));
+        if let Some(repositories) = manifest
+            .get_mut("repositories")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            repositories.retain(|repository| {
+                repository.get("type").and_then(serde_json::Value::as_str) != Some("path")
+            });
             if repositories.is_empty() {
                 manifest.remove("repositories");
             }
@@ -961,7 +1298,11 @@ fn sanitize_composer_metadata(project: &Path) -> Result<(), String> {
             continue;
         };
         for package in packages {
-            let path_distribution = package.get("dist").and_then(|dist| dist.get("type")).and_then(serde_json::Value::as_str) == Some("path");
+            let path_distribution = package
+                .get("dist")
+                .and_then(|dist| dist.get("type"))
+                .and_then(serde_json::Value::as_str)
+                == Some("path");
             if path_distribution && let Some(package) = package.as_object_mut() {
                 package.remove("dist");
                 package.remove("transport-options");
@@ -972,7 +1313,8 @@ fn sanitize_composer_metadata(project: &Path) -> Result<(), String> {
 }
 
 fn read_json_object(path: &Path) -> Result<serde_json::Map<String, serde_json::Value>, String> {
-    let source = fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let source =
+        fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     match serde_json::from_slice::<serde_json::Value>(&source) {
         Ok(serde_json::Value::Object(object)) => Ok(object),
         Ok(_) => Err(format!("{} must contain a JSON object", path.display())),
@@ -980,8 +1322,12 @@ fn read_json_object(path: &Path) -> Result<serde_json::Map<String, serde_json::V
     }
 }
 
-fn write_json_object(path: &Path, object: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
-    let mut encoded = serde_json::to_vec_pretty(object).map_err(|error| format!("cannot serialize {}: {error}", path.display()))?;
+fn write_json_object(
+    path: &Path,
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let mut encoded = serde_json::to_vec_pretty(object)
+        .map_err(|error| format!("cannot serialize {}: {error}", path.display()))?;
     encoded.push(b'\n');
     fs::write(path, encoded).map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
@@ -990,80 +1336,151 @@ fn write_json_object(path: &Path, object: &serde_json::Map<String, serde_json::V
 /// secrets, the host's development state, the development dependencies of
 /// vendored packages, and what the manifest excludes.
 fn excluded_path(relative: &Path, configured: &[PathBuf]) -> bool {
-    let names = || relative.components().filter_map(|component| if let Component::Normal(name) = component { Some(name) } else { None });
+    let names = || {
+        relative.components().filter_map(|component| {
+            if let Component::Normal(name) = component {
+                Some(name)
+            } else {
+                None
+            }
+        })
+    };
     let vendor_depth = names().position(|name| name == "vendor");
-    let nested_package_vendor = vendor_depth.is_some_and(|depth| names().skip(depth + 1).any(|name| name == "vendor"));
+    let nested_package_vendor =
+        vendor_depth.is_some_and(|depth| names().skip(depth + 1).any(|name| name == "vendor"));
     let default = names().any(|name| {
         let name = name.to_string_lossy();
-        matches!(name.as_ref(), ".git" | ".pam" | ".pam-desktop" | ".pamignore" | "dist" | "node_modules" | "target" | ".env") || name.starts_with(".env.")
+        matches!(
+            name.as_ref(),
+            ".git"
+                | ".pam"
+                | ".pam-desktop"
+                | ".pamignore"
+                | "dist"
+                | "node_modules"
+                | "target"
+                | ".env"
+        ) || name.starts_with(".env.")
     });
-    default || nested_package_vendor || configured.iter().any(|excluded| relative.starts_with(excluded))
+    default
+        || nested_package_vendor
+        || configured
+            .iter()
+            .any(|excluded| relative.starts_with(excluded))
 }
 
 fn copy_binary(source: &Path, destination: &Path) -> Result<(), String> {
-    fs::copy(source, destination).map_err(|error| format!("cannot copy {} to {}: {error}", source.display(), destination.display()))?;
+    fs::copy(source, destination).map_err(|error| {
+        format!(
+            "cannot copy {} to {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    })?;
     make_executable(destination)
 }
 
 /// The shared libraries of `objects` outside the base system ABI, by file name.
-fn linux_libraries<'a>(objects: impl IntoIterator<Item = &'a Path>) -> Result<BTreeMap<OsString, PathBuf>, String> {
+fn linux_libraries<'a>(
+    objects: impl IntoIterator<Item = &'a Path>,
+) -> Result<BTreeMap<OsString, PathBuf>, String> {
     let mut libraries = BTreeMap::<OsString, PathBuf>::new();
     for object in objects {
         for library in runtime_libraries(object)? {
-            let name = library.file_name().ok_or_else(|| format!("runtime library has no file name: {}", library.display()))?.to_os_string();
+            let name = library
+                .file_name()
+                .ok_or_else(|| format!("runtime library has no file name: {}", library.display()))?
+                .to_os_string();
             if let Some(existing) = libraries.insert(name.clone(), library.clone())
                 && existing != library
             {
-                return Err(format!("runtime library name conflict for {}: {} and {}", name.to_string_lossy(), existing.display(), library.display()));
+                return Err(format!(
+                    "runtime library name conflict for {}: {} and {}",
+                    name.to_string_lossy(),
+                    existing.display(),
+                    library.display()
+                ));
             }
         }
     }
     Ok(libraries)
 }
 
-fn copy_libraries(libraries: &BTreeMap<OsString, PathBuf>, destination: &Path) -> Result<(), String> {
+fn copy_libraries(
+    libraries: &BTreeMap<OsString, PathBuf>,
+    destination: &Path,
+) -> Result<(), String> {
     if libraries.is_empty() {
         return Ok(());
     }
-    fs::create_dir_all(destination).map_err(|error| format!("cannot create {}: {error}", destination.display()))?;
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("cannot create {}: {error}", destination.display()))?;
     for (name, source) in libraries {
-        fs::copy(source, destination.join(name)).map_err(|error| format!("cannot bundle {}: {error}", source.display()))?;
+        fs::copy(source, destination.join(name))
+            .map_err(|error| format!("cannot bundle {}: {error}", source.display()))?;
     }
     Ok(())
 }
 
 /// The libraries that ship beside a binary (macOS and Windows builds).
-fn copy_adjacent_libraries(binary: &Path, destination: &Path, extension: &str) -> Result<(), String> {
+fn copy_adjacent_libraries(
+    binary: &Path,
+    destination: &Path,
+    extension: &str,
+) -> Result<(), String> {
     let Some(parent) = binary.parent() else {
         return Ok(());
     };
-    for entry in fs::read_dir(parent).map_err(|error| format!("cannot inspect the runtime directory {}: {error}", parent.display()))? {
+    for entry in fs::read_dir(parent).map_err(|error| {
+        format!(
+            "cannot inspect the runtime directory {}: {error}",
+            parent.display()
+        )
+    })? {
         let path = entry.map_err(|error| error.to_string())?.path();
-        let matches = path.extension().and_then(OsStr::to_str).is_some_and(|found| found.eq_ignore_ascii_case(extension));
+        let matches = path
+            .extension()
+            .and_then(OsStr::to_str)
+            .is_some_and(|found| found.eq_ignore_ascii_case(extension));
         let Some(name) = path.file_name().filter(|_| matches && path.is_file()) else {
             continue;
         };
-        fs::create_dir_all(destination).map_err(|error| format!("cannot create {}: {error}", destination.display()))?;
-        fs::copy(&path, destination.join(name)).map_err(|error| format!("cannot bundle {}: {error}", path.display()))?;
+        fs::create_dir_all(destination)
+            .map_err(|error| format!("cannot create {}: {error}", destination.display()))?;
+        fs::copy(&path, destination.join(name))
+            .map_err(|error| format!("cannot bundle {}: {error}", path.display()))?;
     }
     Ok(())
 }
 
 fn runtime_libraries(binary: &Path) -> Result<Vec<PathBuf>, String> {
-    let output = Command::new("ldd").arg(binary).output().map_err(|error| format!("cannot inspect {} with ldd: {error}", binary.display()))?;
+    let output = Command::new("ldd")
+        .arg(binary)
+        .output()
+        .map_err(|error| format!("cannot inspect {} with ldd: {error}", binary.display()))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let diagnostics = format!("{stdout}\n{stderr}");
-    if !output.status.success() && (diagnostics.contains("not a dynamic executable") || diagnostics.contains("statically linked")) {
+    if !output.status.success()
+        && (diagnostics.contains("not a dynamic executable")
+            || diagnostics.contains("statically linked"))
+    {
         return Ok(Vec::new());
     }
     if !output.status.success() {
-        return Err(format!("ldd failed for {}: {diagnostics}", binary.display()));
+        return Err(format!(
+            "ldd failed for {}: {diagnostics}",
+            binary.display()
+        ));
     }
     let mut result = Vec::new();
     for line in stdout.lines() {
         if line.contains("not found") {
-            return Err(format!("a runtime dependency is missing for {}: {}", binary.display(), line.trim()));
+            return Err(format!(
+                "a runtime dependency is missing for {}: {}",
+                binary.display(),
+                line.trim()
+            ));
         }
         let candidate = if let Some((_, resolved)) = line.split_once("=>") {
             resolved.split_whitespace().next()
@@ -1084,22 +1501,44 @@ fn runtime_libraries(binary: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 fn system_abi_library(name: &str) -> bool {
-    ["ld-linux", "libc.so", "libdl.so", "libm.so", "libpthread.so", "libresolv.so", "librt.so", "libutil.so", "libnss_"]
-        .iter()
-        .any(|prefix| name.starts_with(prefix))
+    [
+        "ld-linux",
+        "libc.so",
+        "libdl.so",
+        "libm.so",
+        "libpthread.so",
+        "libresolv.so",
+        "librt.so",
+        "libutil.so",
+        "libnss_",
+    ]
+    .iter()
+    .any(|prefix| name.starts_with(prefix))
 }
 
 /// Libraries of the desktop platform the host is built on. They come from
 /// the system: a bundled GTK would not match the theme, the portals or the
 /// GPU drivers of the machine it runs on.
 fn platform_root(name: &str) -> bool {
-    ["libgtk-4.", "libadwaita-1.", "libwebkitgtk-", "libjavascriptcoregtk-", "libgst", "libglib-2.0.", "libgobject-2.0.", "libgio-2.0.", "libgmodule-2.0."]
-        .iter()
-        .any(|prefix| name.starts_with(prefix))
+    [
+        "libgtk-4.",
+        "libadwaita-1.",
+        "libwebkitgtk-",
+        "libjavascriptcoregtk-",
+        "libgst",
+        "libglib-2.0.",
+        "libgobject-2.0.",
+        "libgio-2.0.",
+        "libgmodule-2.0.",
+    ]
+    .iter()
+    .any(|prefix| name.starts_with(prefix))
 }
 
 /// The platform libraries among `libraries` and everything they depend on.
-fn platform_libraries(libraries: &BTreeMap<OsString, PathBuf>) -> Result<HashSet<OsString>, String> {
+fn platform_libraries(
+    libraries: &BTreeMap<OsString, PathBuf>,
+) -> Result<HashSet<OsString>, String> {
     let mut platform = HashSet::new();
     for (name, path) in libraries {
         // `ldd` lists whole closures: a root inside one is already covered.
@@ -1117,10 +1556,18 @@ fn platform_libraries(libraries: &BTreeMap<OsString, PathBuf>) -> Result<HashSet
 }
 
 /// The packages that provide the platform libraries the host links against.
-fn system_dependencies<'a>(libraries: impl IntoIterator<Item = &'a OsString>) -> SystemDependencies {
-    let names: Vec<&str> = libraries.into_iter().filter_map(|name| name.to_str()).collect();
+fn system_dependencies<'a>(
+    libraries: impl IntoIterator<Item = &'a OsString>,
+) -> SystemDependencies {
+    let names: Vec<&str> = libraries
+        .into_iter()
+        .filter_map(|name| name.to_str())
+        .collect();
     let links = |prefix: &str| names.iter().any(|name| name.starts_with(prefix));
-    let mut dependencies = SystemDependencies { debian: vec!["libc6"], rpm: vec!["glibc"] };
+    let mut dependencies = SystemDependencies {
+        debian: vec!["libc6"],
+        rpm: vec!["glibc"],
+    };
     let mut add = |linked: bool, debian: &[&'static str], rpm: &[&'static str]| {
         if linked {
             dependencies.debian.extend(debian);
@@ -1129,9 +1576,17 @@ fn system_dependencies<'a>(libraries: impl IntoIterator<Item = &'a OsString>) ->
     };
     add(links("libgtk-4."), &["libgtk-4-1"], &["gtk4"]);
     add(links("libadwaita-1."), &["libadwaita-1-0"], &["libadwaita"]);
-    add(links("libwebkitgtk-6.0."), &["libwebkitgtk-6.0-4"], &["webkitgtk6.0"]);
+    add(
+        links("libwebkitgtk-6.0."),
+        &["libwebkitgtk-6.0-4"],
+        &["webkitgtk6.0"],
+    );
     // GTK plays media through GStreamer, which needs its plugins at run time.
-    add(links("libgst"), &["gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good"], &["gstreamer1-plugins-base", "gstreamer1-plugins-good"]);
+    add(
+        links("libgst"),
+        &["gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good"],
+        &["gstreamer1-plugins-base", "gstreamer1-plugins-good"],
+    );
     dependencies
 }
 
@@ -1151,13 +1606,20 @@ fn shell_double_quoted(value: &str) -> Result<String, String> {
 }
 
 const fn library_path_variable() -> &'static str {
-    if cfg!(target_os = "macos") { "DYLD_LIBRARY_PATH" } else { "LD_LIBRARY_PATH" }
+    if cfg!(target_os = "macos") {
+        "DYLD_LIBRARY_PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    }
 }
 
 /// The launcher: finds the bundle through links, points the host at the
 /// bundled PHP and starts the application.
 fn launcher_script(project: &str) -> Result<String, String> {
-    Ok(LAUNCHER.replace("@LIBRARY_PATH@", library_path_variable()).replace("@PHP@", PHP_WRAPPER).replace("@PROJECT@", &shell_double_quoted(project)?))
+    Ok(LAUNCHER
+        .replace("@LIBRARY_PATH@", library_path_variable())
+        .replace("@PHP@", PHP_WRAPPER)
+        .replace("@PROJECT@", &shell_double_quoted(project)?))
 }
 
 const LAUNCHER: &str = r#"#!/bin/sh
@@ -1193,7 +1655,9 @@ exec "$PAM_BUNDLE/bin/pam-desktop" run "$PAM_BUNDLE/@PROJECT@"
 fn php_wrapper(runtime: &PhpRuntime) -> Result<String, String> {
     let mut arguments = String::new();
     for argument in &runtime.arguments {
-        let argument = argument.to_str().ok_or("the PHP runtime arguments must be valid UTF-8")?;
+        let argument = argument
+            .to_str()
+            .ok_or("the PHP runtime arguments must be valid UTF-8")?;
         arguments.push_str(&format!("\"{}\" ", shell_double_quoted(argument)?));
     }
     Ok(PHP_WRAPPER_SCRIPT
@@ -1227,19 +1691,41 @@ fn write_script(path: &Path, script: &str) -> Result<(), String> {
 /// Where the icon sits in the hicolor theme: `(theme directory, extension)`.
 fn icon_theme(icon: &Path) -> Result<(&'static str, String), String> {
     let extension = icon_extension(icon)?;
-    Ok((if extension == "svg" { "scalable" } else { "512x512" }, extension))
+    Ok((
+        if extension == "svg" {
+            "scalable"
+        } else {
+            "512x512"
+        },
+        extension,
+    ))
 }
 
-fn bundle_icon_path(bundle: &Path, application: &Application, icon: &Path) -> Result<PathBuf, String> {
+fn bundle_icon_path(
+    bundle: &Path,
+    application: &Application,
+    icon: &Path,
+) -> Result<PathBuf, String> {
     let (theme, extension) = icon_theme(icon)?;
-    Ok(bundle.join(format!("share/icons/hicolor/{theme}/apps/{}.{extension}", application.identifier)))
+    Ok(bundle.join(format!(
+        "share/icons/hicolor/{theme}/apps/{}.{extension}",
+        application.identifier
+    )))
 }
 
 /// The desktop entry: one link per launch (`%u`), and the schemes of
 /// `urlSchemes` as the MIME types the application handles.
 fn desktop_entry(application: &Application, executable: &str) -> String {
-    let mime_types: String = application.url_schemes.iter().map(|scheme| format!("x-scheme-handler/{scheme};")).collect();
-    let mime_line = if mime_types.is_empty() { String::new() } else { format!("MimeType={mime_types}\n") };
+    let mime_types: String = application
+        .url_schemes
+        .iter()
+        .map(|scheme| format!("x-scheme-handler/{scheme};"))
+        .collect();
+    let mime_line = if mime_types.is_empty() {
+        String::new()
+    } else {
+        format!("MimeType={mime_types}\n")
+    };
     format!(
         "[Desktop Entry]\nType=Application\nVersion=1.5\nName={}\nComment={}\nExec={executable} %u\nIcon={}\nTerminal=false\nCategories={};\n{mime_line}StartupWMClass={}\n",
         desktop_value(&application.name),
@@ -1268,9 +1754,16 @@ const fn freedesktop_category(category: Category) -> &'static str {
 }
 
 /// `install.sh` and `uninstall.sh` of the portable bundle.
-fn write_portable_scripts(bundle: &Path, application: &Application, icon: &Path) -> Result<(), String> {
+fn write_portable_scripts(
+    bundle: &Path,
+    application: &Application,
+    icon: &Path,
+) -> Result<(), String> {
     let (theme, extension) = icon_theme(icon)?;
-    for (name, template) in [("install.sh", PORTABLE_INSTALLER), ("uninstall.sh", PORTABLE_UNINSTALLER)] {
+    for (name, template) in [
+        ("install.sh", PORTABLE_INSTALLER),
+        ("uninstall.sh", PORTABLE_UNINSTALLER),
+    ] {
         let script = template
             .replace("@APP_ID@", &application.identifier)
             .replace("@EXECUTABLE@", application.executable())
@@ -1346,7 +1839,9 @@ struct PackageContext<'a> {
 }
 
 fn run_tool(command: &mut Command, tool: &str) -> Result<(), String> {
-    let status = command.status().map_err(|error| format!("cannot start {tool}: {error}"))?;
+    let status = command
+        .status()
+        .map_err(|error| format!("cannot start {tool}: {error}"))?;
     if !status.success() {
         return Err(format!("{tool} failed with status {status}"));
     }
@@ -1356,12 +1851,26 @@ fn run_tool(command: &mut Command, tool: &str) -> Result<(), String> {
 /// The update-ready archive: the bundle directory (the `.app` on macOS).
 /// On Linux, entry order, ownership, timestamps and the gzip header are
 /// fixed, so the same inputs give the same bytes.
-fn create_portable_archive(package: &PackageContext<'_>, output: &Path, source_date_epoch: u64) -> Result<(), String> {
-    let bundle_name = package.bundle.file_name().and_then(OsStr::to_str).ok_or("the bundle name is not valid UTF-8")?;
+fn create_portable_archive(
+    package: &PackageContext<'_>,
+    output: &Path,
+    source_date_epoch: u64,
+) -> Result<(), String> {
+    let bundle_name = package
+        .bundle
+        .file_name()
+        .and_then(OsStr::to_str)
+        .ok_or("the bundle name is not valid UTF-8")?;
     if cfg!(target_os = "linux") {
         run_tool(
             Command::new("tar")
-                .args(["--sort=name", &format!("--mtime=@{source_date_epoch}"), "--owner=0", "--group=0", "--numeric-owner"])
+                .args([
+                    "--sort=name",
+                    &format!("--mtime=@{source_date_epoch}"),
+                    "--owner=0",
+                    "--group=0",
+                    "--numeric-owner",
+                ])
                 .args(["--use-compress-program", "gzip -n", "-cf"])
                 .arg(output)
                 .arg("-C")
@@ -1371,7 +1880,13 @@ fn create_portable_archive(package: &PackageContext<'_>, output: &Path, source_d
         )
     } else if cfg!(target_os = "macos") {
         let application = create_macos_application(package)?;
-        run_tool(Command::new("ditto").args(["-c", "-k", "--sequesterRsrc", "--keepParent"]).arg(application).arg(output), "ditto")
+        run_tool(
+            Command::new("ditto")
+                .args(["-c", "-k", "--sequesterRsrc", "--keepParent"])
+                .arg(application)
+                .arg(output),
+            "ditto",
+        )
     } else {
         run_tool(
             Command::new("powershell.exe")
@@ -1389,13 +1904,17 @@ fn create_portable_archive(package: &PackageContext<'_>, output: &Path, source_d
 }
 
 /// The parts of the bundle a system package installs below `/opt`.
-const INSTALLED_BUNDLE_ENTRIES: [&str; 6] = ["app", "bin", "lib", "etc", "runtime", bundle::MANIFEST];
+const INSTALLED_BUNDLE_ENTRIES: [&str; 6] =
+    ["app", "bin", "lib", "etc", "runtime", bundle::MANIFEST];
 
 /// Stages `/opt/<id>`, the launcher link, the desktop entry and the icon the
 /// way Debian and RPM packages install them.
 fn stage_system_tree(package: &PackageContext<'_>, root: &Path) -> Result<(), String> {
     let application = package.application;
-    let installed = format!("/opt/{}/bin/{}", application.identifier, package.names.executable);
+    let installed = format!(
+        "/opt/{}/bin/{}",
+        application.identifier, package.names.executable
+    );
     let application_root = root.join("opt").join(&application.identifier);
     fs::create_dir_all(&application_root).map_err(|error| error.to_string())?;
     for entry in INSTALLED_BUNDLE_ENTRIES {
@@ -1406,11 +1925,16 @@ fn stage_system_tree(package: &PackageContext<'_>, root: &Path) -> Result<(), St
     }
     let applications = root.join("usr/share/applications");
     fs::create_dir_all(&applications).map_err(|error| error.to_string())?;
-    fs::write(applications.join(format!("{}.desktop", application.identifier)), desktop_entry(application, &installed))
-        .map_err(|error| format!("cannot write the desktop entry: {error}"))?;
+    fs::write(
+        applications.join(format!("{}.desktop", application.identifier)),
+        desktop_entry(application, &installed),
+    )
+    .map_err(|error| format!("cannot write the desktop entry: {error}"))?;
 
     let source_icon = bundle_icon_path(package.bundle, application, package.icon)?;
-    let relative_icon = source_icon.strip_prefix(package.bundle).map_err(|error| error.to_string())?;
+    let relative_icon = source_icon
+        .strip_prefix(package.bundle)
+        .map_err(|error| error.to_string())?;
     let destination_icon = root.join("usr").join(relative_icon);
     if let Some(parent) = destination_icon.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -1425,20 +1949,32 @@ fn stage_system_tree(package: &PackageContext<'_>, root: &Path) -> Result<(), St
 fn symlink(target: &str, link: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(target, link).map_err(|error| format!("cannot create the link {}: {error}", link.display()))
+        std::os::unix::fs::symlink(target, link)
+            .map_err(|error| format!("cannot create the link {}: {error}", link.display()))
     }
     #[cfg(not(unix))]
     {
         let _ = target;
-        Err(format!("cannot create the link {}: links are a Unix packaging feature", link.display()))
+        Err(format!(
+            "cannot create the link {}: links are a Unix packaging feature",
+            link.display()
+        ))
     }
 }
 
 fn package_description(application: &Application) -> &str {
-    if application.description.is_empty() { &application.name } else { &application.description }
+    if application.description.is_empty() {
+        &application.name
+    } else {
+        &application.description
+    }
 }
 
-fn create_debian_package(package: &PackageContext<'_>, output: &Path, source_date_epoch: u64) -> Result<(), String> {
+fn create_debian_package(
+    package: &PackageContext<'_>,
+    output: &Path,
+    source_date_epoch: u64,
+) -> Result<(), String> {
     let application = package.application;
     let root = package.workspace.join("debian-root");
     stage_system_tree(package, &root)?;
@@ -1456,10 +1992,15 @@ fn create_debian_package(package: &PackageContext<'_>, output: &Path, source_dat
         application.name,
         package_description(application),
     );
-    fs::write(control_directory.join("control"), control).map_err(|error| format!("cannot write the Debian control file: {error}"))?;
+    fs::write(control_directory.join("control"), control)
+        .map_err(|error| format!("cannot write the Debian control file: {error}"))?;
     normalize_permissions(&root)?;
     run_tool(
-        Command::new("dpkg-deb").args(["--root-owner-group", "--build"]).arg(&root).arg(output).env("SOURCE_DATE_EPOCH", source_date_epoch.to_string()),
+        Command::new("dpkg-deb")
+            .args(["--root-owner-group", "--build"])
+            .arg(&root)
+            .arg(output)
+            .env("SOURCE_DATE_EPOCH", source_date_epoch.to_string()),
         "dpkg-deb",
     )
 }
@@ -1468,20 +2009,43 @@ fn create_appimage_package(package: &PackageContext<'_>, output: &Path) -> Resul
     let application = package.application;
     let executable = &package.names.executable;
     let app_dir = package.workspace.join(format!("{executable}.AppDir"));
-    hardlink_or_copy(package.bundle, &app_dir.join("usr/lib").join(&application.identifier))?;
+    hardlink_or_copy(
+        package.bundle,
+        &app_dir.join("usr/lib").join(&application.identifier),
+    )?;
     let usr_bin = app_dir.join("usr/bin");
     fs::create_dir_all(&usr_bin).map_err(|error| error.to_string())?;
-    symlink(&format!("../lib/{}/bin/{executable}", application.identifier), &usr_bin.join(executable))?;
+    symlink(
+        &format!("../lib/{}/bin/{executable}", application.identifier),
+        &usr_bin.join(executable),
+    )?;
     let desktop_name = format!("{}.desktop", application.identifier);
-    fs::write(app_dir.join(&desktop_name), desktop_entry(application, executable)).map_err(|error| format!("cannot write the AppImage desktop entry: {error}"))?;
-    let icon_name = format!("{}.{}", application.identifier, icon_extension(package.icon)?);
-    fs::copy(package.icon, app_dir.join(&icon_name)).map_err(|error| format!("cannot copy the AppImage icon: {error}"))?;
+    fs::write(
+        app_dir.join(&desktop_name),
+        desktop_entry(application, executable),
+    )
+    .map_err(|error| format!("cannot write the AppImage desktop entry: {error}"))?;
+    let icon_name = format!(
+        "{}.{}",
+        application.identifier,
+        icon_extension(package.icon)?
+    );
+    fs::copy(package.icon, app_dir.join(&icon_name))
+        .map_err(|error| format!("cannot copy the AppImage icon: {error}"))?;
     symlink(&desktop_name, &app_dir.join("AppRun.desktop"))?;
     write_script(
         &app_dir.join("AppRun"),
-        &format!("#!/bin/sh\nset -eu\nHERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\nexec \"$HERE/usr/bin/{executable}\" \"$@\"\n"),
+        &format!(
+            "#!/bin/sh\nset -eu\nHERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\nexec \"$HERE/usr/bin/{executable}\" \"$@\"\n"
+        ),
     )?;
-    run_tool(Command::new("appimagetool").arg(&app_dir).arg(output).env("ARCH", linux_architecture(&package.names.architecture, "AppImage")?), "appimagetool")
+    run_tool(
+        Command::new("appimagetool").arg(&app_dir).arg(output).env(
+            "ARCH",
+            linux_architecture(&package.names.architecture, "AppImage")?,
+        ),
+        "appimagetool",
+    )
 }
 
 fn create_rpm_package(package: &PackageContext<'_>, output: &Path) -> Result<(), String> {
@@ -1505,7 +2069,13 @@ fn create_rpm_package(package: &PackageContext<'_>, output: &Path) -> Result<(),
     );
     let spec_path = specs.join(format!("{executable}.spec"));
     fs::write(&spec_path, spec).map_err(|error| format!("cannot write the RPM spec: {error}"))?;
-    run_tool(Command::new("rpmbuild").args(["-bb", "--define"]).arg(format!("_topdir {}", top.display())).arg(&spec_path), "rpmbuild")?;
+    run_tool(
+        Command::new("rpmbuild")
+            .args(["-bb", "--define"])
+            .arg(format!("_topdir {}", top.display()))
+            .arg(&spec_path),
+        "rpmbuild",
+    )?;
     let built = find_single_extension(&top.join("RPMS"), "rpm")?;
     fs::rename(&built, output).map_err(|error| format!("cannot stage the RPM: {error}"))
 }
@@ -1526,7 +2096,9 @@ fn find_single_extension(root: &Path, extension: &str) -> Result<PathBuf, String
     let mut matches = Vec::new();
     let mut directories = vec![root.to_path_buf()];
     while let Some(directory) = directories.pop() {
-        for entry in fs::read_dir(&directory).map_err(|error| format!("cannot inspect {}: {error}", directory.display()))? {
+        for entry in fs::read_dir(&directory)
+            .map_err(|error| format!("cannot inspect {}: {error}", directory.display()))?
+        {
             let path = entry.map_err(|error| error.to_string())?.path();
             if path.is_dir() {
                 directories.push(path);
@@ -1537,7 +2109,10 @@ fn find_single_extension(root: &Path, extension: &str) -> Result<PathBuf, String
     }
     match (matches.pop(), matches.is_empty()) {
         (Some(path), true) => Ok(path),
-        (found, _) => Err(format!("expected exactly one .{extension} artifact, found {}", matches.len() + usize::from(found.is_some()))),
+        (found, _) => Err(format!(
+            "expected exactly one .{extension} artifact, found {}",
+            matches.len() + usize::from(found.is_some())
+        )),
     }
 }
 
@@ -1563,9 +2138,13 @@ fn create_macos_application(package: &PackageContext<'_>) -> Result<PathBuf, Str
         ),
     )?;
     let icon_name = format!("AppIcon.{}", icon_extension(package.icon)?);
-    fs::copy(package.icon, resources.join(&icon_name)).map_err(|error| format!("cannot copy the macOS application icon: {error}"))?;
-    fs::write(contents.join("Info.plist"), macos_info_plist(package.application, executable_name, &icon_name))
-        .map_err(|error| format!("cannot write the macOS Info.plist: {error}"))?;
+    fs::copy(package.icon, resources.join(&icon_name))
+        .map_err(|error| format!("cannot copy the macOS application icon: {error}"))?;
+    fs::write(
+        contents.join("Info.plist"),
+        macos_info_plist(package.application, executable_name, &icon_name),
+    )
+    .map_err(|error| format!("cannot write the macOS Info.plist: {error}"))?;
     if package.sign {
         sign_macos_path(&executable, None)?;
         sign_macos_path(&application, None)?;
@@ -1575,7 +2154,11 @@ fn create_macos_application(package: &PackageContext<'_>) -> Result<PathBuf, Str
 
 fn macos_info_plist(application: &Application, executable: &str, icon_name: &str) -> String {
     let version = xml_escape(&numeric_version(&application.version, 3));
-    let build = if application.build.is_empty() { version.clone() } else { xml_escape(&numeric_version(&application.build, 3)) };
+    let build = if application.build.is_empty() {
+        version.clone()
+    } else {
+        xml_escape(&numeric_version(&application.build, 3))
+    };
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1609,7 +2192,11 @@ fn macos_url_types(application: &Application) -> String {
     if application.url_schemes.is_empty() {
         return String::new();
     }
-    let schemes: String = application.url_schemes.iter().map(|scheme| format!("<string>{}</string>", xml_escape(scheme))).collect();
+    let schemes: String = application
+        .url_schemes
+        .iter()
+        .map(|scheme| format!("<string>{}</string>", xml_escape(scheme)))
+        .collect();
     format!(
         "  <key>CFBundleURLTypes</key>\n  <array>\n    <dict>\n      <key>CFBundleURLName</key><string>{}</string>\n      <key>CFBundleURLSchemes</key><array>{schemes}</array>\n    </dict>\n  </array>\n",
         xml_escape(&application.identifier),
@@ -1625,7 +2212,11 @@ fn numeric_version(version: &str, parts: usize) -> String {
         .map(|value| value.parse::<u16>().unwrap_or(u16::MAX))
         .collect();
     numbers.resize(parts, 0);
-    numbers.iter().map(u16::to_string).collect::<Vec<_>>().join(".")
+    numbers
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 fn create_dmg_package(package: &PackageContext<'_>, output: &Path) -> Result<(), String> {
@@ -1651,11 +2242,22 @@ fn create_pkg_package(package: &PackageContext<'_>, output: &Path) -> Result<(),
     let root = package.workspace.join("pkg-root");
     let applications = root.join("Applications");
     fs::create_dir_all(&applications).map_err(|error| error.to_string())?;
-    hardlink_or_copy(&application, &applications.join(application.file_name().unwrap_or_default()))?;
+    hardlink_or_copy(
+        &application,
+        &applications.join(application.file_name().unwrap_or_default()),
+    )?;
     let mut command = Command::new("pkgbuild");
-    command.arg("--root").arg(&root).args(["--identifier", &package.application.identifier, "--version", &package.application.version]);
+    command.arg("--root").arg(&root).args([
+        "--identifier",
+        &package.application.identifier,
+        "--version",
+        &package.application.version,
+    ]);
     if package.sign {
-        command.args(["--sign", &require_variable("PAM_MACOS_INSTALLER_IDENTITY", "signed PKG builds")?]);
+        command.args([
+            "--sign",
+            &require_variable("PAM_MACOS_INSTALLER_IDENTITY", "signed PKG builds")?,
+        ]);
     }
     run_tool(command.arg(output), "pkgbuild")?;
     if package.sign {
@@ -1676,10 +2278,21 @@ fn create_msix_package(package: &PackageContext<'_>, output: &Path) -> Result<()
     fs::create_dir_all(&assets).map_err(|error| error.to_string())?;
     hardlink_or_copy(package.bundle, &root.join("runtime"))?;
     create_windows_assets(package.icon, &assets)?;
-    let publisher = std::env::var("PAM_WINDOWS_PUBLISHER").unwrap_or_else(|_| "CN=Pam Desktop Development".to_owned());
-    fs::write(root.join("AppxManifest.xml"), windows_appx_manifest(package.application, package.names, &publisher))
-        .map_err(|error| format!("cannot write AppxManifest.xml: {error}"))?;
-    run_tool(Command::new("makeappx.exe").args(["pack", "/o", "/d"]).arg(&root).arg("/p").arg(output), "makeappx.exe")?;
+    let publisher = std::env::var("PAM_WINDOWS_PUBLISHER")
+        .unwrap_or_else(|_| "CN=Pam Desktop Development".to_owned());
+    fs::write(
+        root.join("AppxManifest.xml"),
+        windows_appx_manifest(package.application, package.names, &publisher),
+    )
+    .map_err(|error| format!("cannot write AppxManifest.xml: {error}"))?;
+    run_tool(
+        Command::new("makeappx.exe")
+            .args(["pack", "/o", "/d"])
+            .arg(&root)
+            .arg("/p")
+            .arg(output),
+        "makeappx.exe",
+    )?;
     if package.sign {
         sign_windows_path(output)?;
     }
@@ -1709,7 +2322,11 @@ fn windows_architecture(architecture: &str) -> &str {
     }
 }
 
-fn windows_appx_manifest(application: &Application, names: &ArtifactNames, publisher: &str) -> String {
+fn windows_appx_manifest(
+    application: &Application,
+    names: &ArtifactNames,
+    publisher: &str,
+) -> String {
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
@@ -1766,8 +2383,19 @@ fn create_msi_package(package: &PackageContext<'_>, output: &Path) -> Result<(),
         value => return Err(format!("unsupported MSI architecture {value:?}")),
     };
     let source = package.workspace.join("pam-desktop.wxs");
-    fs::write(&source, windows_wix_source(package.bundle, package.application, package.names)).map_err(|error| format!("cannot write the WiX source: {error}"))?;
-    run_tool(Command::new("wix").args(["build", "-arch", architecture]).arg("-o").arg(output).arg(&source), "wix")?;
+    fs::write(
+        &source,
+        windows_wix_source(package.bundle, package.application, package.names),
+    )
+    .map_err(|error| format!("cannot write the WiX source: {error}"))?;
+    run_tool(
+        Command::new("wix")
+            .args(["build", "-arch", architecture])
+            .arg("-o")
+            .arg(output)
+            .arg(&source),
+        "wix",
+    )?;
     if package.sign {
         sign_windows_path(output)?;
     }
@@ -1824,7 +2452,16 @@ fn windows_wix_source(bundle: &Path, application: &Application, names: &Artifact
 fn deterministic_windows_guid(identifier: &str) -> String {
     let digest = Sha256::digest(identifier.as_bytes());
     let group = |range: std::ops::Range<usize>| hex(&digest[range]).to_ascii_uppercase();
-    format!("{}-{}-4{:X}{}-8{:X}{}-{}", group(0..4), group(4..6), digest[6] & 0x0f, group(7..8), digest[8] & 0x0f, group(9..10), group(10..16))
+    format!(
+        "{}-{}-4{:X}{}-8{:X}{}-{}",
+        group(0..4),
+        group(4..6),
+        digest[6] & 0x0f,
+        group(7..8),
+        digest[8] & 0x0f,
+        group(9..10),
+        group(10..16)
+    )
 }
 
 /// The directories of a bundle that hold code the system must trust.
@@ -1833,14 +2470,23 @@ const SIGNED_DIRECTORIES: [&str; 3] = ["bin", "lib", "runtime"];
 fn signable_files(bundle: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(bundle::files(bundle)?
         .into_iter()
-        .filter(|(relative, _)| SIGNED_DIRECTORIES.iter().any(|directory| Path::new(relative).starts_with(directory)))
+        .filter(|(relative, _)| {
+            SIGNED_DIRECTORIES
+                .iter()
+                .any(|directory| Path::new(relative).starts_with(directory))
+        })
         .map(|(_, path)| path)
         .collect())
 }
 
 fn sign_windows_bundle(bundle: &Path) -> Result<(), String> {
     for path in signable_files(bundle)? {
-        let signable = path.extension().and_then(OsStr::to_str).is_some_and(|extension| extension.eq_ignore_ascii_case("exe") || extension.eq_ignore_ascii_case("dll"));
+        let signable = path
+            .extension()
+            .and_then(OsStr::to_str)
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("exe") || extension.eq_ignore_ascii_case("dll")
+            });
         if signable {
             sign_windows_path(&path)?;
         }
@@ -1851,38 +2497,59 @@ fn sign_windows_bundle(bundle: &Path) -> Result<(), String> {
 fn windows_certificate_thumbprint() -> Result<String, String> {
     let thumbprint = require_variable("PAM_WINDOWS_CERTIFICATE_SHA1", "Windows signing")?;
     if thumbprint.len() != 40 || !thumbprint.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("PAM_WINDOWS_CERTIFICATE_SHA1 must be a 40-digit certificate thumbprint".to_owned());
+        return Err(
+            "PAM_WINDOWS_CERTIFICATE_SHA1 must be a 40-digit certificate thumbprint".to_owned(),
+        );
     }
     Ok(thumbprint)
 }
 
 fn sign_windows_path(path: &Path) -> Result<(), String> {
     let thumbprint = windows_certificate_thumbprint()?;
-    let timestamp = std::env::var("PAM_WINDOWS_TIMESTAMP_URL").unwrap_or_else(|_| "http://timestamp.digicert.com".to_owned());
+    let timestamp = std::env::var("PAM_WINDOWS_TIMESTAMP_URL")
+        .unwrap_or_else(|_| "http://timestamp.digicert.com".to_owned());
     run_tool(
-        Command::new("signtool.exe").args(["sign", "/fd", "SHA256", "/td", "SHA256", "/tr"]).arg(timestamp).arg("/sha1").arg(thumbprint).arg(path),
+        Command::new("signtool.exe")
+            .args(["sign", "/fd", "SHA256", "/td", "SHA256", "/tr"])
+            .arg(timestamp)
+            .arg("/sha1")
+            .arg(thumbprint)
+            .arg(path),
         "signtool.exe",
     )
-    .map_err(|error| format!("Authenticode signing failed for {}: {error}", path.display()))
+    .map_err(|error| {
+        format!(
+            "Authenticode signing failed for {}: {error}",
+            path.display()
+        )
+    })
 }
 
 fn sign_macos_bundle_binaries(bundle: &Path) -> Result<(), String> {
-    let entitlements = bundle.parent().ok_or("the macOS bundle has no build workspace")?.join("pam-desktop-entitlements.plist");
-    fs::write(&entitlements, MACOS_RUNTIME_ENTITLEMENTS).map_err(|error| format!("cannot write the macOS runtime entitlements: {error}"))?;
+    let entitlements = bundle
+        .parent()
+        .ok_or("the macOS bundle has no build workspace")?
+        .join("pam-desktop-entitlements.plist");
+    fs::write(&entitlements, MACOS_RUNTIME_ENTITLEMENTS)
+        .map_err(|error| format!("cannot write the macOS runtime entitlements: {error}"))?;
     for path in signable_files(bundle)? {
         sign_macos_path(&path, Some(&entitlements))?;
     }
-    fs::remove_file(&entitlements).map_err(|error| format!("cannot remove the staged macOS runtime entitlements: {error}"))
+    fs::remove_file(&entitlements)
+        .map_err(|error| format!("cannot remove the staged macOS runtime entitlements: {error}"))
 }
 
 fn sign_macos_path(path: &Path, entitlements: Option<&Path>) -> Result<(), String> {
     let identity = require_variable("PAM_MACOS_SIGNING_IDENTITY", "macOS signing")?;
     let mut command = Command::new("codesign");
-    command.args(["--force", "--options", "runtime", "--timestamp", "--sign"]).arg(identity);
+    command
+        .args(["--force", "--options", "runtime", "--timestamp", "--sign"])
+        .arg(identity);
     if let Some(entitlements) = entitlements {
         command.arg("--entitlements").arg(entitlements);
     }
-    run_tool(command.arg(path), "codesign").map_err(|error| format!("signing {} failed: {error}", path.display()))
+    run_tool(command.arg(path), "codesign")
+        .map_err(|error| format!("signing {} failed: {error}", path.display()))
 }
 
 /// PHP's JIT writes and runs code at run time, which the hardened runtime
@@ -1902,35 +2569,59 @@ fn notarize_macos(path: &Path) -> Result<(), String> {
     let Ok(profile) = std::env::var("PAM_MACOS_NOTARY_PROFILE") else {
         return Ok(());
     };
-    run_tool(Command::new("xcrun").args(["notarytool", "submit"]).arg(path).args(["--keychain-profile", &profile, "--wait"]), "Apple notarytool")?;
-    run_tool(Command::new("xcrun").args(["stapler", "staple"]).arg(path), "Apple stapler")
+    run_tool(
+        Command::new("xcrun")
+            .args(["notarytool", "submit"])
+            .arg(path)
+            .args(["--keychain-profile", &profile, "--wait"]),
+        "Apple notarytool",
+    )?;
+    run_tool(
+        Command::new("xcrun").args(["stapler", "staple"]).arg(path),
+        "Apple stapler",
+    )
 }
 
 fn xml_escape(value: &str) -> String {
-    value.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 /// Mirrors a tree of the staged bundle with hard links, copying where the
 /// file system has none.
 fn hardlink_or_copy(source: &Path, destination: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(source).map_err(|error| format!("cannot inspect {}: {error}", source.display()))?;
+    let metadata = fs::symlink_metadata(source)
+        .map_err(|error| format!("cannot inspect {}: {error}", source.display()))?;
     if metadata.is_dir() {
-        fs::create_dir_all(destination).map_err(|error| format!("cannot create {}: {error}", destination.display()))?;
-        for entry in fs::read_dir(source).map_err(|error| format!("cannot read {}: {error}", source.display()))? {
+        fs::create_dir_all(destination)
+            .map_err(|error| format!("cannot create {}: {error}", destination.display()))?;
+        for entry in fs::read_dir(source)
+            .map_err(|error| format!("cannot read {}: {error}", source.display()))?
+        {
             let entry = entry.map_err(|error| error.to_string())?;
             hardlink_or_copy(&entry.path(), &destination.join(entry.file_name()))?;
         }
     } else if metadata.file_type().is_symlink() {
-        return Err(format!("unexpected symlink in the materialized bundle: {}", source.display()));
+        return Err(format!(
+            "unexpected symlink in the materialized bundle: {}",
+            source.display()
+        ));
     } else if fs::hard_link(source, destination).is_err() {
-        fs::copy(source, destination).map_err(|error| format!("cannot copy {}: {error}", source.display()))?;
+        fs::copy(source, destination)
+            .map_err(|error| format!("cannot copy {}: {error}", source.display()))?;
     }
     Ok(())
 }
 
 fn directory_bytes(path: &Path) -> Result<u64, String> {
     let mut bytes = 0_u64;
-    for entry in fs::read_dir(path).map_err(|error| format!("cannot read {}: {error}", path.display()))? {
+    for entry in
+        fs::read_dir(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?
+    {
         let entry = entry.map_err(|error| error.to_string())?;
         let metadata = fs::symlink_metadata(entry.path()).map_err(|error| error.to_string())?;
         if metadata.is_dir() {
@@ -1953,21 +2644,33 @@ fn normalize_permissions(root: &Path) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
 
         fn visit(root: &Path, path: &Path) -> Result<(), String> {
-            let metadata = fs::symlink_metadata(path).map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+            let metadata = fs::symlink_metadata(path)
+                .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
             if metadata.file_type().is_symlink() {
                 return Ok(());
             }
             let mode = if metadata.is_dir() {
-                for entry in fs::read_dir(path).map_err(|error| format!("cannot read {}: {error}", path.display()))? {
+                for entry in fs::read_dir(path)
+                    .map_err(|error| format!("cannot read {}: {error}", path.display()))?
+                {
                     visit(root, &entry.map_err(|error| error.to_string())?.path())?;
                 }
                 0o755
             } else {
                 let relative = path.strip_prefix(root).map_err(|error| error.to_string())?;
-                let in_bin = relative.parent().is_some_and(|parent| parent.components().any(|component| component.as_os_str() == "bin"));
-                if in_bin || path.extension() == Some(OsStr::new("sh")) { 0o755 } else { 0o644 }
+                let in_bin = relative.parent().is_some_and(|parent| {
+                    parent
+                        .components()
+                        .any(|component| component.as_os_str() == "bin")
+                });
+                if in_bin || path.extension() == Some(OsStr::new("sh")) {
+                    0o755
+                } else {
+                    0o644
+                }
             };
-            fs::set_permissions(path, fs::Permissions::from_mode(mode)).map_err(|error| format!("cannot set the mode of {}: {error}", path.display()))
+            fs::set_permissions(path, fs::Permissions::from_mode(mode))
+                .map_err(|error| format!("cannot set the mode of {}: {error}", path.display()))
         }
 
         visit(root, root)?;
@@ -1992,26 +2695,45 @@ fn debian_architecture(architecture: &str) -> Result<&'static str, String> {
     match architecture {
         "x86_64" => Ok("amd64"),
         "aarch64" => Ok("arm64"),
-        _ => Err(format!("Debian packaging does not map the architecture {architecture:?}")),
+        _ => Err(format!(
+            "Debian packaging does not map the architecture {architecture:?}"
+        )),
     }
 }
 
 /// `SOURCE_DATE_EPOCH`, the timestamp of every archived file; zero by default.
 fn source_date_epoch() -> Result<u64, String> {
     match std::env::var("SOURCE_DATE_EPOCH") {
-        Ok(value) => value.parse().map_err(|_| "SOURCE_DATE_EPOCH must be an unsigned integer".to_owned()),
+        Ok(value) => value
+            .parse()
+            .map_err(|_| "SOURCE_DATE_EPOCH must be an unsigned integer".to_owned()),
         Err(_) => Ok(DEFAULT_SOURCE_DATE_EPOCH),
     }
 }
 
 fn output_directory(project: &Project, options: &BuildOptions) -> Result<PathBuf, String> {
-    let path = options.output.clone().unwrap_or_else(|| project.root.join("dist"));
-    fs::create_dir_all(&path).map_err(|error| format!("cannot create the output directory {}: {error}", path.display()))?;
-    path.canonicalize().map_err(|error| format!("cannot resolve the output directory {}: {error}", path.display()))
+    let path = options
+        .output
+        .clone()
+        .unwrap_or_else(|| project.root.join("dist"));
+    fs::create_dir_all(&path).map_err(|error| {
+        format!(
+            "cannot create the output directory {}: {error}",
+            path.display()
+        )
+    })?;
+    path.canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve the output directory {}: {error}",
+            path.display()
+        )
+    })
 }
 
 fn validated_binary(path: &Path, label: &str) -> Result<PathBuf, String> {
-    let resolved = path.canonicalize().map_err(|error| format!("cannot resolve the {label} {}: {error}", path.display()))?;
+    let resolved = path
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve the {label} {}: {error}", path.display()))?;
     if !resolved.is_file() {
         return Err(format!("the {label} is not a file: {}", resolved.display()));
     }
@@ -2022,12 +2744,24 @@ fn validated_binary(path: &Path, label: &str) -> Result<PathBuf, String> {
 fn resolve_executable(program: &Path, search_path: &OsStr) -> Result<PathBuf, String> {
     if program.is_absolute() || program.components().count() > 1 {
         // Not resolved further: the bundle names the runtime as it was found.
-        return if program.is_file() { Ok(program.to_path_buf()) } else { Err(format!("the PHP runtime {} is not a file", program.display())) };
+        return if program.is_file() {
+            Ok(program.to_path_buf())
+        } else {
+            Err(format!(
+                "the PHP runtime {} is not a file",
+                program.display()
+            ))
+        };
     }
     std::env::split_paths(search_path)
         .map(|directory| directory.join(program))
         .find(|candidate| candidate.is_file())
-        .ok_or_else(|| format!("cannot find {} on PATH; install PHP or set PAM_DESKTOP_PHP", program.display()))
+        .ok_or_else(|| {
+            format!(
+                "cannot find {} on PATH; install PHP or set PAM_DESKTOP_PHP",
+                program.display()
+            )
+        })
 }
 
 fn make_executable(path: &Path) -> Result<(), String> {
@@ -2036,7 +2770,8 @@ fn make_executable(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).map_err(|error| format!("cannot mark {} executable: {error}", path.display()))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+            .map_err(|error| format!("cannot mark {} executable: {error}", path.display()))?;
     }
     Ok(())
 }
@@ -2065,46 +2800,105 @@ mod tests {
 
     #[test]
     fn parses_build_formats_and_replacement_policy() {
-        let options = parse(&["project", "--format", "deb", "--format", "portable", "--force", "-o", "out"]).unwrap();
+        let options = parse(&[
+            "project", "--format", "deb", "--format", "portable", "--force", "-o", "out",
+        ])
+        .unwrap();
         assert_eq!(options.project, PathBuf::from("project"));
         assert_eq!(options.output, Some(PathBuf::from("out")));
-        assert_eq!(options.formats, BTreeSet::from([PackageFormat::Portable, PackageFormat::Debian]));
+        assert_eq!(
+            options.formats,
+            BTreeSet::from([PackageFormat::Portable, PackageFormat::Debian])
+        );
         assert!(options.force && !options.sign);
 
         let defaults = parse(&[]).unwrap();
         assert_eq!(defaults.project, PathBuf::from("."));
-        assert_eq!(defaults.formats, BTreeSet::from([PackageFormat::Directory, PackageFormat::Portable]));
+        assert_eq!(
+            defaults.formats,
+            BTreeSet::from([PackageFormat::Directory, PackageFormat::Portable])
+        );
         assert!(!defaults.force);
     }
 
     #[test]
     fn parses_every_installer_format() {
-        let options = parse(&["--format", "appimage", "--format", "rpm", "--format", "dmg", "--format", "pkg", "--format", "msix", "--format", "msi", "--sign"]).unwrap();
-        for format in [PackageFormat::AppImage, PackageFormat::Rpm, PackageFormat::Dmg, PackageFormat::Pkg, PackageFormat::Msix, PackageFormat::Msi] {
+        let options = parse(&[
+            "--format", "appimage", "--format", "rpm", "--format", "dmg", "--format", "pkg",
+            "--format", "msix", "--format", "msi", "--sign",
+        ])
+        .unwrap();
+        for format in [
+            PackageFormat::AppImage,
+            PackageFormat::Rpm,
+            PackageFormat::Dmg,
+            PackageFormat::Pkg,
+            PackageFormat::Msix,
+            PackageFormat::Msi,
+        ] {
             assert!(options.formats.contains(&format), "{format:?}");
         }
         assert!(options.sign);
         let all = parse(&["--format", "all"]).unwrap();
-        assert!(all.formats.contains(&PackageFormat::Directory) && all.formats.contains(&PackageFormat::Portable));
-        assert_eq!(all.formats.contains(&PackageFormat::Debian), cfg!(target_os = "linux"));
-        assert_eq!(all.formats.contains(&PackageFormat::Dmg), cfg!(target_os = "macos"));
-        assert_eq!(all.formats.contains(&PackageFormat::Msi), cfg!(target_os = "windows"));
+        assert!(
+            all.formats.contains(&PackageFormat::Directory)
+                && all.formats.contains(&PackageFormat::Portable)
+        );
+        assert_eq!(
+            all.formats.contains(&PackageFormat::Debian),
+            cfg!(target_os = "linux")
+        );
+        assert_eq!(
+            all.formats.contains(&PackageFormat::Dmg),
+            cfg!(target_os = "macos")
+        );
+        assert_eq!(
+            all.formats.contains(&PackageFormat::Msi),
+            cfg!(target_os = "windows")
+        );
 
-        assert!(parse(&["--format", "floppy"]).unwrap_err().contains("unknown package format"));
-        assert!(parse(&["--format"]).unwrap_err().contains("requires a value"));
-        assert!(parse(&["--fast"]).unwrap_err().contains("unknown build option"));
+        assert!(
+            parse(&["--format", "floppy"])
+                .unwrap_err()
+                .contains("unknown package format")
+        );
+        assert!(
+            parse(&["--format"])
+                .unwrap_err()
+                .contains("requires a value")
+        );
+        assert!(
+            parse(&["--fast"])
+                .unwrap_err()
+                .contains("unknown build option")
+        );
         assert!(parse(&["one", "two"]).unwrap_err().contains("only one"));
         assert!(parse(&["-o", "a", "-o", "b"]).unwrap_err().contains("once"));
-        assert!(matches!(BuildOptions::parse([OsString::from("--help")]), Ok(BuildCommand::Help)));
+        assert!(matches!(
+            BuildOptions::parse([OsString::from("--help")]),
+            Ok(BuildCommand::Help)
+        ));
     }
 
     #[test]
     fn installers_of_other_systems_are_refused() {
-        let foreign = if cfg!(target_os = "linux") { "msi" } else { "deb" };
-        assert!(validate_platform_formats(&parse(&["--format", foreign]).unwrap()).unwrap_err().contains("only available"));
+        let foreign = if cfg!(target_os = "linux") {
+            "msi"
+        } else {
+            "deb"
+        };
+        assert!(
+            validate_platform_formats(&parse(&["--format", foreign]).unwrap())
+                .unwrap_err()
+                .contains("only available")
+        );
         assert!(validate_platform_formats(&parse(&["--format", "directory"]).unwrap()).is_ok());
         if cfg!(target_os = "linux") {
-            assert!(validate_platform_formats(&parse(&["--sign"]).unwrap()).unwrap_err().contains("--sign"));
+            assert!(
+                validate_platform_formats(&parse(&["--sign"]).unwrap())
+                    .unwrap_err()
+                    .contains("--sign")
+            );
         }
     }
 
@@ -2115,9 +2909,14 @@ mod tests {
         assert_ne!(first, deterministic_windows_guid("com.pushin.other"));
         assert_eq!(first.len(), 36);
         let groups: Vec<&str> = first.split('-').collect();
-        assert_eq!(groups.iter().map(|group| group.len()).collect::<Vec<_>>(), [8, 4, 4, 4, 12]);
+        assert_eq!(
+            groups.iter().map(|group| group.len()).collect::<Vec<_>>(),
+            [8, 4, 4, 4, 12]
+        );
         assert!(groups[2].starts_with('4') && groups[3].starts_with('8'));
-        assert!(first.chars().all(|character| character == '-' || character.is_ascii_digit() || ('A'..='F').contains(&character)));
+        assert!(first.chars().all(|character| character == '-'
+            || character.is_ascii_digit()
+            || ('A'..='F').contains(&character)));
     }
 
     #[test]
@@ -2146,7 +2945,14 @@ mod tests {
         ] {
             assert!(excluded_path(Path::new(path), &[]), "{path}");
         }
-        for path in ["index.php", "vendor/autoload.php", "vendor/acme/package/src/Vendor.php", "environment.php", "src/target.php", "plugins/system/src/main.rs"] {
+        for path in [
+            "index.php",
+            "vendor/autoload.php",
+            "vendor/acme/package/src/Vendor.php",
+            "environment.php",
+            "src/target.php",
+            "plugins/system/src/main.rs",
+        ] {
             assert!(!excluded_path(Path::new(path), &[]), "{path}");
         }
         let configured = [PathBuf::from("storage/cache"), PathBuf::from("notes.md")];
@@ -2161,7 +2967,10 @@ mod tests {
     fn validates_self_contained_application_icons() {
         assert!(validate_svg_icon(DEFAULT_ICON.as_bytes()).is_ok());
         assert!(validate_svg_icon(b"<svg><script>alert(1)</script></svg>").is_err());
-        assert!(validate_svg_icon(b"<svg><image href=\"https://example.com/icon.png\"/></svg>").is_err());
+        assert!(
+            validate_svg_icon(b"<svg><image href=\"https://example.com/icon.png\"/></svg>")
+                .is_err()
+        );
         assert!(validate_svg_icon(b"\xff\xfe").is_err());
 
         let mut png = Vec::from(*b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0@\0\0\0@");
@@ -2211,34 +3020,83 @@ mod tests {
         assert!(wix.contains("Key=\"Software\\Classes\\hello\""));
         assert!(wix.contains("Key=\"Software\\Classes\\pam-hello\""));
         assert!(wix.contains("&quot;[INSTALLFOLDER]bin\\hello.exe&quot; &quot;%1&quot;"));
-        assert!(wix.contains("<ComponentRef Id=\"UrlScheme0\" /><ComponentRef Id=\"UrlScheme1\" />"));
+        assert!(
+            wix.contains("<ComponentRef Id=\"UrlScheme0\" /><ComponentRef Id=\"UrlScheme1\" />")
+        );
 
         let mut plain = application.clone();
         plain.url_schemes.clear();
         assert!(!macos_info_plist(&plain, "hello", "AppIcon.svg").contains("CFBundleURLTypes"));
         assert!(!windows_appx_manifest(&plain, &names, "CN=Pushin").contains("Extensions"));
-        assert!(!windows_wix_source(Path::new("C:\\build\\hello"), &plain, &names).contains("Component"));
+        assert!(
+            !windows_wix_source(Path::new("C:\\build\\hello"), &plain, &names)
+                .contains("Component")
+        );
     }
 
     #[test]
     fn platform_libraries_become_package_dependencies() {
-        let names: Vec<OsString> = ["libgtk-4.so.1", "libwebkitgtk-6.0.so.4", "libgstplay-1.0.so.0", "libz.so.1"].into_iter().map(OsString::from).collect();
+        let names: Vec<OsString> = [
+            "libgtk-4.so.1",
+            "libwebkitgtk-6.0.so.4",
+            "libgstplay-1.0.so.0",
+            "libz.so.1",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
         let dependencies = system_dependencies(&names);
-        assert_eq!(dependencies.debian, ["libc6", "libgtk-4-1", "libwebkitgtk-6.0-4", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good"]);
-        assert_eq!(dependencies.rpm, ["glibc", "gtk4", "webkitgtk6.0", "gstreamer1-plugins-base", "gstreamer1-plugins-good"]);
-        assert_eq!(system_dependencies(&[]), SystemDependencies { debian: vec!["libc6"], rpm: vec!["glibc"] });
+        assert_eq!(
+            dependencies.debian,
+            [
+                "libc6",
+                "libgtk-4-1",
+                "libwebkitgtk-6.0-4",
+                "gstreamer1.0-plugins-base",
+                "gstreamer1.0-plugins-good"
+            ]
+        );
+        assert_eq!(
+            dependencies.rpm,
+            [
+                "glibc",
+                "gtk4",
+                "webkitgtk6.0",
+                "gstreamer1-plugins-base",
+                "gstreamer1-plugins-good"
+            ]
+        );
+        assert_eq!(
+            system_dependencies(&[]),
+            SystemDependencies {
+                debian: vec!["libc6"],
+                rpm: vec!["glibc"]
+            }
+        );
 
-        assert!(platform_root("libgtk-4.so.1") && platform_root("libgstreamer-1.0.so.0") && platform_root("libglib-2.0.so.0"));
+        assert!(
+            platform_root("libgtk-4.so.1")
+                && platform_root("libgstreamer-1.0.so.0")
+                && platform_root("libglib-2.0.so.0")
+        );
         assert!(!platform_root("libsqlite3.so.0") && !platform_root("libgtk-3.so.0"));
-        assert!(system_abi_library("libc.so.6") && system_abi_library("ld-linux-x86-64.so.2") && !system_abi_library("libcurl.so.4"));
+        assert!(
+            system_abi_library("libc.so.6")
+                && system_abi_library("ld-linux-x86-64.so.2")
+                && !system_abi_library("libcurl.so.4")
+        );
     }
 
     #[test]
     fn launchers_quote_their_paths() {
         let script = launcher_script("app/my \"app\"/$HOME").unwrap();
         assert!(script.contains("cd \"$PAM_BUNDLE/app/my \\\"app\\\"/\\$HOME\"\n"));
-        assert!(script.contains("exec \"$PAM_BUNDLE/bin/pam-desktop\" run \"$PAM_BUNDLE/app/my \\\"app\\\"/\\$HOME\"\n"));
-        assert!(script.contains(&format!("export PAM_DESKTOP_PHP=\"$PAM_BUNDLE/bin/{PHP_WRAPPER}\"\n")));
+        assert!(script.contains(
+            "exec \"$PAM_BUNDLE/bin/pam-desktop\" run \"$PAM_BUNDLE/app/my \\\"app\\\"/\\$HOME\"\n"
+        ));
+        assert!(script.contains(&format!(
+            "export PAM_DESKTOP_PHP=\"$PAM_BUNDLE/bin/{PHP_WRAPPER}\"\n"
+        )));
         assert!(!script.contains('@'));
         assert!(launcher_script("app/a\nb").is_err());
     }
@@ -2246,39 +3104,84 @@ mod tests {
     #[test]
     fn builds_a_materialized_directory_with_integrity_metadata() {
         let fixture = Fixture::create("directory");
-        let result = fixture.build(&["--format", "directory"]).expect("bundle should build");
+        let result = fixture
+            .build(&["--format", "directory"])
+            .expect("bundle should build");
         let exe = std::env::consts::EXE_SUFFIX;
         let bundle = &result.artifacts[0];
-        assert_eq!(bundle, &fixture.output.join(format!("hello-0.4.0-{}-{}", std::env::consts::OS, std::env::consts::ARCH)));
+        assert_eq!(
+            bundle,
+            &fixture.output.join(format!(
+                "hello-0.4.0-{}-{}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ))
+        );
         assert!(bundle.join(format!("bin/pam-desktop{exe}")).is_file());
         assert!(bundle.join(format!("bin/hello{exe}")).is_file());
         assert!(bundle.join("runtime/php/bin/php").is_file());
         assert_eq!(bundle.join("bin/pam-desktop-php").is_file(), cfg!(unix));
         assert!(bundle.join("app/index.php").is_file());
         assert!(bundle.join("app/vendor/autoload.php").is_file());
-        assert!(bundle.join("app/vendor/pushinbr/pam-desktop/packages/desktop/bin/pam-desktop-worker").is_file());
-        assert!(!bundle.join("app/vendor/pushinbr/pam-desktop/vendor").exists());
-        assert!(!fs::read_to_string(bundle.join("app/composer.json")).unwrap().contains("/private/source"));
-        assert!(!fs::read_to_string(bundle.join("app/composer.lock")).unwrap().contains("/private/source"));
+        assert!(
+            bundle
+                .join("app/vendor/pushinbr/pam-desktop/packages/desktop/bin/pam-desktop-worker")
+                .is_file()
+        );
+        assert!(
+            !bundle
+                .join("app/vendor/pushinbr/pam-desktop/vendor")
+                .exists()
+        );
+        assert!(
+            !fs::read_to_string(bundle.join("app/composer.json"))
+                .unwrap()
+                .contains("/private/source")
+        );
+        assert!(
+            !fs::read_to_string(bundle.join("app/composer.lock"))
+                .unwrap()
+                .contains("/private/source")
+        );
         assert!(!bundle.join("app/.env").exists());
         assert!(!bundle.join("app/.pam-desktop").exists());
         assert!(!bundle.join("app/storage/cache").exists());
         assert!(bundle.join("app/storage/data.txt").is_file());
-        assert!(!bundle.join("app/artifacts").exists(), "the output directory must not leak into its own bundle");
-        assert!(bundle.join("share/icons/hicolor/scalable/apps/com.pushin.hello.svg").is_file());
+        assert!(
+            !bundle.join("app/artifacts").exists(),
+            "the output directory must not leak into its own bundle"
+        );
+        assert!(
+            bundle
+                .join("share/icons/hicolor/scalable/apps/com.pushin.hello.svg")
+                .is_file()
+        );
         // The manifest was complete: it ships as written.
-        assert_eq!(fs::read(bundle.join("app/pam-desktop.json")).unwrap(), fs::read(fixture.project.join("pam-desktop.json")).unwrap());
+        assert_eq!(
+            fs::read(bundle.join("app/pam-desktop.json")).unwrap(),
+            fs::read(fixture.project.join("pam-desktop.json")).unwrap()
+        );
 
         let ini = fs::read_to_string(bundle.join("etc/php.ini")).unwrap();
         assert!(ini.contains("expose_php=Off\n") && ini.contains("memory_limit=512M\n"));
-        assert!(!ini.contains("extension"), "a runtime without shared extensions loads none");
+        assert!(
+            !ini.contains("extension"),
+            "a runtime without shared extensions loads none"
+        );
 
         let manifest = bundle::verify(bundle).expect("the bundle verifies against its manifest");
         assert_eq!(manifest.schema_version, bundle::SCHEMA_VERSION);
         assert_eq!(manifest.application.identifier, "com.pushin.hello");
         assert_eq!(manifest.application.version, "0.4.0");
         assert_eq!(manifest.application.category, "development");
-        assert_eq!(manifest.application.updates.as_ref().map(|updates| updates.policy.as_str()), Some("notify"));
+        assert_eq!(
+            manifest
+                .application
+                .updates
+                .as_ref()
+                .map(|updates| updates.policy.as_str()),
+            Some("notify")
+        );
         assert_eq!(manifest.project, "app");
         assert_eq!(manifest.entry, "app/index.php");
         assert_eq!(manifest.launcher, format!("bin/hello{exe}"));
@@ -2287,13 +3190,29 @@ mod tests {
         assert_eq!(manifest.runtime.php, "unknown");
         assert_eq!(manifest.target, BundleTarget::current());
         assert_eq!(manifest.source_date_epoch, 0);
-        assert!(manifest.files.iter().any(|file| file.path == "app/index.php"));
-        assert!(manifest.files.windows(2).all(|pair| pair[0].path < pair[1].path));
+        assert!(
+            manifest
+                .files
+                .iter()
+                .any(|file| file.path == "app/index.php")
+        );
+        assert!(
+            manifest
+                .files
+                .windows(2)
+                .all(|pair| pair[0].path < pair[1].path)
+        );
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = |path: &str| fs::metadata(bundle.join(path)).unwrap().permissions().mode() & 0o777;
+            let mode = |path: &str| {
+                fs::metadata(bundle.join(path))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777
+            };
             assert_eq!(mode("bin/hello"), 0o755);
             assert_eq!(mode("bin/pam-desktop"), 0o755);
             assert_eq!(mode("runtime/php/bin/php"), 0o755);
@@ -2308,8 +3227,16 @@ mod tests {
             let linked_bin = fixture.root.join("linked-bin");
             fs::create_dir(&linked_bin).unwrap();
             std::os::unix::fs::symlink(bundle.join("bin/hello"), linked_bin.join("hello")).unwrap();
-            let output = Command::new(linked_bin.join("hello")).arg("hello://open").env_remove("PAM_DESKTOP_LAUNCH_URL").output().expect("the launcher runs");
-            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            let output = Command::new(linked_bin.join("hello"))
+                .arg("hello://open")
+                .env_remove("PAM_DESKTOP_LAUNCH_URL")
+                .output()
+                .expect("the launcher runs");
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             let bundle_path = bundle.display();
             assert_eq!(
                 String::from_utf8_lossy(&output.stdout),
@@ -2318,10 +3245,15 @@ mod tests {
                 )
             );
             // The wrapper starts the real PHP with the bundled configuration.
-            let output = Command::new(bundle.join("bin/pam-desktop-php")).args(["worker", "entry"]).output().expect("the PHP wrapper runs");
+            let output = Command::new(bundle.join("bin/pam-desktop-php"))
+                .args(["worker", "entry"])
+                .output()
+                .expect("the PHP wrapper runs");
             assert_eq!(
                 String::from_utf8_lossy(&output.stdout),
-                format!("php worker entry\nPHPRC={bundle_path}/etc/php.ini\nscan=\nextensions={bundle_path}/runtime/php/ext\n")
+                format!(
+                    "php worker entry\nPHPRC={bundle_path}/etc/php.ini\nscan=\nextensions={bundle_path}/runtime/php/ext\n"
+                )
             );
         }
     }
@@ -2332,22 +3264,44 @@ mod tests {
         fs::create_dir_all(fixture.project.join("src")).unwrap();
         fs::write(fixture.project.join("src/main.php"), "<?php\n").unwrap();
         fs::write(fixture.project.join("other.php"), "<?php\n").unwrap();
-        fs::write(fixture.project.join("pam-desktop.json"), r#"{"applicationId": "com.pushin.hello", "version": "0.4.0", "entry": "src/main.php"}"#).unwrap();
+        fs::write(
+            fixture.project.join("pam-desktop.json"),
+            r#"{"applicationId": "com.pushin.hello", "version": "0.4.0", "entry": "src/main.php"}"#,
+        )
+        .unwrap();
 
         // A declared entry ships as declared: the host reads it at run time.
-        let declared = fixture.build(&["--format", "directory"]).expect("bundle of the declared entry");
+        let declared = fixture
+            .build(&["--format", "directory"])
+            .expect("bundle of the declared entry");
         let bundle = &declared.artifacts[0];
         let manifest = bundle::verify(bundle).unwrap();
-        assert_eq!((manifest.project.as_str(), manifest.entry.as_str()), ("app", "app/src/main.php"));
-        assert_eq!(fs::read(bundle.join("app/pam-desktop.json")).unwrap(), fs::read(fixture.project.join("pam-desktop.json")).unwrap());
+        assert_eq!(
+            (manifest.project.as_str(), manifest.entry.as_str()),
+            ("app", "app/src/main.php")
+        );
+        assert_eq!(
+            fs::read(bundle.join("app/pam-desktop.json")).unwrap(),
+            fs::read(fixture.project.join("pam-desktop.json")).unwrap()
+        );
 
         // A script given to the build becomes the entry of the bundle.
         let script = fixture.project.join("other.php");
-        let options = parse(&[script.to_str().unwrap(), "--output", fixture.output.to_str().unwrap(), "--format", "directory", "--force"]).unwrap();
+        let options = parse(&[
+            script.to_str().unwrap(),
+            "--output",
+            fixture.output.to_str().unwrap(),
+            "--format",
+            "directory",
+            "--force",
+        ])
+        .unwrap();
         let given = build_with(&options, &fixture.toolchain()).expect("bundle of the given script");
         let bundle = &given.artifacts[0];
         assert_eq!(bundle::verify(bundle).unwrap().entry, "app/other.php");
-        let written: serde_json::Value = serde_json::from_slice(&fs::read(bundle.join("app/pam-desktop.json")).unwrap()).unwrap();
+        let written: serde_json::Value =
+            serde_json::from_slice(&fs::read(bundle.join("app/pam-desktop.json")).unwrap())
+                .unwrap();
         assert_eq!(written["entry"], "other.php");
         assert_eq!(written["applicationId"], "com.pushin.hello");
     }
@@ -2355,13 +3309,26 @@ mod tests {
     #[test]
     fn existing_artifacts_need_force() {
         let fixture = Fixture::create("force");
-        let first = fixture.build(&["--format", "directory"]).expect("first build");
+        let first = fixture
+            .build(&["--format", "directory"])
+            .expect("first build");
         fs::write(first.artifacts[0].join("stale.txt"), b"stale").unwrap();
-        let error = fixture.build(&["--format", "directory"]).err().expect("an existing artifact stops the build");
-        assert!(error.contains("already exists") && error.contains("--force"), "{error}");
-        assert!(first.artifacts[0].join("stale.txt").is_file(), "a refused build touches nothing");
+        let error = fixture
+            .build(&["--format", "directory"])
+            .err()
+            .expect("an existing artifact stops the build");
+        assert!(
+            error.contains("already exists") && error.contains("--force"),
+            "{error}"
+        );
+        assert!(
+            first.artifacts[0].join("stale.txt").is_file(),
+            "a refused build touches nothing"
+        );
 
-        let second = fixture.build(&["--format", "directory", "--force"]).expect("forced build");
+        let second = fixture
+            .build(&["--format", "directory", "--force"])
+            .expect("forced build");
         assert_eq!(second.artifacts, first.artifacts);
         assert!(!second.artifacts[0].join("stale.txt").exists());
         assert!(bundle::verify(&second.artifacts[0]).is_ok());
@@ -2374,25 +3341,54 @@ mod tests {
             return;
         }
         let fixture = Fixture::create("portable");
-        let first = fixture.build(&["--format", "portable"]).expect("first portable archive should build");
-        assert_eq!(first.artifacts, [fixture.output.join(format!("hello-0.4.0-linux-{}.tar.gz", std::env::consts::ARCH))]);
+        let first = fixture
+            .build(&["--format", "portable"])
+            .expect("first portable archive should build");
+        assert_eq!(
+            first.artifacts,
+            [fixture.output.join(format!(
+                "hello-0.4.0-linux-{}.tar.gz",
+                std::env::consts::ARCH
+            ))]
+        );
         let first_bytes = fs::read(&first.artifacts[0]).unwrap();
         // The gzip header carries no timestamp and no file name.
         assert_eq!(&first_bytes[..4], [0x1f, 0x8b, 8, 0]);
         assert_eq!(&first_bytes[4..8], [0, 0, 0, 0]);
-        let listing = Command::new("tar").arg("-tzvf").arg(&first.artifacts[0]).env("TZ", "UTC").output().expect("the archive lists");
+        let listing = Command::new("tar")
+            .arg("-tzvf")
+            .arg(&first.artifacts[0])
+            .env("TZ", "UTC")
+            .output()
+            .expect("the archive lists");
         assert!(listing.status.success());
         let listing = String::from_utf8_lossy(&listing.stdout);
         let root = format!("hello-0.4.0-linux-{}/", std::env::consts::ARCH);
-        assert!(listing.lines().all(|line| line.contains(&root)), "one root directory");
-        assert!(listing.contains(&format!("{root}manifest.json")) && listing.contains(&format!("{root}app/index.php")));
-        assert!(!listing.contains("/app/artifacts/"), "the output directory must not leak into its own bundle");
-        assert!(listing.lines().all(|line| line.contains(" 0/0 ") && line.contains("1970-01-01")), "{listing}");
+        assert!(
+            listing.lines().all(|line| line.contains(&root)),
+            "one root directory"
+        );
+        assert!(
+            listing.contains(&format!("{root}manifest.json"))
+                && listing.contains(&format!("{root}app/index.php"))
+        );
+        assert!(
+            !listing.contains("/app/artifacts/"),
+            "the output directory must not leak into its own bundle"
+        );
+        assert!(
+            listing
+                .lines()
+                .all(|line| line.contains(" 0/0 ") && line.contains("1970-01-01")),
+            "{listing}"
+        );
 
         // Other modes and timestamps on the build machine change nothing.
         std::thread::sleep(std::time::Duration::from_millis(1100));
         fs::write(fixture.project.join("index.php"), "<?php\n").unwrap();
-        let second = fixture.build(&["--format", "portable", "--force"]).expect("second portable archive should build");
+        let second = fixture
+            .build(&["--format", "portable", "--force"])
+            .expect("second portable archive should build");
         assert_eq!(first_bytes, fs::read(&second.artifacts[0]).unwrap());
         fixture.assert_no_workspace_left();
     }
@@ -2402,20 +3398,50 @@ mod tests {
         let fixture = Fixture::create("tools");
         let empty = fixture.root.join("empty-path");
         fs::create_dir(&empty).unwrap();
-        let options = parse(&[fixture.project.to_str().unwrap(), "--output", fixture.output.to_str().unwrap(), "--format", "directory", "--format", "portable"]).unwrap();
+        let options = parse(&[
+            fixture.project.to_str().unwrap(),
+            "--output",
+            fixture.output.to_str().unwrap(),
+            "--format",
+            "directory",
+            "--format",
+            "portable",
+        ])
+        .unwrap();
         let mut toolchain = fixture.toolchain();
         toolchain.search_path = empty.into_os_string();
-        let error = build_with(&options, &toolchain).err().expect("the build stops");
-        assert!(error.contains("is required") && error.contains("not found on PATH"), "{error}");
-        assert_eq!(fs::read_dir(&fixture.output).unwrap().count(), 0, "nothing was published or left behind");
-        assert!(find_tool("definitely-not-a-packaging-tool", &std::env::var_os("PATH").unwrap_or_default()).is_none());
+        let error = build_with(&options, &toolchain)
+            .err()
+            .expect("the build stops");
+        assert!(
+            error.contains("is required") && error.contains("not found on PATH"),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_dir(&fixture.output).unwrap().count(),
+            0,
+            "nothing was published or left behind"
+        );
+        assert!(
+            find_tool(
+                "definitely-not-a-packaging-tool",
+                &std::env::var_os("PATH").unwrap_or_default()
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn required_and_unsafe_inputs_stop_the_build() {
         let fixture = Fixture::create("inputs");
-        let manifest = |json: &str| fs::write(fixture.project.join("pam-desktop.json"), json).unwrap();
-        let failure = |fixture: &Fixture| fixture.build(&["--format", "directory"]).err().expect("the build stops");
+        let manifest =
+            |json: &str| fs::write(fixture.project.join("pam-desktop.json"), json).unwrap();
+        let failure = |fixture: &Fixture| {
+            fixture
+                .build(&["--format", "directory"])
+                .err()
+                .expect("the build stops")
+        };
 
         manifest(r#"{"applicationId": "com.pushin.hello", "exclude": ["vendor"]}"#);
         assert!(failure(&fixture).contains("cannot be excluded"));
@@ -2430,7 +3456,10 @@ mod tests {
         manifest(r#"{"applicationId": "com.pushin.hello", "icon": "resources/missing.svg"}"#);
         assert!(failure(&fixture).contains("icon"));
         manifest(r#"{"applicationId": "com.pushin.hello", "extensions": ["imagick"]}"#);
-        assert!(fixture.build(&["--format", "directory"]).is_ok(), "a runtime that cannot be asked ships as it is");
+        assert!(
+            fixture.build(&["--format", "directory"]).is_ok(),
+            "a runtime that cannot be asked ships as it is"
+        );
         manifest("{ broken");
         assert!(failure(&fixture).contains("not valid JSON"));
 
@@ -2452,26 +3481,52 @@ mod tests {
         fs::write(package.join("vendor/dev/only.php"), "<?php\n").unwrap();
         fs::create_dir_all(fixture.project.join("vendor/acme")).unwrap();
         symlink(&package, fixture.project.join("vendor/acme/linked")).unwrap();
-        symlink(fixture.project.join("index.php"), fixture.project.join("alias.php")).unwrap();
+        symlink(
+            fixture.project.join("index.php"),
+            fixture.project.join("alias.php"),
+        )
+        .unwrap();
 
-        let result = fixture.build(&["--format", "directory"]).expect("links inside the rules are copied");
+        let result = fixture
+            .build(&["--format", "directory"])
+            .expect("links inside the rules are copied");
         let bundle = &result.artifacts[0];
         let copied = bundle.join("app/vendor/acme/linked/src/Linked.php");
-        assert!(copied.is_file() && !fs::symlink_metadata(bundle.join("app/vendor/acme/linked")).unwrap().file_type().is_symlink());
+        assert!(
+            copied.is_file()
+                && !fs::symlink_metadata(bundle.join("app/vendor/acme/linked"))
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+        );
         assert!(!bundle.join("app/vendor/acme/linked/vendor").exists());
-        assert!(fs::symlink_metadata(bundle.join("app/alias.php")).unwrap().file_type().is_file());
+        assert!(
+            fs::symlink_metadata(bundle.join("app/alias.php"))
+                .unwrap()
+                .file_type()
+                .is_file()
+        );
         assert!(bundle::verify(bundle).is_ok());
 
         symlink(&package, fixture.project.join("outside")).unwrap();
-        let error = fixture.build(&["--format", "directory", "--force"]).err().expect("a link out of the project stops the build");
+        let error = fixture
+            .build(&["--format", "directory", "--force"])
+            .err()
+            .expect("a link out of the project stops the build");
         assert!(error.contains("escapes the project"), "{error}");
         fs::remove_file(fixture.project.join("outside")).unwrap();
         symlink(&fixture.project, fixture.project.join("storage/loop")).unwrap();
-        let error = fixture.build(&["--format", "directory", "--force"]).err().expect("a cycle stops the build");
+        let error = fixture
+            .build(&["--format", "directory", "--force"])
+            .err()
+            .expect("a cycle stops the build");
         assert!(error.contains("cycle"), "{error}");
         fs::remove_file(fixture.project.join("storage/loop")).unwrap();
         symlink(&fixture.output, fixture.project.join("vendor/acme/output")).unwrap();
-        let error = fixture.build(&["--format", "directory", "--force"]).err().expect("a link into the output stops the build");
+        let error = fixture
+            .build(&["--format", "directory", "--force"])
+            .err()
+            .expect("a link into the output stops the build");
         assert!(error.contains("build output"), "{error}");
     }
 
@@ -2492,7 +3547,11 @@ mod tests {
         fs::write(example.join("index.php"), "<?php\n").unwrap();
         fs::write(checkout.join("examples/other/index.php"), "<?php\n").unwrap();
         fs::write(checkout.join("vendor/autoload.php"), "<?php\n").unwrap();
-        fs::write(checkout.join("packages/desktop/bin/pam-desktop-worker"), "<?php\n").unwrap();
+        fs::write(
+            checkout.join("packages/desktop/bin/pam-desktop-worker"),
+            "<?php\n",
+        )
+        .unwrap();
         fs::write(checkout.join("packages/desktop/src/App.php"), "<?php\n").unwrap();
         fs::write(checkout.join("packages/desktop/tests/run.php"), "<?php\n").unwrap();
         fs::write(checkout.join("packages/desktop/composer.json"), "{}\n").unwrap();
@@ -2501,11 +3560,21 @@ mod tests {
         let options = parse(&[example.to_str().unwrap(), "--format", "directory"]).unwrap();
         let result = build_with(&options, &fixture.toolchain()).expect("the example builds");
         let bundle = &result.artifacts[0];
-        assert_eq!(bundle, &example.canonicalize().unwrap().join(format!("dist/app-counter-app-0.0.0-{}-{}", std::env::consts::OS, std::env::consts::ARCH)));
+        assert_eq!(
+            bundle,
+            &example.canonicalize().unwrap().join(format!(
+                "dist/app-counter-app-0.0.0-{}-{}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ))
+        );
         let app = bundle.join("app");
         assert!(app.join("examples/Counter App/index.php").is_file());
         assert!(app.join("vendor/autoload.php").is_file());
-        assert!(app.join("packages/desktop/bin/pam-desktop-worker").is_file());
+        assert!(
+            app.join("packages/desktop/bin/pam-desktop-worker")
+                .is_file()
+        );
         assert!(app.join("packages/desktop/src/App.php").is_file());
         assert!(app.join("packages/desktop/composer.json").is_file());
         assert!(!app.join("packages/desktop/tests").exists());
@@ -2514,14 +3583,27 @@ mod tests {
         assert!(!app.join("examples/Counter App/dist").exists());
 
         // Without a manifest, the bundle carries the identity the build chose.
-        let written: serde_json::Value = serde_json::from_slice(&fs::read(app.join("examples/Counter App/pam-desktop.json")).unwrap()).unwrap();
-        assert_eq!(written, serde_json::json!({"applicationId": "dev.pam.desktop.app-counter-app", "version": "0.0.0"}));
+        let written: serde_json::Value = serde_json::from_slice(
+            &fs::read(app.join("examples/Counter App/pam-desktop.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            written,
+            serde_json::json!({"applicationId": "dev.pam.desktop.app-counter-app", "version": "0.0.0"})
+        );
         let manifest = bundle::verify(bundle).unwrap();
         assert_eq!(manifest.project, "app/examples/Counter App");
         assert_eq!(manifest.entry, "app/examples/Counter App/index.php");
-        assert_eq!(manifest.application.identifier, "dev.pam.desktop.app-counter-app");
+        assert_eq!(
+            manifest.application.identifier,
+            "dev.pam.desktop.app-counter-app"
+        );
         assert_eq!(manifest.application.updates, None);
-        assert!(bundle.join("share/icons/hicolor/scalable/apps/dev.pam.desktop.app-counter-app.svg").is_file());
+        assert!(
+            bundle
+                .join("share/icons/hicolor/scalable/apps/dev.pam.desktop.app-counter-app.svg")
+                .is_file()
+        );
         if cfg!(unix) {
             let launcher = fs::read_to_string(bundle.join("bin/app-counter-app")).unwrap();
             assert!(launcher.contains("cd \"$PAM_BUNDLE/app/examples/Counter App\"\n"));
@@ -2547,10 +3629,15 @@ mod tests {
         )
         .unwrap();
 
-        let all = fixture.build(&["--format", "directory"]).expect("bundle with every loaded extension");
+        let all = fixture
+            .build(&["--format", "directory"])
+            .expect("bundle with every loaded extension");
         let bundle = &all.artifacts[0];
         for name in ["ctype", "tokenizer", "intl"] {
-            assert_eq!(fs::read_to_string(bundle.join(format!("runtime/php/ext/{name}.so"))).unwrap(), name);
+            assert_eq!(
+                fs::read_to_string(bundle.join(format!("runtime/php/ext/{name}.so"))).unwrap(),
+                name
+            );
         }
         assert!(!bundle.join("runtime/php/ext/unloaded.so").exists());
         let ini = fs::read_to_string(bundle.join("etc/php.ini")).unwrap();
@@ -2562,16 +3649,30 @@ mod tests {
             r#"{"applicationId": "com.pushin.hello", "version": "0.4.0", "extensions": ["tokenizer", "core", "unloaded"]}"#,
         )
         .unwrap();
-        let chosen = fixture.build(&["--format", "directory", "--force"]).expect("bundle with the listed extensions");
+        let chosen = fixture
+            .build(&["--format", "directory", "--force"])
+            .expect("bundle with the listed extensions");
         let bundle = &chosen.artifacts[0];
-        let shipped: BTreeSet<String> =
-            fs::read_dir(bundle.join("runtime/php/ext")).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect();
-        assert_eq!(shipped, BTreeSet::from(["tokenizer.so".to_owned(), "unloaded.so".to_owned()]));
+        let shipped: BTreeSet<String> = fs::read_dir(bundle.join("runtime/php/ext"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            shipped,
+            BTreeSet::from(["tokenizer.so".to_owned(), "unloaded.so".to_owned()])
+        );
         let ini = fs::read_to_string(bundle.join("etc/php.ini")).unwrap();
-        assert!(ini.ends_with("extension=tokenizer\nextension=unloaded\n") && !ini.contains("extension=ctype"), "{ini}");
+        assert!(
+            ini.ends_with("extension=tokenizer\nextension=unloaded\n")
+                && !ini.contains("extension=ctype"),
+            "{ini}"
+        );
 
         fs::write(fixture.project.join("pam-desktop.json"), r#"{"applicationId": "com.pushin.hello", "version": "0.4.0", "extensions": ["imagick"]}"#).unwrap();
-        let error = fixture.build(&["--format", "directory", "--force"]).err().expect("an unavailable extension stops the build");
+        let error = fixture
+            .build(&["--format", "directory", "--force"])
+            .err()
+            .expect("an unavailable extension stops the build");
         assert!(error.contains("\"imagick\" is not available"), "{error}");
     }
 
@@ -2587,16 +3688,25 @@ mod tests {
 
     impl Fixture {
         fn create(name: &str) -> Self {
-            let root = temporary_directory(&format!("package-{name}")).canonicalize().expect("temporary directory");
+            let root = temporary_directory(&format!("package-{name}"))
+                .canonicalize()
+                .expect("temporary directory");
             let project = root.join("project");
             let output = project.join("artifacts");
             let package = project.join("vendor/pushinbr/pam-desktop");
-            for directory in ["resources", "storage/cache", ".pam-desktop/state", "artifacts"] {
+            for directory in [
+                "resources",
+                "storage/cache",
+                ".pam-desktop/state",
+                "artifacts",
+            ] {
                 fs::create_dir_all(project.join(directory)).unwrap();
             }
             fs::create_dir_all(package.join("packages/desktop/bin")).unwrap();
             fs::create_dir_all(package.join("vendor")).unwrap();
-            let write = |path: &str, contents: &str| fs::write(project.join(path), contents).expect("fixture file");
+            let write = |path: &str, contents: &str| {
+                fs::write(project.join(path), contents).expect("fixture file")
+            };
             write("index.php", "<?php\n");
             write("secret-mode.txt", "mode\n");
             write(
@@ -2606,15 +3716,24 @@ mod tests {
                     "icon": "resources/icon.svg", "exclude": ["storage/cache"], "urlSchemes": ["hello", "pam-hello"],
                     "updates": {"endpoint": "https://updates.pushin.dev/hello/stable.json", "publicKey": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "policy": "notify"}}"#,
             );
-            write("composer.json", "{\"repositories\":[{\"type\":\"path\",\"url\":\"/private/source\"}]}\n");
+            write(
+                "composer.json",
+                "{\"repositories\":[{\"type\":\"path\",\"url\":\"/private/source\"}]}\n",
+            );
             write(
                 "composer.lock",
                 "{\"packages\":[{\"name\":\"pushinbr/pam-desktop\",\"dist\":{\"type\":\"path\",\"url\":\"/private/source\"},\"transport-options\":{\"symlink\":true}}],\"packages-dev\":[]}\n",
             );
             write("vendor/autoload.php", "<?php\n");
-            write("vendor/pushinbr/pam-desktop/packages/desktop/bin/pam-desktop-worker", "<?php\n");
+            write(
+                "vendor/pushinbr/pam-desktop/packages/desktop/bin/pam-desktop-worker",
+                "<?php\n",
+            );
             write("vendor/pushinbr/pam-desktop/vendor/dev-only.php", "<?php\n");
-            write("resources/icon.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"></svg>\n");
+            write(
+                "resources/icon.svg",
+                "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"></svg>\n",
+            );
             write("storage/cache/item", "ignored\n");
             write("storage/data.txt", "kept\n");
             write(".pam-desktop/state/navigation.json", "{}\n");
@@ -2622,7 +3741,11 @@ mod tests {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(project.join("secret-mode.txt"), fs::Permissions::from_mode(0o600)).unwrap();
+                fs::set_permissions(
+                    project.join("secret-mode.txt"),
+                    fs::Permissions::from_mode(0o600),
+                )
+                .unwrap();
             }
             let host = root.join("pam-desktop");
             let php = root.join("php");
@@ -2635,15 +3758,30 @@ mod tests {
             fs::write(&php, "#!/bin/sh\nif [ \"$1\" = \"-r\" ]; then exit 1; fi\necho \"php $*\"\necho \"PHPRC=$PHPRC\"\necho \"scan=$PHP_INI_SCAN_DIR\"\necho \"extensions=$PAM_DESKTOP_PHP_EXTENSION_DIR\"\n").unwrap();
             make_executable(&host).unwrap();
             make_executable(&php).unwrap();
-            Self { root, project, output, host, php }
+            Self {
+                root,
+                project,
+                output,
+                host,
+                php,
+            }
         }
 
         fn toolchain(&self) -> Toolchain {
-            Toolchain { host: self.host.clone(), php: self.php.clone(), php_arguments: Vec::new(), search_path: std::env::var_os("PATH").unwrap_or_default() }
+            Toolchain {
+                host: self.host.clone(),
+                php: self.php.clone(),
+                php_arguments: Vec::new(),
+                search_path: std::env::var_os("PATH").unwrap_or_default(),
+            }
         }
 
         fn build(&self, arguments: &[&str]) -> Result<BuildResult, String> {
-            let mut all = vec![self.project.to_str().unwrap(), "--output", self.output.to_str().unwrap()];
+            let mut all = vec![
+                self.project.to_str().unwrap(),
+                "--output",
+                self.output.to_str().unwrap(),
+            ];
             all.extend(arguments);
             build_with(&parse(&all)?, &self.toolchain())
         }

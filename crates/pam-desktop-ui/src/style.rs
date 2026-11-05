@@ -17,11 +17,21 @@ pub struct Radii {
 }
 
 impl Radii {
-    pub const ZERO: Self = Self { top_left: 0.0, top_right: 0.0, bottom_right: 0.0, bottom_left: 0.0 };
+    pub const ZERO: Self = Self {
+        top_left: 0.0,
+        top_right: 0.0,
+        bottom_right: 0.0,
+        bottom_left: 0.0,
+    };
 
     #[must_use]
     pub const fn all(radius: f32) -> Self {
-        Self { top_left: radius, top_right: radius, bottom_right: radius, bottom_left: radius }
+        Self {
+            top_left: radius,
+            top_right: radius,
+            bottom_right: radius,
+            bottom_left: radius,
+        }
     }
 
     #[must_use]
@@ -38,7 +48,12 @@ impl Radii {
 
     #[must_use]
     pub fn as_array(&self) -> [f32; 4] {
-        [self.top_left, self.top_right, self.bottom_right, self.bottom_left]
+        [
+            self.top_left,
+            self.top_right,
+            self.bottom_right,
+            self.bottom_left,
+        ]
     }
 
     /// CSS corner clamping: adjacent radii never overlap inside `size`.
@@ -66,7 +81,13 @@ impl Radii {
     /// Radii of a box grown (positive) or shrunk (negative) by `amount`.
     #[must_use]
     pub fn outset(&self, amount: f32) -> Self {
-        let grow = |radius: f32| if radius <= 0.0 && amount > 0.0 { 0.0 } else { (radius + amount).max(0.0) };
+        let grow = |radius: f32| {
+            if radius <= 0.0 && amount > 0.0 {
+                0.0
+            } else {
+                (radius + amount).max(0.0)
+            }
+        };
         Self {
             top_left: grow(self.top_left),
             top_right: grow(self.top_right),
@@ -95,7 +116,10 @@ pub struct Border {
 impl Border {
     #[must_use]
     pub fn is_visible(&self) -> bool {
-        self.widths.iter().zip(&self.colors).any(|(width, color)| *width > 0.0 && !color.is_transparent())
+        self.widths
+            .iter()
+            .zip(&self.colors)
+            .any(|(width, color)| *width > 0.0 && !color.is_transparent())
     }
 
     #[must_use]
@@ -120,12 +144,24 @@ pub struct GradientStop {
 #[derive(Clone, Debug, PartialEq)]
 pub enum GradientShape {
     /// CSS angle in degrees: 0 points up, 180 (the default) points down.
-    Linear { angle: f32 },
+    Linear {
+        angle: f32,
+    },
     /// Explicit line in fractions of the box (`0..1`).
-    LinearPoints { start: Point, end: Point },
+    LinearPoints {
+        start: Point,
+        end: Point,
+    },
     /// Center in fractions of the box; radii in fractions of width/height.
-    Radial { center: Point, radius_x: f32, radius_y: f32 },
-    Conic { center: Point, angle: f32 },
+    Radial {
+        center: Point,
+        radius_x: f32,
+        radius_y: f32,
+    },
+    Conic {
+        center: Point,
+        angle: f32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -162,14 +198,20 @@ impl Gradient {
     /// Color at `offset` (used by hosts without native gradients and by tests).
     #[must_use]
     pub fn color_at(&self, offset: f32) -> Color {
-        let Some(first) = self.stops.first() else { return Color::TRANSPARENT };
+        let Some(first) = self.stops.first() else {
+            return Color::TRANSPARENT;
+        };
         if offset <= first.offset {
             return first.color;
         }
         for pair in self.stops.windows(2) {
             if offset <= pair[1].offset {
                 let span = pair[1].offset - pair[0].offset;
-                let t = if span > 0.0 { (offset - pair[0].offset) / span } else { 1.0 };
+                let t = if span > 0.0 {
+                    (offset - pair[0].offset) / span
+                } else {
+                    1.0
+                };
                 return pair[0].color.lerp(pair[1].color, t);
             }
         }
@@ -190,7 +232,8 @@ impl Shadow {
     /// Area an outer shadow may paint around a box.
     #[must_use]
     pub fn bounds(&self, rect: Rect) -> Rect {
-        rect.translate(self.offset.x, self.offset.y).outset(self.spread.max(0.0) + self.blur * 2.0)
+        rect.translate(self.offset.x, self.offset.y)
+            .outset(self.spread.max(0.0) + self.blur * 2.0)
     }
 }
 
@@ -230,7 +273,9 @@ impl Decoration {
 
     #[must_use]
     pub fn has_outer_shadow(&self) -> bool {
-        self.shadows.iter().any(|shadow| !shadow.inset && !shadow.color.is_transparent())
+        self.shadows
+            .iter()
+            .any(|shadow| !shadow.inset && !shadow.color.is_transparent())
     }
 
     /// How far paint may extend beyond the box (shadows).
@@ -255,7 +300,9 @@ impl Decoration {
 
         let uniform_width = props.number(PropKey::BorderWidth).unwrap_or(0.0);
         let width = |key| props.number(key).unwrap_or(uniform_width).max(0.0);
-        let base_color = props.color(PropKey::BorderColor).unwrap_or(Color::TRANSPARENT);
+        let base_color = props
+            .color(PropKey::BorderColor)
+            .unwrap_or(Color::TRANSPARENT);
         let color = |key| props.color(key).unwrap_or(base_color);
         let border = Border {
             widths: [
@@ -277,7 +324,10 @@ impl Decoration {
             },
         };
 
-        let image_host = matches!(kind, NodeKind::Image | NodeKind::ImageBackground | NodeKind::DrawingCanvas);
+        let image_host = matches!(
+            kind,
+            NodeKind::Image | NodeKind::ImageBackground | NodeKind::DrawingCanvas
+        );
         let gradients = if image_host {
             Vec::new()
         } else {
@@ -286,7 +336,9 @@ impl Decoration {
         let border_gradient = if image_host || !border.has_width() {
             None
         } else {
-            parse_gradients(props.text_or_empty(PropKey::BorderGradient)).into_iter().next()
+            parse_gradients(props.text_or_empty(PropKey::BorderGradient))
+                .into_iter()
+                .next()
         };
 
         let shadows = match props.text(PropKey::BoxShadows) {
@@ -303,18 +355,24 @@ impl Decoration {
                     inset: false,
                 }],
                 // Material elevation without a CSS shadow.
-                None => elevation_shadow(props.number_or(PropKey::Elevation, 0.0)).into_iter().collect(),
+                None => elevation_shadow(props.number_or(PropKey::Elevation, 0.0))
+                    .into_iter()
+                    .collect(),
             },
         };
 
         Self {
-            background: props.color(PropKey::BackgroundColor).unwrap_or(Color::TRANSPARENT),
+            background: props
+                .color(PropKey::BackgroundColor)
+                .unwrap_or(Color::TRANSPARENT),
             gradients,
             radii,
             border,
             border_gradient,
             shadows,
-            clip: props.integer(PropKey::Overflow) == Some(2) || (matches!(kind, NodeKind::Image | NodeKind::Media | NodeKind::WebView) && !radii.is_zero()),
+            clip: props.integer(PropKey::Overflow) == Some(2)
+                || (matches!(kind, NodeKind::Image | NodeKind::Media | NodeKind::WebView)
+                    && !radii.is_zero()),
             blur: props.number_or(PropKey::BlurRadius, 0.0).max(0.0),
             color_matrix: parse_color_matrix(props.text_or_empty(PropKey::FilterColorMatrix)),
             backdrop_blur: props.number_or(PropKey::BackdropBlurRadius, 0.0).max(0.0),
@@ -335,7 +393,8 @@ fn elevation_shadow(elevation: f32) -> Option<Shadow> {
 /// `[[x, y, blur, spread, argb, inset], …]` in logical units.
 #[must_use]
 pub fn parse_shadows(wire: &str) -> Vec<Shadow> {
-    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(wire) else {
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(wire)
+    else {
         return Vec::new();
     };
     items
@@ -345,8 +404,15 @@ pub fn parse_shadows(wire: &str) -> Vec<Shadow> {
             if fields.len() < 5 {
                 return None;
             }
-            let number = |index: usize| fields.get(index).and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32;
-            let color = fields[4].as_i64().or_else(|| fields[4].as_f64().map(|value| value as i64))?;
+            let number = |index: usize| {
+                fields
+                    .get(index)
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.0) as f32
+            };
+            let color = fields[4]
+                .as_i64()
+                .or_else(|| fields[4].as_f64().map(|value| value as i64))?;
             Some(Shadow {
                 offset: Point::new(number(0), number(1)),
                 blur: number(2).max(0.0),
@@ -373,7 +439,8 @@ pub fn parse_gradients(wire: &str) -> Vec<Gradient> {
     if wire.is_empty() {
         return Vec::new();
     }
-    let Ok(serde_json::Value::Array(layers)) = serde_json::from_str::<serde_json::Value>(wire) else {
+    let Ok(serde_json::Value::Array(layers)) = serde_json::from_str::<serde_json::Value>(wire)
+    else {
         return Vec::new();
     };
     layers.iter().filter_map(parse_gradient).collect()
@@ -385,7 +452,12 @@ fn parse_gradient(layer: &serde_json::Value) -> Option<Gradient> {
         return None;
     }
     let integer = |key: &str| layer.get(key).and_then(serde_json::Value::as_i64);
-    let number = |key: &str| layer.get(key).and_then(serde_json::Value::as_f64).map(|value| value as f32);
+    let number = |key: &str| {
+        layer
+            .get(key)
+            .and_then(serde_json::Value::as_f64)
+            .map(|value| value as f32)
+    };
 
     // Stops: explicit fractions are kept; `auto` positions are spread evenly
     // between their explicit neighbours (CSS color stop fix-up).
@@ -393,10 +465,18 @@ fn parse_gradient(layer: &serde_json::Value) -> Option<Gradient> {
     let mut positions: Vec<Option<f32>> = Vec::with_capacity(raw_stops.len());
     for stop in raw_stops {
         let fields = stop.as_array()?;
-        let color = fields.first().and_then(|value| value.as_i64().or_else(|| value.as_f64().map(|v| v as i64)))?;
+        let color = fields
+            .first()
+            .and_then(|value| value.as_i64().or_else(|| value.as_f64().map(|v| v as i64)))?;
         colors.push(Color::from_wire(color));
-        let unit = fields.get(2).and_then(serde_json::Value::as_i64).unwrap_or(0);
-        let position = fields.get(1).and_then(serde_json::Value::as_f64).map(|value| value as f32);
+        let unit = fields
+            .get(2)
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
+        let position = fields
+            .get(1)
+            .and_then(serde_json::Value::as_f64)
+            .map(|value| value as f32);
         // unit 0 = auto, 1 = fraction, 2 = percent.
         positions.push(match (unit, position) {
             (0, _) | (_, None) => None,
@@ -442,37 +522,80 @@ fn parse_gradient(layer: &serde_json::Value) -> Option<Gradient> {
 
     let center = || {
         let axis = |index: usize| {
-            let pair = layer.get("c").and_then(|center| center.get(index)).and_then(serde_json::Value::as_array);
-            let value = pair.and_then(|pair| pair.first()).and_then(serde_json::Value::as_f64).unwrap_or(0.5) as f32;
-            let unit = pair.and_then(|pair| pair.get(1)).and_then(serde_json::Value::as_i64).unwrap_or(1);
+            let pair = layer
+                .get("c")
+                .and_then(|center| center.get(index))
+                .and_then(serde_json::Value::as_array);
+            let value = pair
+                .and_then(|pair| pair.first())
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.5) as f32;
+            let unit = pair
+                .and_then(|pair| pair.get(1))
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(1);
             if unit == 2 { value / 100.0 } else { value }
         };
         Point::new(axis(0), axis(1))
     };
 
     let shape = match integer("t").unwrap_or(GRADIENT_LINEAR) {
-        GRADIENT_RADIAL => GradientShape::Radial { center: center(), radius_x: 0.5, radius_y: 0.5 },
-        GRADIENT_CONIC => GradientShape::Conic { center: center(), angle: number("a").unwrap_or(0.0) },
+        GRADIENT_RADIAL => GradientShape::Radial {
+            center: center(),
+            radius_x: 0.5,
+            radius_y: 0.5,
+        },
+        GRADIENT_CONIC => GradientShape::Conic {
+            center: center(),
+            angle: number("a").unwrap_or(0.0),
+        },
         _ => match integer("m").unwrap_or(MODE_ANGLE) {
             MODE_POINTS => {
                 let points = layer.get("p").and_then(serde_json::Value::as_array);
                 let point = |index: usize| {
-                    points.and_then(|points| points.get(index)).and_then(serde_json::Value::as_f64).unwrap_or(0.0) as f32
+                    points
+                        .and_then(|points| points.get(index))
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or(0.0) as f32
                 };
-                GradientShape::LinearPoints { start: Point::new(point(0), point(1)), end: Point::new(point(2), point(3)) }
+                GradientShape::LinearPoints {
+                    start: Point::new(point(0), point(1)),
+                    end: Point::new(point(2), point(3)),
+                }
             }
             MODE_CORNER => {
                 // `to <corner>`: x/y are -1, 0 or 1 towards the target corner.
                 let x = number("x").unwrap_or(0.0);
                 let y = number("y").unwrap_or(0.0);
-                let start = Point::new(if x > 0.0 { 0.0 } else if x < 0.0 { 1.0 } else { 0.5 }, if y > 0.0 { 0.0 } else if y < 0.0 { 1.0 } else { 0.5 });
+                let start = Point::new(
+                    if x > 0.0 {
+                        0.0
+                    } else if x < 0.0 {
+                        1.0
+                    } else {
+                        0.5
+                    },
+                    if y > 0.0 {
+                        0.0
+                    } else if y < 0.0 {
+                        1.0
+                    } else {
+                        0.5
+                    },
+                );
                 let end = Point::new(1.0 - start.x, 1.0 - start.y);
                 GradientShape::LinearPoints { start, end }
             }
-            _ => GradientShape::Linear { angle: number("a").unwrap_or(180.0) },
+            _ => GradientShape::Linear {
+                angle: number("a").unwrap_or(180.0),
+            },
         },
     };
-    Some(Gradient { shape, stops, repeating: integer("r") == Some(1) })
+    Some(Gradient {
+        shape,
+        stops,
+        repeating: integer("r") == Some(1),
+    })
 }
 
 /// 20 comma or space separated decimals (rows of R, G, B, A with an offset column).
@@ -483,14 +606,19 @@ pub fn parse_color_matrix(wire: &str) -> Option<[f32; 20]> {
     }
     let mut matrix = [0.0_f32; 20];
     let mut count = 0;
-    for field in wire.split(|character: char| character == ',' || character.is_whitespace() || character == '[' || character == ']') {
+    for field in wire.split(|character: char| {
+        character == ',' || character.is_whitespace() || character == '[' || character == ']'
+    }) {
         if field.is_empty() {
             continue;
         }
         if count == 20 {
             return None;
         }
-        matrix[count] = field.parse::<f32>().ok().filter(|value| value.is_finite())?;
+        matrix[count] = field
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())?;
         count += 1;
     }
     (count == 20).then_some(matrix)
@@ -508,7 +636,11 @@ pub struct LayerState {
 
 impl Default for LayerState {
     fn default() -> Self {
-        Self { opacity: 1.0, transform: Affine::IDENTITY, visible: true }
+        Self {
+            opacity: 1.0,
+            transform: Affine::IDENTITY,
+            visible: true,
+        }
     }
 }
 
@@ -522,7 +654,14 @@ pub fn resolve_transform(props: Props<'_>, size: Size) -> Affine {
     let scale_x = props.number_or(PropKey::ScaleX, 1.0);
     let scale_y = props.number_or(PropKey::ScaleY, 1.0);
     let rotation = props.number_or(PropKey::Rotation, 0.0);
-    compose_transform(translate_x, translate_y, scale_x, scale_y, rotation, transform_origin(props, size))
+    compose_transform(
+        translate_x,
+        translate_y,
+        scale_x,
+        scale_y,
+        rotation,
+        transform_origin(props, size),
+    )
 }
 
 /// Transform origin in the box's coordinates (percent on the wire, center by default).
@@ -574,9 +713,20 @@ mod tests {
         map.insert(PropKey::BorderBottomWidth, PropValue::Integer(3));
         map.insert(PropKey::BorderColor, PropValue::Integer(0xFF00_0000));
         map.insert(PropKey::BackgroundColor, PropValue::Integer(0xFFFF_FFFF));
-        map.insert(PropKey::BoxShadows, PropValue::String("[[0,4,12,0,1493172224,0],[0,1,0,0,-1,1]]".into()));
+        map.insert(
+            PropKey::BoxShadows,
+            PropValue::String("[[0,4,12,0,1493172224,0],[0,1,0,0,-1,1]]".into()),
+        );
         let decoration = Decoration::resolve(NodeKind::View, Props::new(&map));
-        assert_eq!(decoration.radii, Radii { top_left: 2.0, top_right: 8.0, bottom_right: 8.0, bottom_left: 8.0 });
+        assert_eq!(
+            decoration.radii,
+            Radii {
+                top_left: 2.0,
+                top_right: 8.0,
+                bottom_right: 8.0,
+                bottom_left: 8.0
+            }
+        );
         assert_eq!(decoration.border.widths, [1.0, 1.0, 1.0, 3.0]);
         assert!(decoration.border.is_visible() && !decoration.border.is_uniform());
         assert_eq!(decoration.shadows.len(), 2);
@@ -589,7 +739,12 @@ mod tests {
     fn elevation_becomes_a_shadow_only_without_css_shadows() {
         let mut map = PropMap::new();
         map.insert(PropKey::Elevation, PropValue::Float(4.0));
-        assert_eq!(Decoration::resolve(NodeKind::View, Props::new(&map)).shadows.len(), 1);
+        assert_eq!(
+            Decoration::resolve(NodeKind::View, Props::new(&map))
+                .shadows
+                .len(),
+            1
+        );
         map.insert(PropKey::ShadowColor, PropValue::Integer(0x4000_0000));
         let decoration = Decoration::resolve(NodeKind::View, Props::new(&map));
         assert_eq!(decoration.shadows.len(), 1);
@@ -598,7 +753,9 @@ mod tests {
 
     #[test]
     fn parses_linear_gradients_and_spreads_auto_stops() {
-        let gradients = parse_gradients(r#"[{"t":1,"m":1,"a":90,"s":[[-65536,0,0],[-16711936,0,0],[-16776961,0,0]]}]"#);
+        let gradients = parse_gradients(
+            r#"[{"t":1,"m":1,"a":90,"s":[[-65536,0,0],[-16711936,0,0],[-16776961,0,0]]}]"#,
+        );
         assert_eq!(gradients.len(), 1);
         let offsets: Vec<f32> = gradients[0].stops.iter().map(|stop| stop.offset).collect();
         assert_eq!(offsets, vec![0.0, 0.5, 1.0]);
@@ -621,8 +778,14 @@ mod tests {
         map.insert(PropKey::ScaleY, PropValue::Float(2.0));
         map.insert(PropKey::TranslationX, PropValue::Float(10.0));
         let transform = resolve_transform(Props::new(&map), Size::new(100.0, 40.0));
-        assert_eq!(transform.apply(Point::new(50.0, 20.0)), Point::new(60.0, 20.0));
-        assert_eq!(transform.apply(Point::new(0.0, 0.0)), Point::new(-40.0, -20.0));
+        assert_eq!(
+            transform.apply(Point::new(50.0, 20.0)),
+            Point::new(60.0, 20.0)
+        );
+        assert_eq!(
+            transform.apply(Point::new(0.0, 0.0)),
+            Point::new(-40.0, -20.0)
+        );
     }
 
     #[test]

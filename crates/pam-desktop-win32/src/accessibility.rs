@@ -7,41 +7,62 @@
 //! Native text controls and web views bring their own providers and are
 //! left out of this tree.
 
-#![allow(non_upper_case_globals, reason = "UI Automation constants keep their SDK names, also in patterns")]
+#![allow(
+    non_upper_case_globals,
+    reason = "UI Automation constants keep their SDK names, also in patterns"
+)]
 
 use std::rc::Rc;
 
 use pam_desktop_ui::accessibility::{Accessibility, Checked, LiveRegion, Role};
 use pam_desktop_ui::backend::{BackendEvent, NodeId, WindowId};
 use pam_desktop_ui::geometry::Point;
-use windows::core::{implement, Error, IUnknown, IUnknownImpl, Interface, Result, BOOL, BSTR, HRESULT};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
-use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER, SAFEARRAY};
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, SAFEARRAY};
 use windows::Win32::System::Ole::{SafeArrayCreateVector, SafeArrayPutElement};
 use windows::Win32::System::Variant::{VARIANT, VT_I4};
 use windows::Win32::UI::Accessibility::{
-    Assertive, CLSID_AccPropServices, ExpandCollapseState, ExpandCollapseState_Collapsed, ExpandCollapseState_Expanded, IAccPropServices,
-    IExpandCollapseProvider, IExpandCollapseProvider_Impl, IInvokeProvider, IInvokeProvider_Impl, IRangeValueProvider, IRangeValueProvider_Impl,
-    IRawElementProviderFragment, IRawElementProviderFragmentRoot, IRawElementProviderFragmentRoot_Impl, IRawElementProviderFragment_Impl,
-    IRawElementProviderSimple, IRawElementProviderSimple_Impl, ISelectionItemProvider, ISelectionItemProvider_Impl, IToggleProvider, IToggleProvider_Impl,
-    Name_Property_GUID, NavigateDirection, NavigateDirection_FirstChild, NavigateDirection_LastChild, NavigateDirection_NextSibling, NavigateDirection_Parent,
-    NavigateDirection_PreviousSibling, NotificationKind_Other, NotificationProcessing_All, NotificationProcessing_ImportantAll, Off, Polite, ProviderOptions,
-    ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading, ToggleState, ToggleState_Indeterminate, ToggleState_Off, ToggleState_On,
+    Assertive, CLSID_AccPropServices, ExpandCollapseState, ExpandCollapseState_Collapsed,
+    ExpandCollapseState_Expanded, IAccPropServices, IExpandCollapseProvider,
+    IExpandCollapseProvider_Impl, IInvokeProvider, IInvokeProvider_Impl, IRangeValueProvider,
+    IRangeValueProvider_Impl, IRawElementProviderFragment, IRawElementProviderFragment_Impl,
+    IRawElementProviderFragmentRoot, IRawElementProviderFragmentRoot_Impl,
+    IRawElementProviderSimple, IRawElementProviderSimple_Impl, ISelectionItemProvider,
+    ISelectionItemProvider_Impl, IToggleProvider, IToggleProvider_Impl, Name_Property_GUID,
+    NavigateDirection, NavigateDirection_FirstChild, NavigateDirection_LastChild,
+    NavigateDirection_NextSibling, NavigateDirection_Parent, NavigateDirection_PreviousSibling,
+    NotificationKind_Other, NotificationProcessing_All, NotificationProcessing_ImportantAll, Off,
+    Polite, ProviderOptions, ProviderOptions_ServerSideProvider, ProviderOptions_UseComThreading,
+    ToggleState, ToggleState_Indeterminate, ToggleState_Off, ToggleState_On,
+    UIA_AutomationFocusChangedEventId, UIA_AutomationIdPropertyId, UIA_ButtonControlTypeId,
+    UIA_CONTROLTYPE_ID, UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId,
+    UIA_ControlTypePropertyId, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_INVALIDOPERATION,
+    UIA_EditControlTypeId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+    UIA_ExpandCollapsePatternId, UIA_FrameworkIdPropertyId, UIA_GroupControlTypeId,
+    UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId, UIA_HyperlinkControlTypeId,
+    UIA_ImageControlTypeId, UIA_InvokePatternId, UIA_IsContentElementPropertyId,
+    UIA_IsControlElementPropertyId, UIA_IsEnabledPropertyId, UIA_IsKeyboardFocusablePropertyId,
+    UIA_IsOffscreenPropertyId, UIA_ItemStatusPropertyId, UIA_ListControlTypeId,
+    UIA_ListItemControlTypeId, UIA_LiveSettingPropertyId, UIA_MenuBarControlTypeId,
+    UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_PATTERN_ID,
+    UIA_PROPERTY_ID, UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId,
+    UIA_RangeValuePatternId, UIA_RangeValueValuePropertyId, UIA_ScrollBarControlTypeId,
+    UIA_SelectionItemIsSelectedPropertyId, UIA_SelectionItemPatternId, UIA_SliderControlTypeId,
+    UIA_SpinnerControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
+    UIA_TableControlTypeId, UIA_TextControlTypeId, UIA_TogglePatternId,
+    UIA_ToggleToggleStatePropertyId, UIA_ToolBarControlTypeId, UIA_WindowControlTypeId,
     UiaAppendRuntimeId, UiaClientsAreListening, UiaHostProviderFromHwnd, UiaRaiseAutomationEvent,
-    UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent, UiaRect, UiaReturnRawElementProvider, UiaRootObjectId,
-    UIA_AutomationFocusChangedEventId, UIA_AutomationIdPropertyId, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId,
-    UIA_ControlTypePropertyId, UIA_EditControlTypeId, UIA_ExpandCollapsePatternId, UIA_FrameworkIdPropertyId, UIA_GroupControlTypeId,
-    UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId, UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId, UIA_InvokePatternId,
-    UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId, UIA_IsEnabledPropertyId, UIA_IsKeyboardFocusablePropertyId, UIA_IsOffscreenPropertyId,
-    UIA_ItemStatusPropertyId, UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_LiveSettingPropertyId, UIA_MenuBarControlTypeId,
-    UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_ProgressBarControlTypeId,
-    UIA_RadioButtonControlTypeId, UIA_RangeValuePatternId, UIA_ScrollBarControlTypeId, UIA_SelectionItemIsSelectedPropertyId, UIA_SelectionItemPatternId, UIA_ToggleToggleStatePropertyId,
-    UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_RangeValueValuePropertyId, UIA_SliderControlTypeId,
-    UIA_SpinnerControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_TableControlTypeId, UIA_TextControlTypeId, UIA_TogglePatternId,
-    UIA_ToolBarControlTypeId, UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_INVALIDOPERATION,
+    UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent, UiaRect,
+    UiaReturnRawElementProvider, UiaRootObjectId,
 };
-use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, CHILDID_SELF, OBJID_CLIENT, SPI_GETSCREENREADER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CHILDID_SELF, OBJID_CLIENT, SPI_GETSCREENREADER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    SystemParametersInfoW,
+};
+use windows::core::{
+    BOOL, BSTR, Error, HRESULT, IUnknown, IUnknownImpl, Interface, Result, implement,
+};
 
 use crate::app::App;
 use crate::scene::{Scene, View};
@@ -57,19 +78,30 @@ fn none() -> Error {
 
 /// Neither the view nor anything inside it is exposed.
 fn subtree_hidden(view: &View) -> bool {
-    !view.layer.visible || view.accessibility.as_ref().is_some_and(|accessibility| accessibility.hide_descendants)
+    !view.layer.visible
+        || view
+            .accessibility
+            .as_ref()
+            .is_some_and(|accessibility| accessibility.hide_descendants)
 }
 
 /// Whether a view is an element of the tree (its children are in any case,
 /// promoted to its parent when it is not).
 fn exposed(view: &View) -> bool {
     // Native controls and web pages describe themselves through their own windows.
-    view.input.is_none() && view.web.is_none() && !view.accessibility.as_ref().is_some_and(|accessibility| accessibility.hidden)
+    view.input.is_none()
+        && view.web.is_none()
+        && !view
+            .accessibility
+            .as_ref()
+            .is_some_and(|accessibility| accessibility.hidden)
 }
 
 fn collect_children(scene: &Scene, children: &[NodeId], out: &mut Vec<NodeId>, depth: usize) {
     for child in children {
-        let Some(view) = scene.views.get(child) else { continue };
+        let Some(view) = scene.views.get(child) else {
+            continue;
+        };
         if subtree_hidden(view) || depth > 256 {
             continue;
         }
@@ -92,7 +124,12 @@ fn children_of(scene: &Scene, window: WindowId, node: Option<NodeId>) -> Vec<Nod
         }
         None => {
             if let Some(entry) = scene.windows.get(&window) {
-                let layers: Vec<NodeId> = entry.root.iter().chain(entry.overlays.iter()).copied().collect();
+                let layers: Vec<NodeId> = entry
+                    .root
+                    .iter()
+                    .chain(entry.overlays.iter())
+                    .copied()
+                    .collect();
                 collect_children(scene, &layers, &mut out, 0);
             }
         }
@@ -121,7 +158,12 @@ fn parent_of(scene: &Scene, id: NodeId) -> Option<Option<NodeId>> {
 
 /// The accessible name: the label, or the text the view shows.
 fn name_of(view: &View) -> String {
-    match view.accessibility.as_ref().map(|accessibility| accessibility.label.as_str()).filter(|label| !label.is_empty()) {
+    match view
+        .accessibility
+        .as_ref()
+        .map(|accessibility| accessibility.label.as_str())
+        .filter(|label| !label.is_empty())
+    {
         Some(label) => label.to_owned(),
         None => view.plain_text().unwrap_or_default(),
     }
@@ -130,10 +172,19 @@ fn name_of(view: &View) -> String {
 fn control_type(view: &View) -> UIA_CONTROLTYPE_ID {
     let Some(accessibility) = view.accessibility.as_ref() else {
         // A plain view that shows text is static text.
-        return if view.text.is_some() { UIA_TextControlTypeId } else { UIA_GroupControlTypeId };
+        return if view.text.is_some() {
+            UIA_TextControlTypeId
+        } else {
+            UIA_GroupControlTypeId
+        };
     };
     match accessibility.role {
-        Role::Generic | Role::RadioGroup | Role::Summary | Role::Timer | Role::Alert | Role::Search => UIA_GroupControlTypeId,
+        Role::Generic
+        | Role::RadioGroup
+        | Role::Summary
+        | Role::Timer
+        | Role::Alert
+        | Role::Search => UIA_GroupControlTypeId,
         Role::Button | Role::ToggleButton => UIA_ButtonControlTypeId,
         Role::TextInput => UIA_EditControlTypeId,
         Role::Image => UIA_ImageControlTypeId,
@@ -168,13 +219,17 @@ fn is_control(view: &View) -> bool {
 /// Whether the item is selected, for elements that are selection items:
 /// those with a selected state, and radio buttons (their checked state).
 fn selection_of(accessibility: &Accessibility) -> Option<bool> {
-    accessibility.selected.or_else(|| (accessibility.role == Role::Radio).then(|| accessibility.checked == Some(Checked::Checked)))
+    accessibility.selected.or_else(|| {
+        (accessibility.role == Role::Radio).then(|| accessibility.checked == Some(Checked::Checked))
+    })
 }
 
 /// Whether the view is part of the tree assistive technology walks:
 /// exposed itself, in a window, and under no ancestor that hides it.
 fn reachable(scene: &Scene, id: NodeId) -> bool {
-    let Some(view) = scene.views.get(&id) else { return false };
+    let Some(view) = scene.views.get(&id) else {
+        return false;
+    };
     if !exposed(view) || subtree_hidden(view) {
         return false;
     }
@@ -193,10 +248,20 @@ fn reachable(scene: &Scene, id: NodeId) -> bool {
 
 /// Whether the default action (a press) makes sense for the element.
 fn invokable(view: &View) -> bool {
-    view.focusable || view.accessibility.as_ref().is_some_and(|accessibility| matches!(accessibility.role, Role::Button | Role::Link | Role::MenuItem | Role::Tab | Role::ListItem))
+    view.focusable
+        || view.accessibility.as_ref().is_some_and(|accessibility| {
+            matches!(
+                accessibility.role,
+                Role::Button | Role::Link | Role::MenuItem | Role::Tab | Role::ListItem
+            )
+        })
 }
 
-#[implement(IRawElementProviderSimple, IRawElementProviderFragment, IRawElementProviderFragmentRoot)]
+#[implement(
+    IRawElementProviderSimple,
+    IRawElementProviderFragment,
+    IRawElementProviderFragmentRoot
+)]
 struct RootProvider {
     hwnd: HWND,
     window: WindowId,
@@ -225,7 +290,12 @@ fn node_fragment(hwnd: HWND, window: WindowId, node: NodeId) -> IRawElementProvi
 fn root_provider(app: &App, hwnd: HWND, window: WindowId) -> Option<IRawElementProviderSimple> {
     app.with_state(|state| {
         let entry = state.scene.windows.get_mut(&window)?;
-        Some(entry.automation.get_or_insert_with(|| RootProvider { hwnd, window }.into()).clone())
+        Some(
+            entry
+                .automation
+                .get_or_insert_with(|| RootProvider { hwnd, window }.into())
+                .clone(),
+        )
     })
     .flatten()
 }
@@ -236,7 +306,11 @@ fn options() -> ProviderOptions {
 }
 
 fn runtime_id(node: NodeId) -> Result<*mut SAFEARRAY> {
-    let parts = [UiaAppendRuntimeId as i32, (node & 0xFFFF_FFFF) as u32 as i32, (node >> 32) as u32 as i32];
+    let parts = [
+        UiaAppendRuntimeId as i32,
+        (node & 0xFFFF_FFFF) as u32 as i32,
+        (node >> 32) as u32 as i32,
+    ];
     // SAFETY: a three element vector of 32-bit integers, filled index by
     // index from live locals; ownership passes to the caller.
     unsafe {
@@ -275,13 +349,17 @@ impl IRawElementProviderSimple_Impl for RootProvider_Impl {
 impl IRawElementProviderFragment_Impl for RootProvider_Impl {
     fn Navigate(&self, direction: NavigateDirection) -> Result<IRawElementProviderFragment> {
         let app = App::current().ok_or_else(unavailable)?;
-        let children = app.with_state(|state| children_of(&state.scene, self.window, None)).ok_or_else(unavailable)?;
+        let children = app
+            .with_state(|state| children_of(&state.scene, self.window, None))
+            .ok_or_else(unavailable)?;
         let target = match direction {
             NavigateDirection_FirstChild => children.first(),
             NavigateDirection_LastChild => children.last(),
             _ => None,
         };
-        target.map(|node| node_fragment(self.hwnd, self.window, *node)).ok_or_else(none)
+        target
+            .map(|node| node_fragment(self.hwnd, self.window, *node))
+            .ok_or_else(none)
     }
 
     fn GetRuntimeId(&self) -> Result<*mut SAFEARRAY> {
@@ -304,14 +382,19 @@ impl IRawElementProviderFragment_Impl for RootProvider_Impl {
 
     fn FragmentRoot(&self) -> Result<IRawElementProviderFragmentRoot> {
         let app = App::current().ok_or_else(unavailable)?;
-        root_provider(&app, self.hwnd, self.window).ok_or_else(unavailable)?.cast()
+        root_provider(&app, self.hwnd, self.window)
+            .ok_or_else(unavailable)?
+            .cast()
     }
 }
 
 impl IRawElementProviderFragmentRoot_Impl for RootProvider_Impl {
     fn ElementProviderFromPoint(&self, x: f64, y: f64) -> Result<IRawElementProviderFragment> {
         let app = App::current().ok_or_else(unavailable)?;
-        let mut point = POINT { x: x.round() as i32, y: y.round() as i32 };
+        let mut point = POINT {
+            x: x.round() as i32,
+            y: y.round() as i32,
+        };
         // SAFETY: plain coordinate conversion on our window.
         unsafe {
             let _ = ScreenToClient(self.hwnd, &mut point);
@@ -320,15 +403,28 @@ impl IRawElementProviderFragmentRoot_Impl for RootProvider_Impl {
             .with_state(|state| {
                 let scale = state.scene.windows.get(&self.window)?.scale();
                 let mut path = Vec::new();
-                state.scene.hit_path(self.window, Point::new(point.x as f32 / scale, point.y as f32 / scale), &mut path);
+                state.scene.hit_path(
+                    self.window,
+                    Point::new(point.x as f32 / scale, point.y as f32 / scale),
+                    &mut path,
+                );
                 // The deepest exposed view on the path, unless an ancestor hides it.
-                let hidden_from = path.iter().position(|id| state.scene.views.get(id).is_none_or(subtree_hidden)).unwrap_or(path.len());
-                path[..hidden_from].iter().rev().copied().find(|id| state.scene.views.get(id).is_some_and(exposed))
+                let hidden_from = path
+                    .iter()
+                    .position(|id| state.scene.views.get(id).is_none_or(subtree_hidden))
+                    .unwrap_or(path.len());
+                path[..hidden_from]
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|id| state.scene.views.get(id).is_some_and(exposed))
             })
             .flatten();
         match hit {
             Some(node) => Ok(node_fragment(self.hwnd, self.window, node)),
-            None => root_provider(&app, self.hwnd, self.window).ok_or_else(unavailable)?.cast(),
+            None => root_provider(&app, self.hwnd, self.window)
+                .ok_or_else(unavailable)?
+                .cast(),
         }
     }
 
@@ -338,10 +434,13 @@ impl IRawElementProviderFragmentRoot_Impl for RootProvider_Impl {
             .with_state(|state| {
                 let focus = state.scene.focus?;
                 let view = state.scene.views.get(&focus)?;
-                (state.scene.window_of(focus) == Some(self.window) && exposed(view)).then_some(focus)
+                (state.scene.window_of(focus) == Some(self.window) && exposed(view))
+                    .then_some(focus)
             })
             .flatten();
-        focused.map(|node| node_fragment(self.hwnd, self.window, node)).ok_or_else(none)
+        focused
+            .map(|node| node_fragment(self.hwnd, self.window, node))
+            .ok_or_else(none)
     }
 }
 
@@ -349,21 +448,40 @@ impl NodeProvider {
     /// Reads from the view, or fails when it is gone.
     fn read<T>(&self, read: impl FnOnce(&Scene, &View) -> T) -> Result<T> {
         let app = App::current().ok_or_else(unavailable)?;
-        app.with_state(|state| state.scene.views.get(&self.node).map(|view| read(&state.scene, view))).flatten().ok_or_else(unavailable)
+        app.with_state(|state| {
+            state
+                .scene
+                .views
+                .get(&self.node)
+                .map(|view| read(&state.scene, view))
+        })
+        .flatten()
+        .ok_or_else(unavailable)
     }
 
     fn described<T>(&self, read: impl FnOnce(&Accessibility) -> Option<T>) -> Result<T> {
-        self.read(|_, view| view.accessibility.as_deref().and_then(read))?.ok_or_else(|| Error::from(HRESULT(UIA_E_INVALIDOPERATION as i32)))
+        self.read(|_, view| view.accessibility.as_deref().and_then(read))?
+            .ok_or_else(|| Error::from(HRESULT(UIA_E_INVALIDOPERATION as i32)))
     }
 
     /// The default action: the core presses the node.
     fn activate(&self) -> Result<()> {
         let app = App::current().ok_or_else(unavailable)?;
-        let enabled = self.read(|_, view| !view.accessibility.as_ref().is_some_and(|accessibility| accessibility.disabled))?;
+        let enabled = self.read(|_, view| {
+            !view
+                .accessibility
+                .as_ref()
+                .is_some_and(|accessibility| accessibility.disabled)
+        })?;
         if !enabled {
-            return Err(Error::from(HRESULT(windows::Win32::UI::Accessibility::UIA_E_ELEMENTNOTENABLED as i32)));
+            return Err(Error::from(HRESULT(
+                windows::Win32::UI::Accessibility::UIA_E_ELEMENTNOTENABLED as i32,
+            )));
         }
-        app.emit(BackendEvent::AccessibilityAction { id: self.node, name: String::from("activate") });
+        app.emit(BackendEvent::AccessibilityAction {
+            id: self.node,
+            name: String::from("activate"),
+        });
         app.pump();
         Ok(())
     }
@@ -379,14 +497,26 @@ impl IRawElementProviderSimple_Impl for NodeProvider_Impl {
             let described = view.accessibility.as_deref();
             match pattern {
                 UIA_InvokePatternId => invokable(view),
-                UIA_TogglePatternId => described.is_some_and(|accessibility| accessibility.checked.is_some()),
-                UIA_SelectionItemPatternId => described.is_some_and(|accessibility| selection_of(accessibility).is_some()),
-                UIA_ExpandCollapsePatternId => described.is_some_and(|accessibility| accessibility.expanded.is_some()),
-                UIA_RangeValuePatternId => described.is_some_and(|accessibility| accessibility.range.is_some()),
+                UIA_TogglePatternId => {
+                    described.is_some_and(|accessibility| accessibility.checked.is_some())
+                }
+                UIA_SelectionItemPatternId => {
+                    described.is_some_and(|accessibility| selection_of(accessibility).is_some())
+                }
+                UIA_ExpandCollapsePatternId => {
+                    described.is_some_and(|accessibility| accessibility.expanded.is_some())
+                }
+                UIA_RangeValuePatternId => {
+                    described.is_some_and(|accessibility| accessibility.range.is_some())
+                }
                 _ => false,
             }
         })?;
-        if supported { Ok(self.to_interface::<IUnknown>()) } else { Err(none()) }
+        if supported {
+            Ok(self.to_interface::<IUnknown>())
+        } else {
+            Err(none())
+        }
     }
 
     fn GetPropertyValue(&self, property: UIA_PROPERTY_ID) -> Result<VARIANT> {
@@ -395,25 +525,39 @@ impl IRawElementProviderSimple_Impl for NodeProvider_Impl {
             match property {
                 UIA_ControlTypePropertyId => VARIANT::from(control_type(view).0),
                 UIA_NamePropertyId => VARIANT::from(BSTR::from(name_of(view))),
-                UIA_HelpTextPropertyId => described.filter(|accessibility| !accessibility.hint.is_empty()).map_or_else(VARIANT::default, |accessibility| VARIANT::from(BSTR::from(accessibility.hint.as_str()))),
-                UIA_AutomationIdPropertyId => {
-                    described.filter(|accessibility| !accessibility.identifier.is_empty()).map_or_else(VARIANT::default, |accessibility| VARIANT::from(BSTR::from(accessibility.identifier.as_str())))
+                UIA_HelpTextPropertyId => described
+                    .filter(|accessibility| !accessibility.hint.is_empty())
+                    .map_or_else(VARIANT::default, |accessibility| {
+                        VARIANT::from(BSTR::from(accessibility.hint.as_str()))
+                    }),
+                UIA_AutomationIdPropertyId => described
+                    .filter(|accessibility| !accessibility.identifier.is_empty())
+                    .map_or_else(VARIANT::default, |accessibility| {
+                        VARIANT::from(BSTR::from(accessibility.identifier.as_str()))
+                    }),
+                UIA_IsEnabledPropertyId => {
+                    VARIANT::from(!described.is_some_and(|accessibility| accessibility.disabled))
                 }
-                UIA_IsEnabledPropertyId => VARIANT::from(!described.is_some_and(|accessibility| accessibility.disabled)),
                 UIA_ItemStatusPropertyId => match described {
-                    Some(accessibility) if !accessibility.value_text.is_empty() => VARIANT::from(BSTR::from(accessibility.value_text.as_str())),
+                    Some(accessibility) if !accessibility.value_text.is_empty() => {
+                        VARIANT::from(BSTR::from(accessibility.value_text.as_str()))
+                    }
                     Some(accessibility) if accessibility.busy => VARIANT::from(BSTR::from("busy")),
                     _ => VARIANT::default(),
                 },
-                UIA_IsControlElementPropertyId | UIA_IsContentElementPropertyId => VARIANT::from(is_control(view)),
+                UIA_IsControlElementPropertyId | UIA_IsContentElementPropertyId => {
+                    VARIANT::from(is_control(view))
+                }
                 UIA_IsKeyboardFocusablePropertyId => VARIANT::from(view.focusable),
                 UIA_HasKeyboardFocusPropertyId => VARIANT::from(scene.focus == Some(self.node)),
                 UIA_IsOffscreenPropertyId => VARIANT::from(!scene.is_shown(self.node)),
-                UIA_LiveSettingPropertyId => VARIANT::from(match described.map_or(LiveRegion::Off, |accessibility| accessibility.live) {
-                    LiveRegion::Off => Off.0,
-                    LiveRegion::Polite => Polite.0,
-                    LiveRegion::Assertive => Assertive.0,
-                }),
+                UIA_LiveSettingPropertyId => VARIANT::from(
+                    match described.map_or(LiveRegion::Off, |accessibility| accessibility.live) {
+                        LiveRegion::Off => Off.0,
+                        LiveRegion::Polite => Polite.0,
+                        LiveRegion::Assertive => Assertive.0,
+                    },
+                ),
                 UIA_FrameworkIdPropertyId => VARIANT::from(BSTR::from("PAM")),
                 _ => VARIANT::default(),
             }
@@ -430,7 +574,9 @@ impl IRawElementProviderFragment_Impl for NodeProvider_Impl {
     fn Navigate(&self, direction: NavigateDirection) -> Result<IRawElementProviderFragment> {
         let app = App::current().ok_or_else(unavailable)?;
         // `Some(None)` is the window root.
-        let known = app.with_state(|state| state.scene.views.contains_key(&self.node)).ok_or_else(unavailable)?;
+        let known = app
+            .with_state(|state| state.scene.views.contains_key(&self.node))
+            .ok_or_else(unavailable)?;
         if !known {
             return Err(unavailable());
         }
@@ -440,12 +586,22 @@ impl IRawElementProviderFragment_Impl for NodeProvider_Impl {
                 let parent = parent_of(scene, self.node)?;
                 match direction {
                     NavigateDirection_Parent => Some(parent),
-                    NavigateDirection_FirstChild => children_of(scene, self.window, Some(self.node)).first().map(|node| Some(*node)),
-                    NavigateDirection_LastChild => children_of(scene, self.window, Some(self.node)).last().map(|node| Some(*node)),
+                    NavigateDirection_FirstChild => {
+                        children_of(scene, self.window, Some(self.node))
+                            .first()
+                            .map(|node| Some(*node))
+                    }
+                    NavigateDirection_LastChild => children_of(scene, self.window, Some(self.node))
+                        .last()
+                        .map(|node| Some(*node)),
                     NavigateDirection_NextSibling | NavigateDirection_PreviousSibling => {
                         let siblings = children_of(scene, self.window, parent);
                         let index = siblings.iter().position(|sibling| *sibling == self.node)?;
-                        let neighbour = if direction == NavigateDirection_NextSibling { index.checked_add(1) } else { index.checked_sub(1) }?;
+                        let neighbour = if direction == NavigateDirection_NextSibling {
+                            index.checked_add(1)
+                        } else {
+                            index.checked_sub(1)
+                        }?;
                         siblings.get(neighbour).map(|node| Some(*node))
                     }
                     _ => None,
@@ -454,7 +610,9 @@ impl IRawElementProviderFragment_Impl for NodeProvider_Impl {
             .ok_or_else(unavailable)?;
         match target {
             Some(Some(node)) => Ok(node_fragment(self.hwnd, self.window, node)),
-            Some(None) => root_provider(&app, self.hwnd, self.window).ok_or_else(unavailable)?.cast(),
+            Some(None) => root_provider(&app, self.hwnd, self.window)
+                .ok_or_else(unavailable)?
+                .cast(),
             None => Err(none()),
         }
     }
@@ -475,12 +633,20 @@ impl IRawElementProviderFragment_Impl for NodeProvider_Impl {
             .flatten()
             .ok_or_else(unavailable)?;
         let (rect, scale) = bounds;
-        let mut origin = POINT { x: (rect.x * scale).round() as i32, y: (rect.y * scale).round() as i32 };
+        let mut origin = POINT {
+            x: (rect.x * scale).round() as i32,
+            y: (rect.y * scale).round() as i32,
+        };
         // SAFETY: plain coordinate conversion on our window.
         unsafe {
             let _ = ClientToScreen(self.hwnd, &mut origin);
         }
-        Ok(UiaRect { left: f64::from(origin.x), top: f64::from(origin.y), width: f64::from(rect.width * scale), height: f64::from(rect.height * scale) })
+        Ok(UiaRect {
+            left: f64::from(origin.x),
+            top: f64::from(origin.y),
+            width: f64::from(rect.width * scale),
+            height: f64::from(rect.height * scale),
+        })
     }
 
     fn GetEmbeddedFragmentRoots(&self) -> Result<*mut SAFEARRAY> {
@@ -496,7 +662,9 @@ impl IRawElementProviderFragment_Impl for NodeProvider_Impl {
 
     fn FragmentRoot(&self) -> Result<IRawElementProviderFragmentRoot> {
         let app = App::current().ok_or_else(unavailable)?;
-        root_provider(&app, self.hwnd, self.window).ok_or_else(unavailable)?.cast()
+        root_provider(&app, self.hwnd, self.window)
+            .ok_or_else(unavailable)?
+            .cast()
     }
 }
 
@@ -518,7 +686,11 @@ impl IToggleProvider_Impl for NodeProvider_Impl {
 
 impl ISelectionItemProvider_Impl for NodeProvider_Impl {
     fn Select(&self) -> Result<()> {
-        if self.described(selection_of)? { Ok(()) } else { self.activate() }
+        if self.described(selection_of)? {
+            Ok(())
+        } else {
+            self.activate()
+        }
     }
 
     fn AddToSelection(&self) -> Result<()> {
@@ -541,15 +713,30 @@ impl ISelectionItemProvider_Impl for NodeProvider_Impl {
 
 impl IExpandCollapseProvider_Impl for NodeProvider_Impl {
     fn Expand(&self) -> Result<()> {
-        if self.described(|accessibility| accessibility.expanded)? { Ok(()) } else { self.activate() }
+        if self.described(|accessibility| accessibility.expanded)? {
+            Ok(())
+        } else {
+            self.activate()
+        }
     }
 
     fn Collapse(&self) -> Result<()> {
-        if self.described(|accessibility| accessibility.expanded)? { self.activate() } else { Ok(()) }
+        if self.described(|accessibility| accessibility.expanded)? {
+            self.activate()
+        } else {
+            Ok(())
+        }
     }
 
     fn ExpandCollapseState(&self) -> Result<ExpandCollapseState> {
-        self.described(|accessibility| accessibility.expanded).map(|expanded| if expanded { ExpandCollapseState_Expanded } else { ExpandCollapseState_Collapsed })
+        self.described(|accessibility| accessibility.expanded)
+            .map(|expanded| {
+                if expanded {
+                    ExpandCollapseState_Expanded
+                } else {
+                    ExpandCollapseState_Collapsed
+                }
+            })
     }
 }
 
@@ -560,7 +747,8 @@ impl IRangeValueProvider_Impl for NodeProvider_Impl {
     }
 
     fn Value(&self) -> Result<f64> {
-        self.described(|accessibility| accessibility.range).map(|(_, _, now)| f64::from(now))
+        self.described(|accessibility| accessibility.range)
+            .map(|(_, _, now)| f64::from(now))
     }
 
     fn IsReadOnly(&self) -> Result<BOOL> {
@@ -568,11 +756,13 @@ impl IRangeValueProvider_Impl for NodeProvider_Impl {
     }
 
     fn Maximum(&self) -> Result<f64> {
-        self.described(|accessibility| accessibility.range).map(|(_, maximum, _)| f64::from(maximum))
+        self.described(|accessibility| accessibility.range)
+            .map(|(_, maximum, _)| f64::from(maximum))
     }
 
     fn Minimum(&self) -> Result<f64> {
-        self.described(|accessibility| accessibility.range).map(|(minimum, _, _)| f64::from(minimum))
+        self.described(|accessibility| accessibility.range)
+            .map(|(minimum, _, _)| f64::from(minimum))
     }
 
     fn LargeChange(&self) -> Result<f64> {
@@ -585,7 +775,13 @@ impl IRangeValueProvider_Impl for NodeProvider_Impl {
 }
 
 /// `WM_GETOBJECT`: hands the window's fragment root to UI Automation.
-pub fn get_object(app: &Rc<App>, hwnd: HWND, window: WindowId, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+pub fn get_object(
+    app: &Rc<App>,
+    hwnd: HWND,
+    window: WindowId,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> Option<LRESULT> {
     // The object id travels in the low 32 bits.
     if lparam.0 as i32 != UiaRootObjectId {
         return None;
@@ -600,7 +796,12 @@ pub fn get_object(app: &Rc<App>, hwnd: HWND, window: WindowId, wparam: WPARAM, l
 pub fn window_destroyed(hwnd: HWND) {
     // SAFETY: the documented way to disconnect every provider of a window.
     unsafe {
-        UiaReturnRawElementProvider(hwnd, WPARAM(0), LPARAM(0), None::<&IRawElementProviderSimple>);
+        UiaReturnRawElementProvider(
+            hwnd,
+            WPARAM(0),
+            LPARAM(0),
+            None::<&IRawElementProviderSimple>,
+        );
     }
 }
 
@@ -616,7 +817,14 @@ fn simple_provider(app: &App, id: NodeId) -> Option<IRawElementProviderSimple> {
             Some((state.scene.windows.get(&window)?.hwnd, window))
         })
         .flatten()?;
-    Some(NodeProvider { hwnd, window, node: id }.into())
+    Some(
+        NodeProvider {
+            hwnd,
+            window,
+            node: id,
+        }
+        .into(),
+    )
 }
 
 /// Keyboard focus moved to a view that is not a native control.
@@ -637,11 +845,28 @@ pub fn focus_changed(app: &Rc<App>, id: NodeId) {
 fn annotate_control(hwnd: HWND, name: &str) {
     // SAFETY: standard in-process activation and calls with a live window.
     unsafe {
-        let Ok(services) = CoCreateInstance::<_, IAccPropServices>(&CLSID_AccPropServices, None, CLSCTX_INPROC_SERVER) else { return };
+        let Ok(services) = CoCreateInstance::<_, IAccPropServices>(
+            &CLSID_AccPropServices,
+            None,
+            CLSCTX_INPROC_SERVER,
+        ) else {
+            return;
+        };
         if name.is_empty() {
-            let _ = services.ClearHwndProps(hwnd, OBJID_CLIENT.0 as u32, CHILDID_SELF, &[Name_Property_GUID]);
+            let _ = services.ClearHwndProps(
+                hwnd,
+                OBJID_CLIENT.0 as u32,
+                CHILDID_SELF,
+                &[Name_Property_GUID],
+            );
         } else {
-            let _ = services.SetHwndPropStr(hwnd, OBJID_CLIENT.0 as u32, CHILDID_SELF, Name_Property_GUID, &windows::core::HSTRING::from(name));
+            let _ = services.SetHwndPropStr(
+                hwnd,
+                OBJID_CLIENT.0 as u32,
+                CHILDID_SELF,
+                Name_Property_GUID,
+                &windows::core::HSTRING::from(name),
+            );
         }
     }
 }
@@ -660,7 +885,10 @@ pub fn content_changed(app: &Rc<App>, id: NodeId) {
                 return None;
             }
             let name = name_of(view);
-            let live = view.accessibility.as_ref().map_or(LiveRegion::Off, |accessibility| accessibility.live);
+            let live = view
+                .accessibility
+                .as_ref()
+                .map_or(LiveRegion::Off, |accessibility| accessibility.live);
             if name == view.announced {
                 return None;
             }
@@ -669,7 +897,9 @@ pub fn content_changed(app: &Rc<App>, id: NodeId) {
             (reachable || control.is_some()).then_some((name, previous, control, live))
         })
         .flatten();
-    let Some((name, previous, control, live)) = change else { return };
+    let Some((name, previous, control, live)) = change else {
+        return;
+    };
     if let Some(control) = control {
         annotate_control(control, &name);
         return;
@@ -679,13 +909,30 @@ pub fn content_changed(app: &Rc<App>, id: NodeId) {
     if previous.is_empty() && live == LiveRegion::Off {
         return;
     }
-    let Some(provider) = simple_provider(app, id) else { return };
+    let Some(provider) = simple_provider(app, id) else {
+        return;
+    };
     // SAFETY: raising events with a live provider; no state borrow is held.
     unsafe {
-        let _ = UiaRaiseAutomationPropertyChangedEvent(&provider, UIA_NamePropertyId, &VARIANT::from(BSTR::from(previous)), &VARIANT::from(BSTR::from(name.as_str())));
+        let _ = UiaRaiseAutomationPropertyChangedEvent(
+            &provider,
+            UIA_NamePropertyId,
+            &VARIANT::from(BSTR::from(previous)),
+            &VARIANT::from(BSTR::from(name.as_str())),
+        );
         if live != LiveRegion::Off && !name.is_empty() {
-            let processing = if live == LiveRegion::Assertive { NotificationProcessing_ImportantAll } else { NotificationProcessing_All };
-            let _ = UiaRaiseNotificationEvent(&provider, NotificationKind_Other, processing, &BSTR::from(name), &BSTR::from("pam-live-region"));
+            let processing = if live == LiveRegion::Assertive {
+                NotificationProcessing_ImportantAll
+            } else {
+                NotificationProcessing_All
+            };
+            let _ = UiaRaiseNotificationEvent(
+                &provider,
+                NotificationKind_Other,
+                processing,
+                &BSTR::from(name),
+                &BSTR::from("pam-live-region"),
+            );
         }
     }
 }
@@ -705,36 +952,81 @@ pub fn state_changed(app: &Rc<App>, id: NodeId, previous: Option<&Accessibility>
         return;
     }
     let current = app
-        .with_state(|state| if reachable(&state.scene, id) { state.scene.views.get(&id).map(|view| view.accessibility.as_deref().cloned()) } else { None })
+        .with_state(|state| {
+            if reachable(&state.scene, id) {
+                state
+                    .scene
+                    .views
+                    .get(&id)
+                    .map(|view| view.accessibility.as_deref().cloned())
+            } else {
+                None
+            }
+        })
         .flatten();
     let Some(current) = current else { return };
     let plain = Accessibility::default();
-    let (before, now) = (previous.unwrap_or(&plain), current.as_ref().unwrap_or(&plain));
+    let (before, now) = (
+        previous.unwrap_or(&plain),
+        current.as_ref().unwrap_or(&plain),
+    );
     let mut changes: Vec<(UIA_PROPERTY_ID, VARIANT, VARIANT)> = Vec::new();
     if before.checked != now.checked
-        && let (Some(old), Some(new)) = (before.checked, now.checked) {
-            changes.push((UIA_ToggleToggleStatePropertyId, VARIANT::from(toggle_state(old).0), VARIANT::from(toggle_state(new).0)));
-        }
+        && let (Some(old), Some(new)) = (before.checked, now.checked)
+    {
+        changes.push((
+            UIA_ToggleToggleStatePropertyId,
+            VARIANT::from(toggle_state(old).0),
+            VARIANT::from(toggle_state(new).0),
+        ));
+    }
     if selection_of(before) != selection_of(now)
-        && let (Some(old), Some(new)) = (selection_of(before), selection_of(now)) {
-            changes.push((UIA_SelectionItemIsSelectedPropertyId, VARIANT::from(old), VARIANT::from(new)));
-        }
+        && let (Some(old), Some(new)) = (selection_of(before), selection_of(now))
+    {
+        changes.push((
+            UIA_SelectionItemIsSelectedPropertyId,
+            VARIANT::from(old),
+            VARIANT::from(new),
+        ));
+    }
     if before.expanded != now.expanded
-        && let (Some(old), Some(new)) = (before.expanded, now.expanded) {
-            let state = |expanded: bool| if expanded { ExpandCollapseState_Expanded.0 } else { ExpandCollapseState_Collapsed.0 };
-            changes.push((UIA_ExpandCollapseExpandCollapseStatePropertyId, VARIANT::from(state(old)), VARIANT::from(state(new))));
-        }
+        && let (Some(old), Some(new)) = (before.expanded, now.expanded)
+    {
+        let state = |expanded: bool| {
+            if expanded {
+                ExpandCollapseState_Expanded.0
+            } else {
+                ExpandCollapseState_Collapsed.0
+            }
+        };
+        changes.push((
+            UIA_ExpandCollapseExpandCollapseStatePropertyId,
+            VARIANT::from(state(old)),
+            VARIANT::from(state(new)),
+        ));
+    }
     if before.range != now.range
-        && let (Some((_, _, old)), Some((_, _, new))) = (before.range, now.range) {
-            changes.push((UIA_RangeValueValuePropertyId, VARIANT::from(f64::from(old)), VARIANT::from(f64::from(new))));
-        }
+        && let (Some((_, _, old)), Some((_, _, new))) = (before.range, now.range)
+    {
+        changes.push((
+            UIA_RangeValueValuePropertyId,
+            VARIANT::from(f64::from(old)),
+            VARIANT::from(f64::from(new)),
+        ));
+    }
     if before.disabled != now.disabled {
-        changes.push((UIA_IsEnabledPropertyId, VARIANT::from(!before.disabled), VARIANT::from(!now.disabled)));
+        changes.push((
+            UIA_IsEnabledPropertyId,
+            VARIANT::from(!before.disabled),
+            VARIANT::from(!now.disabled),
+        ));
     }
     if changes.is_empty() {
         return;
     }
-    let Some(provider) = simple_provider(app, id) else { return };
+    let Some(provider) = simple_provider(app, id) else {
+        return;
+    };
     for (property, old, new) in &changes {
         // SAFETY: raising an event with a live provider; no state borrow is held.
         unsafe {
@@ -747,7 +1039,14 @@ pub fn state_changed(app: &Rc<App>, id: NodeId, previous: Option<&Accessibility>
 pub fn screen_reader_active() -> bool {
     let mut active = BOOL(0);
     // SAFETY: the out pointer refers to a live BOOL.
-    let read = unsafe { SystemParametersInfoW(SPI_GETSCREENREADER, 0, Some(std::ptr::from_mut(&mut active).cast()), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) };
+    let read = unsafe {
+        SystemParametersInfoW(
+            SPI_GETSCREENREADER,
+            0,
+            Some(std::ptr::from_mut(&mut active).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
     read.is_ok() && active.as_bool()
 }
 
@@ -755,17 +1054,39 @@ pub fn screen_reader_active() -> bool {
 /// the main window. Answers whether a screen reader is there to speak it.
 pub fn announce(app: &Rc<App>, message: &str, assertive: bool) -> bool {
     let window = pam_desktop_ui::backend::MAIN_WINDOW;
-    let Some(hwnd) = app.with_state(|state| state.scene.windows.get(&window).map(|entry| entry.hwnd)).flatten() else { return false };
-    let Some(root) = root_provider(app, hwnd, window) else { return false };
-    let processing = if assertive { NotificationProcessing_ImportantAll } else { NotificationProcessing_All };
+    let Some(hwnd) = app
+        .with_state(|state| state.scene.windows.get(&window).map(|entry| entry.hwnd))
+        .flatten()
+    else {
+        return false;
+    };
+    let Some(root) = root_provider(app, hwnd, window) else {
+        return false;
+    };
+    let processing = if assertive {
+        NotificationProcessing_ImportantAll
+    } else {
+        NotificationProcessing_All
+    };
     // SAFETY: raising an event with a live provider; no state borrow is held.
-    let raised = unsafe { UiaRaiseNotificationEvent(&root, NotificationKind_Other, processing, &BSTR::from(message), &BSTR::from("pam-announcement")) };
+    let raised = unsafe {
+        UiaRaiseNotificationEvent(
+            &root,
+            NotificationKind_Other,
+            processing,
+            &BSTR::from(message),
+            &BSTR::from("pam-announcement"),
+        )
+    };
     raised.is_ok() && screen_reader_active()
 }
 
 /// A native text control was created: it takes the name of its view.
 pub fn control_created(app: &Rc<App>, id: NodeId, hwnd: HWND) {
-    let name = app.with_state(|state| state.scene.views.get(&id).map(name_of)).flatten().unwrap_or_default();
+    let name = app
+        .with_state(|state| state.scene.views.get(&id).map(name_of))
+        .flatten()
+        .unwrap_or_default();
     if !name.is_empty() {
         annotate_control(hwnd, &name);
     }

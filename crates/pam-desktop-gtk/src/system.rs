@@ -50,7 +50,17 @@ fn portal_prefers_dark() -> Option<bool> {
     // `ReadOne` replaced `Read` in version 2 of the interface.
     let reply = ["ReadOne", "Read"].into_iter().find_map(|method| {
         connection
-            .call_sync(Some(PORTAL), PORTAL_PATH, SETTINGS, method, Some(&arguments), None, gio::DBusCallFlags::NO_AUTO_START, 250, gio::Cancellable::NONE)
+            .call_sync(
+                Some(PORTAL),
+                PORTAL_PATH,
+                SETTINGS,
+                method,
+                Some(&arguments),
+                None,
+                gio::DBusCallFlags::NO_AUTO_START,
+                250,
+                gio::Cancellable::NONE,
+            )
             .ok()
     })?;
     scheme_is_dark(unwrap_number(reply)?)
@@ -66,7 +76,9 @@ fn scheme_is_dark(scheme: u32) -> Option<bool> {
 }
 
 fn theme_is_dark(settings: &gtk::Settings) -> bool {
-    settings.gtk_theme_name().is_some_and(|name| name.to_lowercase().contains("dark"))
+    settings
+        .gtk_theme_name()
+        .is_some_and(|name| name.to_lowercase().contains("dark"))
 }
 
 /// Whether the desktop asks for a dark interface. `forced` says the
@@ -74,7 +86,9 @@ fn theme_is_dark(settings: &gtk::Settings) -> bool {
 /// about the desktop.
 pub fn prefers_dark(forced: bool) -> bool {
     portal_prefers_dark().unwrap_or_else(|| {
-        gtk::Settings::default().is_some_and(|settings| theme_is_dark(&settings) || (!forced && settings.is_gtk_application_prefer_dark_theme()))
+        gtk::Settings::default().is_some_and(|settings| {
+            theme_is_dark(&settings) || (!forced && settings.is_gtk_application_prefer_dark_theme())
+        })
     })
 }
 
@@ -104,30 +118,51 @@ impl Watch {
             .map(|connection| {
                 let events = Rc::clone(events);
                 // `SettingChanged(namespace, key, value)`.
-                connection.subscribe_to_signal(Some(PORTAL), Some(SETTINGS), Some("SettingChanged"), Some(PORTAL_PATH), Some(APPEARANCE), gio::DBusSignalFlags::NONE, move |signal| {
-                    if signal.parameters.child_value(1).str() != Some(COLOR_SCHEME) {
-                        return;
-                    }
-                    let dark = unwrap_number(signal.parameters.child_value(2)).and_then(scheme_is_dark);
-                    events.push(BackendEvent::AppearanceChanged { dark: dark.unwrap_or_else(|| prefers_dark(true)) });
-                })
+                connection.subscribe_to_signal(
+                    Some(PORTAL),
+                    Some(SETTINGS),
+                    Some("SettingChanged"),
+                    Some(PORTAL_PATH),
+                    Some(APPEARANCE),
+                    gio::DBusSignalFlags::NONE,
+                    move |signal| {
+                        if signal.parameters.child_value(1).str() != Some(COLOR_SCHEME) {
+                            return;
+                        }
+                        let dark = unwrap_number(signal.parameters.child_value(2))
+                            .and_then(scheme_is_dark);
+                        events.push(BackendEvent::AppearanceChanged {
+                            dark: dark.unwrap_or_else(|| prefers_dark(true)),
+                        });
+                    },
+                )
             });
         let settings = gtk::Settings::default().map(|settings| {
             let mut handlers = Vec::new();
             for property in ["gtk-xft-dpi", "gtk-enable-animations"] {
                 let events = Rc::clone(events);
-                handlers.push(settings.connect_notify_local(Some(property), move |_, _| events.push(BackendEvent::MetricsChanged)));
+                handlers.push(settings.connect_notify_local(Some(property), move |_, _| {
+                    events.push(BackendEvent::MetricsChanged)
+                }));
             }
             // Without a portal the theme is all that tells light from dark.
             if portal.is_none() {
                 let events = Rc::clone(events);
-                handlers.push(settings.connect_notify_local(Some("gtk-theme-name"), move |settings, _| {
-                    events.push(BackendEvent::AppearanceChanged { dark: theme_is_dark(settings) });
-                }));
+                handlers.push(settings.connect_notify_local(
+                    Some("gtk-theme-name"),
+                    move |settings, _| {
+                        events.push(BackendEvent::AppearanceChanged {
+                            dark: theme_is_dark(settings),
+                        });
+                    },
+                ));
             }
             (settings, handlers)
         });
-        Self { _portal: portal, settings }
+        Self {
+            _portal: portal,
+            settings,
+        }
     }
 }
 

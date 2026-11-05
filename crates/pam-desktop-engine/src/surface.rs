@@ -81,7 +81,9 @@ thread_local! {
 pub fn set_surface_size(surface: u64, size: Option<(f32, f32)>) -> bool {
     SURFACE_SIZES.with(|sizes| {
         let mut sizes = sizes.borrow_mut();
-        match size.filter(|(width, height)| width.is_finite() && height.is_finite() && *width > 0.0 && *height > 0.0) {
+        match size.filter(|(width, height)| {
+            width.is_finite() && height.is_finite() && *width > 0.0 && *height > 0.0
+        }) {
             Some(size) => sizes.insert(surface, size) != Some(size),
             None => sizes.remove(&surface).is_some(),
         }
@@ -97,8 +99,18 @@ pub(crate) fn modal_surface(
 ) -> Surface {
     // A surface in its own window is laid out against that window, which
     // has no system bars over its content.
-    if let Some((width, height)) = SURFACE_SIZES.with(|sizes| sizes.borrow().get(&modal.id).copied()) {
-        return Surface { viewport: Layout { x: 0.0, y: 0.0, width, height }, insets: window_insets.map(|_| [0.0; 4]) };
+    if let Some((width, height)) =
+        SURFACE_SIZES.with(|sizes| sizes.borrow().get(&modal.id).copied())
+    {
+        return Surface {
+            viewport: Layout {
+                x: 0.0,
+                y: 0.0,
+                width,
+                height,
+            },
+            insets: window_insets.map(|_| [0.0; 4]),
+        };
     }
     let Some(insets) = window_insets else {
         return Surface {

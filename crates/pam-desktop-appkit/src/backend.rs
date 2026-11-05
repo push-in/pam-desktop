@@ -6,23 +6,30 @@ use std::rc::Rc;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{
+    AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
+};
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSApplicationTerminateReply, NSDraggingItem, NSEvent,
-    NSEventModifierFlags, NSEventType, NSImage, NSView, NSWindow, NSWindowButton, NSWindowOrderingMode, NSWindowSharingType, NSWindowStyleMask,
-    NSWindowTabbingMode, NSWindowTitleVisibility,
+    NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
+    NSApplicationTerminateReply, NSDraggingItem, NSEvent, NSEventModifierFlags, NSEventType,
+    NSImage, NSView, NSWindow, NSWindowButton, NSWindowOrderingMode, NSWindowSharingType,
+    NSWindowStyleMask, NSWindowTabbingMode, NSWindowTitleVisibility,
 };
 use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_foundation::{NSArray, NSURL};
 use pam_desktop_ui::accessibility::Accessibility;
 use pam_desktop_ui::backend::{
-    AlertConfig, Backend, BackendEvent, DrawCommand, ImageContent, ImageKey, ImageSource, InputConfig, MediaState, NodeId,
-    ScrollConfig, TextContent, ViewClass, WebViewState, WindowConfig, WindowId, WindowMetrics, MAIN_WINDOW,
+    AlertConfig, Backend, BackendEvent, DrawCommand, ImageContent, ImageKey, ImageSource,
+    InputConfig, MAIN_WINDOW, MediaState, NodeId, ScrollConfig, TextContent, ViewClass,
+    WebViewState, WindowConfig, WindowId, WindowMetrics,
 };
 use pam_desktop_ui::geometry::{Point, Rect, Size};
 use pam_desktop_ui::runtime::{self, EventQueue, Inbox, Runtime, RuntimeConfig, Shared};
 use pam_desktop_ui::scene::IdMap;
-use pam_desktop_ui::shell::{Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand, WindowState};
+use pam_desktop_ui::shell::{
+    Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand,
+    WindowState,
+};
 use pam_desktop_ui::style::{Decoration, LayerState};
 use pam_desktop_ui::text::{TextBlock, TextMetrics};
 
@@ -136,7 +143,9 @@ impl AppKitBackend {
     }
 
     fn native_window(&self, window: WindowId) -> Option<Retained<NSWindow>> {
-        self.windows.get(&window).map(|entry| Retained::into_super(entry.window.clone()))
+        self.windows
+            .get(&window)
+            .map(|entry| Retained::into_super(entry.window.clone()))
     }
 
     /// The window host holds the root view and, above it, the overlays.
@@ -153,14 +162,21 @@ impl AppKitBackend {
     /// Shows a window for the first time: on its own, attached to its
     /// parent, or as a sheet that blocks it.
     fn present(&self, window: WindowId) {
-        let Some(entry) = self.windows.get(&window) else { return };
-        let parent = entry.parent.and_then(|parent| self.windows.get(&parent)).map(|parent| parent.window.clone());
+        let Some(entry) = self.windows.get(&window) else {
+            return;
+        };
+        let parent = entry
+            .parent
+            .and_then(|parent| self.windows.get(&parent))
+            .map(|parent| parent.window.clone());
         match parent {
             Some(parent) if entry.modal => parent.beginSheet_completionHandler(&entry.window, None),
             Some(parent) => {
                 // SAFETY: both windows are alive; the child is detached in
                 // `close_window` before either goes away.
-                unsafe { parent.addChildWindow_ordered(&entry.window, NSWindowOrderingMode::Above) };
+                unsafe {
+                    parent.addChildWindow_ordered(&entry.window, NSWindowOrderingMode::Above)
+                };
                 entry.window.makeKeyAndOrderFront(None);
             }
             None => {
@@ -184,13 +200,21 @@ impl AppKitBackend {
 
     /// Where the children of a node go, and the node's own native views
     /// that stay below them.
-    fn container(&mut self, id: NodeId, has_children: bool) -> Option<(Retained<NSView>, Vec<Retained<NSView>>)> {
+    fn container(
+        &mut self,
+        id: NodeId,
+        has_children: bool,
+    ) -> Option<(Retained<NSView>, Vec<Retained<NSView>>)> {
         let entry = self.views.get_mut(&id)?;
         if let Some(scroll) = &entry.scroll {
             return Some((Retained::into_super(scroll.document.clone()), Vec::new()));
         }
         // A clipping node gets its inner view with its first child.
-        let container = if has_children { entry.node.content_parent() } else { entry.node.content_view() };
+        let container = if has_children {
+            entry.node.content_parent()
+        } else {
+            entry.node.content_view()
+        };
         let mut native = Vec::new();
         entry.native_views(&mut native);
         Some((container, native))
@@ -201,14 +225,20 @@ impl Backend for AppKitBackend {
     fn open_window(&mut self, window: WindowId, config: &WindowConfig) {
         if let Some(entry) = self.windows.get(&window) {
             entry.window.setTitle(&ns_string(&config.title));
-            shell::window_command(self.mtm, &entry.window, &WindowCommand::SetResizable(config.resizable));
+            shell::window_command(
+                self.mtm,
+                &entry.window,
+                &WindowCommand::SetResizable(config.resizable),
+            );
             // A new size from the application resizes a secondary window.
             if window != MAIN_WINDOW && window::content_metrics(&entry.window).0 != config.size {
                 entry.window.setContentSize(cg_size(config.size));
             }
             return;
         }
-        let mut style = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Miniaturizable;
+        let mut style = NSWindowStyleMask::Titled
+            | NSWindowStyleMask::Closable
+            | NSWindowStyleMask::Miniaturizable;
         if config.resizable {
             style |= NSWindowStyleMask::Resizable;
         }
@@ -223,7 +253,11 @@ impl Backend for AppKitBackend {
         if !config.decorated {
             native.setTitlebarAppearsTransparent(true);
             native.setTitleVisibility(NSWindowTitleVisibility::Hidden);
-            for button in [NSWindowButton::CloseButton, NSWindowButton::MiniaturizeButton, NSWindowButton::ZoomButton] {
+            for button in [
+                NSWindowButton::CloseButton,
+                NSWindowButton::MiniaturizeButton,
+                NSWindowButton::ZoomButton,
+            ] {
                 if let Some(button) = native.standardWindowButton(button) {
                     button.setHidden(true);
                 }
@@ -260,7 +294,9 @@ impl Backend for AppKitBackend {
     }
 
     fn close_window(&mut self, window: WindowId) {
-        let Some(entry) = self.windows.remove(&window) else { return };
+        let Some(entry) = self.windows.remove(&window) else {
+            return;
+        };
         if let Some(parent) = entry.parent.and_then(|parent| self.windows.get(&parent)) {
             if entry.presented && entry.modal {
                 parent.window.endSheet(&entry.window);
@@ -288,7 +324,9 @@ impl Backend for AppKitBackend {
     }
 
     fn window_metrics(&self, window: WindowId) -> WindowMetrics {
-        let Some(entry) = self.windows.get(&window) else { return WindowMetrics::default() };
+        let Some(entry) = self.windows.get(&window) else {
+            return WindowMetrics::default();
+        };
         let (size, scale) = window::content_metrics(&entry.window);
         let refresh_rate = entry
             .window
@@ -310,7 +348,9 @@ impl Backend for AppKitBackend {
     }
 
     fn set_window_root(&mut self, window: WindowId, root: Option<NodeId>) {
-        let Some(entry) = self.windows.get_mut(&window) else { return };
+        let Some(entry) = self.windows.get_mut(&window) else {
+            return;
+        };
         entry.root = root;
         Self::arrange_window(entry, &self.views);
         if root.is_some() && !entry.presented {
@@ -320,7 +360,9 @@ impl Backend for AppKitBackend {
     }
 
     fn set_window_overlays(&mut self, window: WindowId, overlays: &[NodeId]) {
-        let Some(entry) = self.windows.get_mut(&window) else { return };
+        let Some(entry) = self.windows.get_mut(&window) else {
+            return;
+        };
         entry.overlays = overlays.to_vec();
         Self::arrange_window(entry, &self.views);
     }
@@ -330,7 +372,8 @@ impl Backend for AppKitBackend {
         let node = NodeView::new(mtm, id, events);
         // A new node has no clip yet: its native views go straight into it.
         let parent = node.content_view();
-        let scroll = (class == ViewClass::Scroll).then(|| ScrollHost::new(mtm, id, events, &parent));
+        let scroll =
+            (class == ViewClass::Scroll).then(|| ScrollHost::new(mtm, id, events, &parent));
         let input = match class {
             ViewClass::Input => Some(InputHost::new(mtm, id, false, &node.view, &parent, events)),
             ViewClass::TextArea => Some(InputHost::new(mtm, id, true, &node.view, &parent, events)),
@@ -340,12 +383,23 @@ impl Backend for AppKitBackend {
         let web = (class == ViewClass::WebView).then(|| WebHost::new(mtm, id, events));
         self.views.insert(
             id,
-            ViewEntry { node, scroll, input, media, web, accessibility: None, plain_text: None, applied: Applied::default() },
+            ViewEntry {
+                node,
+                scroll,
+                input,
+                media,
+                web,
+                accessibility: None,
+                plain_text: None,
+                applied: Applied::default(),
+            },
         );
     }
 
     fn destroy_view(&mut self, id: NodeId) {
-        let Some(mut entry) = self.views.remove(&id) else { return };
+        let Some(mut entry) = self.views.remove(&id) else {
+            return;
+        };
         if let Some(input) = &entry.input {
             input.destroy();
         }
@@ -366,7 +420,9 @@ impl Backend for AppKitBackend {
     }
 
     fn set_children(&mut self, parent: NodeId, children: &[NodeId]) {
-        let Some((container, mut wanted)) = self.container(parent, !children.is_empty()) else { return };
+        let Some((container, mut wanted)) = self.container(parent, !children.is_empty()) else {
+            return;
+        };
         for child in children {
             if let Some(entry) = self.views.get(child) {
                 entry.node.stack(&mut wanted);
@@ -376,7 +432,9 @@ impl Backend for AppKitBackend {
     }
 
     fn set_frame(&mut self, id: NodeId, frame: Rect) {
-        let Some(entry) = self.views.get_mut(&id) else { return };
+        let Some(entry) = self.views.get_mut(&id) else {
+            return;
+        };
         let resized = entry.node.frame().size() != frame.size();
         entry.node.set_frame(frame);
         if !resized {
@@ -410,7 +468,9 @@ impl Backend for AppKitBackend {
     }
 
     fn set_text(&mut self, id: NodeId, text: Option<&TextContent>) {
-        let Some(entry) = self.views.get_mut(&id) else { return };
+        let Some(entry) = self.views.get_mut(&id) else {
+            return;
+        };
         entry.node.view.set_text(text);
         // The text is the accessible name unless a label was given.
         entry.plain_text = text.map(|content| content.block.plain_text());
@@ -424,7 +484,9 @@ impl Backend for AppKitBackend {
     }
 
     fn set_accessibility(&mut self, id: NodeId, accessibility: Option<&Accessibility>) {
-        let Some(entry) = self.views.get_mut(&id) else { return };
+        let Some(entry) = self.views.get_mut(&id) else {
+            return;
+        };
         entry.accessibility = accessibility.cloned().map(Box::new);
         entry.apply_accessibility(&self.events);
     }
@@ -448,7 +510,9 @@ impl Backend for AppKitBackend {
     }
 
     fn set_input_config(&mut self, id: NodeId, config: &InputConfig) {
-        let Some(entry) = self.views.get_mut(&id) else { return };
+        let Some(entry) = self.views.get_mut(&id) else {
+            return;
+        };
         let parent = entry.node.content_parent();
         if let Some(input) = &mut entry.input {
             input.configure(config, &entry.node.view, &parent);
@@ -476,8 +540,15 @@ impl Backend for AppKitBackend {
     }
 
     fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>) {
-        let Some(entry) = self.views.get(&id) else { return };
-        let state = image.and_then(|content| Some(ImageState { content: *content, image: self.images.get(content.key)? }));
+        let Some(entry) = self.views.get(&id) else {
+            return;
+        };
+        let state = image.and_then(|content| {
+            Some(ImageState {
+                content: *content,
+                image: self.images.get(content.key)?,
+            })
+        });
         entry.node.view.set_image(state);
     }
 
@@ -492,8 +563,13 @@ impl Backend for AppKitBackend {
     }
 
     fn announce(&mut self, message: &str, assertive: bool) -> bool {
-        let key = self.windows.values().find(|entry| entry.window.isKeyWindow());
-        let Some(entry) = key.or_else(|| self.windows.get(&MAIN_WINDOW)) else { return false };
+        let key = self
+            .windows
+            .values()
+            .find(|entry| entry.window.isKeyWindow());
+        let Some(entry) = key.or_else(|| self.windows.get(&MAIN_WINDOW)) else {
+            return false;
+        };
         accessibility::announce_in(&entry.window, message, assertive);
         accessibility::screen_reader_active()
     }
@@ -504,7 +580,11 @@ impl Backend for AppKitBackend {
 
     fn set_content_protection(&mut self, enabled: bool) -> bool {
         self.content_protected = enabled;
-        let sharing = if enabled { NSWindowSharingType::None } else { NSWindowSharingType::ReadOnly };
+        let sharing = if enabled {
+            NSWindowSharingType::None
+        } else {
+            NSWindowSharingType::ReadOnly
+        };
         for entry in self.windows.values() {
             entry.window.setSharingType(sharing);
         }
@@ -512,7 +592,10 @@ impl Backend for AppKitBackend {
     }
 
     fn begin_text_drag(&mut self, window: WindowId, source: NodeId, text: &str) {
-        let failed = BackendEvent::DragFinished { source, dropped: false };
+        let failed = BackendEvent::DragFinished {
+            source,
+            dropped: false,
+        };
         let (Some(entry), Some(view)) = (self.windows.get(&window), self.views.get(&source)) else {
             return self.events.push(failed);
         };
@@ -521,32 +604,50 @@ impl Backend for AppKitBackend {
         if NSEvent::pressedMouseButtons() & 1 == 0 {
             return self.events.push(failed);
         }
-        let event = NSApplication::sharedApplication(self.mtm).currentEvent().filter(|event| {
-            let kind = event.r#type();
-            kind == NSEventType::LeftMouseDown || kind == NSEventType::LeftMouseDragged
-        });
+        let event = NSApplication::sharedApplication(self.mtm)
+            .currentEvent()
+            .filter(|event| {
+                let kind = event.r#type();
+                kind == NSEventType::LeftMouseDown || kind == NSEventType::LeftMouseDragged
+            });
         let Some(event) = event.or_else(|| entry.window.press_event()) else {
             return self.events.push(failed);
         };
         let view = &view.node.view;
         let bounds = view.bounds();
-        let item = NSDraggingItem::initWithPasteboardWriter(NSDraggingItem::alloc(), ProtocolObject::from_ref(&*ns_string(text)));
+        let item = NSDraggingItem::initWithPasteboardWriter(
+            NSDraggingItem::alloc(),
+            ProtocolObject::from_ref(&*ns_string(text)),
+        );
         // What follows the pointer: a snapshot of the source view.
-        let snapshot = view.bitmapImageRepForCachingDisplayInRect(bounds).map(|bitmap| {
-            view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
-            let image = NSImage::initWithSize(NSImage::alloc(), bounds.size);
-            image.addRepresentation(&bitmap);
-            image
-        });
+        let snapshot = view
+            .bitmapImageRepForCachingDisplayInRect(bounds)
+            .map(|bitmap| {
+                view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+                let image = NSImage::initWithSize(NSImage::alloc(), bounds.size);
+                image.addRepresentation(&bitmap);
+                image
+            });
         let frame = entry.host.convertRect_fromView(bounds, Some(view));
         // SAFETY: the contents of a dragging item are an image, or nil.
-        unsafe { item.setDraggingFrame_contents(frame, snapshot.as_deref().map(AsRef::<AnyObject>::as_ref)) };
+        unsafe {
+            item.setDraggingFrame_contents(
+                frame,
+                snapshot.as_deref().map(AsRef::<AnyObject>::as_ref),
+            )
+        };
         entry.host.set_drag_source(source);
-        entry.host.beginDraggingSessionWithItems_event_source(&NSArray::from_retained_slice(&[item]), &event, ProtocolObject::from_ref(&*entry.host));
+        entry.host.beginDraggingSessionWithItems_event_source(
+            &NSArray::from_retained_slice(&[item]),
+            &event,
+            ProtocolObject::from_ref(&*entry.host),
+        );
     }
 
     fn set_media(&mut self, id: NodeId, state: &MediaState) {
-        let Some(entry) = self.views.get_mut(&id) else { return };
+        let Some(entry) = self.views.get_mut(&id) else {
+            return;
+        };
         let parent = entry.node.content_parent();
         if let Some(media) = &mut entry.media {
             media.apply(state, &parent);
@@ -558,7 +659,9 @@ impl Backend for AppKitBackend {
     }
 
     fn set_web_view(&mut self, id: NodeId, state: &WebViewState) {
-        let Some(entry) = self.views.get_mut(&id) else { return };
+        let Some(entry) = self.views.get_mut(&id) else {
+            return;
+        };
         let parent = entry.node.content_parent();
         if let Some(web) = &mut entry.web {
             web.apply(state, &parent);
@@ -572,13 +675,21 @@ impl Backend for AppKitBackend {
     }
 
     fn set_scroll_content(&mut self, id: NodeId, size: Size) {
-        if let Some(scroll) = self.views.get_mut(&id).and_then(|entry| entry.scroll.as_mut()) {
+        if let Some(scroll) = self
+            .views
+            .get_mut(&id)
+            .and_then(|entry| entry.scroll.as_mut())
+        {
             scroll.set_content(size);
         }
     }
 
     fn set_scroll_config(&mut self, id: NodeId, config: &ScrollConfig) {
-        if let Some(scroll) = self.views.get_mut(&id).and_then(|entry| entry.scroll.as_mut()) {
+        if let Some(scroll) = self
+            .views
+            .get_mut(&id)
+            .and_then(|entry| entry.scroll.as_mut())
+        {
             scroll.configure(config);
         }
     }
@@ -595,7 +706,11 @@ impl Backend for AppKitBackend {
 
     fn request_frame(&mut self) {
         // Any window's view will do: frames follow the display it is on.
-        let host = self.windows.get(&MAIN_WINDOW).or_else(|| self.windows.values().next()).map(|entry| &entry.host);
+        let host = self
+            .windows
+            .get(&MAIN_WINDOW)
+            .or_else(|| self.windows.values().next())
+            .map(|entry| &entry.host);
         self.frames.request(host.map(|host| -> &NSView { host }));
     }
 
@@ -611,8 +726,15 @@ impl Backend for AppKitBackend {
         self.shell.clipboard_text(done);
     }
 
-    fn show_alert(&mut self, window: WindowId, alert: &AlertConfig, done: Box<dyn FnOnce(Option<usize>)>) {
-        let parent = self.native_window(window).filter(|window| window.isVisible());
+    fn show_alert(
+        &mut self,
+        window: WindowId,
+        alert: &AlertConfig,
+        done: Box<dyn FnOnce(Option<usize>)>,
+    ) {
+        let parent = self
+            .native_window(window)
+            .filter(|window| window.isVisible());
         self.shell.show_alert(parent.as_deref(), alert, done);
     }
 
@@ -628,9 +750,17 @@ impl Backend for AppKitBackend {
         self.shell.set_menu_bar(menu);
     }
 
-    fn popup_menu(&mut self, window: WindowId, position: Point, menu: &[MenuNode], done: Box<dyn FnOnce(Option<String>)>) {
+    fn popup_menu(
+        &mut self,
+        window: WindowId,
+        position: Point,
+        menu: &[MenuNode],
+        done: Box<dyn FnOnce(Option<String>)>,
+    ) {
         match self.windows.get(&window) {
-            Some(entry) if !menu.is_empty() => self.shell.popup_menu(&entry.host, position, menu, done),
+            Some(entry) if !menu.is_empty() => {
+                self.shell.popup_menu(&entry.host, position, menu, done)
+            }
             _ => self.events.defer(move || done(None)),
         }
     }
@@ -639,8 +769,15 @@ impl Backend for AppKitBackend {
         self.shell.set_tray(tray);
     }
 
-    fn pick_files(&mut self, window: WindowId, config: &FileDialogConfig, done: Box<dyn FnOnce(Vec<std::path::PathBuf>)>) {
-        let parent = self.native_window(window).filter(|window| window.isVisible());
+    fn pick_files(
+        &mut self,
+        window: WindowId,
+        config: &FileDialogConfig,
+        done: Box<dyn FnOnce(Vec<std::path::PathBuf>)>,
+    ) {
+        let parent = self
+            .native_window(window)
+            .filter(|window| window.isVisible());
         self.shell.pick_files(parent.as_deref(), config, done);
     }
 
@@ -655,7 +792,10 @@ impl Backend for AppKitBackend {
     }
 
     fn window_state(&self, window: WindowId) -> WindowState {
-        self.windows.get(&window).map(|entry| window::window_state(&entry.window)).unwrap_or_default()
+        self.windows
+            .get(&window)
+            .map(|entry| window::window_state(&entry.window))
+            .unwrap_or_default()
     }
 
     fn set_shortcuts(&mut self, shortcuts: &[Shortcut]) {
@@ -807,7 +947,11 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
     };
     // While the runtime drains, events wait for the next turn of the run loop.
     let probe = Rc::downgrade(&shared);
-    events.set_busy_probe(move || probe.upgrade().is_none_or(|shared| shared.with(|_| ()).is_none()));
+    events.set_busy_probe(move || {
+        probe
+            .upgrade()
+            .is_none_or(|shared| shared.with(|_| ()).is_none())
+    });
     runtime::pump();
 
     application.run();

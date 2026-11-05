@@ -34,8 +34,17 @@ const CHECKPOINT: u8 = 0x06;
 pub enum WorkerMessage {
     /// A `PNT1` tree or `PNP1` patch frame.
     Commit(Vec<u8>),
-    Call { request: u64, module: String, method: String, payload: Vec<u8> },
-    CallTyped { request: u64, operation: u16, payload: Vec<u8> },
+    Call {
+        request: u64,
+        module: String,
+        method: String,
+        payload: Vec<u8>,
+    },
+    CallTyped {
+        request: u64,
+        operation: u16,
+        payload: Vec<u8>,
+    },
     Error(String),
     /// The entry script finished booting.
     Ready,
@@ -81,7 +90,10 @@ fn read_message(reader: &mut impl Read) -> io::Result<Option<(u8, Vec<u8>)>> {
     }
     let length = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
     if length == 0 || length > MAX_MESSAGE_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "malformed worker message"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "malformed worker message",
+        ));
     }
     let mut payload = vec![0_u8; length - 1];
     reader.read_exact(&mut payload)?;
@@ -93,20 +105,37 @@ fn decode(kind: u8, payload: Vec<u8>) -> Option<WorkerMessage> {
         COMMIT => Some(WorkerMessage::Commit(payload)),
         CALL => {
             let request = u64::from_le_bytes(payload.get(0..8)?.try_into().ok()?);
-            let module_length = usize::from(u16::from_le_bytes(payload.get(8..10)?.try_into().ok()?));
-            let method_length = usize::from(u16::from_le_bytes(payload.get(10..12)?.try_into().ok()?));
+            let module_length =
+                usize::from(u16::from_le_bytes(payload.get(8..10)?.try_into().ok()?));
+            let method_length =
+                usize::from(u16::from_le_bytes(payload.get(10..12)?.try_into().ok()?));
             let module_end = 12 + module_length;
             let method_end = module_end + method_length;
-            let module = std::str::from_utf8(payload.get(12..module_end)?).ok()?.to_owned();
-            let method = std::str::from_utf8(payload.get(module_end..method_end)?).ok()?.to_owned();
-            Some(WorkerMessage::Call { request, module, method, payload: payload[method_end..].to_vec() })
+            let module = std::str::from_utf8(payload.get(12..module_end)?)
+                .ok()?
+                .to_owned();
+            let method = std::str::from_utf8(payload.get(module_end..method_end)?)
+                .ok()?
+                .to_owned();
+            Some(WorkerMessage::Call {
+                request,
+                module,
+                method,
+                payload: payload[method_end..].to_vec(),
+            })
         }
         CALL_TYPED => {
             let request = u64::from_le_bytes(payload.get(0..8)?.try_into().ok()?);
             let operation = u16::from_le_bytes(payload.get(8..10)?.try_into().ok()?);
-            Some(WorkerMessage::CallTyped { request, operation, payload: payload[10..].to_vec() })
+            Some(WorkerMessage::CallTyped {
+                request,
+                operation,
+                payload: payload[10..].to_vec(),
+            })
         }
-        ERROR => Some(WorkerMessage::Error(String::from_utf8_lossy(&payload).into_owned())),
+        ERROR => Some(WorkerMessage::Error(
+            String::from_utf8_lossy(&payload).into_owned(),
+        )),
         READY => Some(WorkerMessage::Ready),
         IDLE => Some(WorkerMessage::Idle),
         _ => None,
@@ -116,7 +145,10 @@ fn decode(kind: u8, payload: Vec<u8>) -> Option<WorkerMessage> {
 impl Worker {
     /// Starts the worker. `sink` is called on a background thread for every
     /// message; it must hand the message to the UI thread and return quickly.
-    pub fn spawn(command: &WorkerCommand, sink: impl Fn(WorkerMessage) + Send + 'static) -> io::Result<Self> {
+    pub fn spawn(
+        command: &WorkerCommand,
+        sink: impl Fn(WorkerMessage) + Send + 'static,
+    ) -> io::Result<Self> {
         let mut process = Command::new(&command.program);
         process
             .args(&command.arguments)
@@ -138,58 +170,79 @@ impl Worker {
             process.env(key, value);
         }
         let mut child = process.spawn()?;
-        let stdout = child.stdout.take().ok_or_else(|| io::Error::other("worker stdout unavailable"))?;
-        let stdin = child.stdin.take().ok_or_else(|| io::Error::other("worker stdin unavailable"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::other("worker stdout unavailable"))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::other("worker stdin unavailable"))?;
 
-        thread::Builder::new().name("pam-worker-read".into()).spawn(move || {
-            let mut reader = BufReader::with_capacity(64 * 1024, stdout);
-            // Until the worker closes its output or sends something unreadable.
-            while let Ok(Some((kind, payload))) = read_message(&mut reader) {
-                if let Some(message) = decode(kind, payload) {
-                    sink(message);
+        thread::Builder::new()
+            .name("pam-worker-read".into())
+            .spawn(move || {
+                let mut reader = BufReader::with_capacity(64 * 1024, stdout);
+                // Until the worker closes its output or sends something unreadable.
+                while let Ok(Some((kind, payload))) = read_message(&mut reader) {
+                    if let Some(message) = decode(kind, payload) {
+                        sink(message);
+                    }
                 }
-            }
-            sink(WorkerMessage::Exited(None));
-        })?;
+                sink(WorkerMessage::Exited(None));
+            })?;
 
         let (outbox, receiver) = mpsc::channel::<Vec<u8>>();
-        thread::Builder::new().name("pam-worker-write".into()).spawn(move || {
-            let mut writer: BufWriter<ChildStdin> = BufWriter::with_capacity(64 * 1024, stdin);
-            while let Ok(message) = receiver.recv() {
-                if writer.write_all(&message).is_err() {
-                    break;
-                }
-                // Coalesce whatever is already queued into one write.
-                let mut failed = false;
-                while let Ok(next) = receiver.try_recv() {
-                    if writer.write_all(&next).is_err() {
-                        failed = true;
+        thread::Builder::new()
+            .name("pam-worker-write".into())
+            .spawn(move || {
+                let mut writer: BufWriter<ChildStdin> = BufWriter::with_capacity(64 * 1024, stdin);
+                while let Ok(message) = receiver.recv() {
+                    if writer.write_all(&message).is_err() {
+                        break;
+                    }
+                    // Coalesce whatever is already queued into one write.
+                    let mut failed = false;
+                    while let Ok(next) = receiver.try_recv() {
+                        if writer.write_all(&next).is_err() {
+                            failed = true;
+                            break;
+                        }
+                    }
+                    if failed || writer.flush().is_err() {
                         break;
                     }
                 }
-                if failed || writer.flush().is_err() {
-                    break;
-                }
-            }
-        })?;
+            })?;
 
-        Ok(Self { child, outbox: Some(outbox), events_since_flush: false })
+        Ok(Self {
+            child,
+            outbox: Some(outbox),
+            events_since_flush: false,
+        })
     }
 
     fn send(&mut self, message: Vec<u8>) {
         if let Some(outbox) = &self.outbox
-            && outbox.send(message).is_err() {
-                self.outbox = None;
-            }
+            && outbox.send(message).is_err()
+        {
+            self.outbox = None;
+        }
     }
 
     pub fn send_event(&mut self, node: u64, kind: u16, payload: &[u8]) {
-        self.send(frame(EVENT, &[&node.to_le_bytes(), &kind.to_le_bytes(), payload]));
+        self.send(frame(
+            EVENT,
+            &[&node.to_le_bytes(), &kind.to_le_bytes(), payload],
+        ));
         self.events_since_flush = true;
     }
 
     pub fn send_module_result(&mut self, request: u64, status: u8, payload: &[u8]) {
-        self.send(frame(MODULE_RESULT, &[&request.to_le_bytes(), &[status], payload]));
+        self.send(frame(
+            MODULE_RESULT,
+            &[&request.to_le_bytes(), &[status], payload],
+        ));
         self.events_since_flush = true;
     }
 
@@ -258,7 +311,12 @@ mod tests {
         call.extend_from_slice(b"filesgetXY");
         assert_eq!(
             decode(CALL, call),
-            Some(WorkerMessage::Call { request: 9, module: "files".into(), method: "get".into(), payload: b"XY".to_vec() }),
+            Some(WorkerMessage::Call {
+                request: 9,
+                module: "files".into(),
+                method: "get".into(),
+                payload: b"XY".to_vec()
+            }),
         );
         assert_eq!(decode(CALL, vec![1, 2, 3]), None);
         assert_eq!(decode(READY, Vec::new()), Some(WorkerMessage::Ready));
@@ -269,8 +327,14 @@ mod tests {
         let mut stream = frame(COMMIT, &[b"PNT1"]);
         stream.extend_from_slice(&frame(READY, &[]));
         let mut reader = io::Cursor::new(stream);
-        assert_eq!(read_message(&mut reader).unwrap(), Some((COMMIT, b"PNT1".to_vec())));
-        assert_eq!(read_message(&mut reader).unwrap(), Some((READY, Vec::new())));
+        assert_eq!(
+            read_message(&mut reader).unwrap(),
+            Some((COMMIT, b"PNT1".to_vec()))
+        );
+        assert_eq!(
+            read_message(&mut reader).unwrap(),
+            Some((READY, Vec::new()))
+        );
         assert_eq!(read_message(&mut reader).unwrap(), None);
     }
 }

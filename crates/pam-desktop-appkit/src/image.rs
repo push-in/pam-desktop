@@ -3,14 +3,17 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use objc2::rc::autoreleasepool;
-use objc2_core_foundation::{CFBoolean, CFData, CFDictionary, CFNumber, CFRetained, CFString, CFType, CFURL};
+use objc2_core_foundation::{
+    CFBoolean, CFData, CFDictionary, CFNumber, CFRetained, CFString, CFType, CFURL,
+};
 use objc2_core_graphics::CGImage;
 use objc2_image_io::{
-    kCGImageSourceCreateThumbnailFromImageAlways, kCGImageSourceCreateThumbnailWithTransform, kCGImageSourceShouldCacheImmediately,
-    kCGImageSourceThumbnailMaxPixelSize, CGImageSource,
+    CGImageSource, kCGImageSourceCreateThumbnailFromImageAlways,
+    kCGImageSourceCreateThumbnailWithTransform, kCGImageSourceShouldCacheImmediately,
+    kCGImageSourceThumbnailMaxPixelSize,
 };
 use pam_desktop_ui::backend::{BackendEvent, ImageKey, ImageSource};
 use pam_desktop_ui::geometry::Size;
@@ -60,33 +63,48 @@ fn decode(source: &ImageSource, max_dimension: Option<u32>) -> Result<CFRetained
         }
         .ok_or_else(|| String::from("Image could not be decoded"))?;
         let yes: &CFType = CFBoolean::new(true).as_ref();
-        let mut keys: Vec<&CFString> =
-            vec![kCGImageSourceCreateThumbnailFromImageAlways, kCGImageSourceCreateThumbnailWithTransform, kCGImageSourceShouldCacheImmediately];
+        let mut keys: Vec<&CFString> = vec![
+            kCGImageSourceCreateThumbnailFromImageAlways,
+            kCGImageSourceCreateThumbnailWithTransform,
+            kCGImageSourceShouldCacheImmediately,
+        ];
         let mut values: Vec<&CFType> = vec![yes, yes, yes];
-        let limit = max_dimension.filter(|limit| *limit > 0).map(|limit| CFNumber::new_i64(i64::from(limit)));
+        let limit = max_dimension
+            .filter(|limit| *limit > 0)
+            .map(|limit| CFNumber::new_i64(i64::from(limit)));
         if let Some(limit) = &limit {
             keys.push(kCGImageSourceThumbnailMaxPixelSize);
             values.push(limit.as_ref());
         }
-        let options: CFRetained<CFDictionary<CFString, CFType>> = CFDictionary::from_slices(&keys, &values);
-        native.thumbnail_at_index(0, Some(options.as_ref())).ok_or_else(|| String::from("Image format is not supported"))
+        let options: CFRetained<CFDictionary<CFString, CFType>> =
+            CFDictionary::from_slices(&keys, &values);
+        native
+            .thumbnail_at_index(0, Some(options.as_ref()))
+            .ok_or_else(|| String::from("Image format is not supported"))
     }
 }
 
 /// Runs on the main thread with the result of a decode.
 fn deliver(key: ImageKey, result: Result<CFRetained<CGImage>, String>) {
-    let Some(store) = STORE.with(|store| store.borrow().clone()) else { return };
+    let Some(store) = STORE.with(|store| store.borrow().clone()) else {
+        return;
+    };
     if !store.pending.borrow_mut().remove(&key) {
         // Released while it was decoding: nobody waits for it.
         return;
     }
     match result {
         Ok(image) => {
-            let size = Size::new(CGImage::width(Some(&image)) as f32, CGImage::height(Some(&image)) as f32);
+            let size = Size::new(
+                CGImage::width(Some(&image)) as f32,
+                CGImage::height(Some(&image)) as f32,
+            );
             store.images.borrow_mut().insert(key, image);
             store.events.push(BackendEvent::ImageLoaded { key, size });
         }
-        Err(message) => store.events.push(BackendEvent::ImageFailed { key, message }),
+        Err(message) => store
+            .events
+            .push(BackendEvent::ImageFailed { key, message }),
     }
 }
 
@@ -96,17 +114,21 @@ fn start_workers(main: &MainThread) -> Option<mpsc::Sender<Job>> {
     let mut started = 0;
     for _ in 0..WORKERS {
         let (receiver, main) = (Arc::clone(&receiver), main.clone());
-        let spawned = std::thread::Builder::new().name("pam-image-decode".into()).spawn(move || loop {
-            // The lock is only held while waiting for a job.
-            let job = match receiver.lock() {
-                Ok(receiver) => receiver.recv(),
-                Err(_) => return,
-            };
-            let Ok(job) = job else { return };
-            // Foundation objects made while decoding die with the pool.
-            let result = autoreleasepool(|_| decode(&job.source, job.max_dimension));
-            main.run(move || deliver(job.key, result));
-        });
+        let spawned = std::thread::Builder::new()
+            .name("pam-image-decode".into())
+            .spawn(move || {
+                loop {
+                    // The lock is only held while waiting for a job.
+                    let job = match receiver.lock() {
+                        Ok(receiver) => receiver.recv(),
+                        Err(_) => return,
+                    };
+                    let Ok(job) = job else { return };
+                    // Foundation objects made while decoding die with the pool.
+                    let result = autoreleasepool(|_| decode(&job.source, job.max_dimension));
+                    main.run(move || deliver(job.key, result));
+                }
+            });
         started += usize::from(spawned.is_ok());
     }
     (started > 0).then_some(sender)
@@ -137,11 +159,22 @@ impl ImageStore {
             *queue = start_workers(self.events.main());
         }
         self.pending.borrow_mut().insert(key);
-        let sent = queue.as_ref().is_some_and(|queue| queue.send(Job { key, source, max_dimension }).is_ok());
+        let sent = queue.as_ref().is_some_and(|queue| {
+            queue
+                .send(Job {
+                    key,
+                    source,
+                    max_dimension,
+                })
+                .is_ok()
+        });
         drop(queue);
         if !sent {
             self.pending.borrow_mut().remove(&key);
-            self.events.push(BackendEvent::ImageFailed { key, message: "image decoder could not start".into() });
+            self.events.push(BackendEvent::ImageFailed {
+                key,
+                message: "image decoder could not start".into(),
+            });
         }
     }
 

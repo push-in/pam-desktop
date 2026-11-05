@@ -6,7 +6,9 @@ use std::rc::Rc;
 
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
-use pam_desktop_ui::backend::{BackendEvent, ImageFit, MediaEvent, MediaSource, MediaState, NodeId};
+use pam_desktop_ui::backend::{
+    BackendEvent, ImageFit, MediaEvent, MediaSource, MediaState, NodeId,
+};
 use pam_desktop_ui::runtime::EventQueue;
 
 use crate::view::PamView;
@@ -38,7 +40,11 @@ impl MediaHost {
         picture.set_can_shrink(true);
         picture.set_content_fit(gtk::ContentFit::Cover);
         let controls = gtk::MediaControls::new(gtk::MediaStream::NONE);
-        let revealer = gtk::Revealer::builder().transition_type(gtk::RevealerTransitionType::Crossfade).valign(gtk::Align::End).child(&controls).build();
+        let revealer = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::Crossfade)
+            .valign(gtk::Align::End)
+            .child(&controls)
+            .build();
         controls.add_css_class("osd");
         let overlay = gtk::Overlay::new();
         overlay.set_child(Some(&picture));
@@ -113,14 +119,28 @@ impl MediaHost {
         let id = self.id;
         let mut handlers = Vec::new();
         {
-            let (events, start_at, play_when_ready) = (Rc::clone(&self.events), Rc::clone(&self.start_at), Rc::clone(&self.play_when_ready));
+            let (events, start_at, play_when_ready) = (
+                Rc::clone(&self.events),
+                Rc::clone(&self.start_at),
+                Rc::clone(&self.play_when_ready),
+            );
             handlers.push(stream.connect_prepared_notify(move |stream| {
                 if !stream.is_prepared() {
                     return;
                 }
                 let duration = stream.duration() as f64 / MICROSECONDS;
-                let (width, height) = (stream.intrinsic_width().max(0) as u32, stream.intrinsic_height().max(0) as u32);
-                events.push(BackendEvent::Media { id, event: MediaEvent::Ready { width, height, duration: duration.max(0.0) } });
+                let (width, height) = (
+                    stream.intrinsic_width().max(0) as u32,
+                    stream.intrinsic_height().max(0) as u32,
+                );
+                events.push(BackendEvent::Media {
+                    id,
+                    event: MediaEvent::Ready {
+                        width,
+                        height,
+                        duration: duration.max(0.0),
+                    },
+                });
                 let start = start_at.get();
                 if start > 0.0 && stream.is_seekable() {
                     stream.seek((start * MICROSECONDS) as i64);
@@ -134,7 +154,10 @@ impl MediaHost {
             let events = Rc::clone(&self.events);
             handlers.push(stream.connect_ended_notify(move |stream| {
                 if stream.is_ended() && !stream.is_loop() {
-                    events.push(BackendEvent::Media { id, event: MediaEvent::Ended });
+                    events.push(BackendEvent::Media {
+                        id,
+                        event: MediaEvent::Ended,
+                    });
                 }
             }));
         }
@@ -142,14 +165,23 @@ impl MediaHost {
             let events = Rc::clone(&self.events);
             handlers.push(stream.connect_error_notify(move |stream| {
                 if let Some(error) = stream.error() {
-                    events.push(BackendEvent::Media { id, event: MediaEvent::Failed(format!("Media playback failed ({})", error.message())) });
+                    events.push(BackendEvent::Media {
+                        id,
+                        event: MediaEvent::Failed(format!(
+                            "Media playback failed ({})",
+                            error.message()
+                        )),
+                    });
                 }
             }));
         }
         {
             let events = Rc::clone(&self.events);
             handlers.push(stream.connect_playing_notify(move |stream| {
-                events.push(BackendEvent::Media { id, event: MediaEvent::Playing(stream.is_playing()) });
+                events.push(BackendEvent::Media {
+                    id,
+                    event: MediaEvent::Playing(stream.is_playing()),
+                });
             }));
         }
         {
@@ -158,7 +190,10 @@ impl MediaHost {
                 // The first new contents after preparation is the first frame.
                 if !rendered.get() && stream.is_prepared() && stream.has_video() {
                     rendered.set(true);
-                    events.push(BackendEvent::Media { id, event: MediaEvent::Rendered });
+                    events.push(BackendEvent::Media {
+                        id,
+                        event: MediaEvent::Rendered,
+                    });
                 }
             }));
         }
@@ -170,8 +205,11 @@ impl MediaHost {
 
     pub fn apply(&mut self, state: &MediaState) {
         let previous = self.state.take();
-        let source_changed = previous.as_ref().map(|previous| &previous.source) != Some(&state.source);
-        let seek_changed = previous.as_ref().is_some_and(|previous| previous.seek.0 != state.seek.0);
+        let source_changed =
+            previous.as_ref().map(|previous| &previous.source) != Some(&state.source);
+        let seek_changed = previous
+            .as_ref()
+            .is_some_and(|previous| previous.seek.0 != state.seek.0);
         if source_changed {
             self.release();
             self.start_at.set(state.seek.1.max(0.0));
@@ -188,7 +226,8 @@ impl MediaHost {
             ImageFit::Cover => gtk::ContentFit::Cover,
         });
         self.revealer.set_visible(state.controls);
-        self.revealer.set_reveal_child(state.controls && self.hovered.get());
+        self.revealer
+            .set_reveal_child(state.controls && self.hovered.get());
         if let Some(stream) = &self.stream {
             stream.set_loop(state.looping);
             stream.set_muted(state.muted);
@@ -215,6 +254,9 @@ impl MediaHost {
 
     pub fn position(&self) -> Option<(f64, f64)> {
         let stream = self.stream.as_ref().filter(|stream| stream.is_prepared())?;
-        Some((stream.timestamp() as f64 / MICROSECONDS, (stream.duration() as f64 / MICROSECONDS).max(0.0)))
+        Some((
+            stream.timestamp() as f64 / MICROSECONDS,
+            (stream.duration() as f64 / MICROSECONDS).max(0.0),
+        ))
     }
 }

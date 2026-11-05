@@ -5,7 +5,7 @@
 use pam_desktop_wire::PropKey;
 
 use crate::backend::{NodeId, PointerButton, PointerEvent, PointerPhase};
-use crate::context::{event_kind, Ctx, HostCommand};
+use crate::context::{Ctx, HostCommand, event_kind};
 use crate::geometry::Point;
 use crate::scene::Scene;
 use crate::wiremap::WireMap;
@@ -20,7 +20,11 @@ pub struct DragDrop {
 }
 
 /// The nearest node at or above `id` for which `accepts` holds.
-fn nearest(scene: &Scene, id: NodeId, accepts: impl Fn(&crate::scene::SceneNode) -> bool) -> Option<NodeId> {
+fn nearest(
+    scene: &Scene,
+    id: NodeId,
+    accepts: impl Fn(&crate::scene::SceneNode) -> bool,
+) -> Option<NodeId> {
     let mut current = id;
     loop {
         let node = scene.node(current)?;
@@ -43,19 +47,35 @@ impl DragDrop {
                 self.candidate = ctx
                     .scene
                     .hit_test(pointer.position)
-                    .and_then(|hit| nearest(ctx.scene, hit, |node| node.props().flag_or(PropKey::Draggable, false) && node.props().flag_or(PropKey::Enabled, true)))
+                    .and_then(|hit| {
+                        nearest(ctx.scene, hit, |node| {
+                            node.props().flag_or(PropKey::Draggable, false)
+                                && node.props().flag_or(PropKey::Enabled, true)
+                        })
+                    })
                     .map(|id| (id, pointer.position));
                 false
             }
             PointerPhase::Move => {
-                let Some((id, start)) = self.candidate else { return false };
-                if (pointer.position.x - start.x).hypot(pointer.position.y - start.y) < DRAG_THRESHOLD {
+                let Some((id, start)) = self.candidate else {
+                    return false;
+                };
+                if (pointer.position.x - start.x).hypot(pointer.position.y - start.y)
+                    < DRAG_THRESHOLD
+                {
                     return false;
                 }
                 self.candidate = None;
-                let Some(text) = ctx.scene.node(id).map(|node| node.props().text_or_empty(PropKey::DragData).to_owned()) else { return false };
+                let Some(text) = ctx
+                    .scene
+                    .node(id)
+                    .map(|node| node.props().text_or_empty(PropKey::DragData).to_owned())
+                else {
+                    return false;
+                };
                 ctx.emit_if(id, PropKey::OnDragStart, event_kind::DRAG_START, Vec::new());
-                ctx.commands.push(HostCommand::BeginTextDrag { source: id, text });
+                ctx.commands
+                    .push(HostCommand::BeginTextDrag { source: id, text });
                 true
             }
             PointerPhase::Up | PointerPhase::Cancel => {
@@ -69,9 +89,18 @@ impl DragDrop {
     /// Text was dropped at a window position: the nearest node that
     /// accepts drops receives it.
     pub fn on_text_dropped(&mut self, ctx: &mut Ctx<'_>, position: Point, text: &str) {
-        let target = ctx.scene.hit_test(position).and_then(|hit| nearest(ctx.scene, hit, |node| node.props().flag_or(PropKey::DropEnabled, false)));
+        let target = ctx.scene.hit_test(position).and_then(|hit| {
+            nearest(ctx.scene, hit, |node| {
+                node.props().flag_or(PropKey::DropEnabled, false)
+            })
+        });
         if let Some(target) = target {
-            ctx.emit_if(target, PropKey::OnDrop, event_kind::DROP, WireMap::new().with("data", text).encode());
+            ctx.emit_if(
+                target,
+                PropKey::OnDrop,
+                event_kind::DROP,
+                WireMap::new().with("data", text).encode(),
+            );
         }
     }
 

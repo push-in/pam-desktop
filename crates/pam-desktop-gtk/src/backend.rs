@@ -8,15 +8,17 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib, graphene, pango};
 use pam_desktop_ui::backend::{
-    AlertButtonStyle, AlertConfig, Backend, BackendEvent, ImageContent, ImageKey, ImageSource, InputConfig, KeyEvent,
-    Modifiers, NodeId, PointerButton, PointerEvent,
-    PointerPhase, ScrollConfig, TextContent, ViewClass,
-    WindowConfig, WindowId, WindowMetrics,
+    AlertButtonStyle, AlertConfig, Backend, BackendEvent, ImageContent, ImageKey, ImageSource,
+    InputConfig, KeyEvent, Modifiers, NodeId, PointerButton, PointerEvent, PointerPhase,
+    ScrollConfig, TextContent, ViewClass, WindowConfig, WindowId, WindowMetrics,
 };
 use pam_desktop_ui::geometry::{Point, Rect, Size};
 use pam_desktop_ui::runtime::{self, EventQueue, Inbox, Runtime, RuntimeConfig, Shared};
 use pam_desktop_ui::scene::IdMap;
-use pam_desktop_ui::shell::{Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand, WindowState};
+use pam_desktop_ui::shell::{
+    Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand,
+    WindowState,
+};
 use pam_desktop_ui::style::{Decoration, LayerState};
 use pam_desktop_ui::text::{TextBlock, TextMetrics};
 
@@ -113,7 +115,8 @@ impl GtkBackend {
             shift: state.contains(gdk::ModifierType::SHIFT_MASK),
             control: state.contains(gdk::ModifierType::CONTROL_MASK),
             alt: state.contains(gdk::ModifierType::ALT_MASK),
-            meta: state.contains(gdk::ModifierType::META_MASK) || state.contains(gdk::ModifierType::SUPER_MASK),
+            meta: state.contains(gdk::ModifierType::META_MASK)
+                || state.contains(gdk::ModifierType::SUPER_MASK),
         }
     }
 
@@ -131,8 +134,12 @@ impl GtkBackend {
             motion.connect_motion(move |_, x, y| pointer.set(Point::new(x as f32, y as f32)));
             host.add_controller(motion);
         }
-        for phase in [gtk::PropagationPhase::Capture, gtk::PropagationPhase::Bubble] {
-            let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+        for phase in [
+            gtk::PropagationPhase::Capture,
+            gtk::PropagationPhase::Bubble,
+        ] {
+            let scroll =
+                gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
             scroll.set_propagation_phase(phase);
             let (events, pointer) = (Rc::clone(&self.events), Rc::clone(&pointer));
             scroll.connect_scroll(move |controller, dx, dy| {
@@ -143,27 +150,59 @@ impl GtkBackend {
                 if (phase == gtk::PropagationPhase::Capture) != modifiers.control {
                     return glib::Propagation::Proceed;
                 }
-                let scale = if controller.unit() == gdk::ScrollUnit::Wheel { NOTCH } else { 1.0 };
+                let scale = if controller.unit() == gdk::ScrollUnit::Wheel {
+                    NOTCH
+                } else {
+                    1.0
+                };
                 let delta = Point::new(dx as f32 * scale, dy as f32 * scale);
-                events.push(BackendEvent::Wheel { window, position: pointer.get(), delta, modifiers });
-                if modifiers.control { glib::Propagation::Stop } else { glib::Propagation::Proceed }
+                events.push(BackendEvent::Wheel {
+                    window,
+                    position: pointer.get(),
+                    delta,
+                    modifiers,
+                });
+                if modifiers.control {
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
             });
             host.add_controller(scroll);
         }
-        let center = |gesture: &gtk::Gesture, fallback: Point| gesture.bounding_box_center().map_or(fallback, |(x, y)| Point::new(x as f32, y as f32));
+        let center = |gesture: &gtk::Gesture, fallback: Point| {
+            gesture
+                .bounding_box_center()
+                .map_or(fallback, |(x, y)| Point::new(x as f32, y as f32))
+        };
         {
             let zoom = gtk::GestureZoom::new();
             let (events, tracked) = (Rc::clone(&self.events), Rc::clone(&pointer));
             zoom.connect_begin(move |gesture, _| {
-                events.push(BackendEvent::Magnify { window, position: center(gesture.upcast_ref(), tracked.get()), phase: GesturePhase::Begin, scale: 1.0 });
+                events.push(BackendEvent::Magnify {
+                    window,
+                    position: center(gesture.upcast_ref(), tracked.get()),
+                    phase: GesturePhase::Begin,
+                    scale: 1.0,
+                });
             });
             let (events, tracked) = (Rc::clone(&self.events), Rc::clone(&pointer));
             zoom.connect_scale_changed(move |gesture, scale| {
-                events.push(BackendEvent::Magnify { window, position: center(gesture.upcast_ref(), tracked.get()), phase: GesturePhase::Update, scale: scale as f32 });
+                events.push(BackendEvent::Magnify {
+                    window,
+                    position: center(gesture.upcast_ref(), tracked.get()),
+                    phase: GesturePhase::Update,
+                    scale: scale as f32,
+                });
             });
             let (events, tracked) = (Rc::clone(&self.events), Rc::clone(&pointer));
             zoom.connect_end(move |gesture, _| {
-                events.push(BackendEvent::Magnify { window, position: center(gesture.upcast_ref(), tracked.get()), phase: GesturePhase::End, scale: 1.0 });
+                events.push(BackendEvent::Magnify {
+                    window,
+                    position: center(gesture.upcast_ref(), tracked.get()),
+                    phase: GesturePhase::End,
+                    scale: 1.0,
+                });
             });
             host.add_controller(zoom);
         }
@@ -171,15 +210,30 @@ impl GtkBackend {
             let rotate = gtk::GestureRotate::new();
             let (events, tracked) = (Rc::clone(&self.events), Rc::clone(&pointer));
             rotate.connect_begin(move |gesture, _| {
-                events.push(BackendEvent::Rotate { window, position: center(gesture.upcast_ref(), tracked.get()), phase: GesturePhase::Begin, radians: 0.0 });
+                events.push(BackendEvent::Rotate {
+                    window,
+                    position: center(gesture.upcast_ref(), tracked.get()),
+                    phase: GesturePhase::Begin,
+                    radians: 0.0,
+                });
             });
             let (events, tracked) = (Rc::clone(&self.events), Rc::clone(&pointer));
             rotate.connect_angle_changed(move |gesture, _, delta| {
-                events.push(BackendEvent::Rotate { window, position: center(gesture.upcast_ref(), tracked.get()), phase: GesturePhase::Update, radians: delta as f32 });
+                events.push(BackendEvent::Rotate {
+                    window,
+                    position: center(gesture.upcast_ref(), tracked.get()),
+                    phase: GesturePhase::Update,
+                    radians: delta as f32,
+                });
             });
             let (events, tracked) = (Rc::clone(&self.events), Rc::clone(&pointer));
             rotate.connect_end(move |gesture, _| {
-                events.push(BackendEvent::Rotate { window, position: center(gesture.upcast_ref(), tracked.get()), phase: GesturePhase::End, radians: 0.0 });
+                events.push(BackendEvent::Rotate {
+                    window,
+                    position: center(gesture.upcast_ref(), tracked.get()),
+                    phase: GesturePhase::End,
+                    radians: 0.0,
+                });
             });
             host.add_controller(rotate);
         }
@@ -231,7 +285,9 @@ impl GtkBackend {
         }
         let mut previous: Option<gtk::Widget> = None;
         for widget in wanted {
-            let owned = widget.parent().is_some_and(|parent| parent == *entry.host.upcast_ref::<gtk::Widget>());
+            let owned = widget
+                .parent()
+                .is_some_and(|parent| parent == *entry.host.upcast_ref::<gtk::Widget>());
             if !owned {
                 if widget.parent().is_some() {
                     widget.unparent();
@@ -255,7 +311,9 @@ impl GtkBackend {
         // and triple clicks with the system's own thresholds.
         let clicks = Cell::new((0_u32, Point::ZERO, PointerButton::Primary, 0_u8));
         controller.connect_event(move |_, event| {
-            let Some(host) = target.upgrade() else { return glib::Propagation::Proceed };
+            let Some(host) = target.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
             let phase = match event.event_type() {
                 gdk::EventType::ButtonPress => PointerPhase::Down,
                 gdk::EventType::ButtonRelease => PointerPhase::Up,
@@ -271,10 +329,15 @@ impl GtkBackend {
                 let converted = native.compute_point(&host, &point)?;
                 Some(Point::new(converted.x(), converted.y()))
             });
-            let Some(position) = position.or_else(|| (phase == PointerPhase::Leave).then_some(Point::ZERO)) else {
+            let Some(position) =
+                position.or_else(|| (phase == PointerPhase::Leave).then_some(Point::ZERO))
+            else {
                 return glib::Propagation::Proceed;
             };
-            let button = match event.downcast_ref::<gdk::ButtonEvent>().map(gdk::ButtonEvent::button) {
+            let button = match event
+                .downcast_ref::<gdk::ButtonEvent>()
+                .map(gdk::ButtonEvent::button)
+            {
                 Some(2) => PointerButton::Middle,
                 Some(3) => PointerButton::Secondary,
                 // The "back" side button of a mouse.
@@ -288,16 +351,27 @@ impl GtkBackend {
                 _ => PointerButton::Primary,
             };
             if phase == PointerPhase::Down
-                && let (Some(device), Some((x, y)), Some(press)) = (event.device(), event.position(), event.downcast_ref::<gdk::ButtonEvent>()) {
-                    *last_press.borrow_mut() = Some((device, press.button() as i32, x, y, event.time()));
-                }
+                && let (Some(device), Some((x, y)), Some(press)) = (
+                    event.device(),
+                    event.position(),
+                    event.downcast_ref::<gdk::ButtonEvent>(),
+                )
+            {
+                *last_press.borrow_mut() =
+                    Some((device, press.button() as i32, x, y, event.time()));
+            }
             let state = event.modifier_state();
             let click_count = match phase {
                 PointerPhase::Down => {
                     let (time, place, last_button, count) = clicks.get();
                     let settings = gtk::Settings::default();
-                    let interval = settings.as_ref().map_or(400, |settings| settings.gtk_double_click_time().max(0) as u32);
-                    let distance = settings.as_ref().map_or(5, |settings| settings.gtk_double_click_distance().max(0)) as f32;
+                    let interval = settings.as_ref().map_or(400, |settings| {
+                        settings.gtk_double_click_time().max(0) as u32
+                    });
+                    let distance = settings
+                        .as_ref()
+                        .map_or(5, |settings| settings.gtk_double_click_distance().max(0))
+                        as f32;
                     let repeated = count > 0
                         && last_button == button
                         && event.time().wrapping_sub(time) <= interval
@@ -333,13 +407,19 @@ impl Backend for GtkBackend {
             entry.window.set_modal(config.modal);
             // A new size from the application resizes a secondary window.
             if window != pam_desktop_ui::backend::MAIN_WINDOW && entry.size.get() != config.size {
-                entry.window.set_default_size(config.size.width.round() as i32, config.size.height.round() as i32);
+                entry.window.set_default_size(
+                    config.size.width.round() as i32,
+                    config.size.height.round() as i32,
+                );
             }
             return;
         }
         let native = gtk::ApplicationWindow::new(&self.application);
         native.set_title(Some(&config.title));
-        native.set_default_size(config.size.width.round() as i32, config.size.height.round() as i32);
+        native.set_default_size(
+            config.size.width.round() as i32,
+            config.size.height.round() as i32,
+        );
         native.set_resizable(config.resizable);
         native.set_decorated(config.decorated);
         // The menu bar belongs to the main window.
@@ -366,12 +446,18 @@ impl Backend for GtkBackend {
                         return;
                     }
                     size.set(next);
-                    let scale = weak.upgrade().map_or(1.0, |host| host.scale_factor() as f32);
+                    let scale = weak
+                        .upgrade()
+                        .map_or(1.0, |host| host.scale_factor() as f32);
                     // Allocation runs inside GTK's layout pass: apply the new
                     // viewport right after it instead of re-entering layout.
                     let events = Rc::clone(&events);
                     glib::idle_add_local_full(glib::Priority::HIGH, move || {
-                        events.push(BackendEvent::WindowResized { window, size: next, scale });
+                        events.push(BackendEvent::WindowResized {
+                            window,
+                            size: next,
+                            scale,
+                        });
                         glib::ControlFlow::Break
                     });
                 }));
@@ -392,7 +478,10 @@ impl Backend for GtkBackend {
         });
         let events = Rc::clone(&self.events);
         native.connect_is_active_notify(move |native| {
-            events.push(BackendEvent::WindowFocusChanged { window, focused: native.is_active() });
+            events.push(BackendEvent::WindowFocusChanged {
+                window,
+                focused: native.is_active(),
+            });
         });
         let events = Rc::clone(&self.events);
         let size_for_scale = Rc::clone(&size);
@@ -407,7 +496,17 @@ impl Backend for GtkBackend {
         if self.measure_layout.is_none() {
             self.measure_layout = Some(host.create_pango_layout(None));
         }
-        self.windows.insert(window, WindowEntry { window: native, host, size, presented: false, root: None, overlays: Vec::new() });
+        self.windows.insert(
+            window,
+            WindowEntry {
+                window: native,
+                host,
+                size,
+                presented: false,
+                root: None,
+                overlays: Vec::new(),
+            },
+        );
     }
 
     fn close_window(&mut self, window: WindowId) {
@@ -417,7 +516,9 @@ impl Backend for GtkBackend {
     }
 
     fn window_metrics(&self, window: WindowId) -> WindowMetrics {
-        let Some(entry) = self.windows.get(&window) else { return WindowMetrics::default() };
+        let Some(entry) = self.windows.get(&window) else {
+            return WindowMetrics::default();
+        };
         let refresh_rate = entry
             .window
             .surface()
@@ -436,7 +537,9 @@ impl Backend for GtkBackend {
     }
 
     fn set_window_root(&mut self, window: WindowId, root: Option<NodeId>) {
-        let Some(entry) = self.windows.get_mut(&window) else { return };
+        let Some(entry) = self.windows.get_mut(&window) else {
+            return;
+        };
         entry.root = root;
         Self::arrange_window(entry, &self.views);
         if root.is_some() && !entry.presented {
@@ -446,7 +549,9 @@ impl Backend for GtkBackend {
     }
 
     fn set_window_overlays(&mut self, window: WindowId, overlays: &[NodeId]) {
-        let Some(entry) = self.windows.get_mut(&window) else { return };
+        let Some(entry) = self.windows.get_mut(&window) else {
+            return;
+        };
         entry.overlays = overlays.to_vec();
         Self::arrange_window(entry, &self.views);
     }
@@ -456,9 +561,13 @@ impl Backend for GtkBackend {
         {
             let focus = gtk::EventControllerFocus::new();
             let events = Rc::clone(&self.events);
-            focus.connect_enter(move |_| events.push(BackendEvent::FocusChanged { id, focused: true }));
+            focus.connect_enter(move |_| {
+                events.push(BackendEvent::FocusChanged { id, focused: true })
+            });
             let events = Rc::clone(&self.events);
-            focus.connect_leave(move |_| events.push(BackendEvent::FocusChanged { id, focused: false }));
+            focus.connect_leave(move |_| {
+                events.push(BackendEvent::FocusChanged { id, focused: false })
+            });
             container.add_controller(focus);
         }
         let pending_scroll: Rc<Cell<Option<Point>>> = Rc::new(Cell::new(None));
@@ -476,10 +585,18 @@ impl Backend for GtkBackend {
                         // would overwrite a value set now: apply it right after.
                         let (pending, weak) = (Rc::clone(&pending), weak.clone());
                         glib::idle_add_local_full(glib::Priority::HIGH, move || {
-                            let (Some(target), Some(scrolled)) = (pending.get(), weak.upgrade()) else { return glib::ControlFlow::Break };
-                            let reach = |adjustment: &gtk::Adjustment| (adjustment.upper() - adjustment.page_size()).max(0.0);
-                            let (horizontal, vertical) = (scrolled.hadjustment(), scrolled.vadjustment());
-                            if f64::from(target.x) <= reach(&horizontal) + 0.5 && f64::from(target.y) <= reach(&vertical) + 0.5 {
+                            let (Some(target), Some(scrolled)) = (pending.get(), weak.upgrade())
+                            else {
+                                return glib::ControlFlow::Break;
+                            };
+                            let reach = |adjustment: &gtk::Adjustment| {
+                                (adjustment.upper() - adjustment.page_size()).max(0.0)
+                            };
+                            let (horizontal, vertical) =
+                                (scrolled.hadjustment(), scrolled.vadjustment());
+                            if f64::from(target.x) <= reach(&horizontal) + 0.5
+                                && f64::from(target.y) <= reach(&vertical) + 0.5
+                            {
                                 pending.set(None);
                                 horizontal.set_value(f64::from(target.x));
                                 vertical.set_value(f64::from(target.y));
@@ -498,14 +615,21 @@ impl Backend for GtkBackend {
                     let weak = scrolled.downgrade();
                     move || {
                         if let Some(scrolled) = weak.upgrade() {
-                            let offset = Point::new(scrolled.hadjustment().value() as f32, scrolled.vadjustment().value() as f32);
+                            let offset = Point::new(
+                                scrolled.hadjustment().value() as f32,
+                                scrolled.vadjustment().value() as f32,
+                            );
                             events.push(BackendEvent::ScrollChanged { id, offset });
                         }
                     }
                 };
                 let report_horizontal = report.clone();
-                scrolled.hadjustment().connect_value_changed(move |_| report_horizontal());
-                scrolled.vadjustment().connect_value_changed(move |_| report());
+                scrolled
+                    .hadjustment()
+                    .connect_value_changed(move |_| report_horizontal());
+                scrolled
+                    .vadjustment()
+                    .connect_value_changed(move |_| report());
                 scrolled.upcast()
             }
             _ => container.clone().upcast(),
@@ -515,9 +639,11 @@ impl Backend for GtkBackend {
             ViewClass::TextArea => Some(InputHost::new(id, true, &container, &self.events)),
             _ => None,
         };
-        let media = (class == ViewClass::Media).then(|| crate::media::MediaHost::new(id, &container, &self.events));
+        let media = (class == ViewClass::Media)
+            .then(|| crate::media::MediaHost::new(id, &container, &self.events));
         #[cfg(feature = "webview")]
-        let web = (class == ViewClass::WebView).then(|| crate::webview::WebHost::new(id, &container, &self.events));
+        let web = (class == ViewClass::WebView)
+            .then(|| crate::webview::WebHost::new(id, &container, &self.events));
         self.views.insert(
             id,
             ViewEntry {
@@ -556,13 +682,19 @@ impl Backend for GtkBackend {
     }
 
     fn set_children(&mut self, parent: NodeId, children: &[NodeId]) {
-        let Some(parent_entry) = self.views.get(&parent) else { return };
+        let Some(parent_entry) = self.views.get(&parent) else {
+            return;
+        };
         let container = parent_entry.container.clone();
         let mut previous: Option<gtk::Widget> = None;
         for child in children {
-            let Some(entry) = self.views.get(child) else { continue };
+            let Some(entry) = self.views.get(child) else {
+                continue;
+            };
             let widget = &entry.widget;
-            let owned = widget.parent().is_some_and(|current| current == *container.upcast_ref::<gtk::Widget>());
+            let owned = widget
+                .parent()
+                .is_some_and(|current| current == *container.upcast_ref::<gtk::Widget>());
             if owned {
                 if widget.prev_sibling() != previous {
                     widget.insert_after(&container, previous.as_ref());
@@ -579,7 +711,9 @@ impl Backend for GtkBackend {
     }
 
     fn set_frame(&mut self, id: NodeId, frame: Rect) {
-        let Some(entry) = self.views.get_mut(&id) else { return };
+        let Some(entry) = self.views.get_mut(&id) else {
+            return;
+        };
         view::set_layout(&entry.widget, |layout| layout.frame = frame);
         if entry.class != ViewClass::Scroll {
             entry.container.set_size(frame.size());
@@ -599,7 +733,9 @@ impl Backend for GtkBackend {
     }
 
     fn set_layer(&mut self, id: NodeId, layer: &LayerState) {
-        let Some(entry) = self.views.get(&id) else { return };
+        let Some(entry) = self.views.get(&id) else {
+            return;
+        };
         entry.widget.set_opacity(f64::from(layer.opacity));
         entry.widget.set_visible(layer.visible);
         view::set_layout(&entry.widget, |layout| layout.transform = layer.transform);
@@ -612,12 +748,29 @@ impl Backend for GtkBackend {
         if let Some(entry) = self.views.get_mut(&id) {
             entry.container.set_text(text);
             // The text is the accessible name unless a label was given.
-            entry.plain_text = text.map(|content| content.block.runs.iter().map(|run| run.text.as_str()).collect());
-            crate::accessibility::apply(entry.container.upcast_ref(), entry.accessibility.as_deref(), entry.plain_text.as_deref(), &mut entry.announced, false);
+            entry.plain_text = text.map(|content| {
+                content
+                    .block
+                    .runs
+                    .iter()
+                    .map(|run| run.text.as_str())
+                    .collect()
+            });
+            crate::accessibility::apply(
+                entry.container.upcast_ref(),
+                entry.accessibility.as_deref(),
+                entry.plain_text.as_deref(),
+                &mut entry.announced,
+                false,
+            );
         }
     }
 
-    fn set_accessibility(&mut self, id: NodeId, accessibility: Option<&pam_desktop_ui::accessibility::Accessibility>) {
+    fn set_accessibility(
+        &mut self,
+        id: NodeId,
+        accessibility: Option<&pam_desktop_ui::accessibility::Accessibility>,
+    ) {
         if let Some(entry) = self.views.get_mut(&id) {
             entry.accessibility = accessibility.cloned().map(Box::new);
             // Native text controls describe themselves; only the name and state are added.
@@ -625,7 +778,13 @@ impl Backend for GtkBackend {
                 Some(input) => input.focus_target(),
                 None => entry.container.clone().upcast(),
             };
-            crate::accessibility::apply(&target, accessibility, entry.plain_text.as_deref(), &mut entry.announced, entry.input.is_some());
+            crate::accessibility::apply(
+                &target,
+                accessibility,
+                entry.plain_text.as_deref(),
+                &mut entry.announced,
+                entry.input.is_some(),
+            );
         }
     }
 
@@ -660,9 +819,10 @@ impl Backend for GtkBackend {
 
     fn set_input_config(&mut self, id: NodeId, config: &InputConfig) {
         if let Some(entry) = self.views.get_mut(&id)
-            && let Some(input) = &mut entry.input {
-                input.configure(config, &entry.container);
-            }
+            && let Some(input) = &mut entry.input
+        {
+            input.configure(config, &entry.container);
+        }
     }
 
     fn set_input_text(&mut self, id: NodeId, text: &str, selection: Option<(u32, u32)>) {
@@ -683,19 +843,37 @@ impl Backend for GtkBackend {
         // Decoding runs on a worker thread; only plain pixels cross back to
         // the UI thread, where they become a texture without another copy.
         let (sender, receiver) = std::sync::mpsc::channel::<Result<DecodedImage, String>>();
-        let spawned = std::thread::Builder::new().name("pam-image-decode".into()).spawn(move || {
-            let _ = sender.send(decode_image(source, max_dimension));
-            glib::MainContext::default().wakeup();
-        });
+        let spawned = std::thread::Builder::new()
+            .name("pam-image-decode".into())
+            .spawn(move || {
+                let _ = sender.send(decode_image(source, max_dimension));
+                glib::MainContext::default().wakeup();
+            });
         if spawned.is_err() {
-            return self.events.push(BackendEvent::ImageFailed { key, message: "image decoder could not start".into() });
+            return self.events.push(BackendEvent::ImageFailed {
+                key,
+                message: "image decoder could not start".into(),
+            });
         }
         glib::idle_add_local_full(glib::Priority::DEFAULT, move || match receiver.try_recv() {
             Ok(Ok(decoded)) => {
-                let format = if decoded.alpha { gdk::MemoryFormat::R8g8b8a8 } else { gdk::MemoryFormat::R8g8b8 };
-                let texture = gdk::MemoryTexture::new(decoded.width, decoded.height, format, &decoded.pixels, decoded.stride);
+                let format = if decoded.alpha {
+                    gdk::MemoryFormat::R8g8b8a8
+                } else {
+                    gdk::MemoryFormat::R8g8b8
+                };
+                let texture = gdk::MemoryTexture::new(
+                    decoded.width,
+                    decoded.height,
+                    format,
+                    &decoded.pixels,
+                    decoded.stride,
+                );
                 textures.borrow_mut().insert(key, texture.upcast());
-                events.push(BackendEvent::ImageLoaded { key, size: Size::new(decoded.width as f32, decoded.height as f32) });
+                events.push(BackendEvent::ImageLoaded {
+                    key,
+                    size: Size::new(decoded.width as f32, decoded.height as f32),
+                });
                 glib::ControlFlow::Break
             }
             Ok(Err(message)) => {
@@ -704,7 +882,10 @@ impl Backend for GtkBackend {
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                events.push(BackendEvent::ImageFailed { key, message: "image decoder stopped".into() });
+                events.push(BackendEvent::ImageFailed {
+                    key,
+                    message: "image decoder stopped".into(),
+                });
                 glib::ControlFlow::Break
             }
         });
@@ -715,16 +896,24 @@ impl Backend for GtkBackend {
     }
 
     fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>) {
-        let Some(entry) = self.views.get(&id) else { return };
+        let Some(entry) = self.views.get(&id) else {
+            return;
+        };
         let state = image.and_then(|content| {
             let texture = self.textures.borrow().get(&content.key).cloned()?;
-            Some(ImageState { content: *content, texture })
+            Some(ImageState {
+                content: *content,
+                texture,
+            })
         });
         entry.container.set_image(state);
     }
 
     fn text_index_at(&self, id: NodeId, point: Point) -> Option<u32> {
-        self.views.get(&id)?.container.text_index_at(point.x, point.y)
+        self.views
+            .get(&id)?
+            .container
+            .text_index_at(point.x, point.y)
     }
 
     fn set_text_selection(&mut self, id: NodeId, range: Option<(u32, u32)>) {
@@ -734,9 +923,21 @@ impl Backend for GtkBackend {
     }
 
     fn announce(&mut self, message: &str, assertive: bool) -> bool {
-        let active = self.application.active_window().and_then(|active| self.windows.values().find(|entry| entry.window == active));
-        let Some(entry) = active.or_else(|| self.windows.get(&pam_desktop_ui::backend::MAIN_WINDOW)).filter(|entry| entry.host.is_realized()) else { return false };
-        let priority = if assertive { gtk::AccessibleAnnouncementPriority::High } else { gtk::AccessibleAnnouncementPriority::Medium };
+        let active = self
+            .application
+            .active_window()
+            .and_then(|active| self.windows.values().find(|entry| entry.window == active));
+        let Some(entry) = active
+            .or_else(|| self.windows.get(&pam_desktop_ui::backend::MAIN_WINDOW))
+            .filter(|entry| entry.host.is_realized())
+        else {
+            return false;
+        };
+        let priority = if assertive {
+            gtk::AccessibleAnnouncementPriority::High
+        } else {
+            gtk::AccessibleAnnouncementPriority::Medium
+        };
         entry.host.announce(message, priority);
         crate::accessibility::screen_reader_active()
     }
@@ -746,19 +947,28 @@ impl Backend for GtkBackend {
     }
 
     fn begin_text_drag(&mut self, window: WindowId, source: NodeId, text: &str) {
-        let finished = |events: &Rc<EventQueue>, dropped: bool| events.push(BackendEvent::DragFinished { source, dropped });
-        let surface = self.windows.get(&window).and_then(|entry| entry.window.surface());
-        let (Some(surface), Some((device, _, x, y, _))) = (surface, self.last_press.borrow().clone()) else {
+        let finished = |events: &Rc<EventQueue>, dropped: bool| {
+            events.push(BackendEvent::DragFinished { source, dropped })
+        };
+        let surface = self
+            .windows
+            .get(&window)
+            .and_then(|entry| entry.window.surface());
+        let (Some(surface), Some((device, _, x, y, _))) =
+            (surface, self.last_press.borrow().clone())
+        else {
             return finished(&self.events, false);
         };
         let content = gdk::ContentProvider::for_value(&text.to_value());
-        let Some(drag) = gdk::Drag::begin(&surface, &device, &content, gdk::DragAction::COPY, x, y) else {
+        let Some(drag) = gdk::Drag::begin(&surface, &device, &content, gdk::DragAction::COPY, x, y)
+        else {
             return finished(&self.events, false);
         };
         // The dragged view follows the pointer.
         if let Some(entry) = self.views.get(&source) {
             let icon = gtk::DragIcon::for_drag(&drag);
-            let picture = gtk::Picture::for_paintable(&gtk::WidgetPaintable::new(Some(&entry.widget)));
+            let picture =
+                gtk::Picture::for_paintable(&gtk::WidgetPaintable::new(Some(&entry.widget)));
             picture.set_opacity(0.85);
             icon.set_child(Some(&picture));
         }
@@ -769,14 +979,28 @@ impl Backend for GtkBackend {
         }
         {
             let (events, dropped) = (Rc::clone(&self.events), Rc::clone(&dropped));
-            drag.connect_dnd_finished(move |_| events.push(BackendEvent::DragFinished { source, dropped: dropped.get() }));
+            drag.connect_dnd_finished(move |_| {
+                events.push(BackendEvent::DragFinished {
+                    source,
+                    dropped: dropped.get(),
+                })
+            });
         }
         let events = Rc::clone(&self.events);
-        drag.connect_cancel(move |_, _| events.push(BackendEvent::DragFinished { source, dropped: false }));
+        drag.connect_cancel(move |_, _| {
+            events.push(BackendEvent::DragFinished {
+                source,
+                dropped: false,
+            })
+        });
     }
 
     fn set_media(&mut self, id: NodeId, state: &pam_desktop_ui::backend::MediaState) {
-        if let Some(media) = self.views.get_mut(&id).and_then(|entry| entry.media.as_mut()) {
+        if let Some(media) = self
+            .views
+            .get_mut(&id)
+            .and_then(|entry| entry.media.as_mut())
+        {
             media.apply(state);
         }
     }
@@ -791,7 +1015,9 @@ impl Backend for GtkBackend {
     #[cfg(not(feature = "webview"))]
     fn set_web_view(&mut self, id: NodeId, state: &pam_desktop_ui::backend::WebViewState) {
         if state.source != pam_desktop_ui::backend::WebSource::None {
-            let event = pam_desktop_ui::backend::WebViewEvent::Failed("WebView is not available in this build".into());
+            let event = pam_desktop_ui::backend::WebViewEvent::Failed(
+                "WebView is not available in this build".into(),
+            );
             self.events.push(BackendEvent::WebView { id, event });
         }
     }
@@ -813,7 +1039,11 @@ impl Backend for GtkBackend {
     }
 
     fn set_scroll_config(&mut self, id: NodeId, config: &ScrollConfig) {
-        let Some(scrolled) = self.views.get(&id).and_then(|entry| entry.widget.downcast_ref::<gtk::ScrolledWindow>()) else {
+        let Some(scrolled) = self
+            .views
+            .get(&id)
+            .and_then(|entry| entry.widget.downcast_ref::<gtk::ScrolledWindow>())
+        else {
             return;
         };
         let scrolling = if !config.enabled {
@@ -833,13 +1063,19 @@ impl Backend for GtkBackend {
     }
 
     fn scroll_to(&mut self, id: NodeId, offset: Point, _animated: bool) {
-        let Some(entry) = self.views.get(&id) else { return };
-        let Some(scrolled) = entry.widget.downcast_ref::<gtk::ScrolledWindow>() else { return };
-        let reach = |adjustment: &gtk::Adjustment| (adjustment.upper() - adjustment.page_size()).max(0.0);
+        let Some(entry) = self.views.get(&id) else {
+            return;
+        };
+        let Some(scrolled) = entry.widget.downcast_ref::<gtk::ScrolledWindow>() else {
+            return;
+        };
+        let reach =
+            |adjustment: &gtk::Adjustment| (adjustment.upper() - adjustment.page_size()).max(0.0);
         let (horizontal, vertical) = (scrolled.hadjustment(), scrolled.vadjustment());
         // Content that is not laid out yet cannot be scrolled to: remember
         // the offset and apply it when the adjustments grow.
-        let reachable = f64::from(offset.x) <= reach(&horizontal) + 0.5 && f64::from(offset.y) <= reach(&vertical) + 0.5;
+        let reachable = f64::from(offset.x) <= reach(&horizontal) + 0.5
+            && f64::from(offset.y) <= reach(&vertical) + 0.5;
         entry.pending_scroll.set((!reachable).then_some(offset));
         horizontal.set_value(f64::from(offset.x));
         vertical.set_value(f64::from(offset.y));
@@ -864,7 +1100,9 @@ impl Backend for GtkBackend {
         let requested = Rc::clone(&self.frame_requested);
         entry.host.add_tick_callback(move |_, clock| {
             requested.set(false);
-            events.push(BackendEvent::Frame { time_ms: u64::try_from(clock.frame_time() / 1000).unwrap_or(0) });
+            events.push(BackendEvent::Frame {
+                time_ms: u64::try_from(clock.frame_time() / 1000).unwrap_or(0),
+            });
             glib::ControlFlow::Break
         });
     }
@@ -876,21 +1114,50 @@ impl Backend for GtkBackend {
     }
 
     fn clipboard_text(&mut self, done: Box<dyn FnOnce(Option<String>)>) {
-        let Some(display) = gdk::Display::default() else { return done(None) };
-        display.clipboard().read_text_async(gio::Cancellable::NONE, move |result| {
-            done(result.ok().flatten().map(|text| text.to_string()));
-        });
+        let Some(display) = gdk::Display::default() else {
+            return done(None);
+        };
+        display
+            .clipboard()
+            .read_text_async(gio::Cancellable::NONE, move |result| {
+                done(result.ok().flatten().map(|text| text.to_string()));
+            });
     }
 
-    fn show_alert(&mut self, window: WindowId, alert: &AlertConfig, done: Box<dyn FnOnce(Option<usize>)>) {
-        let labels: Vec<&str> =
-            if alert.buttons.is_empty() { vec!["OK"] } else { alert.buttons.iter().map(|button| button.label.as_str()).collect() };
-        let dialog = gtk::AlertDialog::builder().modal(true).message(alert.title.as_str()).detail(alert.message.as_str()).buttons(labels).build();
-        if let Some(cancel) = alert.buttons.iter().position(|button| button.style == AlertButtonStyle::Cancel) {
+    fn show_alert(
+        &mut self,
+        window: WindowId,
+        alert: &AlertConfig,
+        done: Box<dyn FnOnce(Option<usize>)>,
+    ) {
+        let labels: Vec<&str> = if alert.buttons.is_empty() {
+            vec!["OK"]
+        } else {
+            alert
+                .buttons
+                .iter()
+                .map(|button| button.label.as_str())
+                .collect()
+        };
+        let dialog = gtk::AlertDialog::builder()
+            .modal(true)
+            .message(alert.title.as_str())
+            .detail(alert.message.as_str())
+            .buttons(labels)
+            .build();
+        if let Some(cancel) = alert
+            .buttons
+            .iter()
+            .position(|button| button.style == AlertButtonStyle::Cancel)
+        {
             dialog.set_cancel_button(cancel as i32);
         }
         // The first non-cancel button answers to Enter.
-        let default = alert.buttons.iter().position(|button| button.style != AlertButtonStyle::Cancel).unwrap_or(0);
+        let default = alert
+            .buttons
+            .iter()
+            .position(|button| button.style != AlertButtonStyle::Cancel)
+            .unwrap_or(0);
         dialog.set_default_button(default as i32);
         let parent = self.windows.get(&window).map(|entry| entry.window.clone());
         dialog.choose(parent.as_ref(), gio::Cancellable::NONE, move |result| {
@@ -899,7 +1166,9 @@ impl Backend for GtkBackend {
     }
 
     fn set_appearance(&mut self, dark: Option<bool>) {
-        let Some(settings) = gtk::Settings::default() else { return };
+        let Some(settings) = gtk::Settings::default() else {
+            return;
+        };
         self.forced_appearance = dark.is_some();
         match dark {
             Some(dark) => settings.set_gtk_application_prefer_dark_theme(dark),
@@ -908,11 +1177,21 @@ impl Backend for GtkBackend {
     }
 
     fn set_menu_bar(&mut self, menu: &[MenuNode]) {
-        let window = self.windows.get(&pam_desktop_ui::backend::MAIN_WINDOW).map(|entry| entry.window.clone());
-        self.shell.set_menu_bar(menu, window.as_ref(), pam_desktop_ui::backend::MAIN_WINDOW);
+        let window = self
+            .windows
+            .get(&pam_desktop_ui::backend::MAIN_WINDOW)
+            .map(|entry| entry.window.clone());
+        self.shell
+            .set_menu_bar(menu, window.as_ref(), pam_desktop_ui::backend::MAIN_WINDOW);
     }
 
-    fn popup_menu(&mut self, window: WindowId, position: Point, menu: &[MenuNode], done: Box<dyn FnOnce(Option<String>)>) {
+    fn popup_menu(
+        &mut self,
+        window: WindowId,
+        position: Point,
+        menu: &[MenuNode],
+        done: Box<dyn FnOnce(Option<String>)>,
+    ) {
         match self.windows.get(&window) {
             Some(entry) => self.shell.popup_menu(&entry.host, position, menu, done),
             None => done(None),
@@ -922,8 +1201,17 @@ impl Backend for GtkBackend {
     #[cfg(feature = "tray")]
     fn set_tray(&mut self, tray: Option<&TrayConfig>) {
         if self.tray.is_none() && tray.is_some() {
-            let id = self.application.application_id().map(|id| id.to_string()).unwrap_or_else(|| String::from("pam-desktop"));
-            let title = self.windows.get(&pam_desktop_ui::backend::MAIN_WINDOW).and_then(|entry| entry.window.title()).map(|title| title.to_string()).unwrap_or_else(|| id.clone());
+            let id = self
+                .application
+                .application_id()
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| String::from("pam-desktop"));
+            let title = self
+                .windows
+                .get(&pam_desktop_ui::backend::MAIN_WINDOW)
+                .and_then(|entry| entry.window.title())
+                .map(|title| title.to_string())
+                .unwrap_or_else(|| id.clone());
             self.tray = Some(crate::tray::TrayHost::new(&id, &title, &self.events));
         }
         if let Some(host) = &mut self.tray {
@@ -934,7 +1222,12 @@ impl Backend for GtkBackend {
     #[cfg(not(feature = "tray"))]
     fn set_tray(&mut self, _tray: Option<&TrayConfig>) {}
 
-    fn pick_files(&mut self, window: WindowId, config: &FileDialogConfig, done: Box<dyn FnOnce(Vec<std::path::PathBuf>)>) {
+    fn pick_files(
+        &mut self,
+        window: WindowId,
+        config: &FileDialogConfig,
+        done: Box<dyn FnOnce(Vec<std::path::PathBuf>)>,
+    ) {
         let parent = self.windows.get(&window).map(|entry| entry.window.clone());
         self.shell.pick_files(parent.as_ref(), config, done);
     }
@@ -950,7 +1243,10 @@ impl Backend for GtkBackend {
     }
 
     fn window_state(&self, window: WindowId) -> WindowState {
-        self.windows.get(&window).map(|entry| shell::window_state(&entry.window)).unwrap_or_default()
+        self.windows
+            .get(&window)
+            .map(|entry| shell::window_state(&entry.window))
+            .unwrap_or_default()
     }
 
     /// Shortcuts of the focused window are matched by the core; only the
@@ -970,7 +1266,9 @@ impl Backend for GtkBackend {
 
     fn set_cursor(&mut self, id: NodeId, cursor: Cursor) {
         if let Some(entry) = self.views.get(&id) {
-            entry.widget.set_cursor_from_name(shell::cursor_name(cursor));
+            entry
+                .widget
+                .set_cursor_from_name(shell::cursor_name(cursor));
         }
     }
 
@@ -981,9 +1279,17 @@ impl Backend for GtkBackend {
     }
 
     fn begin_window_drag(&mut self, window: WindowId) {
-        let Some(entry) = self.windows.get(&window) else { return };
-        let Some((device, button, x, y, time)) = self.last_press.borrow().clone() else { return };
-        if let Some(toplevel) = entry.window.surface().and_then(|surface| surface.downcast::<gdk::Toplevel>().ok()) {
+        let Some(entry) = self.windows.get(&window) else {
+            return;
+        };
+        let Some((device, button, x, y, time)) = self.last_press.borrow().clone() else {
+            return;
+        };
+        if let Some(toplevel) = entry
+            .window
+            .surface()
+            .and_then(|surface| surface.downcast::<gdk::Toplevel>().ok())
+        {
             toplevel.begin_move(&device, button, x, y, time);
         }
     }
@@ -999,10 +1305,13 @@ impl Backend for GtkBackend {
         let slot = Rc::clone(&self.wake_fired);
         slot.set(false);
         let fired = Rc::clone(&slot);
-        self.wake_source = Some(glib::timeout_add_local_once(std::time::Duration::from_millis(u64::from(delay_ms)), move || {
-            fired.set(true);
-            events.push(BackendEvent::Wake);
-        }));
+        self.wake_source = Some(glib::timeout_add_local_once(
+            std::time::Duration::from_millis(u64::from(delay_ms)),
+            move || {
+                fired.set(true);
+                events.push(BackendEvent::Wake);
+            },
+        ));
     }
 
     fn quit(&mut self) {
@@ -1058,7 +1367,9 @@ fn key_name(key: gdk::Key) -> String {
     }
     match key.to_unicode() {
         Some(character) if !character.is_control() => character.to_string(),
-        _ => key.name().map_or_else(|| String::from("Unidentified"), |name| name.to_string()),
+        _ => key
+            .name()
+            .map_or_else(|| String::from("Unidentified"), |name| name.to_string()),
     }
 }
 
@@ -1073,18 +1384,29 @@ const STYLESHEET: &str = "
 /// Runs a PAM Desktop application on GTK until its window closes.
 pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
     // One instance per application: a second launch hands its URL over.
-    let flags = if config.single_instance { gio::ApplicationFlags::HANDLES_OPEN } else { gio::ApplicationFlags::NON_UNIQUE };
+    let flags = if config.single_instance {
+        gio::ApplicationFlags::HANDLES_OPEN
+    } else {
+        gio::ApplicationFlags::NON_UNIQUE
+    };
     let application = gtk::Application::new(Some(application_id), flags);
-    if config.single_instance && application.register(gio::Cancellable::NONE).is_ok() && application.is_remote() {
+    if config.single_instance
+        && application.register(gio::Cancellable::NONE).is_ok()
+        && application.is_remote()
+    {
         // Running a remote application forwards its arguments and returns.
-        let arguments: Vec<&str> = std::iter::once("pam-desktop").chain(config.launch_url.as_deref()).collect();
+        let arguments: Vec<&str> = std::iter::once("pam-desktop")
+            .chain(config.launch_url.as_deref())
+            .collect();
         application.run_with_args(&arguments);
         return ExitCode::SUCCESS;
     }
     let queue: Rc<RefCell<Option<Rc<EventQueue>>>> = Rc::new(RefCell::new(None));
     let links = Rc::clone(&queue);
     application.connect_open(move |application, files, _| {
-        let Some(events) = links.borrow().clone() else { return };
+        let Some(events) = links.borrow().clone() else {
+            return;
+        };
         if let Some(window) = application.windows().into_iter().next_back() {
             window.present();
         }
@@ -1109,7 +1431,11 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
         if let Some(display) = gdk::Display::default() {
             let provider = gtk::CssProvider::new();
             provider.load_from_string(STYLESHEET);
-            gtk::style_context_add_provider_for_display(&display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
         }
         let events = EventQueue::new();
         *queue.borrow_mut() = Some(Rc::clone(&events));
@@ -1154,12 +1480,18 @@ struct DecodedImage {
 fn decode_image(source: ImageSource, max_dimension: Option<u32>) -> Result<DecodedImage, String> {
     use gtk::gdk_pixbuf::prelude::*;
     let loader = gtk::gdk_pixbuf::PixbufLoader::new();
-    if let Some(limit) = max_dimension.and_then(|limit| i32::try_from(limit).ok()).filter(|limit| *limit > 0) {
+    if let Some(limit) = max_dimension
+        .and_then(|limit| i32::try_from(limit).ok())
+        .filter(|limit| *limit > 0)
+    {
         loader.connect_size_prepared(move |loader, width, height| {
             let longest = width.max(height);
             if longest > limit {
                 let ratio = f64::from(limit) / f64::from(longest);
-                loader.set_size(((f64::from(width) * ratio).round() as i32).max(1), ((f64::from(height) * ratio).round() as i32).max(1));
+                loader.set_size(
+                    ((f64::from(width) * ratio).round() as i32).max(1),
+                    ((f64::from(height) * ratio).round() as i32).max(1),
+                );
             }
         });
     }
@@ -1175,7 +1507,9 @@ fn decode_image(source: ImageSource, max_dimension: Option<u32>) -> Result<Decod
     };
     let closed = loader.close();
     written.and(closed).map_err(|error| error.to_string())?;
-    let pixbuf = loader.pixbuf().ok_or_else(|| String::from("Image could not be decoded"))?;
+    let pixbuf = loader
+        .pixbuf()
+        .ok_or_else(|| String::from("Image could not be decoded"))?;
     if pixbuf.bits_per_sample() != 8 || pixbuf.width() <= 0 || pixbuf.height() <= 0 {
         return Err("Image format is not supported".into());
     }

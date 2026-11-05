@@ -10,21 +10,25 @@ use std::rc::Rc;
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::NSView;
 use objc2_av_foundation::{
-    AVLayerVideoGravity, AVLayerVideoGravityResize, AVLayerVideoGravityResizeAspect, AVLayerVideoGravityResizeAspectFill,
-    AVPlayer, AVPlayerActionAtItemEnd, AVPlayerItem, AVPlayerItemDidPlayToEndTimeNotification,
-    AVPlayerItemFailedToPlayToEndTimeNotification, AVPlayerItemStatus, AVPlayerLayer, AVPlayerTimeControlStatus,
+    AVLayerVideoGravity, AVLayerVideoGravityResize, AVLayerVideoGravityResizeAspect,
+    AVLayerVideoGravityResizeAspectFill, AVPlayer, AVPlayerActionAtItemEnd, AVPlayerItem,
+    AVPlayerItemDidPlayToEndTimeNotification, AVPlayerItemFailedToPlayToEndTimeNotification,
+    AVPlayerItemStatus, AVPlayerLayer, AVPlayerTimeControlStatus,
 };
 use objc2_av_kit::{AVPlayerView, AVPlayerViewControlsStyle};
 use objc2_core_foundation::{CGPoint, CGRect};
 use objc2_core_media::CMTime;
 use objc2_foundation::{
-    NSDictionary, NSKeyValueObservingOptions, NSNotification, NSNotificationCenter, NSObjectNSKeyValueObserverRegistration,
-    NSObjectNSThreadPerformAdditions, NSOperationQueue, NSString, NSThread, NSURL,
+    NSDictionary, NSKeyValueObservingOptions, NSNotification, NSNotificationCenter,
+    NSObjectNSKeyValueObserverRegistration, NSObjectNSThreadPerformAdditions, NSOperationQueue,
+    NSString, NSThread, NSURL,
 };
-use pam_desktop_ui::backend::{BackendEvent, ImageFit, MediaEvent, MediaSource, MediaState, NodeId};
+use pam_desktop_ui::backend::{
+    BackendEvent, ImageFit, MediaEvent, MediaSource, MediaState, NodeId,
+};
 use pam_desktop_ui::geometry::Size;
 
 use crate::events::Events;
@@ -36,7 +40,10 @@ const TIMESCALE: i32 = 600;
 /// What shows the video.
 enum Surface {
     /// A layer-hosting view around a player layer (no controls).
-    Layer { view: Retained<NSView>, layer: Retained<AVPlayerLayer> },
+    Layer {
+        view: Retained<NSView>,
+        layer: Retained<AVPlayerLayer>,
+    },
     /// AVKit's player view with its inline controls.
     Controls(Retained<AVPlayerView>),
 }
@@ -113,7 +120,11 @@ struct Shared {
 fn seconds(time: CMTime) -> f64 {
     // SAFETY: converts a plain value.
     let seconds = unsafe { time.seconds() };
-    if seconds.is_finite() { seconds.max(0.0) } else { 0.0 }
+    if seconds.is_finite() {
+        seconds.max(0.0)
+    } else {
+        0.0
+    }
 }
 
 fn time(seconds: f64) -> CMTime {
@@ -136,16 +147,29 @@ impl Shared {
     /// Compares the player with what was last reported and reports the
     /// differences. Called for every observed change.
     fn refresh(&self) {
-        let Some(player) = self.player.borrow().clone() else { return };
+        let Some(player) = self.player.borrow().clone() else {
+            return;
+        };
         // SAFETY: plain property reads on the main thread.
-        let (item, rate, control) = unsafe { (player.currentItem(), player.rate(), player.timeControlStatus()) };
+        let (item, rate, control) = unsafe {
+            (
+                player.currentItem(),
+                player.rate(),
+                player.timeControlStatus(),
+            )
+        };
         if let Some(item) = &item {
             // SAFETY: as above.
             let status = unsafe { item.status() };
             if status == AVPlayerItemStatus::ReadyToPlay && !self.ready.replace(true) {
                 // SAFETY: as above.
-                let (natural, duration) = unsafe { (item.presentationSize(), seconds(item.duration())) };
-                self.emit(MediaEvent::Ready { width: natural.width.max(0.0) as u32, height: natural.height.max(0.0) as u32, duration });
+                let (natural, duration) =
+                    unsafe { (item.presentationSize(), seconds(item.duration())) };
+                self.emit(MediaEvent::Ready {
+                    width: natural.width.max(0.0) as u32,
+                    height: natural.height.max(0.0) as u32,
+                    duration,
+                });
                 if self.start_at.get() > 0.0 {
                     self.seek(&player, self.start_at.get());
                 }
@@ -155,8 +179,12 @@ impl Shared {
                 }
             } else if status == AVPlayerItemStatus::Failed && !self.failed.replace(true) {
                 // SAFETY: plain property read on the main thread.
-                let reason = unsafe { item.error() }.map(|error| error.localizedDescription().to_string()).unwrap_or_default();
-                self.emit(MediaEvent::Failed(format!("Media playback failed ({reason})")));
+                let reason = unsafe { item.error() }
+                    .map(|error| error.localizedDescription().to_string())
+                    .unwrap_or_default();
+                self.emit(MediaEvent::Failed(format!(
+                    "Media playback failed ({reason})"
+                )));
             }
         }
         if !self.ready.get() {
@@ -172,7 +200,11 @@ impl Shared {
         if self.playing.replace(playing) != playing {
             self.emit(MediaEvent::Playing(playing));
         }
-        let shows = self.surface.borrow().as_ref().is_some_and(Surface::ready_for_display);
+        let shows = self
+            .surface
+            .borrow()
+            .as_ref()
+            .is_some_and(Surface::ready_for_display);
         // SAFETY: plain property read on the main thread.
         let has_video = item.is_some_and(|item| unsafe { item.presentationSize() }.width > 0.0);
         if shows && has_video && !self.rendered.replace(true) {
@@ -181,7 +213,9 @@ impl Shared {
     }
 
     fn reached_end(&self) {
-        let Some(player) = self.player.borrow().clone() else { return };
+        let Some(player) = self.player.borrow().clone() else {
+            return;
+        };
         if self.looping.get() {
             // The player keeps its rate at the end of a looping item.
             self.seek(&player, 0.0);
@@ -268,7 +302,15 @@ impl MediaHost {
         let this = MediaObserver::alloc(mtm).set_ivars(Rc::clone(&shared));
         // SAFETY: `init` is the designated initializer of `NSObject`.
         let observer: Retained<MediaObserver> = unsafe { msg_send![super(this), init] };
-        Self { mtm, shared, observer, observed: Vec::new(), tokens: Vec::new(), state: None, size: Size::ZERO }
+        Self {
+            mtm,
+            shared,
+            observer,
+            observed: Vec::new(),
+            tokens: Vec::new(),
+            state: None,
+            size: Size::ZERO,
+        }
     }
 
     /// The view placed inside the node's view, once there is one.
@@ -280,7 +322,12 @@ impl MediaHost {
         // SAFETY: the observer implements `observeValueForKeyPath:…` and is
         // removed from every object in `unobserve` before either goes away.
         unsafe {
-            object.addObserver_forKeyPath_options_context(&self.observer, &ns_string(key), NSKeyValueObservingOptions::New, std::ptr::null_mut());
+            object.addObserver_forKeyPath_options_context(
+                &self.observer,
+                &ns_string(key),
+                NSKeyValueObservingOptions::New,
+                std::ptr::null_mut(),
+            );
         }
         self.observed.push((object, key));
     }
@@ -299,7 +346,12 @@ impl MediaHost {
 
     /// Shows the video with or without the system's controls.
     fn set_surface(&mut self, controls: bool, parent: &NSView) {
-        let current = self.shared.surface.borrow().as_ref().map(|surface| matches!(surface, Surface::Controls(_)));
+        let current = self
+            .shared
+            .surface
+            .borrow()
+            .as_ref()
+            .map(|surface| matches!(surface, Surface::Controls(_)));
         if current == Some(controls) {
             return;
         }
@@ -325,7 +377,11 @@ impl MediaHost {
         let view = surface.view();
         view.setFrame(CGRect::new(CGPoint::ZERO, cg_size(self.size)));
         // The video sits under the node's children.
-        parent.addSubview_positioned_relativeTo(&view, objc2_app_kit::NSWindowOrderingMode::Below, None);
+        parent.addSubview_positioned_relativeTo(
+            &view,
+            objc2_app_kit::NSWindowOrderingMode::Below,
+            None,
+        );
         self.observe(surface.display(), "readyForDisplay");
         *self.shared.surface.borrow_mut() = Some(surface);
         // A new surface shows its first frame again.
@@ -373,11 +429,15 @@ impl MediaHost {
 
     fn open(&mut self, source: &MediaSource) {
         let url = match source {
-            MediaSource::File(path) => Some(NSURL::fileURLWithPath(&ns_string(&path.to_string_lossy()))),
+            MediaSource::File(path) => {
+                Some(NSURL::fileURLWithPath(&ns_string(&path.to_string_lossy())))
+            }
             MediaSource::Url(url) => NSURL::URLWithString(&ns_string(url)),
         };
         let Some(url) = url else {
-            return self.shared.emit(MediaEvent::Failed(String::from("Media playback failed (the address is not valid)")));
+            return self.shared.emit(MediaEvent::Failed(String::from(
+                "Media playback failed (the address is not valid)",
+            )));
         };
         // SAFETY: plain constructors on the main thread.
         let (item, player) = unsafe {
@@ -388,7 +448,10 @@ impl MediaHost {
         *self.shared.player.borrow_mut() = Some(player.clone());
         self.observe(AsRef::<NSObject>::as_ref(&*item).retain(), "status");
         self.observe(AsRef::<NSObject>::as_ref(&*player).retain(), "rate");
-        self.observe(AsRef::<NSObject>::as_ref(&*player).retain(), "timeControlStatus");
+        self.observe(
+            AsRef::<NSObject>::as_ref(&*player).retain(),
+            "timeControlStatus",
+        );
 
         // These notifications may be posted from any thread: they are
         // delivered on the main queue.
@@ -399,24 +462,28 @@ impl MediaHost {
         let shared = Rc::clone(&self.shared);
         let failed = RcBlock::new(move |_: NonNull<NSNotification>| {
             if !shared.failed.replace(true) {
-                shared.emit(MediaEvent::Failed(String::from("Media playback failed (the stream stopped)")));
+                shared.emit(MediaEvent::Failed(String::from(
+                    "Media playback failed (the stream stopped)",
+                )));
             }
         });
         // SAFETY: the blocks only run on the main queue, where the state
         // they capture lives; the registrations are removed in `release`.
         unsafe {
-            self.tokens.push(center.addObserverForName_object_queue_usingBlock(
-                Some(AVPlayerItemDidPlayToEndTimeNotification),
-                Some(&item),
-                Some(&queue),
-                &ended,
-            ));
-            self.tokens.push(center.addObserverForName_object_queue_usingBlock(
-                Some(AVPlayerItemFailedToPlayToEndTimeNotification),
-                Some(&item),
-                Some(&queue),
-                &failed,
-            ));
+            self.tokens
+                .push(center.addObserverForName_object_queue_usingBlock(
+                    Some(AVPlayerItemDidPlayToEndTimeNotification),
+                    Some(&item),
+                    Some(&queue),
+                    &ended,
+                ));
+            self.tokens
+                .push(center.addObserverForName_object_queue_usingBlock(
+                    Some(AVPlayerItemFailedToPlayToEndTimeNotification),
+                    Some(&item),
+                    Some(&queue),
+                    &failed,
+                ));
         }
         if let Some(surface) = self.shared.surface.borrow().as_ref() {
             surface.set_player(Some(&player));
@@ -433,9 +500,14 @@ impl MediaHost {
 
     pub fn apply(&mut self, state: &MediaState, parent: &NSView) {
         let previous = self.state.take();
-        let source_changed = previous.as_ref().map(|previous| &previous.source) != Some(&state.source);
-        let seek_changed = previous.as_ref().is_some_and(|previous| previous.seek.0 != state.seek.0);
-        let rate_changed = previous.as_ref().is_some_and(|previous| previous.rate != state.rate);
+        let source_changed =
+            previous.as_ref().map(|previous| &previous.source) != Some(&state.source);
+        let seek_changed = previous
+            .as_ref()
+            .is_some_and(|previous| previous.seek.0 != state.seek.0);
+        let rate_changed = previous
+            .as_ref()
+            .is_some_and(|previous| previous.rate != state.rate);
         let shared = Rc::clone(&self.shared);
         shared.rate.set(state.rate.clamp(0.25, 4.0));
         shared.looping.set(state.looping);
@@ -459,7 +531,9 @@ impl MediaHost {
                 match state.fit {
                     ImageFit::Cover => AVLayerVideoGravityResizeAspectFill,
                     ImageFit::Fill => AVLayerVideoGravityResize,
-                    ImageFit::Contain | ImageFit::Center | ImageFit::Repeat => AVLayerVideoGravityResizeAspect,
+                    ImageFit::Contain | ImageFit::Center | ImageFit::Repeat => {
+                        AVLayerVideoGravityResizeAspect
+                    }
                 }
             };
             if let Some(gravity) = gravity {
@@ -474,7 +548,11 @@ impl MediaHost {
         unsafe {
             // A looping item never pauses at its end: it is sent back to
             // the start with its rate untouched.
-            player.setActionAtItemEnd(if state.looping { AVPlayerActionAtItemEnd::None } else { AVPlayerActionAtItemEnd::Pause });
+            player.setActionAtItemEnd(if state.looping {
+                AVPlayerActionAtItemEnd::None
+            } else {
+                AVPlayerActionAtItemEnd::Pause
+            });
             player.setMuted(state.muted);
             player.setVolume(state.volume.clamp(0.0, 1.0));
             if player.respondsToSelector(sel!(setDefaultRate:)) {
@@ -509,10 +587,17 @@ impl MediaHost {
 
     /// Current position and duration of a prepared player, in seconds.
     pub fn position(&self) -> Option<(f64, f64)> {
-        let player = self.shared.player.borrow().clone().filter(|_| self.shared.ready.get())?;
+        let player = self
+            .shared
+            .player
+            .borrow()
+            .clone()
+            .filter(|_| self.shared.ready.get())?;
         // SAFETY: plain property reads on the main thread.
         unsafe {
-            let duration = player.currentItem().map_or(0.0, |item| seconds(item.duration()));
+            let duration = player
+                .currentItem()
+                .map_or(0.0, |item| seconds(item.duration()));
             Some((seconds(player.currentTime()), duration))
         }
     }

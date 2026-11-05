@@ -27,4 +27,4 @@ mod util;
 mod webview;
 mod window;
 
-pub use backend::{run, Win32Backend};
+pub use backend::{Win32Backend, run};

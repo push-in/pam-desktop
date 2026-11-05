@@ -5,7 +5,9 @@
 use std::collections::HashMap;
 
 use pam_desktop_ui::accessibility::Accessibility;
-use pam_desktop_ui::backend::{DrawCommand, ImageContent, NodeId, TextContent, ViewClass, WindowId};
+use pam_desktop_ui::backend::{
+    DrawCommand, ImageContent, NodeId, TextContent, ViewClass, WindowId,
+};
 use pam_desktop_ui::geometry::{Affine, Point, Rect, Size};
 use pam_desktop_ui::scene::IdMap;
 use pam_desktop_ui::shell::Cursor;
@@ -94,13 +96,17 @@ impl View {
         if self.layer.transform.is_identity() {
             Affine::translation(self.frame.x, self.frame.y)
         } else {
-            self.layer.transform.then(&Affine::translation(self.frame.x, self.frame.y))
+            self.layer
+                .transform
+                .then(&Affine::translation(self.frame.x, self.frame.y))
         }
     }
 
     /// Children are positioned in content coordinates under a scroll view.
     pub fn content_offset(&self) -> Point {
-        self.scroll.as_ref().map_or(Point::ZERO, |scroll| scroll.offset)
+        self.scroll
+            .as_ref()
+            .map_or(Point::ZERO, |scroll| scroll.offset)
     }
 
     /// Whether descendants are cut at this view's bounds.
@@ -114,7 +120,9 @@ impl View {
 
     /// The plain text the view shows.
     pub fn plain_text(&self) -> Option<String> {
-        self.text.as_ref().map(|text| text.content.block.plain_text())
+        self.text
+            .as_ref()
+            .map(|text| text.content.block.plain_text())
     }
 }
 
@@ -170,9 +178,10 @@ impl Scene {
         }
         for child in &view.children {
             if let Some(child) = self.views.get_mut(child)
-                && child.parent == Some(id) {
-                    child.parent = None;
-                }
+                && child.parent == Some(id)
+            {
+                child.parent = None;
+            }
         }
         for window in self.windows.values_mut() {
             if window.root == Some(id) {
@@ -193,19 +202,24 @@ impl Scene {
     }
 
     pub fn set_children(&mut self, parent: NodeId, children: &[NodeId]) {
-        let Some(view) = self.views.get_mut(&parent) else { return };
+        let Some(view) = self.views.get_mut(&parent) else {
+            return;
+        };
         let previous = std::mem::take(&mut view.children);
         for child in &previous {
             if !children.contains(child)
                 && let Some(child) = self.views.get_mut(child)
-                    && child.parent == Some(parent) {
-                        child.parent = None;
-                    }
+                && child.parent == Some(parent)
+            {
+                child.parent = None;
+            }
         }
         let mut kept = previous;
         kept.clear();
         for child in children {
-            let Some(view) = self.views.get(child) else { continue };
+            let Some(view) = self.views.get(child) else {
+                continue;
+            };
             let old_parent = view.parent;
             if let Some(old) = old_parent.filter(|old| *old != parent) {
                 // Where the child was must be repainted too.
@@ -227,8 +241,15 @@ impl Scene {
     }
 
     /// Replaces the root and overlays of a window.
-    pub fn set_layers(&mut self, window: WindowId, root: Option<Option<NodeId>>, overlays: Option<&[NodeId]>) {
-        let Some(entry) = self.windows.get_mut(&window) else { return };
+    pub fn set_layers(
+        &mut self,
+        window: WindowId,
+        root: Option<Option<NodeId>>,
+        overlays: Option<&[NodeId]>,
+    ) {
+        let Some(entry) = self.windows.get_mut(&window) else {
+            return;
+        };
         let mut released: Vec<NodeId> = Vec::new();
         if let Some(root) = root {
             released.extend(entry.root);
@@ -239,13 +260,19 @@ impl Scene {
             entry.overlays.clear();
             entry.overlays.extend_from_slice(overlays);
         }
-        let layers: Vec<NodeId> = entry.root.iter().chain(entry.overlays.iter()).copied().collect();
+        let layers: Vec<NodeId> = entry
+            .root
+            .iter()
+            .chain(entry.overlays.iter())
+            .copied()
+            .collect();
         for id in released {
             if !layers.contains(&id)
                 && let Some(view) = self.views.get_mut(&id)
-                    && view.layer_of == Some(window) {
-                        view.layer_of = None;
-                    }
+                && view.layer_of == Some(window)
+            {
+                view.layer_of = None;
+            }
         }
         for id in layers {
             if let Some(view) = self.views.get_mut(&id) {
@@ -255,7 +282,11 @@ impl Scene {
         self.damage_all(window);
     }
 
-    fn window_of_parent(&self, parent: Option<NodeId>, layer_of: Option<WindowId>) -> Option<WindowId> {
+    fn window_of_parent(
+        &self,
+        parent: Option<NodeId>,
+        layer_of: Option<WindowId>,
+    ) -> Option<WindowId> {
         match parent {
             Some(parent) => self.window_of(parent),
             None => layer_of,
@@ -322,17 +353,26 @@ impl Scene {
 
     /// Whether nothing more can be added to a window's damage.
     fn fully_damaged(&self, window: WindowId) -> bool {
-        self.windows.get(&window).is_none_or(|entry| entry.dirty == crate::window::Damage::All && (entry.natives_dirty || self.natives.is_empty()))
+        self.windows.get(&window).is_none_or(|entry| {
+            entry.dirty == crate::window::Damage::All
+                && (entry.natives_dirty || self.natives.is_empty())
+        })
     }
 
     /// What a view paints inside its own (decorated) bounds changed.
     pub fn damage_view(&mut self, id: NodeId) {
-        let Some(window) = self.window_of(id) else { return };
+        let Some(window) = self.window_of(id) else {
+            return;
+        };
         if self.fully_damaged(window) {
             return;
         }
-        let Some((window, transform)) = self.world_transform(id) else { return };
-        let Some(view) = self.views.get(&id) else { return };
+        let Some((window, transform)) = self.world_transform(id) else {
+            return;
+        };
+        let Some(view) = self.views.get(&id) else {
+            return;
+        };
         // Filters spread paint beyond the bounds: present everything.
         let mut filtered = view.decoration.blur > 0.0;
         let mut ancestor = view.parent;
@@ -353,7 +393,10 @@ impl Scene {
         if self.natives.is_empty() {
             return;
         }
-        if let Some(entry) = self.window_of(id).and_then(|window| self.windows.get_mut(&window)) {
+        if let Some(entry) = self
+            .window_of(id)
+            .and_then(|window| self.windows.get_mut(&window))
+        {
             entry.natives_dirty = true;
         }
     }
@@ -370,7 +413,9 @@ impl Scene {
 
     /// The position, transform, visibility or structure of a view changed.
     pub fn damage_subtree(&mut self, id: NodeId) {
-        let Some(window) = self.window_of(id) else { return };
+        let Some(window) = self.window_of(id) else {
+            return;
+        };
         // During a relayout thousands of frames change: once everything is
         // damaged there is nothing left to compute.
         if self.fully_damaged(window) {
@@ -381,13 +426,17 @@ impl Scene {
         let mut region = None;
         let mut ancestor = self.views.get(&id).and_then(|view| view.parent);
         while let Some(current_id) = ancestor {
-            let Some(current) = self.views.get(&current_id) else { break };
+            let Some(current) = self.views.get(&current_id) else {
+                break;
+            };
             if current.decoration.blur > 0.0 {
                 region = None;
                 break;
             }
             if region.is_none() && current.clips() {
-                region = self.world_transform(current_id).map(|(_, transform)| transform.bounds(current.bounds()).outset(2.0));
+                region = self
+                    .world_transform(current_id)
+                    .map(|(_, transform)| transform.bounds(current.bounds()).outset(2.0));
             }
             ancestor = current.parent;
         }
@@ -402,7 +451,9 @@ impl Scene {
     /// (window coordinates), topmost layer first. Empty when nothing is hit.
     pub fn hit_path(&self, window: WindowId, point: Point, path: &mut Vec<NodeId>) {
         path.clear();
-        let Some(entry) = self.windows.get(&window) else { return };
+        let Some(entry) = self.windows.get(&window) else {
+            return;
+        };
         for layer in entry.overlays.iter().rev().chain(entry.root.iter()) {
             if self.hit_view(*layer, point, path, 0) {
                 return;
@@ -412,11 +463,15 @@ impl Scene {
     }
 
     fn hit_view(&self, id: NodeId, point: Point, path: &mut Vec<NodeId>, depth: usize) -> bool {
-        let Some(view) = self.views.get(&id) else { return false };
+        let Some(view) = self.views.get(&id) else {
+            return false;
+        };
         if !view.layer.visible || depth > 512 {
             return false;
         }
-        let Some(inverse) = view.to_parent().invert() else { return false };
+        let Some(inverse) = view.to_parent().invert() else {
+            return false;
+        };
         let local = inverse.apply(point);
         let inside = view.bounds().contains(local);
         if view.clips() && !inside {
@@ -442,7 +497,9 @@ impl Scene {
     /// extent: with `exact` it counts as unbounded, otherwise as fitting
     /// its box (culling must not paint a view just to learn its size).
     pub fn subtree_bounds(&self, id: NodeId, depth: usize, exact: bool) -> Rect {
-        let Some(view) = self.views.get(&id) else { return Rect::ZERO };
+        let Some(view) = self.views.get(&id) else {
+            return Rect::ZERO;
+        };
         if depth > 64 {
             return if exact { UNBOUNDED } else { view.bounds() };
         }
@@ -455,10 +512,20 @@ impl Scene {
                 Some(layout) => {
                     // Text taller or wider than its box paints outside it.
                     let insets = text.content.insets;
-                    let origin = crate::text::text_origin(view.size(), insets, text.content.vertical, layout.height);
+                    let origin = crate::text::text_origin(
+                        view.size(),
+                        insets,
+                        text.content.vertical,
+                        layout.height,
+                    );
                     let available = (view.frame.width - insets.horizontal()).max(0.0);
                     let overhang = (layout.natural_width - available).max(0.0);
-                    own = own.union(Rect::new(origin.x - overhang, origin.y, available + 2.0 * overhang, layout.height));
+                    own = own.union(Rect::new(
+                        origin.x - overhang,
+                        origin.y,
+                        available + 2.0 * overhang,
+                        layout.height,
+                    ));
                 }
                 None if exact => return UNBOUNDED,
                 None => {}
@@ -466,15 +533,26 @@ impl Scene {
         }
         let offset = view.content_offset();
         let bounds = view.children.iter().fold(own, |bounds, child| {
-            let Some(child_view) = self.views.get(child) else { return bounds };
+            let Some(child_view) = self.views.get(child) else {
+                return bounds;
+            };
             if !child_view.layer.visible {
                 return bounds;
             }
             let inner = self.subtree_bounds(*child, depth + 1, exact);
-            bounds.union(child_view.to_parent().bounds(inner).translate(-offset.x, -offset.y))
+            bounds.union(
+                child_view
+                    .to_parent()
+                    .bounds(inner)
+                    .translate(-offset.x, -offset.y),
+            )
         });
         // A blur spreads what it filters.
-        if view.decoration.blur > 0.0 { bounds.outset(view.decoration.blur * 3.0) } else { bounds }
+        if view.decoration.blur > 0.0 {
+            bounds.outset(view.decoration.blur * 3.0)
+        } else {
+            bounds
+        }
     }
 
     /// Where the child window of a native view goes.
@@ -489,15 +567,18 @@ impl Scene {
         let mut layer = id;
         let mut ancestor = view.parent;
         while let Some(current_id) = ancestor {
-            let Some(current) = self.views.get(&current_id) else { break };
+            let Some(current) = self.views.get(&current_id) else {
+                break;
+            };
             if current.clips()
-                && let Some((_, world)) = self.world_transform(current_id) {
-                    let bounds = world.bounds(current.bounds());
-                    clip = Some(match clip {
-                        Some(existing) => existing.intersect(bounds).unwrap_or(Rect::ZERO),
-                        None => bounds,
-                    });
-                }
+                && let Some((_, world)) = self.world_transform(current_id)
+            {
+                let bounds = world.bounds(current.bounds());
+                clip = Some(match clip {
+                    Some(existing) => existing.intersect(bounds).unwrap_or(Rect::ZERO),
+                    None => bounds,
+                });
+            }
             layer = current_id;
             ancestor = current.parent;
         }
@@ -517,10 +598,18 @@ impl Scene {
             }
             if above
                 && let Some(cover) = self.views.get(other)
-                    && cover.layer.visible && cover.frame.intersects(rect) {
-                        visible = false;
-                    }
+                && cover.layer.visible
+                && cover.frame.intersects(rect)
+            {
+                visible = false;
+            }
         }
-        Some(Placement { window, rect, clip, visible, scale: entry.scale() })
+        Some(Placement {
+            window,
+            rect,
+            clip,
+            visible,
+            scale: entry.scale(),
+        })
     }
 }

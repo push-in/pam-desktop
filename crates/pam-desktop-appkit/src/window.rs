@@ -8,24 +8,32 @@ use std::rc::Rc;
 
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyClass, AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{define_class, msg_send, sel, AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
+use objc2::{
+    AnyThread, ClassType, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class,
+    msg_send, sel,
+};
 use objc2_app_kit::{
-    NSAppearanceCustomization, NSApplication, NSBackingStoreType, NSDragOperation, NSDraggingContext, NSDraggingDestination, NSDraggingInfo,
-    NSDraggingSession, NSDraggingSource, NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType, NSPasteboard,
-    NSPasteboardTypeFileURL, NSPasteboardTypeString, NSPasteboardURLReadingFileURLsOnlyKey, NSResponder, NSTrackingArea,
-    NSTrackingAreaOptions, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSAppearanceCustomization, NSApplication, NSBackingStoreType, NSDragOperation,
+    NSDraggingContext, NSDraggingDestination, NSDraggingInfo, NSDraggingSession, NSDraggingSource,
+    NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType, NSPasteboard,
+    NSPasteboardTypeFileURL, NSPasteboardTypeString, NSPasteboardURLReadingFileURLsOnlyKey,
+    NSResponder, NSTrackingArea, NSTrackingAreaOptions, NSView, NSWindow, NSWindowDelegate,
+    NSWindowStyleMask,
 };
 use objc2_core_foundation::CGRect;
-use objc2_foundation::{NSArray, NSDictionary, NSNotification, NSNumber, NSPoint, NSRect, NSString, NSURL};
+use objc2_foundation::{
+    NSArray, NSDictionary, NSNotification, NSNumber, NSPoint, NSRect, NSString, NSURL,
+};
 use pam_desktop_ui::backend::{
-    BackendEvent, GesturePhase, KeyEvent, NodeId, PointerButton, PointerEvent, PointerPhase, WindowId,
+    BackendEvent, GesturePhase, KeyEvent, NodeId, PointerButton, PointerEvent, PointerPhase,
+    WindowId,
 };
 use pam_desktop_ui::geometry::{Point, Size};
 use pam_desktop_ui::shell::WindowState;
 
 use crate::events::{self, Events};
 use crate::util;
-use crate::view::{node_view_of, responder_view, PamView};
+use crate::view::{PamView, node_view_of, responder_view};
 
 /// Logical units one notch of a mouse wheel scrolls.
 const WHEEL_NOTCH: f64 = 100.0;
@@ -226,7 +234,13 @@ fn gesture_phase(phase: NSEventPhase) -> GesturePhase {
 }
 
 impl PamWindow {
-    pub fn new(mtm: MainThreadMarker, id: WindowId, events: &Rc<Events>, content: NSRect, style: NSWindowStyleMask) -> Retained<Self> {
+    pub fn new(
+        mtm: MainThreadMarker,
+        id: WindowId,
+        events: &Rc<Events>,
+        content: NSRect,
+        style: NSWindowStyleMask,
+    ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(WindowIvars {
             id,
             events: Rc::clone(events),
@@ -257,12 +271,21 @@ impl PamWindow {
     /// bar, a disabled Edit item would swallow the chord.
     fn perform_edit_shortcut(&self, event: &NSEvent) -> bool {
         let flags = event.modifierFlags() & NSEventModifierFlags::DeviceIndependentFlagsMask;
-        let chord = flags & (NSEventModifierFlags::Command | NSEventModifierFlags::Shift | NSEventModifierFlags::Control | NSEventModifierFlags::Option);
+        let chord = flags
+            & (NSEventModifierFlags::Command
+                | NSEventModifierFlags::Shift
+                | NSEventModifierFlags::Control
+                | NSEventModifierFlags::Option);
         let shift = chord == NSEventModifierFlags::Command | NSEventModifierFlags::Shift;
-        if event.r#type() != NSEventType::KeyDown || !(chord == NSEventModifierFlags::Command || shift) {
+        if event.r#type() != NSEventType::KeyDown
+            || !(chord == NSEventModifierFlags::Command || shift)
+        {
             return false;
         }
-        let key = event.charactersIgnoringModifiers().map(|characters| characters.to_string().to_lowercase()).unwrap_or_default();
+        let key = event
+            .charactersIgnoringModifiers()
+            .map(|characters| characters.to_string().to_lowercase())
+            .unwrap_or_default();
         let action = match (key.as_str(), shift) {
             ("c", false) => sel!(copy:),
             ("v", false) => sel!(paste:),
@@ -274,7 +297,13 @@ impl PamWindow {
         };
         // SAFETY: the actions take the sender; a nil target sends them
         // down the responder chain of the key window.
-        let native = unsafe { NSApplication::sharedApplication(self.mtm()).sendAction_to_from(action, None, Some(self)) };
+        let native = unsafe {
+            NSApplication::sharedApplication(self.mtm()).sendAction_to_from(
+                action,
+                None,
+                Some(self),
+            )
+        };
         if !native {
             let ivars = self.ivars();
             ivars.events.push(BackendEvent::Key(KeyEvent {
@@ -290,10 +319,17 @@ impl PamWindow {
 
     fn report_wheel(&self, event: &NSEvent) {
         let ivars = self.ivars();
-        let unit = if event.hasPreciseScrollingDeltas() { 1.0 } else { WHEEL_NOTCH };
+        let unit = if event.hasPreciseScrollingDeltas() {
+            1.0
+        } else {
+            WHEEL_NOTCH
+        };
         // AppKit's deltas say where the content moves; the core's say
         // where the viewport moves.
-        let delta = Point::new((-event.scrollingDeltaX() * unit) as f32, (-event.scrollingDeltaY() * unit) as f32);
+        let delta = Point::new(
+            (-event.scrollingDeltaX() * unit) as f32,
+            (-event.scrollingDeltaY() * unit) as f32,
+        );
         if delta != Point::ZERO {
             ivars.events.push(BackendEvent::Wheel {
                 window: ivars.id,
@@ -324,11 +360,21 @@ impl PamWindow {
     fn inside_content(&self, point: Point) -> bool {
         self.contentView().is_some_and(|content| {
             let bounds = content.bounds();
-            point.x >= 0.0 && point.y >= 0.0 && f64::from(point.x) < bounds.size.width && f64::from(point.y) < bounds.size.height
+            point.x >= 0.0
+                && point.y >= 0.0
+                && f64::from(point.x) < bounds.size.width
+                && f64::from(point.y) < bounds.size.height
         })
     }
 
-    fn report_pointer(&self, phase: PointerPhase, position: Point, button: PointerButton, event: &NSEvent, click_count: isize) {
+    fn report_pointer(
+        &self,
+        phase: PointerPhase,
+        position: Point,
+        button: PointerButton,
+        event: &NSEvent,
+        click_count: isize,
+    ) {
         let ivars = self.ivars();
         ivars.reporting_pointer.set(true);
         ivars.events.push(BackendEvent::Pointer(PointerEvent {
@@ -346,13 +392,18 @@ impl PamWindow {
     /// Whether the press lands on a native control that must not open its
     /// own context menu.
     fn context_menu_hidden_at(&self, event: &NSEvent) -> bool {
-        let Some(content) = self.contentView() else { return false };
+        let Some(content) = self.contentView() else {
+            return false;
+        };
         // SAFETY: the superview is only used to convert the location.
         let location = match unsafe { content.superview() } {
             Some(frame) => frame.convertPoint_fromView(event.locationInWindow(), None),
             None => event.locationInWindow(),
         };
-        content.hitTest(location).and_then(|hit| node_view_of(&hit)).is_some_and(|node| node.context_menu_hidden())
+        content
+            .hitTest(location)
+            .and_then(|hit| node_view_of(&hit))
+            .is_some_and(|node| node.context_menu_hidden())
     }
 
     fn mouse_down(&self, event: &NSEvent) {
@@ -361,7 +412,14 @@ impl PamWindow {
         let left = kind == NSEventType::LeftMouseDown;
         let button = if left {
             // Control-click is the secondary click of a one-button mouse.
-            if event.modifierFlags().contains(NSEventModifierFlags::Control) { PointerButton::Secondary } else { PointerButton::Primary }
+            if event
+                .modifierFlags()
+                .contains(NSEventModifierFlags::Control)
+            {
+                PointerButton::Secondary
+            } else {
+                PointerButton::Primary
+            }
         } else if kind == NSEventType::RightMouseDown {
             PointerButton::Secondary
         } else if event.buttonNumber() == 2 {
@@ -379,13 +437,22 @@ impl PamWindow {
                 ivars.left_button.set(button);
             }
             *ivars.last_press.borrow_mut() = Some(event.retain());
-            self.report_pointer(PointerPhase::Down, position, button, event, event.clickCount());
+            self.report_pointer(
+                PointerPhase::Down,
+                position,
+                button,
+                event,
+                event.clickCount(),
+            );
         }
         if ivars.drag_requested.replace(false) {
             // The press grabbed a drag region: the system moves the window
             // until the button is released.
             self.performWindowDragWithEvent(event);
-        } else if !(inside && button == PointerButton::Secondary && self.context_menu_hidden_at(event)) {
+        } else if !(inside
+            && button == PointerButton::Secondary
+            && self.context_menu_hidden_at(event))
+        {
             ivars.events.dispatching_mouse_down.set(left);
             self.dispatch(event);
             ivars.events.dispatching_mouse_down.set(false);
@@ -402,7 +469,13 @@ impl PamWindow {
         if still_reported && NSEvent::pressedMouseButtons() & (1 << number) == 0 {
             ivars.pressed.set(ivars.pressed.get() & !button_bit(button));
             let position = self.content_point(self.mouseLocationOutsideOfEventStream());
-            self.report_pointer(PointerPhase::Up, position, button, event, event.clickCount());
+            self.report_pointer(
+                PointerPhase::Up,
+                position,
+                button,
+                event,
+                event.clickCount(),
+            );
         }
     }
 
@@ -426,11 +499,19 @@ impl PamWindow {
             Some(button) => {
                 if ivars.pressed.get() & button_bit(button) != 0 {
                     ivars.pressed.set(ivars.pressed.get() & !button_bit(button));
-                    self.report_pointer(PointerPhase::Up, self.content_point(event.locationInWindow()), button, event, event.clickCount());
+                    self.report_pointer(
+                        PointerPhase::Up,
+                        self.content_point(event.locationInWindow()),
+                        button,
+                        event,
+                        event.clickCount(),
+                    );
                 }
             }
             // The "back" side button of a mouse.
-            None if event.buttonNumber() == 3 => ivars.events.push(BackendEvent::BackRequested { window: ivars.id }),
+            None if event.buttonNumber() == 3 => ivars
+                .events
+                .push(BackendEvent::BackRequested { window: ivars.id }),
             None => {}
         }
         self.dispatch(event);
@@ -438,8 +519,17 @@ impl PamWindow {
 
     fn mouse_dragged(&self, event: &NSEvent) {
         let ivars = self.ivars();
-        if let Some(button) = self.reported_button(event).filter(|button| ivars.pressed.get() & button_bit(*button) != 0) {
-            self.report_pointer(PointerPhase::Move, self.content_point(event.locationInWindow()), button, event, 1);
+        if let Some(button) = self
+            .reported_button(event)
+            .filter(|button| ivars.pressed.get() & button_bit(*button) != 0)
+        {
+            self.report_pointer(
+                PointerPhase::Move,
+                self.content_point(event.locationInWindow()),
+                button,
+                event,
+                1,
+            );
             if ivars.drag_requested.replace(false) {
                 self.performWindowDragWithEvent(event);
                 return self.release_if_swallowed(button, event);
@@ -457,7 +547,9 @@ impl PamWindow {
             ivars.drag_requested.set(true);
             return;
         }
-        let Some(press) = ivars.last_press.borrow().clone() else { return };
+        let Some(press) = ivars.last_press.borrow().clone() else {
+            return;
+        };
         if ivars.pressed.get() == 0 {
             return;
         }
@@ -476,24 +568,36 @@ impl PamWindow {
 
     fn focus_moved(&self) {
         let ivars = self.ivars();
-        let node = self.firstResponder().and_then(|responder| responder_view(&responder)).and_then(|view| node_view_of(&view));
+        let node = self
+            .firstResponder()
+            .and_then(|responder| responder_view(&responder))
+            .and_then(|view| node_view_of(&view));
         let next = node.as_ref().map(|node| node.node_id());
         let previous = {
             let mut focused = ivars.focused.borrow_mut();
             if focused.as_ref().map(|(id, _)| *id) == next {
                 return;
             }
-            std::mem::replace(&mut *focused, node.as_ref().map(|node| (node.node_id(), Weak::from_retained(node))))
+            std::mem::replace(
+                &mut *focused,
+                node.as_ref()
+                    .map(|node| (node.node_id(), Weak::from_retained(node))),
+            )
         };
         if let Some((id, view)) = previous {
             if let Some(view) = view.load() {
                 view.notify_focus(false);
             }
-            ivars.events.push(BackendEvent::FocusChanged { id, focused: false });
+            ivars
+                .events
+                .push(BackendEvent::FocusChanged { id, focused: false });
         }
         if let Some(node) = node {
             node.notify_focus(true);
-            ivars.events.push(BackendEvent::FocusChanged { id: node.node_id(), focused: true });
+            ivars.events.push(BackendEvent::FocusChanged {
+                id: node.node_id(),
+                focused: true,
+            });
         }
     }
 }
@@ -511,7 +615,9 @@ pub fn window_state(window: &NSWindow) -> WindowState {
 
 /// Size of the content area and device pixels per logical unit.
 pub fn content_metrics(window: &NSWindow) -> (Size, f32) {
-    let size = window.contentView().map_or(Size::ZERO, |content| util::size(content.bounds().size));
+    let size = window
+        .contentView()
+        .map_or(Size::ZERO, |content| util::size(content.bounds().size));
     (size, window.backingScaleFactor() as f32)
 }
 
@@ -537,7 +643,9 @@ define_class!(
         #[unsafe(method(windowShouldClose:))]
         fn window_should_close(&self, _sender: &NSWindow) -> bool {
             let ivars = self.ivars();
-            ivars.events.push(BackendEvent::WindowCloseRequested { window: ivars.id });
+            ivars
+                .events
+                .push(BackendEvent::WindowCloseRequested { window: ivars.id });
             false
         }
 
@@ -554,14 +662,20 @@ define_class!(
         #[unsafe(method(windowDidBecomeKey:))]
         fn window_did_become_key(&self, notification: &NSNotification) {
             let ivars = self.ivars();
-            ivars.events.push(BackendEvent::WindowFocusChanged { window: ivars.id, focused: true });
+            ivars.events.push(BackendEvent::WindowFocusChanged {
+                window: ivars.id,
+                focused: true,
+            });
             self.report(notification);
         }
 
         #[unsafe(method(windowDidResignKey:))]
         fn window_did_resign_key(&self, notification: &NSNotification) {
             let ivars = self.ivars();
-            ivars.events.push(BackendEvent::WindowFocusChanged { window: ivars.id, focused: false });
+            ivars.events.push(BackendEvent::WindowFocusChanged {
+                window: ivars.id,
+                focused: false,
+            });
             self.report(notification);
         }
 
@@ -588,7 +702,12 @@ define_class!(
 );
 
 impl WindowDelegate {
-    pub fn new(mtm: MainThreadMarker, id: WindowId, events: &Rc<Events>, window: &NSWindow) -> Retained<Self> {
+    pub fn new(
+        mtm: MainThreadMarker,
+        id: WindowId,
+        events: &Rc<Events>,
+        window: &NSWindow,
+    ) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(DelegateIvars {
             id,
             events: Rc::clone(events),
@@ -602,14 +721,26 @@ impl WindowDelegate {
     /// Reports whatever changed in the window's size, scale and state.
     fn report(&self, notification: &NSNotification) {
         let ivars = self.ivars();
-        let Some(window) = notification.object().and_then(|object| object.downcast::<NSWindow>().ok()) else { return };
+        let Some(window) = notification
+            .object()
+            .and_then(|object| object.downcast::<NSWindow>().ok())
+        else {
+            return;
+        };
         let metrics = content_metrics(&window);
         if ivars.metrics.replace(metrics) != metrics {
-            ivars.events.push(BackendEvent::WindowResized { window: ivars.id, size: metrics.0, scale: metrics.1 });
+            ivars.events.push(BackendEvent::WindowResized {
+                window: ivars.id,
+                size: metrics.0,
+                scale: metrics.1,
+            });
         }
         let state = window_state(&window);
         if ivars.state.replace(state) != state {
-            ivars.events.push(BackendEvent::WindowStateChanged { window: ivars.id, state });
+            ivars.events.push(BackendEvent::WindowStateChanged {
+                window: ivars.id,
+                state,
+            });
         }
     }
 }
@@ -726,10 +857,15 @@ fn dropped_files(pasteboard: &NSPasteboard) -> Vec<PathBuf> {
     let yes = NSNumber::new_bool(true);
     // SAFETY: the key is an immutable string exported by AppKit.
     let key: &NSString = unsafe { NSPasteboardURLReadingFileURLsOnlyKey };
-    let options: Retained<NSDictionary<NSString, AnyObject>> = NSDictionary::from_slices(&[key], &[yes.as_ref()]);
+    let options: Retained<NSDictionary<NSString, AnyObject>> =
+        NSDictionary::from_slices(&[key], &[yes.as_ref()]);
     // SAFETY: `NSURL` is a pasteboard-reading class and the option takes a
     // boolean number; the result holds instances of the classes asked for.
-    let Some(objects) = (unsafe { pasteboard.readObjectsForClasses_options(&classes, Some(&options)) }) else { return Vec::new() };
+    let Some(objects) =
+        (unsafe { pasteboard.readObjectsForClasses_options(&classes, Some(&options)) })
+    else {
+        return Vec::new();
+    };
     objects
         .iter()
         .filter_map(|object| object.downcast::<NSURL>().ok())
@@ -740,7 +876,11 @@ fn dropped_files(pasteboard: &NSPasteboard) -> Vec<PathBuf> {
 
 impl HostView {
     pub fn new(mtm: MainThreadMarker, window: WindowId, events: &Rc<Events>) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(HostIvars { window, events: Rc::clone(events), drag_source: Cell::new(None) });
+        let this = Self::alloc(mtm).set_ivars(HostIvars {
+            window,
+            events: Rc::clone(events),
+            drag_source: Cell::new(None),
+        });
         // SAFETY: `initWithFrame:` is the designated initializer of `NSView`.
         let view: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: CGRect::ZERO] };
         view.setWantsLayer(true);
@@ -753,11 +893,18 @@ impl HostView {
         // SAFETY: the owner implements the mouse methods above; a tracking
         // area does not retain its owner, and it is removed with the view.
         let area = unsafe {
-            NSTrackingArea::initWithRect_options_owner_userInfo(NSTrackingArea::alloc(), CGRect::ZERO, options, Some(&view), None)
+            NSTrackingArea::initWithRect_options_owner_userInfo(
+                NSTrackingArea::alloc(),
+                CGRect::ZERO,
+                options,
+                Some(&view),
+                None,
+            )
         };
         view.addTrackingArea(&area);
         // SAFETY: the type names are immutable strings exported by AppKit.
-        let types = unsafe { NSArray::from_slice(&[NSPasteboardTypeFileURL, NSPasteboardTypeString]) };
+        let types =
+            unsafe { NSArray::from_slice(&[NSPasteboardTypeFileURL, NSPasteboardTypeString]) };
         view.registerForDraggedTypes(&types);
         view
     }
@@ -777,8 +924,13 @@ impl HostView {
 
     fn drop_operation(sender: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
         // SAFETY: the type names are immutable strings exported by AppKit.
-        let types = unsafe { NSArray::from_slice(&[NSPasteboardTypeFileURL, NSPasteboardTypeString]) };
-        if sender.draggingPasteboard().availableTypeFromArray(&types).is_some() {
+        let types =
+            unsafe { NSArray::from_slice(&[NSPasteboardTypeFileURL, NSPasteboardTypeString]) };
+        if sender
+            .draggingPasteboard()
+            .availableTypeFromArray(&types)
+            .is_some()
+        {
             NSDragOperation::Copy
         } else {
             NSDragOperation::None

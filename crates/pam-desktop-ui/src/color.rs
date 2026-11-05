@@ -51,7 +51,10 @@ impl Color {
 
     #[must_use]
     pub fn with_alpha(self, alpha: f32) -> Self {
-        Self { a: (f32::from(self.a) * alpha.clamp(0.0, 1.0)).round() as u8, ..self }
+        Self {
+            a: (f32::from(self.a) * alpha.clamp(0.0, 1.0)).round() as u8,
+            ..self
+        }
     }
 
     /// Non-premultiplied components in `0.0..=1.0`.
@@ -79,7 +82,12 @@ impl Color {
             let value = (c0 * a0 + (c1 * a1 - c0 * a0) * t) / alpha;
             (value.clamp(0.0, 1.0) * 255.0).round() as u8
         };
-        Self { r: channel(r0, r1), g: channel(g0, g1), b: channel(b0, b1), a: (alpha * 255.0).round() as u8 }
+        Self {
+            r: channel(r0, r1),
+            g: channel(g0, g1),
+            b: channel(b0, b1),
+            a: (alpha * 255.0).round() as u8,
+        }
     }
 
     /// Perceived brightness in `0.0..=1.0` (used to pick readable foregrounds).

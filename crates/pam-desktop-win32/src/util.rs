@@ -3,7 +3,7 @@
 use pam_desktop_ui::color::Color;
 use pam_desktop_ui::geometry::{Affine, Point, Rect};
 use windows::Win32::Foundation::{COLORREF, LPARAM, RECT};
-use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D_RECT_F};
+use windows::Win32::Graphics::Direct2D::Common::{D2D_RECT_F, D2D1_COLOR_F};
 use windows_numerics::{Matrix3x2, Vector2};
 
 /// A NUL-terminated UTF-16 copy of `text`, for `PCWSTR` parameters.
@@ -13,7 +13,10 @@ pub fn wide(text: &str) -> Vec<u16> {
 
 /// The text of a UTF-16 buffer up to its first NUL.
 pub fn from_wide(buffer: &[u16]) -> String {
-    let end = buffer.iter().position(|unit| *unit == 0).unwrap_or(buffer.len());
+    let end = buffer
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(buffer.len());
     String::from_utf16_lossy(&buffer[..end])
 }
 
@@ -44,11 +47,21 @@ pub const fn colorref(color: Color) -> COLORREF {
 
 /// An opaque color from a GDI `COLORREF`.
 pub const fn from_colorref(value: u32) -> Color {
-    Color::rgba((value & 0xFF) as u8, ((value >> 8) & 0xFF) as u8, ((value >> 16) & 0xFF) as u8, 255)
+    Color::rgba(
+        (value & 0xFF) as u8,
+        ((value >> 8) & 0xFF) as u8,
+        ((value >> 16) & 0xFF) as u8,
+        255,
+    )
 }
 
 pub const fn rect_f(rect: Rect) -> D2D_RECT_F {
-    D2D_RECT_F { left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height }
+    D2D_RECT_F {
+        left: rect.x,
+        top: rect.y,
+        right: rect.x + rect.width,
+        bottom: rect.y + rect.height,
+    }
 }
 
 pub const fn vec2(x: f32, y: f32) -> Vector2 {
@@ -56,12 +69,22 @@ pub const fn vec2(x: f32, y: f32) -> Vector2 {
 }
 
 pub const fn point_vec(point: Point) -> Vector2 {
-    Vector2 { X: point.x, Y: point.y }
+    Vector2 {
+        X: point.x,
+        Y: point.y,
+    }
 }
 
 /// Direct2D uses row vectors: `[a b; c d; tx ty]`.
 pub const fn matrix(affine: &Affine) -> Matrix3x2 {
-    Matrix3x2 { M11: affine.a, M12: affine.b, M21: affine.c, M22: affine.d, M31: affine.tx, M32: affine.ty }
+    Matrix3x2 {
+        M11: affine.a,
+        M12: affine.b,
+        M21: affine.c,
+        M22: affine.d,
+        M31: affine.tx,
+        M32: affine.ty,
+    }
 }
 
 /// Logical rectangle to device pixels, rounded outwards so nothing is cut.

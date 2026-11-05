@@ -43,7 +43,8 @@ fn word_at(text: &str, offset: u32) -> (u32, u32) {
         return (0, 0);
     }
     let index = (utf16_to_char_offset(text, offset) as usize).min(characters.len() - 1);
-    let is_word = |character: char| character.is_alphanumeric() || character == '_' || character == '\'';
+    let is_word =
+        |character: char| character.is_alphanumeric() || character == '_' || character == '\'';
     let (mut start, mut end) = (index, index + 1);
     if is_word(characters[index]) {
         while start > 0 && is_word(characters[start - 1]) {
@@ -53,7 +54,10 @@ fn word_at(text: &str, offset: u32) -> (u32, u32) {
             end += 1;
         }
     }
-    (char_to_utf16_offset(text, start as u32), char_to_utf16_offset(text, end as u32))
+    (
+        char_to_utf16_offset(text, start as u32),
+        char_to_utf16_offset(text, end as u32),
+    )
 }
 
 impl TextSelection {
@@ -109,22 +113,32 @@ impl TextSelection {
                 self.dragging = false;
             }
             // New text invalidates the offsets.
-            Change::Updated(updated, PropKey::Text | PropKey::TextSelectable) if updated == id => self.clear(ctx),
+            Change::Updated(updated, PropKey::Text | PropKey::TextSelectable) if updated == id => {
+                self.clear(ctx)
+            }
             _ => {}
         }
     }
 
     /// A press on selectable text at `index`.
-    pub fn begin(&mut self, ctx: &mut Ctx<'_>, id: NodeId, index: u32, click_count: u8, extend: bool) {
+    pub fn begin(
+        &mut self,
+        ctx: &mut Ctx<'_>,
+        id: NodeId,
+        index: u32,
+        click_count: u8,
+        extend: bool,
+    ) {
         let text = ctx.scene.plain_text(id).unwrap_or_default();
         let length = utf16_len(&text);
         let index = index.min(length);
         if extend
-            && let Some(selected) = self.selected.as_mut().filter(|selected| selected.id == id) {
-                selected.granularity = Granularity::Character;
-                self.dragging = true;
-                return self.extend(ctx, index);
-            }
+            && let Some(selected) = self.selected.as_mut().filter(|selected| selected.id == id)
+        {
+            selected.granularity = Granularity::Character;
+            self.dragging = true;
+            return self.extend(ctx, index);
+        }
         if self.node().is_some_and(|current| current != id) {
             self.clear(ctx);
         }
@@ -133,14 +147,22 @@ impl TextSelection {
             2 => (Granularity::Word, word_at(&text, index)),
             _ => (Granularity::All, (0, length)),
         };
-        self.selected = Some(Selected { id, text, anchor, range: anchor, granularity });
+        self.selected = Some(Selected {
+            id,
+            text,
+            anchor,
+            range: anchor,
+            granularity,
+        });
         self.dragging = true;
         self.push(ctx);
     }
 
     /// The pointer moved to `index` while selecting.
     pub fn extend(&mut self, ctx: &mut Ctx<'_>, index: u32) {
-        let Some(selected) = &mut self.selected else { return };
+        let Some(selected) = &mut self.selected else {
+            return;
+        };
         let length = utf16_len(&selected.text);
         let index = index.min(length);
         let range = match selected.granularity {
@@ -172,14 +194,20 @@ impl TextSelection {
     pub fn clear(&mut self, ctx: &mut Ctx<'_>) {
         self.dragging = false;
         if let Some(selected) = self.selected.take() {
-            ctx.commands.push(HostCommand::SetTextSelection { id: selected.id, range: None });
+            ctx.commands.push(HostCommand::SetTextSelection {
+                id: selected.id,
+                range: None,
+            });
         }
     }
 
     fn push(&self, ctx: &mut Ctx<'_>) {
         if let Some(selected) = &self.selected {
             let range = (selected.range.0 < selected.range.1).then_some(selected.range);
-            ctx.commands.push(HostCommand::SetTextSelection { id: selected.id, range });
+            ctx.commands.push(HostCommand::SetTextSelection {
+                id: selected.id,
+                range,
+            });
         }
     }
 }

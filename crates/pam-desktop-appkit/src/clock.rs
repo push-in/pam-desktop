@@ -9,7 +9,7 @@ use std::rc::{Rc, Weak};
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol};
-use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::NSView;
 use objc2_foundation::{NSRunLoop, NSRunLoopCommonModes, NSTimer};
 use objc2_quartz_core::CADisplayLink;
@@ -32,7 +32,9 @@ struct Shared {
 impl Shared {
     fn tick(&self) {
         if self.requested.replace(false) {
-            self.events.push(BackendEvent::Frame { time_ms: events::now_ms() });
+            self.events.push(BackendEvent::Frame {
+                time_ms: events::now_ms(),
+            });
         }
         // Nobody asked for another frame while this one was handled: the
         // display link rests until the next request.
@@ -106,7 +108,9 @@ impl FrameClock {
         }
         // Views vend display links since macOS 14; they follow the screen
         // the view is on and stop while it is not visible.
-        if let Some(view) = view.filter(|view| view.respondsToSelector(sel!(displayLinkWithTarget:selector:))) {
+        if let Some(view) =
+            view.filter(|view| view.respondsToSelector(sel!(displayLinkWithTarget:selector:)))
+        {
             // SAFETY: the target implements `displayTick:`, which takes the
             // display link; the link is invalidated in `reset`.
             let link = unsafe {
@@ -121,7 +125,13 @@ impl FrameClock {
             // SAFETY: the target implements `timerTick:`, which takes the
             // timer; a one-shot timer releases its target after firing.
             unsafe {
-                let timer = NSTimer::timerWithTimeInterval_target_selector_userInfo_repeats(FALLBACK_FRAME, &self.target, sel!(timerTick:), None, false);
+                let timer = NSTimer::timerWithTimeInterval_target_selector_userInfo_repeats(
+                    FALLBACK_FRAME,
+                    &self.target,
+                    sel!(timerTick:),
+                    None,
+                    false,
+                );
                 NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes);
             }
         }
@@ -163,7 +173,11 @@ impl WakeTimer {
         // SAFETY: the block runs on the main run loop, where the queue it
         // captures lives; the mode is an immutable string of Foundation.
         let timer = unsafe {
-            let timer = NSTimer::timerWithTimeInterval_repeats_block(f64::from(delay_ms) / 1000.0, false, &block);
+            let timer = NSTimer::timerWithTimeInterval_repeats_block(
+                f64::from(delay_ms) / 1000.0,
+                false,
+                &block,
+            );
             NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes);
             timer
         };

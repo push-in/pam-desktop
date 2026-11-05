@@ -14,9 +14,15 @@ pub enum HttpBody {
     None,
     Bytes(Vec<u8>),
     /// Streamed from disk with a fixed `Content-Length`.
-    File { path: PathBuf, length: u64 },
+    File {
+        path: PathBuf,
+        length: u64,
+    },
     /// Streamed from a reader with a fixed `Content-Length` (multipart bodies).
-    Stream { reader: Box<dyn Read + Send>, length: u64 },
+    Stream {
+        reader: Box<dyn Read + Send>,
+        length: u64,
+    },
 }
 
 pub struct HttpRequest {
@@ -65,7 +71,10 @@ impl HttpResponse {
     /// First value of a header (lower-case name).
     #[must_use]
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(header, _)| header == name).map(|(_, value)| value.as_str())
+        self.headers
+            .iter()
+            .find(|(header, _)| header == name)
+            .map(|(_, value)| value.as_str())
     }
 }
 
@@ -76,5 +85,10 @@ pub trait HttpClient: Send + Sync {
     /// Performs the request and returns once the response headers arrived.
     /// Any HTTP status is a success; `Err` carries a transport error message
     /// (DNS, TLS, timeout…). `cancel` aborts the exchange when set.
-    fn send(&self, request: HttpRequest, progress: Option<UploadProgress<'_>>, cancel: &AtomicBool) -> Result<HttpResponse, String>;
+    fn send(
+        &self,
+        request: HttpRequest,
+        progress: Option<UploadProgress<'_>>,
+        cancel: &AtomicBool,
+    ) -> Result<HttpResponse, String>;
 }

@@ -17,20 +17,22 @@ use pam_desktop_engine::{Engine, PamTextMeasureRequest, PamTextMeasureResult};
 use pam_desktop_wire::decode_batch;
 
 use crate::animator::{Animator, Owner, Timer, Timers};
-use crate::backend::{Backend, BackendEvent, KeyEvent, NodeId, WindowConfig, WindowMetrics, MAIN_WINDOW};
-use crate::context::{event_kind, HostCommand, OutEvent};
+use crate::backend::{
+    Backend, BackendEvent, KeyEvent, MAIN_WINDOW, NodeId, WindowConfig, WindowMetrics,
+};
+use crate::context::{HostCommand, OutEvent, event_kind};
 use crate::controls::Controls;
 use crate::geometry::Size;
 use crate::inputs::Inputs;
 use crate::interaction::Interaction;
 use crate::modules::Registry;
 use crate::motion::Motion;
-use crate::runtime_modules::Settings;
-use crate::runtime_shell::Shell;
 use crate::presenter::coverage::Coverage;
 use crate::presenter::modal::Modals;
 use crate::presenter::navigation::Navigation;
 use crate::presenter::tabs::Tabs;
+use crate::runtime_modules::Settings;
+use crate::runtime_shell::Shell;
 use crate::scene::{Action, Change, Scene};
 use crate::scrolling::Scrolling;
 use crate::text::TextSource;
@@ -45,7 +47,12 @@ pub enum Inbound {
     /// A message from the worker process of the given generation.
     Worker(u64, WorkerMessage),
     /// The answer of a native module to the worker of `generation`.
-    ModuleResult { generation: u64, request: u64, status: u8, payload: Vec<u8> },
+    ModuleResult {
+        generation: u64,
+        request: u64,
+        status: u8,
+        payload: Vec<u8>,
+    },
     /// Development: application sources changed, restart the worker.
     Reload,
     /// An item of a node's context menu was chosen.
@@ -68,7 +75,11 @@ pub struct Inbox {
 impl Inbox {
     /// `waker` must schedule [`pump`] on the UI thread; it may be called from any thread.
     pub fn new(waker: impl Fn() + Send + Sync + 'static) -> Arc<Self> {
-        Arc::new(Self { queue: Mutex::new(VecDeque::new()), wake_pending: AtomicBool::new(false), waker: Box::new(waker) })
+        Arc::new(Self {
+            queue: Mutex::new(VecDeque::new()),
+            wake_pending: AtomicBool::new(false),
+            waker: Box::new(waker),
+        })
     }
 
     pub fn post(&self, item: Inbound) {
@@ -82,7 +93,10 @@ impl Inbox {
 
     fn take(&self) -> VecDeque<Inbound> {
         self.wake_pending.store(false, Ordering::Release);
-        self.queue.lock().map(|mut queue| std::mem::take(&mut *queue)).unwrap_or_default()
+        self.queue
+            .lock()
+            .map(|mut queue| std::mem::take(&mut *queue))
+            .unwrap_or_default()
     }
 }
 
@@ -182,7 +196,13 @@ unsafe extern "C" fn measure_trampoline<B: Backend>(
 ) -> i32 {
     // SAFETY: the engine passes back the context installed by `Runtime` and
     // valid request/result pointers for the duration of the call.
-    let (context, request, result) = unsafe { (&*context.cast::<MeasureContext<B>>(), &*request, &mut *result) };
+    let (context, request, result) = unsafe {
+        (
+            &*context.cast::<MeasureContext<B>>(),
+            &*request,
+            &mut *result,
+        )
+    };
     if context.backend.is_null() {
         return 0;
     }
@@ -210,7 +230,15 @@ unsafe extern "C" fn measure_trampoline<B: Backend>(
     };
     // An empty paragraph (an input without text) still occupies one line box.
     let empty = source.text.is_empty();
-    let source = if empty { TextSource { text: " ", spans: "", ..source } } else { source };
+    let source = if empty {
+        TextSource {
+            text: " ",
+            spans: "",
+            ..source
+        }
+    } else {
+        source
+    };
     let block = source.measure_block();
     let max_width = if request.available_width.is_finite() && request.available_width > 0.0 {
         request.available_width
@@ -323,7 +351,12 @@ macro_rules! ctx {
 }
 
 impl<B: Backend> Runtime<B> {
-    pub fn new(mut backend: B, inbox: Arc<Inbox>, events: Rc<EventQueue>, config: RuntimeConfig) -> std::io::Result<Self> {
+    pub fn new(
+        mut backend: B,
+        inbox: Arc<Inbox>,
+        events: Rc<EventQueue>,
+        config: RuntimeConfig,
+    ) -> std::io::Result<Self> {
         backend.open_window(MAIN_WINDOW, &config.window);
         let system = backend.window_metrics(MAIN_WINDOW);
         let settings = Settings::load(&config.directories.state);
@@ -335,7 +368,9 @@ impl<B: Backend> Runtime<B> {
             font_scale: settings.effective_font_scale(system.font_scale),
             ..system
         };
-        let mut measure = Box::new(MeasureContext::<B> { backend: std::ptr::null_mut() });
+        let mut measure = Box::new(MeasureContext::<B> {
+            backend: std::ptr::null_mut(),
+        });
         let engine = new_engine(&metrics, measure.as_mut());
 
         let mut scene = Scene::new();
@@ -344,20 +379,43 @@ impl<B: Backend> Runtime<B> {
 
         let mut modules = Registry::default();
         modules.register("timers", crate::modules::timers::Timers::new());
-        modules.register("storage", crate::modules::storage::Storage::new(&config.directories.data));
+        modules.register(
+            "storage",
+            crate::modules::storage::Storage::new(&config.directories.data),
+        );
         modules.register("device", crate::modules::system::Device::default());
         modules.register("permissions", crate::modules::system::Permissions);
         let linking = crate::modules::system::Linking::new(config.launch_url.clone());
         modules.register("linking", linking.clone());
-        modules.register("cache", crate::modules::system::Cache::new(&config.directories.cache));
+        modules.register(
+            "cache",
+            crate::modules::system::Cache::new(&config.directories.cache),
+        );
         modules.register("background", crate::modules::system::Background::default());
         modules.register("toast", crate::modules::system::Toast);
         if let Some(client) = &config.http_client {
             let directories = &config.directories;
             let files_root = crate::modules::files::sandbox_root(&directories.data);
-            modules.register("files", crate::modules::files::Files::new(&directories.data, &directories.assets, Arc::clone(client)));
-            modules.register("http", crate::modules::http::Http::new(&files_root, Arc::clone(client), config.development));
-            modules.register("image", crate::modules::image::ImagePrefetch::new(&directories.cache, Arc::clone(client)));
+            modules.register(
+                "files",
+                crate::modules::files::Files::new(
+                    &directories.data,
+                    &directories.assets,
+                    Arc::clone(client),
+                ),
+            );
+            modules.register(
+                "http",
+                crate::modules::http::Http::new(
+                    &files_root,
+                    Arc::clone(client),
+                    config.development,
+                ),
+            );
+            modules.register(
+                "image",
+                crate::modules::image::ImagePrefetch::new(&directories.cache, Arc::clone(client)),
+            );
         }
         let directories = config.directories.clone();
         let http_client = config.http_client.clone();
@@ -381,16 +439,34 @@ impl<B: Backend> Runtime<B> {
         }
 
         let mut command = config.worker;
-        command.environment.push(("PAM_DESKTOP_PLATFORM".into(), config.platform.into()));
-        command.environment.push(("PAM_RENDERER_CONTRACT".into(), renderer_contract_json()));
+        command
+            .environment
+            .push(("PAM_DESKTOP_PLATFORM".into(), config.platform.into()));
+        command
+            .environment
+            .push(("PAM_RENDERER_CONTRACT".into(), renderer_contract_json()));
         command.environment.push((
             "PAM_DESKTOP_MODE".into(),
-            if config.development { "development" } else { "production" }.into(),
+            if config.development {
+                "development"
+            } else {
+                "production"
+            }
+            .into(),
         ));
         if let Some(url) = &config.launch_url {
-            command.environment.push(("PAM_DESKTOP_LAUNCH_URL".into(), url.clone()));
+            command
+                .environment
+                .push(("PAM_DESKTOP_LAUNCH_URL".into(), url.clone()));
         }
-        let worker = spawn_worker(&command, &metrics, system.dark, settings.appearance_mode, &inbox, 1)?;
+        let worker = spawn_worker(
+            &command,
+            &metrics,
+            system.dark,
+            settings.appearance_mode,
+            &inbox,
+            1,
+        )?;
         if config.development && !config.watch.is_empty() {
             crate::watch::watch(config.watch, Arc::clone(&inbox));
         }
@@ -426,7 +502,10 @@ impl<B: Backend> Runtime<B> {
             web_views: crate::webview::WebViews::default(),
             selection: crate::selection::TextSelection::default(),
             drag_drop: crate::dragdrop::DragDrop::default(),
-            error_overlay: crate::error_overlay::ErrorOverlay::new(config.development, &crate::modules::system::locale_tag()),
+            error_overlay: crate::error_overlay::ErrorOverlay::new(
+                config.development,
+                &crate::modules::system::locale_tag(),
+            ),
             toasts: crate::toast::Toasts::default(),
             observers: crate::observers::Observers::default(),
             gestures: crate::gestures::Gestures::default(),
@@ -528,20 +607,46 @@ impl<B: Backend> Runtime<B> {
         for command in std::mem::take(&mut self.commands) {
             match command {
                 HostCommand::Focus(id) => self.backend.focus(id),
-                HostCommand::ScrollTo { id, offset, animated } => self.backend.scroll_to(id, offset, animated),
-                HostCommand::InputConfig { id, config } => self.backend.set_input_config(id, &config),
-                HostCommand::InputText { id, text, selection } => self.backend.set_input_text(id, &text, selection),
-                HostCommand::InputSelection { id, start, end } => self.backend.set_input_selection(id, start, end),
+                HostCommand::ScrollTo {
+                    id,
+                    offset,
+                    animated,
+                } => self.backend.scroll_to(id, offset, animated),
+                HostCommand::InputConfig { id, config } => {
+                    self.backend.set_input_config(id, &config)
+                }
+                HostCommand::InputText {
+                    id,
+                    text,
+                    selection,
+                } => self.backend.set_input_text(id, &text, selection),
+                HostCommand::InputSelection { id, start, end } => {
+                    self.backend.set_input_selection(id, start, end)
+                }
                 HostCommand::BeginWindowDrag => self.backend.begin_window_drag(MAIN_WINDOW),
-                HostCommand::LoadImage { key, source, max_dimension } => self.backend.load_image(key, source, max_dimension),
+                HostCommand::LoadImage {
+                    key,
+                    source,
+                    max_dimension,
+                } => self.backend.load_image(key, source, max_dimension),
                 HostCommand::ReleaseImage(key) => self.backend.release_image(key),
-                HostCommand::SetImage { id, content } => self.backend.set_image(id, content.as_ref()),
+                HostCommand::SetImage { id, content } => {
+                    self.backend.set_image(id, content.as_ref())
+                }
                 HostCommand::SetDrawing { id, commands } => self.backend.set_drawing(id, &commands),
-                HostCommand::SetTextSelection { id, range } => self.backend.set_text_selection(id, range),
-                HostCommand::BeginTextDrag { source, text } => self.backend.begin_text_drag(MAIN_WINDOW, source, &text),
+                HostCommand::SetTextSelection { id, range } => {
+                    self.backend.set_text_selection(id, range)
+                }
+                HostCommand::BeginTextDrag { source, text } => {
+                    self.backend.begin_text_drag(MAIN_WINDOW, source, &text)
+                }
                 HostCommand::SetMedia { id, state } => self.backend.set_media(id, &state),
-                HostCommand::OpenWindow { window, config } => self.backend.open_window(window, &config),
-                HostCommand::SetWindowRoot { window, root } => self.backend.set_window_root(window, root),
+                HostCommand::OpenWindow { window, config } => {
+                    self.backend.open_window(window, &config)
+                }
+                HostCommand::SetWindowRoot { window, root } => {
+                    self.backend.set_window_root(window, root)
+                }
                 HostCommand::CloseWindow(window) => self.backend.close_window(window),
                 HostCommand::SetWebView { id, state } => self.backend.set_web_view(id, &state),
             }
@@ -556,7 +661,12 @@ impl<B: Backend> Runtime<B> {
                     }
                 }
                 if debug_enabled() {
-                    eprintln!("event node={} kind={} payload={:?}", event.node, event.kind, String::from_utf8_lossy(&event.payload));
+                    eprintln!(
+                        "event node={} kind={} payload={:?}",
+                        event.node,
+                        event.kind,
+                        String::from_utf8_lossy(&event.payload)
+                    );
                 }
                 worker.send_event(event.node, event.kind, &event.payload);
             }
@@ -571,7 +681,9 @@ impl<B: Backend> Runtime<B> {
         if deadline != self.armed_wake {
             self.armed_wake = deadline;
             if let Some(deadline) = deadline {
-                let delay = deadline.saturating_sub(self.now_ms()).min(u64::from(u32::MAX)) as u32;
+                let delay = deadline
+                    .saturating_sub(self.now_ms())
+                    .min(u64::from(u32::MAX)) as u32;
                 self.backend.schedule_wake(delay);
             }
         }
@@ -613,7 +725,9 @@ impl<B: Backend> Runtime<B> {
             }
             self.navigation.after_commit(&mut ctx);
             if let Some((outgoing, incoming, pop, duration)) = self.navigation.take_started() {
-                flights_changed |= self.shared_elements.start(&mut ctx, outgoing, incoming, pop, duration);
+                flights_changed |= self
+                    .shared_elements
+                    .start(&mut ctx, outgoing, incoming, pop, duration);
             }
             self.headers.after_commit(&mut ctx, self.metrics.dark);
             self.tabs.after_commit(&mut ctx);
@@ -640,7 +754,8 @@ impl<B: Backend> Runtime<B> {
         }
         {
             let backend = &mut self.backend;
-            let mut measure = |block: &crate::text::TextBlock, width: f32| backend.measure_text(block, width);
+            let mut measure =
+                |block: &crate::text::TextBlock, width: f32| backend.measure_text(block, width);
             let mut ctx = ctx!(self);
             self.coverage.evaluate(&mut ctx);
             self.observers.evaluate(&mut ctx);
@@ -660,10 +775,25 @@ impl<B: Backend> Runtime<B> {
         match item {
             Inbound::Worker(generation, _) if generation != self.generation => {}
             Inbound::Worker(_, WorkerMessage::Commit(frame)) => self.commit(&frame),
-            Inbound::Worker(_, WorkerMessage::Call { request, module, method, payload }) => {
+            Inbound::Worker(
+                _,
+                WorkerMessage::Call {
+                    request,
+                    module,
+                    method,
+                    payload,
+                },
+            ) => {
                 self.call_module(request, &module, &method, &payload);
             }
-            Inbound::Worker(_, WorkerMessage::CallTyped { request, operation, payload }) => {
+            Inbound::Worker(
+                _,
+                WorkerMessage::CallTyped {
+                    request,
+                    operation,
+                    payload,
+                },
+            ) => {
                 self.call_typed(request, operation, &payload);
             }
             Inbound::Worker(_, WorkerMessage::Error(message)) => {
@@ -671,7 +801,8 @@ impl<B: Backend> Runtime<B> {
                 if let Some(delay) = self.error_overlay.report(&message) {
                     // Production: try to recover without bothering the user.
                     let now = self.now_ms();
-                    self.timers.schedule(Timer::ErrorRecovery, now + u64::from(delay));
+                    self.timers
+                        .schedule(Timer::ErrorRecovery, now + u64::from(delay));
                 }
                 self.refresh_error_overlay();
             }
@@ -680,17 +811,25 @@ impl<B: Backend> Runtime<B> {
                 self.worker = None;
                 if self.development {
                     // Keep the last frame on screen; the next change restarts PHP.
-                    eprintln!("[pam-desktop] the PHP worker stopped; waiting for a change to restart it");
+                    eprintln!(
+                        "[pam-desktop] the PHP worker stopped; waiting for a change to restart it"
+                    );
                 } else {
                     self.finished = true;
                 }
             }
-            Inbound::ModuleResult { generation, request, status, payload } => {
+            Inbound::ModuleResult {
+                generation,
+                request,
+                status,
+                payload,
+            } => {
                 // Results asked by a worker that was reloaded away are stale.
                 if generation == self.generation
-                    && let Some(worker) = &mut self.worker {
-                        worker.send_module_result(request, status, &payload);
-                    }
+                    && let Some(worker) = &mut self.worker
+                {
+                    worker.send_module_result(request, status, &payload);
+                }
             }
             Inbound::Reload => self.reload(),
             Inbound::ContextMenuAction { node, id } => self.context_menu_chosen(node, &id),
@@ -724,7 +863,14 @@ impl<B: Backend> Runtime<B> {
             self.toasts.remove(&mut ctx);
         }
         self.refresh_error_overlay();
-        match spawn_worker(&self.worker_command, &self.metrics, self.system_dark, self.settings.appearance_mode, &self.inbox, self.generation) {
+        match spawn_worker(
+            &self.worker_command,
+            &self.metrics,
+            self.system_dark,
+            self.settings.appearance_mode,
+            &self.inbox,
+            self.generation,
+        ) {
             Ok(worker) => self.worker = Some(worker),
             Err(error) => eprintln!("[pam-desktop] could not restart the PHP worker: {error}"),
         }
@@ -758,7 +904,8 @@ impl<B: Backend> Runtime<B> {
     pub(crate) fn refresh_error_overlay(&mut self) {
         let dark = self.metrics.dark;
         let backend = &mut self.backend;
-        let mut measure = |block: &crate::text::TextBlock, width: f32| backend.measure_text(block, width);
+        let mut measure =
+            |block: &crate::text::TextBlock, width: f32| backend.measure_text(block, width);
         let mut ctx = ctx!(self);
         self.error_overlay.rebuild(&mut ctx, &mut measure, dark);
         self.update_host_overlays();
@@ -766,7 +913,14 @@ impl<B: Backend> Runtime<B> {
 
     /// Stacks the host chrome above the application: toasts, then errors.
     pub(crate) fn update_host_overlays(&mut self) {
-        let overlays: Vec<NodeId> = self.shared_elements.roots().iter().chain(self.toasts.roots()).chain(self.error_overlay.roots()).copied().collect();
+        let overlays: Vec<NodeId> = self
+            .shared_elements
+            .roots()
+            .iter()
+            .chain(self.toasts.roots())
+            .chain(self.error_overlay.roots())
+            .copied()
+            .collect();
         self.scene.set_host_overlays(overlays);
     }
 
@@ -779,7 +933,10 @@ impl<B: Backend> Runtime<B> {
         }
         let mut changed = false;
         for (surface, size) in resized {
-            changed |= pam_desktop_engine::set_surface_size(surface, size.map(|size| (size.width, size.height)));
+            changed |= pam_desktop_engine::set_surface_size(
+                surface,
+                size.map(|size| (size.width, size.height)),
+            );
         }
         if changed {
             self.relayout();
@@ -814,8 +971,14 @@ impl<B: Backend> Runtime<B> {
     }
 
     pub(crate) fn relayout(&mut self) {
-        let (width, height, font_scale) = (self.metrics.size.width, self.metrics.size.height, self.metrics.font_scale);
-        let result = self.with_engine(|engine, batch| engine.relayout_with_metrics_into(width, height, font_scale, batch));
+        let (width, height, font_scale) = (
+            self.metrics.size.width,
+            self.metrics.size.height,
+            self.metrics.font_scale,
+        );
+        let result = self.with_engine(|engine, batch| {
+            engine.relayout_with_metrics_into(width, height, font_scale, batch)
+        });
         match result {
             Ok(()) => {
                 self.apply_batch();
@@ -825,7 +988,11 @@ impl<B: Backend> Runtime<B> {
     }
 
     pub(crate) fn send_event(&mut self, node: NodeId, kind: u16, payload: &[u8]) {
-        self.outbox.push(OutEvent { node, kind, payload: payload.to_vec() });
+        self.outbox.push(OutEvent {
+            node,
+            kind,
+            payload: payload.to_vec(),
+        });
     }
 
     pub(crate) fn send_dimensions(&mut self) {
@@ -836,7 +1003,10 @@ impl<B: Backend> Runtime<B> {
             .with("density", metrics.scale)
             .with("appearance", if metrics.dark { 2_i64 } else { 1_i64 })
             .with("appearanceMode", i64::from(self.settings.appearance_mode))
-            .with("systemAppearance", if self.system_dark { 2_i64 } else { 1_i64 })
+            .with(
+                "systemAppearance",
+                if self.system_dark { 2_i64 } else { 1_i64 },
+            )
             .with("fontScale", metrics.font_scale)
             .with("safeAreaTop", 0.0_f64)
             .with("safeAreaRight", 0.0_f64)
@@ -870,7 +1040,12 @@ impl<B: Backend> Runtime<B> {
                 };
                 self.scene.set_pointer_root(root);
                 if debug_enabled() && pointer.phase != crate::backend::PointerPhase::Move {
-                    eprintln!("pointer {:?} at {:?} hit {:?}", pointer.phase, pointer.position, self.scene.hit_test(pointer.position));
+                    eprintln!(
+                        "pointer {:?} at {:?} hit {:?}",
+                        pointer.phase,
+                        pointer.position,
+                        self.scene.hit_test(pointer.position)
+                    );
                 }
                 if self.select_text(&pointer) {
                     return;
@@ -882,7 +1057,10 @@ impl<B: Backend> Runtime<B> {
                     let mut ctx = ctx!(self);
                     if self.drag_drop.on_pointer(&mut ctx, pointer) {
                         // The system owns the pointer now: the press never completes.
-                        let cancel = crate::backend::PointerEvent { phase: crate::backend::PointerPhase::Cancel, ..pointer };
+                        let cancel = crate::backend::PointerEvent {
+                            phase: crate::backend::PointerPhase::Cancel,
+                            ..pointer
+                        };
                         self.interaction.on_pointer(&mut ctx, cancel);
                         return;
                     }
@@ -892,7 +1070,10 @@ impl<B: Backend> Runtime<B> {
                     let mut ctx = ctx!(self);
                     match self.modals.on_pointer(&mut ctx, pointer) {
                         Some(true) => {
-                            let cancel = crate::backend::PointerEvent { phase: crate::backend::PointerPhase::Cancel, ..pointer };
+                            let cancel = crate::backend::PointerEvent {
+                                phase: crate::backend::PointerPhase::Cancel,
+                                ..pointer
+                            };
                             self.interaction.on_pointer(&mut ctx, cancel);
                             return;
                         }
@@ -906,7 +1087,10 @@ impl<B: Backend> Runtime<B> {
                         crate::gestures::Outcome::Ignored => {}
                         crate::gestures::Outcome::Recognised => {
                             // The gesture took the pointer: no press completes.
-                            let cancel = crate::backend::PointerEvent { phase: crate::backend::PointerPhase::Cancel, ..pointer };
+                            let cancel = crate::backend::PointerEvent {
+                                phase: crate::backend::PointerPhase::Cancel,
+                                ..pointer
+                            };
                             self.interaction.on_pointer(&mut ctx, cancel);
                             return;
                         }
@@ -930,7 +1114,9 @@ impl<B: Backend> Runtime<B> {
                 if let Some(action) = action {
                     self.run_action(action);
                 }
-                if pointer.phase == crate::backend::PointerPhase::Up && pointer.button == crate::backend::PointerButton::Secondary {
+                if pointer.phase == crate::backend::PointerPhase::Up
+                    && pointer.button == crate::backend::PointerButton::Secondary
+                {
                     self.open_context_menu(pointer.window, pointer.position);
                 }
             }
@@ -949,7 +1135,11 @@ impl<B: Backend> Runtime<B> {
                 let mut ctx = ctx!(self);
                 self.inputs.on_event(&mut ctx, id, event);
             }
-            BackendEvent::WindowResized { window, size, scale } if window == MAIN_WINDOW => {
+            BackendEvent::WindowResized {
+                window,
+                size,
+                scale,
+            } if window == MAIN_WINDOW => {
                 let changed = self.metrics.size != size || self.metrics.scale != scale;
                 if !changed {
                     return;
@@ -983,8 +1173,14 @@ impl<B: Backend> Runtime<B> {
             BackendEvent::MenuAction { id } => self.shell.emit("menu", &id, "{}"),
             BackendEvent::Shortcut { id } => self.shell.emit("shortcut", &id, "{}"),
             BackendEvent::TrayActivated => self.shell.emit("tray", "activate", "{}"),
-            BackendEvent::NotificationActivated { id } => self.shell.emit("notification", &id, "{}"),
-            BackendEvent::FilesDropped { window, position, paths } => {
+            BackendEvent::NotificationActivated { id } => {
+                self.shell.emit("notification", &id, "{}")
+            }
+            BackendEvent::FilesDropped {
+                window,
+                position,
+                paths,
+            } => {
                 if window == MAIN_WINDOW {
                     self.files_dropped(position, &paths);
                 }
@@ -1059,7 +1255,9 @@ impl<B: Backend> Runtime<B> {
                                 self.images.set_suppressed(&mut ctx, id, hidden);
                             }
                         }
-                        Timer::ScrollRest(_) | Timer::ListWindow(_) | Timer::RefreshFallback(_) => self.scrolling.on_timer(&mut ctx, timer),
+                        Timer::ScrollRest(_) | Timer::ListWindow(_) | Timer::RefreshFallback(_) => {
+                            self.scrolling.on_timer(&mut ctx, timer)
+                        }
                         _ => self.interaction.on_timer(&mut ctx, timer),
                     }
                 }
@@ -1081,26 +1279,45 @@ impl<B: Backend> Runtime<B> {
             }
             // Gestures, text selection and drag and drop are wired below as
             // their controllers land.
-            BackendEvent::Wheel { window, position, delta, modifiers } => {
+            BackendEvent::Wheel {
+                window,
+                position,
+                delta,
+                modifiers,
+            } => {
                 // Control + wheel is the desktop pinch.
                 if window == MAIN_WINDOW && modifiers.control {
                     let mut ctx = ctx!(self);
                     self.gestures.on_wheel_zoom(&mut ctx, position, delta.y);
                 }
             }
-            BackendEvent::Magnify { window, position, phase, scale } => {
+            BackendEvent::Magnify {
+                window,
+                position,
+                phase,
+                scale,
+            } => {
                 if window == MAIN_WINDOW {
                     let mut ctx = ctx!(self);
                     self.gestures.on_magnify(&mut ctx, position, phase, scale);
                 }
             }
-            BackendEvent::Rotate { window, position, phase, radians } => {
+            BackendEvent::Rotate {
+                window,
+                position,
+                phase,
+                radians,
+            } => {
                 if window == MAIN_WINDOW {
                     let mut ctx = ctx!(self);
                     self.gestures.on_rotate(&mut ctx, position, phase, radians);
                 }
             }
-            BackendEvent::TextDropped { window, position, text } => {
+            BackendEvent::TextDropped {
+                window,
+                position,
+                text,
+            } => {
                 if window == MAIN_WINDOW {
                     let mut ctx = ctx!(self);
                     self.drag_drop.on_text_dropped(&mut ctx, position, &text);
@@ -1132,7 +1349,12 @@ impl<B: Backend> Runtime<B> {
                     }
                 } else {
                     let mut ctx = ctx!(self);
-                    ctx.emit_if(id, pam_desktop_wire::PropKey::OnAccessibilityAction, event_kind::ACCESSIBILITY_ACTION, name.into_bytes());
+                    ctx.emit_if(
+                        id,
+                        pam_desktop_wire::PropKey::OnAccessibilityAction,
+                        event_kind::ACCESSIBILITY_ACTION,
+                        name.into_bytes(),
+                    );
                 }
             }
             BackendEvent::ImageLoaded { key, size } => {
@@ -1161,25 +1383,47 @@ impl<B: Backend> Runtime<B> {
         for sample in samples {
             match sample.owner {
                 Owner::Navigation(id) => {
-                    self.navigation.on_sample(&mut ctx, id, sample.value, sample.finished);
+                    self.navigation
+                        .on_sample(&mut ctx, id, sample.value, sample.finished);
                     if sample.finished {
                         self.coverage.invalidate();
                     }
                 }
                 Owner::ModalBackdrop(_) | Owner::ModalContent(_) => {
-                    self.modals.on_sample(&mut ctx, sample.owner, sample.value, sample.finished);
+                    self.modals
+                        .on_sample(&mut ctx, sample.owner, sample.value, sample.finished);
                 }
                 Owner::Press(id) => self.interaction.on_press_sample(&mut ctx, id, sample.value),
-                Owner::Control(id) => self.controls.on_sample(&mut ctx, id, sample.value, sample.finished),
+                Owner::Control(id) => {
+                    self.controls
+                        .on_sample(&mut ctx, id, sample.value, sample.finished)
+                }
                 Owner::Scroll(id) => self.scrolling.on_sample(&mut ctx, id, sample.value),
                 Owner::Image(id) => self.images.on_sample(&mut ctx, id, sample.value),
                 Owner::SheetDrag(id) => self.modals.on_sheet_sample(&mut ctx, id, sample.value),
                 Owner::MediaBar(id) => self.media.on_bar_sample(&mut ctx, id, sample.value),
-                Owner::Gesture(id) => self.gestures.on_sample(&mut ctx, id, sample.value, sample.finished),
-                Owner::GesturePose(id) => self.gestures.on_pose_sample(&mut ctx, id, sample.value, sample.finished),
-                Owner::SharedFlight => toast_changed |= self.shared_elements.on_sample(&mut ctx, sample.value, sample.finished),
-                Owner::Toast => toast_changed |= self.toasts.on_sample(&mut ctx, sample.value, sample.finished),
-                Owner::Transition(..) | Owner::Motion(..) => self.motion.on_sample(&mut ctx, sample.owner, sample.value, sample.finished),
+                Owner::Gesture(id) => {
+                    self.gestures
+                        .on_sample(&mut ctx, id, sample.value, sample.finished)
+                }
+                Owner::GesturePose(id) => {
+                    self.gestures
+                        .on_pose_sample(&mut ctx, id, sample.value, sample.finished)
+                }
+                Owner::SharedFlight => {
+                    toast_changed |=
+                        self.shared_elements
+                            .on_sample(&mut ctx, sample.value, sample.finished)
+                }
+                Owner::Toast => {
+                    toast_changed |= self
+                        .toasts
+                        .on_sample(&mut ctx, sample.value, sample.finished)
+                }
+                Owner::Transition(..) | Owner::Motion(..) => {
+                    self.motion
+                        .on_sample(&mut ctx, sample.owner, sample.value, sample.finished)
+                }
             }
         }
         if toast_changed {
@@ -1196,7 +1440,9 @@ impl<B: Backend> Runtime<B> {
             }
             Action::ModalBackdrop { modal } => self.modals.backdrop_pressed(&mut ctx, modal),
             Action::Toggle { id } => self.controls.toggle(&mut ctx, id),
-            Action::Chrome { command: crate::toast::DISMISS_COMMAND } => {
+            Action::Chrome {
+                command: crate::toast::DISMISS_COMMAND,
+            } => {
                 let changed = self.toasts.dismiss(&mut ctx);
                 if changed {
                     self.update_host_overlays();
@@ -1205,7 +1451,9 @@ impl<B: Backend> Runtime<B> {
             Action::Chrome { command } => {
                 match self.error_overlay.run(command) {
                     crate::error_overlay::Effect::Reload => return self.reload(),
-                    crate::error_overlay::Effect::Copy(text) => self.backend.clipboard_set_text(&text),
+                    crate::error_overlay::Effect::Copy(text) => {
+                        self.backend.clipboard_set_text(&text)
+                    }
                     crate::error_overlay::Effect::None => {}
                 }
                 self.refresh_error_overlay();
@@ -1237,16 +1485,31 @@ impl<B: Backend> Runtime<B> {
         }
         let index_at = |runtime: &Self, id: NodeId| {
             let origin = runtime.scene.window_origin(id);
-            runtime.backend.text_index_at(id, crate::geometry::Point::new(pointer.position.x - origin.x, pointer.position.y - origin.y))
+            runtime.backend.text_index_at(
+                id,
+                crate::geometry::Point::new(
+                    pointer.position.x - origin.x,
+                    pointer.position.y - origin.y,
+                ),
+            )
         };
         match pointer.phase {
             PointerPhase::Down => {
-                let target = self.scene.hit_test(pointer.position).and_then(|hit| TextSelection::target(&self.scene, hit));
+                let target = self
+                    .scene
+                    .hit_test(pointer.position)
+                    .and_then(|hit| TextSelection::target(&self.scene, hit));
                 let index = target.and_then(|id| index_at(self, id));
                 let mut ctx = ctx!(self);
                 match (target, index) {
                     (Some(id), Some(index)) => {
-                        self.selection.begin(&mut ctx, id, index, pointer.click_count, pointer.modifiers.shift);
+                        self.selection.begin(
+                            &mut ctx,
+                            id,
+                            index,
+                            pointer.click_count,
+                            pointer.modifiers.shift,
+                        );
                         true
                     }
                     _ => {
@@ -1276,7 +1539,12 @@ impl<B: Backend> Runtime<B> {
     fn press_span(&mut self, pointer: &crate::backend::PointerEvent) -> bool {
         use crate::backend::{PointerButton, PointerPhase};
         use crate::textlayout::TextLayouts;
-        if pointer.button != PointerButton::Primary || !matches!(pointer.phase, PointerPhase::Down | PointerPhase::Up | PointerPhase::Cancel) {
+        if pointer.button != PointerButton::Primary
+            || !matches!(
+                pointer.phase,
+                PointerPhase::Down | PointerPhase::Up | PointerPhase::Cancel
+            )
+        {
             return false;
         }
         // The paragraph under the pointer and the text offset there.
@@ -1286,12 +1554,19 @@ impl<B: Backend> Runtime<B> {
         });
         let located = located.and_then(|id| {
             let origin = self.scene.window_origin(id);
-            let point = crate::geometry::Point::new(pointer.position.x - origin.x, pointer.position.y - origin.y);
-            self.backend.text_index_at(id, point).map(|index| (id, index))
+            let point = crate::geometry::Point::new(
+                pointer.position.x - origin.x,
+                pointer.position.y - origin.y,
+            );
+            self.backend
+                .text_index_at(id, point)
+                .map(|index| (id, index))
         });
         let mut ctx = ctx!(self);
         match pointer.phase {
-            PointerPhase::Down => located.is_some_and(|(id, index)| self.text_layouts.press_down(&ctx, id, index)),
+            PointerPhase::Down => {
+                located.is_some_and(|(id, index)| self.text_layouts.press_down(&ctx, id, index))
+            }
             PointerPhase::Up => self.text_layouts.press_up(&mut ctx, located),
             _ => self.text_layouts.press_up(&mut ctx, None),
         }
@@ -1303,7 +1578,11 @@ impl<B: Backend> Runtime<B> {
         if self.selection.node().is_none() {
             return false;
         }
-        let command = if cfg!(target_os = "macos") { key.modifiers.meta } else { key.modifiers.control };
+        let command = if cfg!(target_os = "macos") {
+            key.modifiers.meta
+        } else {
+            key.modifiers.control
+        };
         match key.key.to_ascii_lowercase().as_str() {
             "c" if command => match self.selection.text() {
                 Some(text) => {
@@ -1440,31 +1719,53 @@ fn new_engine<B: Backend>(metrics: &WindowMetrics, measure: &mut MeasureContext<
 /// PHP. Read once: the environment is not consulted per event.
 fn debug_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PAM_DESKTOP_DEBUG").is_some_and(|value| !value.is_empty() && value != "0"))
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("PAM_DESKTOP_DEBUG").is_some_and(|value| !value.is_empty() && value != "0")
+    })
 }
 
 /// A one-paragraph description of an error report from PHP
 /// (`PAMERR1\n<json>` or a plain `Class: message`).
 fn describe_php_error(report: &str) -> String {
-    let Some(json) = report.strip_prefix("PAMERR1\n") else { return format!("PHP error: {report}") };
-    let Ok(error) = serde_json::from_str::<serde_json::Value>(json) else { return format!("PHP error: {json}") };
-    let text = |key: &str| error.get(key).and_then(serde_json::Value::as_str).unwrap_or("");
+    let Some(json) = report.strip_prefix("PAMERR1\n") else {
+        return format!("PHP error: {report}");
+    };
+    let Ok(error) = serde_json::from_str::<serde_json::Value>(json) else {
+        return format!("PHP error: {json}");
+    };
+    let text = |key: &str| {
+        error
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+    };
     let mut description = format!(
         "PHP {} in {} phase: {}\n    at {}:{}",
         text("type"),
         text("phase"),
         text("message"),
         text("file"),
-        error.get("line").and_then(serde_json::Value::as_i64).unwrap_or(0),
+        error
+            .get("line")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
     );
     if let Some(frames) = error.get("frames").and_then(serde_json::Value::as_array) {
         for frame in frames.iter().take(6) {
-            let field = |key: &str| frame.get(key).and_then(serde_json::Value::as_str).unwrap_or("");
+            let field = |key: &str| {
+                frame
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+            };
             description.push_str(&format!(
                 "\n    {} ({}:{})",
                 field("call"),
                 field("file"),
-                frame.get("line").and_then(serde_json::Value::as_i64).unwrap_or(0),
+                frame
+                    .get("line")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0),
             ));
         }
     }
@@ -1481,12 +1782,24 @@ fn spawn_worker(
     generation: u64,
 ) -> std::io::Result<Worker> {
     let mut command = command.clone();
-    command.environment.push(("PAM_BOOT_METRICS".into(), boot_metrics_json(metrics)));
-    command.environment.push(("PAM_APPEARANCE_MODE".into(), appearance_mode.to_string()));
-    command.environment.push(("PAM_SYSTEM_APPEARANCE".into(), if system_dark { "2" } else { "1" }.into()));
-    command.environment.push(("PAM_SYSTEM_DARK".into(), if metrics.dark { "1" } else { "0" }.into()));
+    command
+        .environment
+        .push(("PAM_BOOT_METRICS".into(), boot_metrics_json(metrics)));
+    command
+        .environment
+        .push(("PAM_APPEARANCE_MODE".into(), appearance_mode.to_string()));
+    command.environment.push((
+        "PAM_SYSTEM_APPEARANCE".into(),
+        if system_dark { "2" } else { "1" }.into(),
+    ));
+    command.environment.push((
+        "PAM_SYSTEM_DARK".into(),
+        if metrics.dark { "1" } else { "0" }.into(),
+    ));
     let inbox = Arc::clone(inbox);
-    Worker::spawn(&command, move |message| inbox.post(Inbound::Worker(generation, message)))
+    Worker::spawn(&command, move |message| {
+        inbox.post(Inbound::Worker(generation, message))
+    })
 }
 
 fn boot_metrics_json(metrics: &WindowMetrics) -> String {
@@ -1497,13 +1810,21 @@ fn boot_metrics_json(metrics: &WindowMetrics) -> String {
             "\"refreshRate\":{},\"reducedMotion\":{},\"deviceType\":\"desktop\",",
             "\"pointer\":\"fine\",\"inputMode\":\"mouse\",\"displayMode\":\"window\"}}"
         ),
-        metrics.size.width, metrics.size.height, metrics.scale, metrics.font_scale, metrics.refresh_rate, metrics.reduced_motion,
+        metrics.size.width,
+        metrics.size.height,
+        metrics.scale,
+        metrics.font_scale,
+        metrics.refresh_rate,
+        metrics.reduced_motion,
     )
 }
 
 /// The property and event ceilings this renderer implements.
 fn renderer_contract_json() -> String {
-    use pam_desktop_wire::{ABI_VERSION, CORE_EVENT_LIMIT, CORE_PROPERTY_LIMIT, MINIMUM_PROTOCOL_VERSION, PROTOCOL_VERSION};
+    use pam_desktop_wire::{
+        ABI_VERSION, CORE_EVENT_LIMIT, CORE_PROPERTY_LIMIT, MINIMUM_PROTOCOL_VERSION,
+        PROTOCOL_VERSION,
+    };
     format!(
         "{{\"abi\":{ABI_VERSION},\"events\":[{CORE_EVENT_LIMIT},{}],\"properties\":[{CORE_PROPERTY_LIMIT},{}],\"protocol\":[{MINIMUM_PROTOCOL_VERSION},{PROTOCOL_VERSION}]}}",
         EXTENSION_EVENT_CEILING, EXTENSION_PROPERTY_CEILING,
@@ -1522,24 +1843,33 @@ pub struct Shared<B: Backend> {
 impl<B: Backend + 'static> Shared<B> {
     /// Wraps the runtime and installs it as this thread's pump target.
     pub fn install(runtime: Runtime<B>) -> Rc<Self> {
-        let shared = Rc::new(Self { runtime: RefCell::new(runtime) });
+        let shared = Rc::new(Self {
+            runtime: RefCell::new(runtime),
+        });
         let weak = Rc::downgrade(&shared);
         set_pump(Some(Rc::new(move || {
             if let Some(shared) = weak.upgrade()
-                && let Ok(mut runtime) = shared.runtime.try_borrow_mut() {
-                    runtime.drain();
-                }
+                && let Ok(mut runtime) = shared.runtime.try_borrow_mut()
+            {
+                runtime.drain();
+            }
         })));
         shared
     }
 
     pub fn with<T>(&self, call: impl FnOnce(&mut Runtime<B>) -> T) -> Option<T> {
-        self.runtime.try_borrow_mut().ok().map(|mut runtime| call(&mut runtime))
+        self.runtime
+            .try_borrow_mut()
+            .ok()
+            .map(|mut runtime| call(&mut runtime))
     }
 
     #[must_use]
     pub fn is_finished(&self) -> bool {
-        self.runtime.try_borrow().map(|runtime| runtime.finished).unwrap_or(false)
+        self.runtime
+            .try_borrow()
+            .map(|runtime| runtime.finished)
+            .unwrap_or(false)
     }
 }
 

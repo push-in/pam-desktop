@@ -4,11 +4,14 @@
 use std::collections::HashMap;
 
 use crate::backend::{
-    AlertConfig, Backend, ImageContent, ImageKey, ImageSource, InputConfig, NodeId, ScrollConfig, TextContent, ViewClass,
-    WindowConfig, WindowId, WindowMetrics,
+    AlertConfig, Backend, ImageContent, ImageKey, ImageSource, InputConfig, NodeId, ScrollConfig,
+    TextContent, ViewClass, WindowConfig, WindowId, WindowMetrics,
 };
 use crate::geometry::{Point, Rect, Size};
-use crate::shell::{Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand, WindowState};
+use crate::shell::{
+    Cursor, FileDialogConfig, MenuNode, NotificationConfig, Shortcut, TrayConfig, WindowCommand,
+    WindowState,
+};
 use crate::style::{Decoration, LayerState};
 use crate::text::{TextBlock, TextMetrics};
 
@@ -87,7 +90,10 @@ pub struct RecordingBackend {
 impl RecordingBackend {
     #[must_use]
     pub fn new() -> Self {
-        Self { character_width: 8.0, ..Self::default() }
+        Self {
+            character_width: 8.0,
+            ..Self::default()
+        }
     }
 
     /// Returns and clears the commands recorded so far.
@@ -97,7 +103,10 @@ impl RecordingBackend {
 
     #[must_use]
     pub fn count(&self, matches: impl Fn(&Command) -> bool) -> usize {
-        self.commands.iter().filter(|command| matches(command)).count()
+        self.commands
+            .iter()
+            .filter(|command| matches(command))
+            .count()
     }
 }
 
@@ -121,18 +130,28 @@ impl Backend for RecordingBackend {
 
     fn set_window_overlays(&mut self, window: WindowId, overlays: &[NodeId]) {
         for overlay in overlays {
-            assert!(self.views.contains_key(overlay), "overlay {overlay} has no view");
+            assert!(
+                self.views.contains_key(overlay),
+                "overlay {overlay} has no view"
+            );
         }
-        self.commands.push(Command::Overlays(window, overlays.to_vec()));
+        self.commands
+            .push(Command::Overlays(window, overlays.to_vec()));
     }
 
     fn create_view(&mut self, id: NodeId, class: ViewClass) {
-        assert!(self.views.insert(id, class).is_none(), "view {id} created twice");
+        assert!(
+            self.views.insert(id, class).is_none(),
+            "view {id} created twice"
+        );
         self.commands.push(Command::Create(id, class));
     }
 
     fn destroy_view(&mut self, id: NodeId) {
-        assert!(self.views.remove(&id).is_some(), "view {id} destroyed but never created");
+        assert!(
+            self.views.remove(&id).is_some(),
+            "view {id} destroyed but never created"
+        );
         self.children.remove(&id);
         self.frames.remove(&id);
         self.texts.remove(&id);
@@ -143,9 +162,15 @@ impl Backend for RecordingBackend {
     }
 
     fn set_children(&mut self, parent: NodeId, children: &[NodeId]) {
-        assert!(self.views.contains_key(&parent), "children set on missing view {parent}");
+        assert!(
+            self.views.contains_key(&parent),
+            "children set on missing view {parent}"
+        );
         for child in children {
-            assert!(self.views.contains_key(child), "child {child} of {parent} has no view");
+            assert!(
+                self.views.contains_key(child),
+                "child {child} of {parent} has no view"
+            );
             for (other, siblings) in &mut self.children {
                 if *other != parent {
                     siblings.retain(|sibling| sibling != child);
@@ -153,17 +178,22 @@ impl Backend for RecordingBackend {
             }
         }
         self.children.insert(parent, children.to_vec());
-        self.commands.push(Command::Children(parent, children.to_vec()));
+        self.commands
+            .push(Command::Children(parent, children.to_vec()));
     }
 
     fn set_frame(&mut self, id: NodeId, frame: Rect) {
-        assert!(self.views.contains_key(&id), "frame set on missing view {id}");
+        assert!(
+            self.views.contains_key(&id),
+            "frame set on missing view {id}"
+        );
         self.frames.insert(id, frame);
         self.commands.push(Command::Frame(id, frame));
     }
 
     fn set_decoration(&mut self, id: NodeId, decoration: &Decoration) {
-        self.commands.push(Command::Decoration(id, decoration.clone()));
+        self.commands
+            .push(Command::Decoration(id, decoration.clone()));
     }
 
     fn set_layer(&mut self, id: NodeId, layer: &LayerState) {
@@ -179,7 +209,10 @@ impl Backend for RecordingBackend {
                 self.texts.remove(&id);
             }
         }
-        self.commands.push(Command::Text(id, text.map(|content| content.block.plain_text())));
+        self.commands.push(Command::Text(
+            id,
+            text.map(|content| content.block.plain_text()),
+        ));
     }
 
     fn set_focusable(&mut self, id: NodeId, focusable: bool) {
@@ -191,12 +224,14 @@ impl Backend for RecordingBackend {
     }
 
     fn set_input_config(&mut self, id: NodeId, config: &InputConfig) {
-        self.commands.push(Command::InputConfig(id, Box::new(config.clone())));
+        self.commands
+            .push(Command::InputConfig(id, Box::new(config.clone())));
     }
 
     fn set_input_text(&mut self, id: NodeId, text: &str, selection: Option<(u32, u32)>) {
         self.inputs.insert(id, text.to_owned());
-        self.commands.push(Command::InputText(id, text.to_owned(), selection));
+        self.commands
+            .push(Command::InputText(id, text.to_owned(), selection));
     }
 
     fn set_input_selection(&mut self, id: NodeId, start: u32, end: u32) {
@@ -211,8 +246,13 @@ impl Backend for RecordingBackend {
         self.commands.push(Command::ReleaseImage(key));
     }
 
-    fn set_accessibility(&mut self, id: NodeId, accessibility: Option<&crate::accessibility::Accessibility>) {
-        self.commands.push(Command::Accessibility(id, accessibility.cloned()));
+    fn set_accessibility(
+        &mut self,
+        id: NodeId,
+        accessibility: Option<&crate::accessibility::Accessibility>,
+    ) {
+        self.commands
+            .push(Command::Accessibility(id, accessibility.cloned()));
     }
 
     fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>) {
@@ -236,7 +276,8 @@ impl Backend for RecordingBackend {
     }
 
     fn begin_text_drag(&mut self, window: WindowId, source: NodeId, text: &str) {
-        self.commands.push(Command::TextDrag(window, source, text.to_owned()));
+        self.commands
+            .push(Command::TextDrag(window, source, text.to_owned()));
     }
 
     fn set_web_view(&mut self, id: NodeId, state: &crate::backend::WebViewState) {
@@ -264,9 +305,14 @@ impl Backend for RecordingBackend {
     fn measure_text(&mut self, block: &TextBlock, max_width: f32) -> TextMetrics {
         let characters: usize = block.runs.iter().map(|run| run.text.chars().count()).sum();
         let font_size = block.runs.first().map_or(14.0, |run| run.font.size);
-        let line_height = if block.line_height > 0.0 { block.line_height } else { font_size * 1.25 };
+        let line_height = if block.line_height > 0.0 {
+            block.line_height
+        } else {
+            font_size * 1.25
+        };
         let natural = characters as f32 * self.character_width;
-        let (width, mut lines) = if max_width.is_finite() && natural > max_width && max_width > 0.0 {
+        let (width, mut lines) = if max_width.is_finite() && natural > max_width && max_width > 0.0
+        {
             (max_width, (natural / max_width).ceil() as u32)
         } else {
             (natural, 1)
@@ -274,7 +320,12 @@ impl Backend for RecordingBackend {
         if block.max_lines > 0 {
             lines = lines.min(block.max_lines);
         }
-        TextMetrics { width, height: lines as f32 * line_height, first_baseline: font_size, line_count: lines }
+        TextMetrics {
+            width,
+            height: lines as f32 * line_height,
+            first_baseline: font_size,
+            line_count: lines,
+        }
     }
 
     fn request_frame(&mut self) {
@@ -291,7 +342,12 @@ impl Backend for RecordingBackend {
     }
 
     /// Answers with `alert_choice` right away.
-    fn show_alert(&mut self, _window: WindowId, alert: &AlertConfig, done: Box<dyn FnOnce(Option<usize>)>) {
+    fn show_alert(
+        &mut self,
+        _window: WindowId,
+        alert: &AlertConfig,
+        done: Box<dyn FnOnce(Option<usize>)>,
+    ) {
         self.commands.push(Command::Alert(alert.clone()));
         done(self.alert_choice);
     }
@@ -305,8 +361,15 @@ impl Backend for RecordingBackend {
     }
 
     /// Answers with `menu_choice` right away.
-    fn popup_menu(&mut self, _window: WindowId, position: Point, menu: &[MenuNode], done: Box<dyn FnOnce(Option<String>)>) {
-        self.commands.push(Command::PopupMenu(position, menu.to_vec()));
+    fn popup_menu(
+        &mut self,
+        _window: WindowId,
+        position: Point,
+        menu: &[MenuNode],
+        done: Box<dyn FnOnce(Option<String>)>,
+    ) {
+        self.commands
+            .push(Command::PopupMenu(position, menu.to_vec()));
         done(self.menu_choice.clone());
     }
 
@@ -315,7 +378,12 @@ impl Backend for RecordingBackend {
     }
 
     /// Answers with `picked_files` right away.
-    fn pick_files(&mut self, _window: WindowId, config: &FileDialogConfig, done: Box<dyn FnOnce(Vec<std::path::PathBuf>)>) {
+    fn pick_files(
+        &mut self,
+        _window: WindowId,
+        config: &FileDialogConfig,
+        done: Box<dyn FnOnce(Vec<std::path::PathBuf>)>,
+    ) {
         self.commands.push(Command::PickFiles(config.clone()));
         done(self.picked_files.clone());
     }
@@ -341,7 +409,8 @@ impl Backend for RecordingBackend {
     }
 
     fn set_tooltip(&mut self, id: NodeId, text: Option<&str>) {
-        self.commands.push(Command::Tooltip(id, text.map(str::to_owned)));
+        self.commands
+            .push(Command::Tooltip(id, text.map(str::to_owned)));
     }
 
     fn begin_window_drag(&mut self, window: WindowId) {
@@ -358,7 +427,13 @@ impl Backend for RecordingBackend {
 }
 
 /// A node of a test tree: id, parent, kind, properties and frame.
-pub type TreeNode<'a> = (NodeId, NodeId, pam_desktop_wire::NodeKind, &'a [(pam_desktop_wire::PropKey, pam_desktop_wire::PropValue)], Rect);
+pub type TreeNode<'a> = (
+    NodeId,
+    NodeId,
+    pam_desktop_wire::NodeKind,
+    &'a [(pam_desktop_wire::PropKey, pam_desktop_wire::PropValue)],
+    Rect,
+);
 
 /// Everything a controller needs besides a backend, for tests that drive
 /// controllers directly: build a tree, hand out a [`Ctx`], inspect what the
@@ -386,16 +461,38 @@ impl Harness {
         let mut indexes: HashMap<NodeId, u32> = HashMap::new();
         for (id, parent, kind, properties, _) in nodes {
             let index = indexes.entry(*parent).or_insert(0);
-            mutations.push(Mutation::Create(Node { id: *id, parent: *parent, index: *index, kind: *kind, properties: properties.iter().cloned().collect() }));
+            mutations.push(Mutation::Create(Node {
+                id: *id,
+                parent: *parent,
+                index: *index,
+                kind: *kind,
+                properties: properties.iter().cloned().collect(),
+            }));
             *index += 1;
         }
         for (id, _, _, _, frame) in nodes {
-            mutations.push(Mutation::Layout { id: *id, frame: Layout { x: frame.x, y: frame.y, width: frame.width, height: frame.height } });
+            mutations.push(Mutation::Layout {
+                id: *id,
+                frame: Layout {
+                    x: frame.x,
+                    y: frame.y,
+                    width: frame.width,
+                    height: frame.height,
+                },
+            });
         }
         let mut scene = crate::scene::Scene::new();
         scene.apply(mutations);
         let viewport = nodes.first().map_or(Size::ZERO, |(.., frame)| frame.size());
-        Self { scene, animator: crate::animator::Animator::new(), timers: crate::animator::Timers::default(), events: Vec::new(), commands: Vec::new(), now_ms: 0, viewport }
+        Self {
+            scene,
+            animator: crate::animator::Animator::new(),
+            timers: crate::animator::Timers::default(),
+            events: Vec::new(),
+            commands: Vec::new(),
+            now_ms: 0,
+            viewport,
+        }
     }
 
     pub fn ctx(&mut self) -> crate::context::Ctx<'_> {
@@ -413,7 +510,10 @@ impl Harness {
 
     /// Feeds the pending scene changes to `react`, like the runtime does
     /// after a commit.
-    pub fn settle(&mut self, mut react: impl FnMut(&mut crate::context::Ctx<'_>, crate::scene::Change)) {
+    pub fn settle(
+        &mut self,
+        mut react: impl FnMut(&mut crate::context::Ctx<'_>, crate::scene::Change),
+    ) {
         for change in self.scene.take_changes() {
             let mut ctx = self.ctx();
             react(&mut ctx, change);
@@ -422,7 +522,12 @@ impl Harness {
 
     /// A primary-button pointer event at a window position.
     #[must_use]
-    pub fn pointer(&self, phase: crate::backend::PointerPhase, x: f32, y: f32) -> crate::backend::PointerEvent {
+    pub fn pointer(
+        &self,
+        phase: crate::backend::PointerPhase,
+        x: f32,
+        y: f32,
+    ) -> crate::backend::PointerEvent {
         crate::backend::PointerEvent {
             window: crate::backend::MAIN_WINDOW,
             phase,

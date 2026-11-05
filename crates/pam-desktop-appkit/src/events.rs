@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject};
-use objc2::{define_class, msg_send, sel, AnyThread};
+use objc2::{AnyThread, define_class, msg_send, sel};
 use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSEventType};
 use objc2_foundation::NSObjectNSThreadPerformAdditions;
 use pam_desktop_ui::backend::{BackendEvent, Modifiers};
@@ -87,7 +87,10 @@ impl MainThread {
     pub fn wake(&self) {
         // SAFETY: `pump:` is implemented by `MainPump` and takes one object
         // argument, here nil. The call only enqueues the message.
-        unsafe { self.pump.performSelectorOnMainThread_withObject_waitUntilDone(sel!(pump:), None, false) };
+        unsafe {
+            self.pump
+                .performSelectorOnMainThread_withObject_waitUntilDone(sel!(pump:), None, false)
+        };
     }
 
     /// Runs `job` on the main thread, then drains the runtime.
@@ -256,11 +259,18 @@ pub fn key_name(event: &NSEvent) -> String {
     }
     // Ignoring Control, Option and Command (but not Shift) gives the letter
     // of a chord instead of a control code or an alternate glyph.
-    let text = event.charactersIgnoringModifiers().map(|characters| characters.to_string()).unwrap_or_default();
+    let text = event
+        .charactersIgnoringModifiers()
+        .map(|characters| characters.to_string())
+        .unwrap_or_default();
     let mut characters = text.chars();
     match (characters.next(), characters.next()) {
         // Function keys without a W3C name live in a private use area.
-        (Some(character), None) if !character.is_control() && !('\u{F700}'..='\u{F8FF}').contains(&character) => text,
+        (Some(character), None)
+            if !character.is_control() && !('\u{F700}'..='\u{F8FF}').contains(&character) =>
+        {
+            text
+        }
         _ => String::from("Unidentified"),
     }
 }

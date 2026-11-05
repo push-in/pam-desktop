@@ -712,7 +712,11 @@ mod tests {
                 PamStatus::InvalidArgument
             );
             assert_eq!(
-                pam_desktop_engine_set_surface_policy(std::ptr::null_mut(), 0, std::ptr::null_mut()),
+                pam_desktop_engine_set_surface_policy(
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut()
+                ),
                 PamStatus::InvalidArgument
             );
             pam_desktop_engine_free(handle);

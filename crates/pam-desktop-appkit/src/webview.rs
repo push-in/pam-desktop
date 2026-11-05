@@ -6,19 +6,20 @@ use std::rc::Rc;
 
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{NSView, NSWindowOrderingMode};
 use objc2_core_foundation::{CGPoint, CGRect};
-use objc2_foundation::{NSError, NSString, NSURLRequest, NSURL};
+use objc2_foundation::{NSError, NSString, NSURL, NSURLRequest};
 use objc2_web_kit::{
-    WKAudiovisualMediaTypes, WKFrameInfo, WKMediaCaptureType, WKNavigation, WKNavigationAction, WKNavigationActionPolicy,
-    WKNavigationDelegate, WKPermissionDecision, WKScriptMessage, WKScriptMessageHandler, WKSecurityOrigin, WKUIDelegate,
-    WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebView, WKWebViewConfiguration, WKWebpagePreferences,
+    WKAudiovisualMediaTypes, WKFrameInfo, WKMediaCaptureType, WKNavigation, WKNavigationAction,
+    WKNavigationActionPolicy, WKNavigationDelegate, WKPermissionDecision, WKScriptMessage,
+    WKScriptMessageHandler, WKSecurityOrigin, WKUIDelegate, WKUserContentController, WKUserScript,
+    WKUserScriptInjectionTime, WKWebView, WKWebViewConfiguration, WKWebpagePreferences,
     WKWebsiteDataStore, WKWindowFeatures,
 };
 use pam_desktop_ui::backend::{BackendEvent, NodeId, WebSource, WebViewEvent, WebViewState};
 use pam_desktop_ui::geometry::Size;
-use pam_desktop_ui::webview::{navigation_allowed, BRIDGE_SCRIPT};
+use pam_desktop_ui::webview::{BRIDGE_SCRIPT, navigation_allowed};
 
 use crate::events::Events;
 use crate::util::{cg_size, ns_string};
@@ -27,7 +28,8 @@ use crate::util::{cg_size, ns_string};
 const HANDLER: &str = "pam";
 /// Adds or removes the rule that stops the page from scrolling.
 const LOCK_SCROLL: &str = "(function(){if(document.getElementById('pam-no-scroll'))return;var style=document.createElement('style');style.id='pam-no-scroll';style.textContent='html,body{overflow:hidden !important;}';(document.head||document.documentElement).appendChild(style);})();";
-const UNLOCK_SCROLL: &str = "(function(){var style=document.getElementById('pam-no-scroll');if(style)style.remove();})();";
+const UNLOCK_SCROLL: &str =
+    "(function(){var style=document.getElementById('pam-no-scroll');if(style)style.remove();})();";
 
 /// State shared with the delegate of the web view.
 struct Shared {
@@ -43,16 +45,20 @@ struct Shared {
 
 impl Shared {
     fn emit(&self, event: WebViewEvent) {
-        self.events.push(BackendEvent::WebView { id: self.id, event });
+        self.events
+            .push(BackendEvent::WebView { id: self.id, event });
     }
 
     fn failed(&self, error: &NSError) {
         let domain = error.domain().to_string();
         // A stopped load (timeout, new source, refused navigation) is not
         // a failure of the page.
-        let cancelled = (domain == "NSURLErrorDomain" && error.code() == -999) || (domain == "WebKitErrorDomain" && error.code() == 102);
+        let cancelled = (domain == "NSURLErrorDomain" && error.code() == -999)
+            || (domain == "WebKitErrorDomain" && error.code() == 102);
         if !cancelled {
-            self.emit(WebViewEvent::Failed(error.localizedDescription().to_string()));
+            self.emit(WebViewEvent::Failed(
+                error.localizedDescription().to_string(),
+            ));
         }
     }
 }
@@ -66,7 +72,10 @@ fn evaluate(view: &WKWebView, script: &str) {
 
 fn address(view: &WKWebView) -> String {
     // SAFETY: plain property read on the main thread.
-    unsafe { view.URL() }.and_then(|url| url.absoluteString()).map(|url| url.to_string()).unwrap_or_default()
+    unsafe { view.URL() }
+        .and_then(|url| url.absoluteString())
+        .map(|url| url.to_string())
+        .unwrap_or_default()
 }
 
 define_class!(
@@ -215,27 +224,48 @@ impl WebHost {
         let this = WebDelegate::alloc(mtm).set_ivars(Rc::clone(&shared));
         // SAFETY: `init` is the designated initializer of `NSObject`.
         let delegate: Retained<WebDelegate> = unsafe { msg_send![super(this), init] };
-        Self { mtm, shared, delegate, view: None, state: None, current: WebSource::None, size: Size::ZERO }
+        Self {
+            mtm,
+            shared,
+            delegate,
+            view: None,
+            state: None,
+            current: WebSource::None,
+            size: Size::ZERO,
+        }
     }
 
     /// The view placed inside the node's view, once there is one.
     pub fn view(&self) -> Option<Retained<NSView>> {
-        self.view.as_ref().map(|view| Retained::into_super(view.clone()))
+        self.view
+            .as_ref()
+            .map(|view| Retained::into_super(view.clone()))
     }
 
     /// The scripts every page gets: the bridge, and the scroll lock.
     fn install_scripts(&self, controller: &WKUserContentController, scroll_enabled: bool) {
         // Pages reach the application through `PamNative.postMessage`.
-        let bridge = BRIDGE_SCRIPT.replace("__PAM_POST__", "window.webkit.messageHandlers.pam.postMessage");
+        let bridge = BRIDGE_SCRIPT.replace(
+            "__PAM_POST__",
+            "window.webkit.messageHandlers.pam.postMessage",
+        );
         // SAFETY: plain constructors and calls on the main thread.
         unsafe {
             controller.removeAllUserScripts();
             let script = |source: &str, time: WKUserScriptInjectionTime| {
-                WKUserScript::initWithSource_injectionTime_forMainFrameOnly(WKUserScript::alloc(self.mtm), &ns_string(source), time, true)
+                WKUserScript::initWithSource_injectionTime_forMainFrameOnly(
+                    WKUserScript::alloc(self.mtm),
+                    &ns_string(source),
+                    time,
+                    true,
+                )
             };
             controller.addUserScript(&script(&bridge, WKUserScriptInjectionTime::AtDocumentStart));
             if !scroll_enabled {
-                controller.addUserScript(&script(LOCK_SCROLL, WKUserScriptInjectionTime::AtDocumentEnd));
+                controller.addUserScript(&script(
+                    LOCK_SCROLL,
+                    WKUserScriptInjectionTime::AtDocumentEnd,
+                ));
             }
         }
     }
@@ -250,7 +280,10 @@ impl WebHost {
             let configuration = WKWebViewConfiguration::new(self.mtm);
             let controller = configuration.userContentController();
             self.install_scripts(&controller, state.scroll_enabled);
-            controller.addScriptMessageHandler_name(ProtocolObject::from_ref(&*self.delegate), &ns_string(HANDLER));
+            controller.addScriptMessageHandler_name(
+                ProtocolObject::from_ref(&*self.delegate),
+                &ns_string(HANDLER),
+            );
             // Without storage nothing the page keeps outlives the view.
             let store = if state.dom_storage {
                 WKWebsiteDataStore::defaultDataStore(self.mtm)
@@ -263,9 +296,15 @@ impl WebHost {
             } else {
                 WKAudiovisualMediaTypes::All
             });
-            configuration.preferences().setJavaScriptCanOpenWindowsAutomatically(false);
+            configuration
+                .preferences()
+                .setJavaScriptCanOpenWindowsAutomatically(false);
             let frame = CGRect::new(CGPoint::ZERO, cg_size(self.size));
-            let view = WKWebView::initWithFrame_configuration(WKWebView::alloc(self.mtm), frame, &configuration);
+            let view = WKWebView::initWithFrame_configuration(
+                WKWebView::alloc(self.mtm),
+                frame,
+                &configuration,
+            );
             view.setNavigationDelegate(Some(ProtocolObject::from_ref(&*self.delegate)));
             view.setUIDelegate(Some(ProtocolObject::from_ref(&*self.delegate)));
             view
@@ -283,7 +322,9 @@ impl WebHost {
             view.stopLoading();
             view.setNavigationDelegate(None);
             view.setUIDelegate(None);
-            view.configuration().userContentController().removeScriptMessageHandlerForName(&ns_string(HANDLER));
+            view.configuration()
+                .userContentController()
+                .removeScriptMessageHandlerForName(&ns_string(HANDLER));
         }
         view.removeFromSuperview();
     }
@@ -301,30 +342,57 @@ impl WebHost {
         let shared = Rc::clone(&self.shared);
         *shared.allowed_hosts.borrow_mut() = state.allowed_hosts.clone();
         shared.javascript.set(state.javascript);
-        let script_changed = previous.as_ref().is_some_and(|previous| previous.injected_script != state.injected_script);
+        let script_changed = previous
+            .as_ref()
+            .is_some_and(|previous| previous.injected_script != state.injected_script);
         *shared.script.borrow_mut() = state.injected_script.clone();
 
         let rebuilt = self.view.is_none()
-            || previous.as_ref().is_some_and(|previous| previous.dom_storage != state.dom_storage || previous.inline_media != state.inline_media);
+            || previous.as_ref().is_some_and(|previous| {
+                previous.dom_storage != state.dom_storage
+                    || previous.inline_media != state.inline_media
+            });
         if rebuilt {
             self.create(state, parent);
         }
-        let Some(view) = self.view.clone() else { return };
+        let Some(view) = self.view.clone() else {
+            return;
+        };
         // SAFETY: plain property write on the main thread.
-        unsafe { view.setCustomUserAgent((!state.user_agent.is_empty()).then(|| ns_string(&state.user_agent)).as_deref()) };
-        if previous.as_ref().is_some_and(|previous| previous.stop != state.stop) {
+        unsafe {
+            view.setCustomUserAgent(
+                (!state.user_agent.is_empty())
+                    .then(|| ns_string(&state.user_agent))
+                    .as_deref(),
+            )
+        };
+        if previous
+            .as_ref()
+            .is_some_and(|previous| previous.stop != state.stop)
+        {
             // SAFETY: plain call on the main thread.
             unsafe { view.stopLoading() };
         }
-        if !rebuilt && previous.as_ref().map(|previous| previous.scroll_enabled) != Some(state.scroll_enabled) {
+        if !rebuilt
+            && previous.as_ref().map(|previous| previous.scroll_enabled)
+                != Some(state.scroll_enabled)
+        {
             // SAFETY: plain property read on the main thread.
             let controller = unsafe { view.configuration().userContentController() };
             self.install_scripts(&controller, state.scroll_enabled);
             if shared.loaded.get() && state.javascript {
-                evaluate(&view, if state.scroll_enabled { UNLOCK_SCROLL } else { LOCK_SCROLL });
+                evaluate(
+                    &view,
+                    if state.scroll_enabled {
+                        UNLOCK_SCROLL
+                    } else {
+                        LOCK_SCROLL
+                    },
+                );
             }
         }
-        let source_changed = previous.as_ref().map(|previous| &previous.source) != Some(&state.source);
+        let source_changed =
+            previous.as_ref().map(|previous| &previous.source) != Some(&state.source);
         let source = if source_changed {
             Some(state.source.clone())
         } else if rebuilt {
@@ -343,8 +411,12 @@ impl WebHost {
                 shared.loaded.set(false);
                 match NSURL::URLWithString(&ns_string(url.trim())) {
                     // SAFETY: plain call on the main thread.
-                    Some(url) => drop(unsafe { view.loadRequest(&NSURLRequest::requestWithURL(&url)) }),
-                    None => shared.emit(WebViewEvent::Failed(String::from("The address is not valid"))),
+                    Some(url) => {
+                        drop(unsafe { view.loadRequest(&NSURLRequest::requestWithURL(&url)) })
+                    }
+                    None => shared.emit(WebViewEvent::Failed(String::from(
+                        "The address is not valid",
+                    ))),
                 }
             }
             Some(WebSource::Html(html)) => {

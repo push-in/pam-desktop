@@ -6,7 +6,7 @@ use pam_desktop_wire::PropKey;
 
 use crate::backend::NodeId;
 use crate::chrome::Measure;
-use crate::context::{event_kind, Ctx};
+use crate::context::{Ctx, event_kind};
 use crate::scene::{Change, IdMap};
 use crate::text::utf16_len;
 use crate::wiremap::WireMap;
@@ -24,7 +24,11 @@ impl TextLayouts {
     pub fn on_change(&mut self, ctx: &mut Ctx<'_>, change: Change) {
         match change {
             Change::Created(id, _) | Change::Updated(id, PropKey::OnTextLayout) => {
-                if ctx.scene.node(id).is_some_and(|node| node.handles(PropKey::OnTextLayout)) {
+                if ctx
+                    .scene
+                    .node(id)
+                    .is_some_and(|node| node.handles(PropKey::OnTextLayout))
+                {
                     self.listeners.entry(id).or_insert(None);
                     self.dirty = true;
                 } else {
@@ -34,10 +38,9 @@ impl TextLayouts {
             Change::Removed(id, _) => {
                 self.listeners.remove(&id);
             }
-            Change::Updated(id, _) | Change::Frame(id)
-                if self.listeners.contains_key(&id) => {
-                    self.dirty = true;
-                }
+            Change::Updated(id, _) | Change::Frame(id) if self.listeners.contains_key(&id) => {
+                self.dirty = true;
+            }
             _ => {}
         }
     }
@@ -49,10 +52,14 @@ impl TextLayouts {
         }
         let ids: Vec<NodeId> = self.listeners.keys().copied().collect();
         for id in ids {
-            let Some(node) = ctx.scene.node(id) else { continue };
+            let Some(node) = ctx.scene.node(id) else {
+                continue;
+            };
             let padding = node.props().padding();
             let width = (node.frame.width - padding.horizontal()).max(0.0);
-            let Some(block) = ctx.scene.text_block(id) else { continue };
+            let Some(block) = ctx.scene.text_block(id) else {
+                continue;
+            };
             if width <= 0.0 {
                 continue;
             }
@@ -66,7 +73,9 @@ impl TextLayouts {
                 visible.line_count
             };
             let layout = (total, visible.line_count, visible.width, visible.height);
-            let Some(reported) = self.listeners.get_mut(&id) else { continue };
+            let Some(reported) = self.listeners.get_mut(&id) else {
+                continue;
+            };
             if *reported == Some(layout) {
                 continue;
             }
@@ -99,7 +108,9 @@ impl TextLayouts {
     /// A text node that reports span presses, when `id` is one.
     #[must_use]
     pub fn listens(ctx: &Ctx<'_>, id: NodeId) -> bool {
-        ctx.scene.node(id).is_some_and(|node| node.is_text_bearing() && node.handles(PropKey::OnSpanPress))
+        ctx.scene
+            .node(id)
+            .is_some_and(|node| node.is_text_bearing() && node.handles(PropKey::OnSpanPress))
     }
 
     /// The button went down on a paragraph at `index`. Returns whether a
@@ -111,9 +122,18 @@ impl TextLayouts {
 
     /// The button went up. A release on the run that was pressed reports it.
     pub fn press_up(&mut self, ctx: &mut Ctx<'_>, released: Option<(NodeId, u32)>) -> bool {
-        let Some((id, slot)) = self.pressed.take() else { return false };
-        if released.is_some_and(|(node, index)| node == id && Self::slot_at(ctx, node, index) == Some(slot)) {
-            ctx.emit_if(id, PropKey::OnSpanPress, event_kind::SPAN_PRESS, slot.to_string().into_bytes());
+        let Some((id, slot)) = self.pressed.take() else {
+            return false;
+        };
+        if released.is_some_and(|(node, index)| {
+            node == id && Self::slot_at(ctx, node, index) == Some(slot)
+        }) {
+            ctx.emit_if(
+                id,
+                PropKey::OnSpanPress,
+                event_kind::SPAN_PRESS,
+                slot.to_string().into_bytes(),
+            );
         }
         true
     }

@@ -49,7 +49,13 @@ fn role(role: Role, hidden: bool) -> AccessibleRole {
 /// as the name when the description brings none. `announced` is the name
 /// applied before, so live regions only speak when it changes. `native`
 /// marks a platform control, which keeps its own role.
-pub fn apply(widget: &gtk::Widget, accessibility: Option<&Accessibility>, text: Option<&str>, announced: &mut String, native: bool) {
+pub fn apply(
+    widget: &gtk::Widget,
+    accessibility: Option<&Accessibility>,
+    text: Option<&str>,
+    announced: &mut String,
+    native: bool,
+) {
     let plain = Accessibility::default();
     let described = accessibility.unwrap_or(&plain);
     let wanted = match accessibility {
@@ -63,7 +69,11 @@ pub fn apply(widget: &gtk::Widget, accessibility: Option<&Accessibility>, text: 
     if !native && widget.accessible_role() != wanted && !widget.is_realized() {
         widget.set_accessible_role(wanted);
     }
-    let name = if described.label.is_empty() { text.unwrap_or_default() } else { described.label.as_str() };
+    let name = if described.label.is_empty() {
+        text.unwrap_or_default()
+    } else {
+        described.label.as_str()
+    };
     if name.is_empty() {
         widget.reset_property(AccessibleProperty::Label);
     } else {
@@ -76,7 +86,11 @@ pub fn apply(widget: &gtk::Widget, accessibility: Option<&Accessibility>, text: 
     }
     match described.range {
         Some((minimum, maximum, now)) => {
-            widget.update_property(&[Property::ValueMin(f64::from(minimum)), Property::ValueMax(f64::from(maximum)), Property::ValueNow(f64::from(now))]);
+            widget.update_property(&[
+                Property::ValueMin(f64::from(minimum)),
+                Property::ValueMax(f64::from(maximum)),
+                Property::ValueNow(f64::from(now)),
+            ]);
         }
         None => {
             widget.reset_property(AccessibleProperty::ValueMin);
@@ -105,10 +119,18 @@ pub fn apply(widget: &gtk::Widget, accessibility: Option<&Accessibility>, text: 
         Some(expanded) => widget.update_state(&[State::Expanded(Some(expanded))]),
         None => widget.reset_state(AccessibleState::Expanded),
     }
-    widget.update_state(&[State::Disabled(described.disabled), State::Busy(described.busy), State::Hidden(described.hide_descendants)]);
+    widget.update_state(&[
+        State::Disabled(described.disabled),
+        State::Busy(described.busy),
+        State::Hidden(described.hide_descendants),
+    ]);
 
     // Live regions speak their new content.
-    if described.live != LiveRegion::Off && !name.is_empty() && name != announced.as_str() && widget.is_realized() {
+    if described.live != LiveRegion::Off
+        && !name.is_empty()
+        && name != announced.as_str()
+        && widget.is_realized()
+    {
         let priority = match described.live {
             LiveRegion::Assertive => gtk::AccessibleAnnouncementPriority::High,
             _ => gtk::AccessibleAnnouncementPriority::Medium,

@@ -9,21 +9,25 @@ use std::rc::Rc;
 
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject, Sel};
-use objc2::{define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::{
+    AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel,
+};
 use objc2_app_kit::{
-    NSApplication, NSBackgroundColorAttributeName, NSBorderType, NSColor, NSControl, NSControlTextEditingDelegate,
-    NSEventModifierFlags, NSEventType, NSFocusRingType, NSFontAttributeName, NSForegroundColorAttributeName,
-    NSKernAttributeName, NSLineBreakMode, NSMutableParagraphStyle, NSParagraphStyleAttributeName, NSScrollView,
-    NSScrollerStyle, NSSecureTextField, NSText, NSTextDelegate, NSTextField, NSTextFieldDelegate, NSTextInputClient, NSTextView,
-    NSTextViewDelegate, NSTextViewDidChangeSelectionNotification, NSView,
+    NSApplication, NSBackgroundColorAttributeName, NSBorderType, NSColor, NSControl,
+    NSControlTextEditingDelegate, NSEventModifierFlags, NSEventType, NSFocusRingType,
+    NSFontAttributeName, NSForegroundColorAttributeName, NSKernAttributeName, NSLineBreakMode,
+    NSMutableParagraphStyle, NSParagraphStyleAttributeName, NSScrollView, NSScrollerStyle,
+    NSSecureTextField, NSText, NSTextDelegate, NSTextField, NSTextFieldDelegate, NSTextInputClient,
+    NSTextView, NSTextViewDelegate, NSTextViewDidChangeSelectionNotification, NSView,
 };
 use objc2_core_foundation::{CGRect, CGSize};
 use objc2_foundation::{
-    NSAttributedString, NSAttributedStringKey, NSDictionary, NSMutableDictionary, NSNotification, NSNotificationCenter, NSNumber,
-    NSRange, NSString,
+    NSAttributedString, NSAttributedStringKey, NSDictionary, NSMutableDictionary, NSNotification,
+    NSNotificationCenter, NSNumber, NSRange, NSString,
 };
 use pam_desktop_ui::backend::{
-    BackendEvent, InputConfig, InputEvent, InputPurpose, KeyEvent, NodeId, TextContent, VerticalAlign, MAIN_WINDOW,
+    BackendEvent, InputConfig, InputEvent, InputPurpose, KeyEvent, MAIN_WINDOW, NodeId,
+    TextContent, VerticalAlign,
 };
 use pam_desktop_ui::color::Color;
 use pam_desktop_ui::geometry::Size;
@@ -41,7 +45,10 @@ fn any<T: AsRef<AnyObject> + ?Sized>(value: &T) -> &AnyObject {
 
 enum Control {
     Line(Retained<NSTextField>),
-    Area { scroll: Retained<NSScrollView>, view: Retained<NSTextView> },
+    Area {
+        scroll: Retained<NSScrollView>,
+        view: Retained<NSTextView>,
+    },
 }
 
 /// What a field changed on the window's shared field editor, to put back
@@ -72,7 +79,8 @@ impl Shared {
     /// may answer by replacing the text (masks), which AppKit does not
     /// expect in the middle of the edit that is being reported.
     fn emit(&self, event: InputEvent) {
-        self.events.push_later(BackendEvent::Input { id: self.id, event });
+        self.events
+            .push_later(BackendEvent::Input { id: self.id, event });
     }
 
     /// The text of the key press being handled, when it types something.
@@ -81,21 +89,33 @@ impl Shared {
         if event.r#type() != NSEventType::KeyDown {
             return None;
         }
-        if event.modifierFlags().intersects(NSEventModifierFlags::Command | NSEventModifierFlags::Control) {
+        if event
+            .modifierFlags()
+            .intersects(NSEventModifierFlags::Command | NSEventModifierFlags::Control)
+        {
             return None;
         }
         let text = event.characters()?.to_string();
-        let types = !text.is_empty() && !text.chars().any(|character| character.is_control() || ('\u{F700}'..='\u{F8FF}').contains(&character));
+        let types = !text.is_empty()
+            && !text.chars().any(|character| {
+                character.is_control() || ('\u{F700}'..='\u{F8FF}').contains(&character)
+            });
         types.then_some(text)
     }
 
     /// The attributes text has in the control (font, color, spacing, alignment).
-    fn text_attributes(&self, color: Option<Color>) -> Retained<NSMutableDictionary<NSAttributedStringKey, AnyObject>> {
+    fn text_attributes(
+        &self,
+        color: Option<Color>,
+    ) -> Retained<NSMutableDictionary<NSAttributedStringKey, AnyObject>> {
         let config = self.config.borrow();
-        let attributes: Retained<NSMutableDictionary<NSAttributedStringKey, AnyObject>> = NSMutableDictionary::new();
+        let attributes: Retained<NSMutableDictionary<NSAttributedStringKey, AnyObject>> =
+            NSMutableDictionary::new();
         let style = NSMutableParagraphStyle::new();
         style.setAlignment(text::alignment(config.align));
-        let color = color.or(config.color).map_or_else(NSColor::labelColor, ns_color);
+        let color = color
+            .or(config.color)
+            .map_or_else(NSColor::labelColor, ns_color);
         // SAFETY: the attribute names are immutable strings exported by
         // AppKit, and every value has the class its attribute documents.
         unsafe {
@@ -103,7 +123,10 @@ impl Shared {
             attributes.insert(NSForegroundColorAttributeName, any(&*color));
             attributes.insert(NSParagraphStyleAttributeName, any(&*style));
             if config.letter_spacing != 0.0 {
-                attributes.insert(NSKernAttributeName, any(&*NSNumber::new_f64(f64::from(config.letter_spacing))));
+                attributes.insert(
+                    NSKernAttributeName,
+                    any(&*NSNumber::new_f64(f64::from(config.letter_spacing))),
+                );
             }
         }
         attributes
@@ -111,7 +134,10 @@ impl Shared {
 
     fn selection_of(text: &NSText) -> (u32, u32) {
         let range = text.selectedRange();
-        (range.location as u32, (range.location + range.length) as u32)
+        (
+            range.location as u32,
+            (range.location + range.length) as u32,
+        )
     }
 
     /// The user edited the single-line field.
@@ -122,7 +148,10 @@ impl Shared {
         let editor = field.currentEditor();
         let mut value = field.stringValue().to_string();
         let limit = self.config.borrow().max_length;
-        let composing = editor.as_ref().and_then(|editor| editor.downcast_ref::<NSTextView>()).is_some_and(|editor| editor.hasMarkedText());
+        let composing = editor
+            .as_ref()
+            .and_then(|editor| editor.downcast_ref::<NSTextView>())
+            .is_some_and(|editor| editor.hasMarkedText());
         if let Some(limit) = limit.filter(|_| !composing) {
             // Maximum length in UTF-16 units, never splitting a character.
             let mut units = 0;
@@ -134,7 +163,10 @@ impl Shared {
                 })
                 .collect();
             if kept.len() != value.len() {
-                let caret = editor.as_ref().map_or(0, |editor| editor.selectedRange().location).min(kept.encode_utf16().count());
+                let caret = editor
+                    .as_ref()
+                    .map_or(0, |editor| editor.selectedRange().location)
+                    .min(kept.encode_utf16().count());
                 self.updating.set(true);
                 field.setStringValue(&ns_string(&kept));
                 if let Some(editor) = &editor {
@@ -148,8 +180,13 @@ impl Shared {
             self.emit(InputEvent::KeyPressed { key });
         }
         let length = value.encode_utf16().count() as u32;
-        let selection = editor.as_ref().map_or((length, length), |editor| Self::selection_of(editor));
-        self.emit(InputEvent::Edited { text: value, selection });
+        let selection = editor
+            .as_ref()
+            .map_or((length, length), |editor| Self::selection_of(editor));
+        self.emit(InputEvent::Edited {
+            text: value,
+            selection,
+        });
     }
 
     fn selection_changed(&self, text: &NSText) {
@@ -167,14 +204,21 @@ impl Shared {
         if self.updating.get() {
             return;
         }
-        self.emit(InputEvent::Edited { text: view.string().to_string(), selection: Self::selection_of(view) });
+        self.emit(InputEvent::Edited {
+            text: view.string().to_string(),
+            selection: Self::selection_of(view),
+        });
     }
 
     /// Size of the laid out text, for editors that grow with their content.
     fn report_content_size(&self, view: &NSTextView) {
         // SAFETY: the layout manager and container belong to the text view
         // and are only used during this call.
-        let (Some(manager), Some(container)) = (unsafe { view.layoutManager() }, unsafe { view.textContainer() }) else { return };
+        let (Some(manager), Some(container)) = (unsafe { view.layoutManager() }, unsafe {
+            view.textContainer()
+        }) else {
+            return;
+        };
         manager.ensureLayoutForTextContainer(&container);
         let used = manager.usedRectForTextContainer(&container).size;
         let size = Size::new(used.width.ceil() as f32, used.height.ceil() as f32);
@@ -186,13 +230,17 @@ impl Shared {
     /// `NSTextView` has no placeholder: the box paints it while the
     /// editor is empty.
     fn refresh_placeholder(&self, empty: bool) {
-        let Some(container) = self.container.load() else { return };
+        let Some(container) = self.container.load() else {
+            return;
+        };
         let config = self.config.borrow();
         if !empty || config.placeholder.is_empty() {
             container.set_text(None);
             return;
         }
-        let color = config.placeholder_color.unwrap_or(Color::rgba(128, 128, 128, 200));
+        let color = config
+            .placeholder_color
+            .unwrap_or(Color::rgba(128, 128, 128, 200));
         container.set_text(Some(&TextContent {
             block: TextBlock {
                 runs: vec![TextRun {
@@ -220,8 +268,12 @@ impl Shared {
         let shift = NSApplication::sharedApplication(mtm)
             .currentEvent()
             .is_some_and(|event| event.modifierFlags().contains(NSEventModifierFlags::Shift));
-        if selector == sel!(insertNewline:) || (!multiline && selector == sel!(insertNewlineIgnoringFieldEditor:)) {
-            self.emit(InputEvent::KeyPressed { key: String::from("Enter") });
+        if selector == sel!(insertNewline:)
+            || (!multiline && selector == sel!(insertNewlineIgnoringFieldEditor:))
+        {
+            self.emit(InputEvent::KeyPressed {
+                key: String::from("Enter"),
+            });
             let submits = !multiline || (self.config.borrow().submit_on_enter && !shift);
             if submits {
                 self.emit(InputEvent::Submitted);
@@ -231,7 +283,9 @@ impl Shared {
             return submits;
         }
         if selector == sel!(deleteBackward:) {
-            self.emit(InputEvent::KeyPressed { key: String::from("Backspace") });
+            self.emit(InputEvent::KeyPressed {
+                key: String::from("Backspace"),
+            });
             return false;
         }
         if multiline && (selector == sel!(insertTab:) || selector == sel!(insertBacktab:)) {
@@ -248,11 +302,16 @@ impl Shared {
         if selector == sel!(cancelOperation:) || selector == sel!(noop:) {
             // A key the control has no use for (Escape, an unbound chord)
             // goes to the core, like a key no native control consumed.
-            let Some(event) = NSApplication::sharedApplication(mtm).currentEvent().filter(|event| event.r#type() == NSEventType::KeyDown)
+            let Some(event) = NSApplication::sharedApplication(mtm)
+                .currentEvent()
+                .filter(|event| event.r#type() == NSEventType::KeyDown)
             else {
                 return false;
             };
-            let window = view.window().and_then(|window| window.downcast::<PamWindow>().ok()).map_or(MAIN_WINDOW, |window| window.id());
+            let window = view
+                .window()
+                .and_then(|window| window.downcast::<PamWindow>().ok())
+                .map_or(MAIN_WINDOW, |window| window.id());
             self.events.push_later(BackendEvent::Key(KeyEvent {
                 window,
                 pressed: true,
@@ -266,13 +325,27 @@ impl Shared {
     }
 
     /// Whether an edit of the editor fits in the maximum length.
-    fn allows_change(&self, view: &NSTextView, range: NSRange, replacement: Option<&NSString>) -> bool {
-        let Some(replacement) = replacement else { return true };
+    fn allows_change(
+        &self,
+        view: &NSTextView,
+        range: NSRange,
+        replacement: Option<&NSString>,
+    ) -> bool {
+        let Some(replacement) = replacement else {
+            return true;
+        };
         let inserted = replacement.length();
         let fits = self.config.borrow().max_length.is_none_or(|limit| {
-            inserted == 0 || (view.string().length() + inserted).saturating_sub(range.length) <= limit as usize
+            inserted == 0
+                || (view.string().length() + inserted).saturating_sub(range.length)
+                    <= limit as usize
         });
-        if fits && !self.updating.get() && inserted > 0 && replacement.to_string() != "\n" && let Some(key) = self.typed_text(view.mtm()) {
+        if fits
+            && !self.updating.get()
+            && inserted > 0
+            && replacement.to_string() != "\n"
+            && let Some(key) = self.typed_text(view.mtm())
+        {
             self.emit(InputEvent::KeyPressed { key });
         }
         fits
@@ -292,7 +365,8 @@ impl Shared {
             // by AppKit and its value is a color.
             unsafe {
                 let key: &NSString = NSBackgroundColorAttributeName;
-                let attributes: Retained<NSDictionary<NSAttributedStringKey, AnyObject>> = NSDictionary::from_slices(&[key], &[any(&*color)]);
+                let attributes: Retained<NSDictionary<NSAttributedStringKey, AnyObject>> =
+                    NSDictionary::from_slices(&[key], &[any(&*color)]);
                 editor.setSelectedTextAttributes(&attributes);
             }
         }
@@ -307,7 +381,13 @@ impl Shared {
                 editor.setTypingAttributes(&attributes);
                 if let Some(storage) = editor.textStorage() {
                     let everything = NSRange::new(0, storage.length());
-                    storage.addAttribute_value_range(NSKernAttributeName, any(&*NSNumber::new_f64(f64::from(self.config.borrow().letter_spacing))), everything);
+                    storage.addAttribute_value_range(
+                        NSKernAttributeName,
+                        any(&*NSNumber::new_f64(f64::from(
+                            self.config.borrow().letter_spacing,
+                        ))),
+                        everything,
+                    );
                 }
             }
         }
@@ -316,9 +396,16 @@ impl Shared {
     /// Keyboard focus entered or left the single-line field. Returns
     /// `false` when the field has focus but its editor is not attached yet.
     fn line_focus_changed(&self, focused: bool) -> bool {
-        let Some(field) = self.line.borrow().as_ref().and_then(Weak::load) else { return true };
+        let Some(field) = self.line.borrow().as_ref().and_then(Weak::load) else {
+            return true;
+        };
         if focused {
-            let Some(editor) = field.currentEditor().and_then(|editor| editor.downcast::<NSTextView>().ok()) else { return false };
+            let Some(editor) = field
+                .currentEditor()
+                .and_then(|editor| editor.downcast::<NSTextView>().ok())
+            else {
+                return false;
+            };
             // The field editor is shared by every field of the window.
             *self.editor_style.borrow_mut() = Some(EditorStyle {
                 caret: editor.insertionPointColor(),
@@ -330,7 +417,9 @@ impl Shared {
                 // After AppKit placed the caret for the click that focused it.
                 let field = Weak::from_retained(&field);
                 self.events.defer(move || {
-                    if let Some(field) = field.load().filter(|field| field.currentEditor().is_some()) {
+                    if let Some(field) =
+                        field.load().filter(|field| field.currentEditor().is_some())
+                    {
                         // SAFETY: `selectText:` accepts a nil sender.
                         unsafe { field.selectText(None) };
                     }
@@ -338,9 +427,12 @@ impl Shared {
             }
         } else {
             let style = self.editor_style.borrow_mut().take();
-            let (Some(style), Some(window)) = (style, field.window()) else { return true };
+            let (Some(style), Some(window)) = (style, field.window()) else {
+                return true;
+            };
             // SAFETY: asks for the existing shared field editor only.
-            let Some(editor) = (unsafe { window.fieldEditor_forObject(false, None) }).and_then(|editor| editor.downcast::<NSTextView>().ok())
+            let Some(editor) = (unsafe { window.fieldEditor_forObject(false, None) })
+                .and_then(|editor| editor.downcast::<NSTextView>().ok())
             else {
                 return true;
             };
@@ -361,7 +453,13 @@ impl Shared {
         }
         let attributes = self.text_attributes(None);
         // SAFETY: the attributes are the standard text attributes built above.
-        let value = unsafe { NSAttributedString::initWithString_attributes(NSAttributedString::alloc(), &field.stringValue(), Some(&attributes)) };
+        let value = unsafe {
+            NSAttributedString::initWithString_attributes(
+                NSAttributedString::alloc(),
+                &field.stringValue(),
+                Some(&attributes),
+            )
+        };
         self.updating.set(true);
         field.setAttributedStringValue(&value);
         self.updating.set(false);
@@ -447,7 +545,10 @@ pub struct InputHost {
 
 fn make_line(mtm: MainThreadMarker, secure: bool) -> Retained<NSTextField> {
     let field = if secure {
-        Retained::into_super(NSSecureTextField::initWithFrame(NSSecureTextField::alloc(mtm), CGRect::ZERO))
+        Retained::into_super(NSSecureTextField::initWithFrame(
+            NSSecureTextField::alloc(mtm),
+            CGRect::ZERO,
+        ))
     } else {
         NSTextField::initWithFrame(NSTextField::alloc(mtm), CGRect::ZERO)
     };
@@ -466,7 +567,14 @@ fn make_line(mtm: MainThreadMarker, secure: bool) -> Retained<NSTextField> {
 }
 
 impl InputHost {
-    pub fn new(mtm: MainThreadMarker, id: NodeId, multiline: bool, container: &PamView, parent: &NSView, events: &Rc<Events>) -> Self {
+    pub fn new(
+        mtm: MainThreadMarker,
+        id: NodeId,
+        multiline: bool,
+        container: &PamView,
+        parent: &NSView,
+        events: &Rc<Events>,
+    ) -> Self {
         let shared = Rc::new(Shared {
             id,
             events: Rc::clone(events),
@@ -483,12 +591,15 @@ impl InputHost {
 
         let control = if multiline {
             let scroll = NSTextView::scrollableTextView(mtm);
-            let view = scroll.documentView().and_then(|document| document.downcast::<NSTextView>().ok()).unwrap_or_else(|| {
-                // Never taken: the factory always builds a text view.
-                let view = NSTextView::initWithFrame(NSTextView::alloc(mtm), CGRect::ZERO);
-                scroll.setDocumentView(Some(&view));
-                view
-            });
+            let view = scroll
+                .documentView()
+                .and_then(|document| document.downcast::<NSTextView>().ok())
+                .unwrap_or_else(|| {
+                    // Never taken: the factory always builds a text view.
+                    let view = NSTextView::initWithFrame(NSTextView::alloc(mtm), CGRect::ZERO);
+                    scroll.setDocumentView(Some(&view));
+                    view
+                });
             scroll.setDrawsBackground(false);
             scroll.setBorderType(NSBorderType::NoBorder);
             scroll.setHasVerticalScroller(true);
@@ -518,7 +629,14 @@ impl InputHost {
             parent.addSubview(&field);
             Control::Line(field)
         };
-        let host = Self { mtm, control, delegate, shared, secure: false, size: Size::ZERO };
+        let host = Self {
+            mtm,
+            control,
+            delegate,
+            shared,
+            secure: false,
+            size: Size::ZERO,
+        };
         host.attach(container);
         host
     }
@@ -593,7 +711,9 @@ impl InputHost {
     /// Gives the control keyboard focus.
     pub fn focus(&self) {
         let target = self.focus_target();
-        let Some(window) = target.window() else { return };
+        let Some(window) = target.window() else {
+            return;
+        };
         if !window.makeFirstResponder(Some(&target)) {
             return;
         }
@@ -623,7 +743,11 @@ impl InputHost {
                 // A field draws its line at its top: it is sized to one
                 // line and placed where the alignment asks.
                 let line = text::line_height(&text::font(&self.shared.config.borrow().font));
-                let natural = field.cell().map_or(0.0, |cell| cell.cellSize().height as f32).max(line).ceil();
+                let natural = field
+                    .cell()
+                    .map_or(0.0, |cell| cell.cellSize().height as f32)
+                    .max(line)
+                    .ceil();
                 let height = natural.min(available);
                 let top = insets.top
                     + match vertical {
@@ -631,10 +755,20 @@ impl InputHost {
                         VerticalAlign::Center => ((available - height) / 2.0).floor(),
                         VerticalAlign::Bottom => available - height,
                     };
-                field.setFrame(cg_rect(pam_desktop_ui::geometry::Rect::new(insets.left, top, width, height)));
+                field.setFrame(cg_rect(pam_desktop_ui::geometry::Rect::new(
+                    insets.left,
+                    top,
+                    width,
+                    height,
+                )));
             }
             Control::Area { scroll, view } => {
-                scroll.setFrame(cg_rect(pam_desktop_ui::geometry::Rect::new(insets.left, insets.top, width, available)));
+                scroll.setFrame(cg_rect(pam_desktop_ui::geometry::Rect::new(
+                    insets.left,
+                    insets.top,
+                    width,
+                    available,
+                )));
                 self.shared.report_content_size(view);
             }
         }
@@ -678,20 +812,36 @@ impl InputHost {
                     field.setPlaceholderAttributedString(None);
                 } else {
                     // Without an authored colour the hint is the system's.
-                    let attributes = self.shared.text_attributes(Some(config.placeholder_color.unwrap_or(Color::rgba(128, 128, 128, 200))));
+                    let attributes = self.shared.text_attributes(Some(
+                        config
+                            .placeholder_color
+                            .unwrap_or(Color::rgba(128, 128, 128, 200)),
+                    ));
                     if config.placeholder_color.is_none() {
                         // SAFETY: the attribute name is an immutable string
                         // exported by AppKit and its value is a color.
-                        unsafe { attributes.insert(NSForegroundColorAttributeName, any(&*NSColor::placeholderTextColor())) };
+                        unsafe {
+                            attributes.insert(
+                                NSForegroundColorAttributeName,
+                                any(&*NSColor::placeholderTextColor()),
+                            )
+                        };
                     }
                     // SAFETY: the attributes are the standard text attributes built above.
                     let placeholder = unsafe {
-                        NSAttributedString::initWithString_attributes(NSAttributedString::alloc(), &ns_string(&config.placeholder), Some(&attributes))
+                        NSAttributedString::initWithString_attributes(
+                            NSAttributedString::alloc(),
+                            &ns_string(&config.placeholder),
+                            Some(&attributes),
+                        )
                     };
                     field.setPlaceholderAttributedString(Some(&placeholder));
                 }
                 // A field that is being edited takes the new style at once.
-                if let Some(editor) = field.currentEditor().and_then(|editor| editor.downcast::<NSTextView>().ok()) {
+                if let Some(editor) = field
+                    .currentEditor()
+                    .and_then(|editor| editor.downcast::<NSTextView>().ok())
+                {
                     self.shared.style_editor(&editor);
                 }
                 self.shared.restyle_line(field);
@@ -714,7 +864,10 @@ impl InputHost {
                     if config.selection_color.is_none() {
                         let key: &NSString = NSBackgroundColorAttributeName;
                         let attributes: Retained<NSDictionary<NSAttributedStringKey, AnyObject>> =
-                            NSDictionary::from_slices(&[key], &[any(&*NSColor::selectedTextBackgroundColor())]);
+                            NSDictionary::from_slices(
+                                &[key],
+                                &[any(&*NSColor::selectedTextBackgroundColor())],
+                            );
                         view.setSelectedTextAttributes(&attributes);
                     }
                 }
@@ -775,7 +928,10 @@ impl InputHost {
         let length = editor.string().length();
         let start = (start as usize).min(length);
         self.shared.updating.set(true);
-        editor.setSelectedRange(NSRange::new(start, (end as usize).min(length).saturating_sub(start)));
+        editor.setSelectedRange(NSRange::new(
+            start,
+            (end as usize).min(length).saturating_sub(start),
+        ));
         self.shared.updating.set(false);
     }
 

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use super::{request_map, Module, Reply};
+use super::{Module, Reply, request_map};
 use crate::wiremap::WireMap;
 
 // ---- device ---------------------------------------------------------------
@@ -22,7 +22,10 @@ pub fn device_status() -> WireMap {
         .with("batteryLevel", status.battery_level)
         .with("charging", status.charging)
         .with("networkType", status.network)
-        .with("expensiveNetwork", status.network == super::probe::NETWORK_CELLULAR)
+        .with(
+            "expensiveNetwork",
+            status.network == super::probe::NETWORK_CELLULAR,
+        )
         .with("lowPowerMode", status.low_power)
 }
 
@@ -48,31 +51,43 @@ pub struct Device {
 
 impl Device {
     fn ensure_polling(&self) {
-        let Ok(mut state) = self.state.lock() else { return };
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
         if state.polling {
             return;
         }
         state.polling = true;
         let shared = Arc::clone(&self.state);
-        let _ = thread::Builder::new().name("pam-device".into()).spawn(move || loop {
-            let interval = {
-                let Ok(mut state) = shared.lock() else { return };
-                if state.subscriptions.is_empty() {
-                    state.polling = false;
-                    return;
-                }
-                let status = device_status().encode();
-                for subscription in state.subscriptions.values_mut() {
-                    if subscription.delivered.as_deref() != Some(status.as_slice())
-                        && let Some(waiter) = subscription.waiter.take() {
-                            subscription.delivered = Some(status.clone());
-                            waiter.success(status.clone());
+        let _ = thread::Builder::new()
+            .name("pam-device".into())
+            .spawn(move || {
+                loop {
+                    let interval = {
+                        let Ok(mut state) = shared.lock() else { return };
+                        if state.subscriptions.is_empty() {
+                            state.polling = false;
+                            return;
                         }
+                        let status = device_status().encode();
+                        for subscription in state.subscriptions.values_mut() {
+                            if subscription.delivered.as_deref() != Some(status.as_slice())
+                                && let Some(waiter) = subscription.waiter.take()
+                            {
+                                subscription.delivered = Some(status.clone());
+                                waiter.success(status.clone());
+                            }
+                        }
+                        state
+                            .subscriptions
+                            .values()
+                            .map(|subscription| subscription.interval)
+                            .min()
+                            .unwrap_or(Duration::from_secs(1))
+                    };
+                    thread::sleep(interval);
                 }
-                state.subscriptions.values().map(|subscription| subscription.interval).min().unwrap_or(Duration::from_secs(1))
-            };
-            thread::sleep(interval);
-        });
+            });
     }
 }
 
@@ -85,21 +100,39 @@ impl Module for Device {
         match method {
             "status" => reply.map(&device_status()),
             "watch" => {
-                let interval = request.integer("intervalMs").unwrap_or(1000).clamp(250, 60_000) as u64;
+                let interval = request
+                    .integer("intervalMs")
+                    .unwrap_or(1000)
+                    .clamp(250, 60_000) as u64;
                 let id = {
-                    let Ok(mut state) = self.state.lock() else { return reply.failure("Device status failed") };
+                    let Ok(mut state) = self.state.lock() else {
+                        return reply.failure("Device status failed");
+                    };
                     state.next += 1;
                     let id = state.next;
-                    state.subscriptions.insert(id, Subscription { interval: Duration::from_millis(interval), delivered: None, waiter: None });
+                    state.subscriptions.insert(
+                        id,
+                        Subscription {
+                            interval: Duration::from_millis(interval),
+                            delivered: None,
+                            waiter: None,
+                        },
+                    );
                     id
                 };
                 self.ensure_polling();
                 reply.map(&WireMap::new().with("subscription", id));
             }
             "next" => {
-                let Some(id) = request.integer("subscription") else { return reply.failure("Missing device subscription") };
-                let Ok(mut state) = self.state.lock() else { return reply.failure("Device status failed") };
-                let Some(subscription) = state.subscriptions.get_mut(&id) else { return reply.failure("Unknown device subscription") };
+                let Some(id) = request.integer("subscription") else {
+                    return reply.failure("Missing device subscription");
+                };
+                let Ok(mut state) = self.state.lock() else {
+                    return reply.failure("Device status failed");
+                };
+                let Some(subscription) = state.subscriptions.get_mut(&id) else {
+                    return reply.failure("Unknown device subscription");
+                };
                 if subscription.waiter.is_some() {
                     return reply.failure("Observation already has a pending read");
                 }
@@ -113,8 +146,14 @@ impl Module for Device {
                 }
             }
             "stop" => {
-                let Some(id) = request.integer("subscription") else { return reply.failure("Missing device subscription") };
-                let stopped = self.state.lock().ok().and_then(|mut state| state.subscriptions.remove(&id));
+                let Some(id) = request.integer("subscription") else {
+                    return reply.failure("Missing device subscription");
+                };
+                let stopped = self
+                    .state
+                    .lock()
+                    .ok()
+                    .and_then(|mut state| state.subscriptions.remove(&id));
                 if let Some(waiter) = stopped.and_then(|subscription| subscription.waiter) {
                     waiter.failure("Observation stopped");
                 }
@@ -146,7 +185,11 @@ impl Module for Permissions {
         };
         match method {
             "status" | "request" => match request.integer("kind") {
-                Some(kind) if (1..=9).contains(&kind) => reply.map(&WireMap::new().with("status", 1_i64).with("canAskAgain", false)),
+                Some(kind) if (1..=9).contains(&kind) => reply.map(
+                    &WireMap::new()
+                        .with("status", 1_i64)
+                        .with("canAskAgain", false),
+                ),
                 Some(kind) => reply.failure(format!("Unknown permission kind {kind}")),
                 None => reply.failure("Missing permission kind"),
             },
@@ -178,7 +221,12 @@ pub struct Linking {
 impl Linking {
     #[must_use]
     pub fn new(initial: Option<String>) -> Self {
-        Self { state: Arc::new(Mutex::new(LinkState { initial: initial.filter(|url| !url.trim().is_empty()), ..LinkState::default() })) }
+        Self {
+            state: Arc::new(Mutex::new(LinkState {
+                initial: initial.filter(|url| !url.trim().is_empty()),
+                ..LinkState::default()
+            })),
+        }
     }
 
     /// A link arrived (a second launch forwarded its URL, a scheme activation).
@@ -187,7 +235,9 @@ impl Linking {
         if url.is_empty() || url.len() > MAX_LINK_BYTES {
             return;
         }
-        let Ok(mut state) = self.state.lock() else { return };
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
         match state.waiter.take() {
             Some(waiter) => waiter.map(&WireMap::new().with("url", url)),
             None => {
@@ -202,10 +252,14 @@ impl Linking {
 
 impl Module for Linking {
     fn call(&mut self, method: &str, _payload: &[u8], reply: Reply) {
-        let Ok(mut state) = self.state.lock() else { return reply.failure("Linking failed") };
+        let Ok(mut state) = self.state.lock() else {
+            return reply.failure("Linking failed");
+        };
         match method {
             // Consumed by the first read.
-            "initialUrl" => reply.map(&WireMap::new().with("url", state.initial.take().unwrap_or_default())),
+            "initialUrl" => {
+                reply.map(&WireMap::new().with("url", state.initial.take().unwrap_or_default()))
+            }
             "nextUrl" => {
                 if let Some(url) = state.pending.pop_front() {
                     reply.map(&WireMap::new().with("url", url));
@@ -230,8 +284,14 @@ impl Module for Linking {
 /// Schemes an application may hand to the system.
 #[must_use]
 pub fn can_open_url(url: &str) -> bool {
-    let Some((scheme, rest)) = url.split_once(':') else { return false };
-    !rest.is_empty() && matches!(scheme.to_ascii_lowercase().as_str(), "https" | "http" | "mailto" | "tel" | "geo")
+    let Some((scheme, rest)) = url.split_once(':') else {
+        return false;
+    };
+    !rest.is_empty()
+        && matches!(
+            scheme.to_ascii_lowercase().as_str(),
+            "https" | "http" | "mailto" | "tel" | "geo"
+        )
 }
 
 /// Opens a URL with the system's default handler.
@@ -273,7 +333,9 @@ fn directory_usage(directory: &Path) -> (i64, i64) {
     let mut bytes = 0_i64;
     let mut stack = vec![directory.to_path_buf()];
     while let Some(current) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&current) else { continue };
+        let Ok(entries) = fs::read_dir(&current) else {
+            continue;
+        };
         for entry in entries.filter_map(Result::ok) {
             match entry.metadata() {
                 Ok(metadata) if metadata.is_dir() => stack.push(entry.path()),
@@ -296,7 +358,9 @@ pub struct Cache {
 impl Cache {
     #[must_use]
     pub fn new(cache_directory: &Path) -> Self {
-        Self { root: cache_directory.to_path_buf() }
+        Self {
+            root: cache_directory.to_path_buf(),
+        }
     }
 
     fn usage(&self, freed: i64) -> WireMap {
@@ -313,7 +377,14 @@ impl Cache {
     }
 
     fn total(&self) -> i64 {
-        [IMAGE_CACHE_DIRECTORY, MEDIA_CACHE_DIRECTORY, SHARES_DIRECTORY].iter().map(|name| directory_usage(&self.root.join(name)).1).sum()
+        [
+            IMAGE_CACHE_DIRECTORY,
+            MEDIA_CACHE_DIRECTORY,
+            SHARES_DIRECTORY,
+        ]
+        .iter()
+        .map(|name| directory_usage(&self.root.join(name)).1)
+        .sum()
     }
 
     fn clear(&self, preserve_offline: bool) {
@@ -325,12 +396,19 @@ impl Cache {
             return;
         }
         // Media pinned for offline use (`<name>.media` with a `<name>.pin`) stays.
-        let Ok(entries) = fs::read_dir(&media) else { return };
+        let Ok(entries) = fs::read_dir(&media) else {
+            return;
+        };
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
-            let pinned = path.with_extension("pin").exists() || path.extension().is_some_and(|extension| extension == "pin");
+            let pinned = path.with_extension("pin").exists()
+                || path.extension().is_some_and(|extension| extension == "pin");
             if !pinned {
-                let _ = if path.is_dir() { fs::remove_dir_all(&path) } else { fs::remove_file(&path) };
+                let _ = if path.is_dir() {
+                    fs::remove_dir_all(&path)
+                } else {
+                    fs::remove_file(&path)
+                };
             }
         }
     }
@@ -402,8 +480,16 @@ impl Module for Toast {
 #[must_use]
 pub fn locale_tag() -> String {
     let raw = crate::input_format::system_locale();
-    let tag = raw.split(['.', '@']).next().unwrap_or("en-US").replace('_', "-");
-    if tag.is_empty() { String::from("en-US") } else { tag }
+    let tag = raw
+        .split(['.', '@'])
+        .next()
+        .unwrap_or("en-US")
+        .replace('_', "-");
+    if tag.is_empty() {
+        String::from("en-US")
+    } else {
+        tag
+    }
 }
 
 /// The IANA time zone id of the system (`America/Sao_Paulo`), `UTC` when unknown.
@@ -451,9 +537,17 @@ mod tests {
         fs::create_dir_all(root.join(IMAGE_CACHE_DIRECTORY)).unwrap();
         fs::create_dir_all(root.join(MEDIA_CACHE_DIRECTORY)).unwrap();
         fs::write(root.join(IMAGE_CACHE_DIRECTORY).join("a.bin"), [0_u8; 10]).unwrap();
-        fs::write(root.join(MEDIA_CACHE_DIRECTORY).join("song.media"), [0_u8; 20]).unwrap();
+        fs::write(
+            root.join(MEDIA_CACHE_DIRECTORY).join("song.media"),
+            [0_u8; 20],
+        )
+        .unwrap();
         fs::write(root.join(MEDIA_CACHE_DIRECTORY).join("song.pin"), []).unwrap();
-        fs::write(root.join(MEDIA_CACHE_DIRECTORY).join("clip.media"), [0_u8; 30]).unwrap();
+        fs::write(
+            root.join(MEDIA_CACHE_DIRECTORY).join("clip.media"),
+            [0_u8; 30],
+        )
+        .unwrap();
         let cache = Cache::new(&root);
         assert_eq!(cache.usage(0).integer("totalBytes"), Some(60));
         assert_eq!(cache.usage(0).integer("fileCount"), Some(4));

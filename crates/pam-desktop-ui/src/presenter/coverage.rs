@@ -4,7 +4,7 @@
 use pam_desktop_wire::PropKey;
 
 use crate::backend::NodeId;
-use crate::context::{event_kind, Ctx};
+use crate::context::{Ctx, event_kind};
 use crate::scene::{Change, IdMap};
 
 #[derive(Default)]
@@ -17,11 +17,11 @@ pub struct Coverage {
 impl Coverage {
     pub fn on_change(&mut self, ctx: &mut Ctx<'_>, change: Change) {
         match change {
-            Change::Created(id, _) | Change::Updated(id, PropKey::OnRouteCovered | PropKey::OnRouteFocused) => {
-                let listens = ctx
-                    .scene
-                    .node(id)
-                    .is_some_and(|node| node.handles(PropKey::OnRouteCovered) || node.handles(PropKey::OnRouteFocused));
+            Change::Created(id, _)
+            | Change::Updated(id, PropKey::OnRouteCovered | PropKey::OnRouteFocused) => {
+                let listens = ctx.scene.node(id).is_some_and(|node| {
+                    node.handles(PropKey::OnRouteCovered) || node.handles(PropKey::OnRouteFocused)
+                });
                 if listens {
                     // Listeners start "focused": one mounted in a hidden route hears about it once.
                     self.listeners.entry(id).or_insert(false);
@@ -51,15 +51,27 @@ impl Coverage {
         let ids: Vec<NodeId> = self.listeners.keys().copied().collect();
         for id in ids {
             let covered = !ctx.scene.is_effectively_visible(id);
-            let Some(reported) = self.listeners.get_mut(&id) else { continue };
+            let Some(reported) = self.listeners.get_mut(&id) else {
+                continue;
+            };
             if *reported == covered {
                 continue;
             }
             *reported = covered;
             if covered {
-                ctx.emit_if(id, PropKey::OnRouteCovered, event_kind::ROUTE_COVERED, Vec::new());
+                ctx.emit_if(
+                    id,
+                    PropKey::OnRouteCovered,
+                    event_kind::ROUTE_COVERED,
+                    Vec::new(),
+                );
             } else {
-                ctx.emit_if(id, PropKey::OnRouteFocused, event_kind::ROUTE_FOCUSED, Vec::new());
+                ctx.emit_if(
+                    id,
+                    PropKey::OnRouteFocused,
+                    event_kind::ROUTE_FOCUSED,
+                    Vec::new(),
+                );
             }
         }
     }

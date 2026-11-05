@@ -8,17 +8,23 @@ use pam_desktop_ui::backend::VerticalAlign;
 use pam_desktop_ui::color::Color;
 use pam_desktop_ui::geometry::{Insets, Point, Rect, Size};
 use pam_desktop_ui::text::{FontSpec, TextAlign, TextBlock, TextMetrics};
-use windows::core::{Interface, BOOL, PCWSTR};
+use windows::Win32::Globalization::GetUserDefaultLocaleName;
 use windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush;
 use windows::Win32::Graphics::DirectWrite::{
-    IDWriteFactory, IDWriteFontCollection, IDWriteTextFormat, IDWriteTextLayout, IDWriteTextLayout1, DWRITE_FONT_FEATURE, DWRITE_FONT_FEATURE_TAG,
-    DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_ITALIC, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT, DWRITE_HIT_TEST_METRICS,
-    DWRITE_LINE_METRICS, DWRITE_LINE_SPACING_METHOD_UNIFORM, DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_JUSTIFIED,
-    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_TEXT_METRICS, DWRITE_TEXT_RANGE, DWRITE_TRIMMING,
-    DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_EMERGENCY_BREAK, DWRITE_WORD_WRAPPING_NO_WRAP,
+    DWRITE_FONT_FEATURE, DWRITE_FONT_FEATURE_TAG, DWRITE_FONT_STRETCH_NORMAL,
+    DWRITE_FONT_STYLE_ITALIC, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT,
+    DWRITE_HIT_TEST_METRICS, DWRITE_LINE_METRICS, DWRITE_LINE_SPACING_METHOD_UNIFORM,
+    DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_JUSTIFIED, DWRITE_TEXT_ALIGNMENT_LEADING,
+    DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_TEXT_METRICS, DWRITE_TEXT_RANGE, DWRITE_TRIMMING,
+    DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_EMERGENCY_BREAK,
+    DWRITE_WORD_WRAPPING_NO_WRAP, IDWriteFactory, IDWriteFontCollection, IDWriteTextFormat,
+    IDWriteTextLayout, IDWriteTextLayout1,
 };
-use windows::Win32::Globalization::GetUserDefaultLocaleName;
-use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS};
+use windows::Win32::UI::WindowsAndMessaging::{
+    NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    SystemParametersInfoW,
+};
+use windows::core::{BOOL, Interface, PCWSTR};
 
 use crate::gfx::Device;
 use crate::util::{from_wide, wide};
@@ -57,13 +63,29 @@ pub struct TextEngine {
 }
 
 fn system_ui_font() -> String {
-    let mut metrics = NONCLIENTMETRICSW { cbSize: size_of::<NONCLIENTMETRICSW>() as u32, ..Default::default() };
+    let mut metrics = NONCLIENTMETRICSW {
+        cbSize: size_of::<NONCLIENTMETRICSW>() as u32,
+        ..Default::default()
+    };
     // SAFETY: `metrics` is a properly sized NONCLIENTMETRICSW with cbSize set.
     let found = unsafe {
-        SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, metrics.cbSize, Some(std::ptr::from_mut(&mut metrics).cast()), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0))
+        SystemParametersInfoW(
+            SPI_GETNONCLIENTMETRICS,
+            metrics.cbSize,
+            Some(std::ptr::from_mut(&mut metrics).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
     };
-    let name = if found.is_ok() { from_wide(&metrics.lfMessageFont.lfFaceName) } else { String::new() };
-    if name.is_empty() { String::from("Segoe UI") } else { name }
+    let name = if found.is_ok() {
+        from_wide(&metrics.lfMessageFont.lfFaceName)
+    } else {
+        String::new()
+    };
+    if name.is_empty() {
+        String::from("Segoe UI")
+    } else {
+        name
+    }
 }
 
 /// `"tnum", "liga" 0` (CSS `font-feature-settings`) as OpenType features.
@@ -93,8 +115,14 @@ fn parse_features(features: &str) -> Vec<DWRITE_FONT_FEATURE> {
                 Err(_) => continue,
             },
         };
-        let name = u32::from(bytes[0]) | (u32::from(bytes[1]) << 8) | (u32::from(bytes[2]) << 16) | (u32::from(bytes[3]) << 24);
-        parsed.push(DWRITE_FONT_FEATURE { nameTag: DWRITE_FONT_FEATURE_TAG(name), parameter });
+        let name = u32::from(bytes[0])
+            | (u32::from(bytes[1]) << 8)
+            | (u32::from(bytes[2]) << 16)
+            | (u32::from(bytes[3]) << 24);
+        parsed.push(DWRITE_FONT_FEATURE {
+            nameTag: DWRITE_FONT_FEATURE_TAG(name),
+            parameter,
+        });
     }
     parsed
 }
@@ -113,16 +141,29 @@ impl TextEngine {
         let mut locale = [0_u16; 85];
         // SAFETY: the buffer is LOCALE_NAME_MAX_LENGTH units long.
         let written = unsafe { GetUserDefaultLocaleName(&mut locale) };
-        let locale = if written > 0 { locale[..written as usize].to_vec() } else { wide("en-us") };
-        Self { locale, ui_font: system_ui_font(), metrics: HashMap::new(), collection, families: RefCell::new(HashMap::new()) }
+        let locale = if written > 0 {
+            locale[..written as usize].to_vec()
+        } else {
+            wide("en-us")
+        };
+        Self {
+            locale,
+            ui_font: system_ui_font(),
+            metrics: HashMap::new(),
+            collection,
+            families: RefCell::new(HashMap::new()),
+        }
     }
 
     fn installed(&self, family: &str) -> bool {
-        let Some(collection) = &self.collection else { return true };
+        let Some(collection) = &self.collection else {
+            return true;
+        };
         let name = wide(family);
         let (mut index, mut exists) = (0_u32, BOOL(0));
         // SAFETY: the name is NUL-terminated and the out pointers refer to live locals.
-        unsafe { collection.FindFamilyName(PCWSTR(name.as_ptr()), &mut index, &mut exists) }.is_ok() && exists.as_bool()
+        unsafe { collection.FindFamilyName(PCWSTR(name.as_ptr()), &mut index, &mut exists) }.is_ok()
+            && exists.as_bool()
     }
 
     /// The installed family a font resolves to: the first available entry
@@ -141,19 +182,30 @@ impl TextEngine {
             .map(|entry| entry.trim().trim_matches(['"', '\'']))
             .filter(|entry| !entry.is_empty())
             .find_map(|entry| match entry.to_ascii_lowercase().as_str() {
-                "system-ui" | "system" | "sans-serif" | "ui-sans-serif" | "-apple-system" | "blinkmacsystemfont" => Some(self.ui_font.clone()),
+                "system-ui" | "system" | "sans-serif" | "ui-sans-serif" | "-apple-system"
+                | "blinkmacsystemfont" => Some(self.ui_font.clone()),
                 "serif" | "ui-serif" => Some(String::from("Times New Roman")),
                 "monospace" | "ui-monospace" => Some(String::from("Consolas")),
                 _ => self.installed(entry).then(|| entry.to_owned()),
             })
             .unwrap_or_else(|| self.ui_font.clone());
-        self.families.borrow_mut().insert(font.family.clone(), resolved.clone());
+        self.families
+            .borrow_mut()
+            .insert(font.family.clone(), resolved.clone());
         resolved
     }
 
-    fn format(&self, dwrite: &IDWriteFactory, font: &FontSpec) -> windows::core::Result<IDWriteTextFormat> {
+    fn format(
+        &self,
+        dwrite: &IDWriteFactory,
+        font: &FontSpec,
+    ) -> windows::core::Result<IDWriteTextFormat> {
         let family = wide(&self.family(font));
-        let style = if font.italic { DWRITE_FONT_STYLE_ITALIC } else { DWRITE_FONT_STYLE_NORMAL };
+        let style = if font.italic {
+            DWRITE_FONT_STYLE_ITALIC
+        } else {
+            DWRITE_FONT_STYLE_NORMAL
+        };
         // SAFETY: `family` and `self.locale` are NUL-terminated and outlive the call.
         unsafe {
             dwrite.CreateTextFormat(
@@ -170,23 +222,40 @@ impl TextEngine {
 
     /// Builds the paragraph wrapped to `max_width` (infinite = one line per
     /// paragraph). Measurement and drawing both go through here.
-    pub fn build(&self, dwrite: &IDWriteFactory, block: &TextBlock, max_width: f32) -> Option<Layout> {
+    pub fn build(
+        &self,
+        dwrite: &IDWriteFactory,
+        block: &TextBlock,
+        max_width: f32,
+    ) -> Option<Layout> {
         let mut text: Vec<u16> = Vec::new();
         let mut ranges = Vec::with_capacity(block.runs.len());
         for run in &block.runs {
             let start = text.len() as u32;
             text.extend(run.text.encode_utf16());
-            ranges.push(DWRITE_TEXT_RANGE { startPosition: start, length: text.len() as u32 - start });
+            ranges.push(DWRITE_TEXT_RANGE {
+                startPosition: start,
+                length: text.len() as u32 - start,
+            });
         }
         let fallback = FontSpec::default();
-        let base = block.runs.iter().find(|run| !run.text.is_empty()).or(block.runs.first()).map_or(&fallback, |run| &run.font);
+        let base = block
+            .runs
+            .iter()
+            .find(|run| !run.text.is_empty())
+            .or(block.runs.first())
+            .map_or(&fallback, |run| &run.font);
         let format = self.format(dwrite, base).ok()?;
         let bounded = max_width.is_finite();
         let wraps = bounded && block.max_lines != 1;
         // SAFETY: COM calls on live DirectWrite objects; every pointer passed
         // refers to a local that outlives the call.
         unsafe {
-            let _ = format.SetWordWrapping(if wraps { DWRITE_WORD_WRAPPING_EMERGENCY_BREAK } else { DWRITE_WORD_WRAPPING_NO_WRAP });
+            let _ = format.SetWordWrapping(if wraps {
+                DWRITE_WORD_WRAPPING_EMERGENCY_BREAK
+            } else {
+                DWRITE_WORD_WRAPPING_NO_WRAP
+            });
             // An unbounded layout is only measured: alignment would move it far away.
             let alignment = match block.align {
                 _ if !bounded => DWRITE_TEXT_ALIGNMENT_LEADING,
@@ -196,8 +265,14 @@ impl TextEngine {
                 TextAlign::Justify => DWRITE_TEXT_ALIGNMENT_JUSTIFIED,
             };
             let _ = format.SetTextAlignment(alignment);
-            let width = if bounded { max_width.max(0.0) } else { UNBOUNDED };
-            let layout = dwrite.CreateTextLayout(&text, &format, width, UNBOUNDED).ok()?;
+            let width = if bounded {
+                max_width.max(0.0)
+            } else {
+                UNBOUNDED
+            };
+            let layout = dwrite
+                .CreateTextLayout(&text, &format, width, UNBOUNDED)
+                .ok()?;
             let spaced = layout.cast::<IDWriteTextLayout1>().ok();
             for (run, range) in block.runs.iter().zip(&ranges) {
                 if range.length == 0 {
@@ -208,22 +283,31 @@ impl TextEngine {
                     let _ = layout.SetFontFamilyName(PCWSTR(family.as_ptr()), *range);
                     let _ = layout.SetFontSize(run.font.size.max(0.1), *range);
                     let _ = layout.SetFontWeight(weight(&run.font), *range);
-                    let _ = layout.SetFontStyle(if run.font.italic { DWRITE_FONT_STYLE_ITALIC } else { DWRITE_FONT_STYLE_NORMAL }, *range);
+                    let _ = layout.SetFontStyle(
+                        if run.font.italic {
+                            DWRITE_FONT_STYLE_ITALIC
+                        } else {
+                            DWRITE_FONT_STYLE_NORMAL
+                        },
+                        *range,
+                    );
                 }
                 if !run.font.features.is_empty() {
                     let features = parse_features(&run.font.features);
                     if !features.is_empty()
-                        && let Ok(typography) = dwrite.CreateTypography() {
-                            for feature in features {
-                                let _ = typography.AddFontFeature(feature);
-                            }
-                            let _ = layout.SetTypography(&typography, *range);
+                        && let Ok(typography) = dwrite.CreateTypography()
+                    {
+                        for feature in features {
+                            let _ = typography.AddFontFeature(feature);
                         }
+                        let _ = layout.SetTypography(&typography, *range);
+                    }
                 }
                 if run.letter_spacing != 0.0
-                    && let Some(spaced) = &spaced {
-                        let _ = spaced.SetCharacterSpacing(0.0, run.letter_spacing, 0.0, *range);
-                    }
+                    && let Some(spaced) = &spaced
+                {
+                    let _ = spaced.SetCharacterSpacing(0.0, run.letter_spacing, 0.0, *range);
+                }
                 if run.underline {
                     let _ = layout.SetUnderline(true, *range);
                 }
@@ -251,7 +335,11 @@ impl TextEngine {
             if block.line_height > 0.0 {
                 // The font's line box is centered in the fixed line height (CSS half-leading).
                 let baseline = (block.line_height - lines[0].height) / 2.0 + lines[0].baseline;
-                let _ = layout.SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, block.line_height, baseline);
+                let _ = layout.SetLineSpacing(
+                    DWRITE_LINE_SPACING_METHOD_UNIFORM,
+                    block.line_height,
+                    baseline,
+                );
                 first_baseline = baseline;
                 layout.GetMetrics(&mut metrics).ok()?;
             }
@@ -265,7 +353,11 @@ impl TextEngine {
                     let visible = if block.line_height > 0.0 {
                         block.line_height * block.max_lines as f32
                     } else {
-                        lines.iter().take(block.max_lines as usize).map(|line| line.height).sum()
+                        lines
+                            .iter()
+                            .take(block.max_lines as usize)
+                            .map(|line| line.height)
+                            .sum()
                     };
                     // Only the first `max_lines` lines fit: the last one gets the ellipsis.
                     let _ = layout.SetMaxHeight(visible + 0.01);
@@ -274,7 +366,11 @@ impl TextEngine {
                     truncated = true;
                 }
                 if truncated || (bounded && !wraps) {
-                    let trimming = DWRITE_TRIMMING { granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER, delimiter: 0, delimiterCount: 0 };
+                    let trimming = DWRITE_TRIMMING {
+                        granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER,
+                        delimiter: 0,
+                        delimiterCount: 0,
+                    };
                     if let Ok(sign) = dwrite.CreateEllipsisTrimmingSign(&format) {
                         let _ = layout.SetTrimming(&trimming, &sign);
                     }
@@ -282,13 +378,32 @@ impl TextEngine {
                 }
             }
             let natural = metrics.widthIncludingTrailingWhitespace;
-            let width = if bounded { natural.min(max_width.max(0.0)) } else { natural };
-            Some(Layout { layout, ranges, height, width, natural_width: natural, first_baseline, line_count, truncated, utf16_length: text.len() as u32 })
+            let width = if bounded {
+                natural.min(max_width.max(0.0))
+            } else {
+                natural
+            };
+            Some(Layout {
+                layout,
+                ranges,
+                height,
+                width,
+                natural_width: natural,
+                first_baseline,
+                line_count,
+                truncated,
+                utf16_length: text.len() as u32,
+            })
         }
     }
 
     /// Measures a paragraph exactly as `build` lays it out for drawing.
-    pub fn measure(&mut self, dwrite: &IDWriteFactory, block: &TextBlock, max_width: f32) -> TextMetrics {
+    pub fn measure(
+        &mut self,
+        dwrite: &IDWriteFactory,
+        block: &TextBlock,
+        max_width: f32,
+    ) -> TextMetrics {
         let key = block.layout_key(max_width);
         if let Some(metrics) = self.metrics.get(&key) {
             return *metrics;
@@ -314,14 +429,24 @@ impl TextEngine {
 impl Layout {
     /// Colors every run (runs without a color use the brush passed when
     /// drawing) and paints `selection` with the highlight text color.
-    pub fn apply_colors(&self, block: &TextBlock, device: &Device, selection: Option<((u32, u32), Color)>) {
+    pub fn apply_colors(
+        &self,
+        block: &TextBlock,
+        device: &Device,
+        selection: Option<((u32, u32), Color)>,
+    ) {
         let mut brushes: Vec<(Color, ID2D1SolidColorBrush)> = Vec::new();
         let mut brush_for = |color: Color| -> Option<ID2D1SolidColorBrush> {
             if let Some((_, brush)) = brushes.iter().find(|(known, _)| *known == color) {
                 return Some(brush.clone());
             }
             // SAFETY: COM call on the live device context; the color outlives the call.
-            let brush = unsafe { device.context.CreateSolidColorBrush(&crate::util::color_f(color), None).ok()? };
+            let brush = unsafe {
+                device
+                    .context
+                    .CreateSolidColorBrush(&crate::util::color_f(color), None)
+                    .ok()?
+            };
             brushes.push((color, brush.clone()));
             Some(brush)
         };
@@ -343,9 +468,16 @@ impl Layout {
             if let Some(((start, end), color)) = selection {
                 let end = end.min(self.utf16_length);
                 if start < end
-                    && let Some(brush) = brush_for(color) {
-                        let _ = self.layout.SetDrawingEffect(&brush, DWRITE_TEXT_RANGE { startPosition: start, length: end - start });
-                    }
+                    && let Some(brush) = brush_for(color)
+                {
+                    let _ = self.layout.SetDrawingEffect(
+                        &brush,
+                        DWRITE_TEXT_RANGE {
+                            startPosition: start,
+                            length: end - start,
+                        },
+                    );
+                }
             }
         }
     }
@@ -357,11 +489,18 @@ impl Layout {
         let mut inside = BOOL(0);
         let mut metrics = DWRITE_HIT_TEST_METRICS::default();
         // SAFETY: the out pointers refer to live locals.
-        let hit = unsafe { self.layout.HitTestPoint(point.x, point.y, &mut trailing, &mut inside, &mut metrics) };
+        let hit = unsafe {
+            self.layout
+                .HitTestPoint(point.x, point.y, &mut trailing, &mut inside, &mut metrics)
+        };
         if hit.is_err() {
             return 0;
         }
-        let index = if trailing.as_bool() { metrics.textPosition + metrics.length } else { metrics.textPosition };
+        let index = if trailing.as_bool() {
+            metrics.textPosition + metrics.length
+        } else {
+            metrics.textPosition
+        };
         index.min(self.utf16_length)
     }
 
@@ -376,15 +515,35 @@ impl Layout {
         let mut metrics = [DWRITE_HIT_TEST_METRICS::default(); 16];
         // SAFETY: the buffers passed are live and their lengths are given by the slices.
         unsafe {
-            let fitted = self.layout.HitTestTextRange(start, end - start, 0.0, 0.0, Some(&mut metrics), &mut count);
+            let fitted = self.layout.HitTestTextRange(
+                start,
+                end - start,
+                0.0,
+                0.0,
+                Some(&mut metrics),
+                &mut count,
+            );
             if fitted.is_ok() {
-                rects.extend(metrics.iter().take(count as usize).map(|hit| Rect::new(hit.left, hit.top, hit.width, hit.height)));
+                rects.extend(
+                    metrics
+                        .iter()
+                        .take(count as usize)
+                        .map(|hit| Rect::new(hit.left, hit.top, hit.width, hit.height)),
+                );
                 return;
             }
             // More rectangles than the stack buffer holds: ask again with the reported count.
             let mut all = vec![DWRITE_HIT_TEST_METRICS::default(); count as usize];
-            if self.layout.HitTestTextRange(start, end - start, 0.0, 0.0, Some(&mut all), &mut count).is_ok() {
-                rects.extend(all.iter().take(count as usize).map(|hit| Rect::new(hit.left, hit.top, hit.width, hit.height)));
+            if self
+                .layout
+                .HitTestTextRange(start, end - start, 0.0, 0.0, Some(&mut all), &mut count)
+                .is_ok()
+            {
+                rects.extend(
+                    all.iter()
+                        .take(count as usize)
+                        .map(|hit| Rect::new(hit.left, hit.top, hit.width, hit.height)),
+                );
             }
         }
     }

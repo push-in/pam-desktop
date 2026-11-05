@@ -18,8 +18,8 @@ pub mod test_support;
 pub mod timers;
 
 use std::collections::HashMap;
-use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Sender};
 use std::thread;
 
 use crate::runtime::{Inbound, Inbox, MODULE_FAILURE, MODULE_SUCCESS};
@@ -27,7 +27,11 @@ use crate::wiremap::WireMap;
 
 enum Sink {
     /// The runtime's queue: the result reaches the PHP worker.
-    Inbox { inbox: Arc<Inbox>, generation: u64, request: u64 },
+    Inbox {
+        inbox: Arc<Inbox>,
+        generation: u64,
+        request: u64,
+    },
     /// A plain channel (tests of modules without a runtime).
     Channel(Sender<ModuleResult>),
 }
@@ -44,20 +48,40 @@ pub struct Reply {
 impl Reply {
     #[must_use]
     pub fn new(inbox: Arc<Inbox>, generation: u64, request: u64) -> Self {
-        Self { sink: Sink::Inbox { inbox, generation, request } }
+        Self {
+            sink: Sink::Inbox {
+                inbox,
+                generation,
+                request,
+            },
+        }
     }
 
     /// A reply whose answer can be read from the returned receiver.
     #[must_use]
     pub fn channel() -> (Self, mpsc::Receiver<ModuleResult>) {
         let (sender, receiver) = mpsc::channel();
-        (Self { sink: Sink::Channel(sender) }, receiver)
+        (
+            Self {
+                sink: Sink::Channel(sender),
+            },
+            receiver,
+        )
     }
 
     fn send(self, status: u8, payload: Vec<u8>) {
         match self.sink {
-            Sink::Inbox { inbox, generation, request } => {
-                inbox.post(Inbound::ModuleResult { generation, request, status, payload });
+            Sink::Inbox {
+                inbox,
+                generation,
+                request,
+            } => {
+                inbox.post(Inbound::ModuleResult {
+                    generation,
+                    request,
+                    status,
+                    payload,
+                });
             }
             Sink::Channel(sender) => {
                 let _ = sender.send((status, payload));
@@ -130,7 +154,13 @@ impl Registry {
     }
 
     /// Routes a call; returns the reply back when no module has that name.
-    pub fn call(&mut self, module: &str, method: &str, payload: &[u8], reply: Reply) -> Option<Reply> {
+    pub fn call(
+        &mut self,
+        module: &str,
+        method: &str,
+        payload: &[u8],
+        reply: Reply,
+    ) -> Option<Reply> {
         match self.modules.get_mut(module) {
             Some(handler) => {
                 handler.call(method, payload, reply);
@@ -166,14 +196,19 @@ pub struct SerialWorker {
 impl SerialWorker {
     #[must_use]
     pub fn new(name: &str) -> Self {
-        Self { name: name.to_owned(), jobs: std::sync::Arc::new(std::sync::Mutex::new(None)) }
+        Self {
+            name: name.to_owned(),
+            jobs: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
     }
 
     pub fn run(&self, job: impl FnOnce() + Send + 'static) {
         let mut job: Job = Box::new(job);
         // Senders and the exiting thread meet on this lock, so a job is
         // never left in the queue of a thread that already decided to stop.
-        let Ok(mut slot) = self.jobs.lock() else { return };
+        let Ok(mut slot) = self.jobs.lock() else {
+            return;
+        };
         if let Some(sender) = slot.as_ref() {
             match sender.send(job) {
                 Ok(()) => return,
@@ -185,25 +220,29 @@ impl SerialWorker {
             return;
         }
         let jobs = std::sync::Arc::clone(&self.jobs);
-        let spawned = thread::Builder::new().name(self.name.clone()).spawn(move || loop {
-            match receiver.recv_timeout(SERIAL_IDLE) {
-                Ok(job) => job(),
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    let Ok(mut slot) = jobs.lock() else { return };
-                    match receiver.try_recv() {
-                        Ok(job) => {
-                            drop(slot);
-                            job();
-                        }
-                        Err(_) => {
-                            *slot = None;
-                            return;
+        let spawned = thread::Builder::new()
+            .name(self.name.clone())
+            .spawn(move || {
+                loop {
+                    match receiver.recv_timeout(SERIAL_IDLE) {
+                        Ok(job) => job(),
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            let Ok(mut slot) = jobs.lock() else { return };
+                            match receiver.try_recv() {
+                                Ok(job) => {
+                                    drop(slot);
+                                    job();
+                                }
+                                Err(_) => {
+                                    *slot = None;
+                                    return;
+                                }
+                            }
                         }
                     }
                 }
-            }
-        });
+            });
         *slot = spawned.is_ok().then_some(sender);
     }
 }

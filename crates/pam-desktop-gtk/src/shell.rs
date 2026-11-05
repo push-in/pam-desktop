@@ -11,7 +11,8 @@ use pam_desktop_ui::backend::{BackendEvent, WindowId};
 use pam_desktop_ui::geometry::Point;
 use pam_desktop_ui::runtime::EventQueue;
 use pam_desktop_ui::shell::{
-    Accelerator, Cursor, FileDialogConfig, FileDialogKind, MenuNode, MenuRole, NotificationConfig, WindowCommand, WindowState,
+    Accelerator, Cursor, FileDialogConfig, FileDialogKind, MenuNode, MenuRole, NotificationConfig,
+    WindowCommand, WindowState,
 };
 
 use crate::view::PamView;
@@ -78,11 +79,22 @@ fn build_menu(
                 menu.append_section(None, &section);
                 section = gio::Menu::new();
             }
-            MenuNode::Submenu { label, children, .. } => {
-                let submenu = build_menu(children, group, scope, counter, on_activate, accelerators);
+            MenuNode::Submenu {
+                label, children, ..
+            } => {
+                let submenu =
+                    build_menu(children, group, scope, counter, on_activate, accelerators);
                 section.append_submenu(Some(label), &submenu);
             }
-            MenuNode::Item { id, label, accelerator, enabled, checked, role, .. } => {
+            MenuNode::Item {
+                id,
+                label,
+                accelerator,
+                enabled,
+                checked,
+                role,
+                ..
+            } => {
                 *counter += 1;
                 let name = format!("item{counter}");
                 let activation = match role {
@@ -90,7 +102,9 @@ fn build_menu(
                     None => Activation::Report(id.clone()),
                 };
                 let action = match checked {
-                    Some(checked) => gio::SimpleAction::new_stateful(&name, None, &checked.to_variant()),
+                    Some(checked) => {
+                        gio::SimpleAction::new_stateful(&name, None, &checked.to_variant())
+                    }
                     None => gio::SimpleAction::new(&name, None),
                 };
                 action.set_enabled(*enabled);
@@ -126,7 +140,8 @@ pub struct Shell {
 impl Shell {
     pub fn new(application: gtk::Application, events: Rc<EventQueue>) -> Self {
         // One action reports every activated notification.
-        let action = gio::SimpleAction::new("notification-activated", Some(glib::VariantTy::STRING));
+        let action =
+            gio::SimpleAction::new("notification-activated", Some(glib::VariantTy::STRING));
         let queue = Rc::clone(&events);
         action.connect_activate(move |_, parameter| {
             if let Some(id) = parameter.and_then(|parameter| parameter.get::<String>()) {
@@ -134,10 +149,19 @@ impl Shell {
             }
         });
         application.add_action(&action);
-        Self { application, events, menu_actions: Vec::new(), menu_accelerators: Vec::new() }
+        Self {
+            application,
+            events,
+            menu_actions: Vec::new(),
+            menu_accelerators: Vec::new(),
+        }
     }
 
-    fn role_handler(&self, window: Option<gtk::ApplicationWindow>, main: WindowId) -> Rc<dyn Fn(Activation)> {
+    fn role_handler(
+        &self,
+        window: Option<gtk::ApplicationWindow>,
+        main: WindowId,
+    ) -> Rc<dyn Fn(Activation)> {
         let events = Rc::clone(&self.events);
         Rc::new(move |activation| match activation {
             Activation::Report(id) => events.push(BackendEvent::MenuAction { id }),
@@ -149,7 +173,9 @@ impl Shell {
                     }
                 };
                 match role {
-                    MenuRole::Quit | MenuRole::CloseWindow => events.push(BackendEvent::WindowCloseRequested { window: main }),
+                    MenuRole::Quit | MenuRole::CloseWindow => {
+                        events.push(BackendEvent::WindowCloseRequested { window: main })
+                    }
                     MenuRole::Undo => edit("text.undo"),
                     MenuRole::Redo => edit("text.redo"),
                     MenuRole::Cut => edit("clipboard.cut"),
@@ -172,15 +198,24 @@ impl Shell {
                         }
                     }
                     // The application decides what these show.
-                    MenuRole::About => events.push(BackendEvent::MenuAction { id: "role:about".into() }),
-                    MenuRole::Preferences => events.push(BackendEvent::MenuAction { id: "role:preferences".into() }),
+                    MenuRole::About => events.push(BackendEvent::MenuAction {
+                        id: "role:about".into(),
+                    }),
+                    MenuRole::Preferences => events.push(BackendEvent::MenuAction {
+                        id: "role:preferences".into(),
+                    }),
                     MenuRole::Hide | MenuRole::HideOthers | MenuRole::ShowAll => {}
                 }
             }
         })
     }
 
-    pub fn set_menu_bar(&mut self, menu: &[MenuNode], window: Option<&gtk::ApplicationWindow>, main: WindowId) {
+    pub fn set_menu_bar(
+        &mut self,
+        menu: &[MenuNode],
+        window: Option<&gtk::ApplicationWindow>,
+        main: WindowId,
+    ) {
         for name in self.menu_actions.drain(..) {
             self.application.remove_action(&name);
         }
@@ -197,10 +232,18 @@ impl Shell {
         let handler = self.role_handler(window.cloned(), main);
         let mut counter = 0;
         let mut accelerators = Vec::new();
-        let model = build_menu(menu, &self.application, "app", &mut counter, &handler, &mut accelerators);
+        let model = build_menu(
+            menu,
+            &self.application,
+            "app",
+            &mut counter,
+            &handler,
+            &mut accelerators,
+        );
         self.menu_actions = (1..=counter).map(|index| format!("item{index}")).collect();
         for (detailed, accelerator) in accelerators {
-            self.application.set_accels_for_action(&detailed, &[accelerator.as_str()]);
+            self.application
+                .set_accels_for_action(&detailed, &[accelerator.as_str()]);
             self.menu_accelerators.push(detailed);
         }
         self.application.set_menubar(Some(&model));
@@ -209,7 +252,13 @@ impl Shell {
         }
     }
 
-    pub fn popup_menu(&self, host: &PamView, position: Point, menu: &[MenuNode], done: Box<dyn FnOnce(Option<String>)>) {
+    pub fn popup_menu(
+        &self,
+        host: &PamView,
+        position: Point,
+        menu: &[MenuNode],
+        done: Box<dyn FnOnce(Option<String>)>,
+    ) {
         let group = gio::SimpleActionGroup::new();
         let done = Rc::new(RefCell::new(Some(done)));
         let chosen = Rc::new(Cell::new(false));
@@ -218,24 +267,41 @@ impl Shell {
             let chosen = Rc::clone(&chosen);
             Rc::new(move |activation| {
                 chosen.set(true);
-                if let (Some(done), Activation::Report(id)) = (done.borrow_mut().take(), activation) {
+                if let (Some(done), Activation::Report(id)) = (done.borrow_mut().take(), activation)
+                {
                     done(Some(id));
                 }
             })
         };
         let mut counter = 0;
         let mut accelerators = Vec::new();
-        let model = build_menu(menu, &group, "context", &mut counter, &handler, &mut accelerators);
+        let model = build_menu(
+            menu,
+            &group,
+            "context",
+            &mut counter,
+            &handler,
+            &mut accelerators,
+        );
         host.insert_action_group("context", Some(&group));
         let popover = gtk::PopoverMenu::from_model(Some(&model));
         popover.set_parent(host);
         popover.set_has_arrow(false);
         popover.set_halign(gtk::Align::Start);
-        popover.set_pointing_to(Some(&gdk::Rectangle::new(position.x.round() as i32, position.y.round() as i32, 1, 1)));
+        popover.set_pointing_to(Some(&gdk::Rectangle::new(
+            position.x.round() as i32,
+            position.y.round() as i32,
+            1,
+            1,
+        )));
         // A tooltip must not open over the menu: silence the widgets under
         // the pointer until the menu closes.
         let mut silenced = Vec::new();
-        let mut current = host.pick(f64::from(position.x), f64::from(position.y), gtk::PickFlags::DEFAULT);
+        let mut current = host.pick(
+            f64::from(position.x),
+            f64::from(position.y),
+            gtk::PickFlags::DEFAULT,
+        );
         while let Some(widget) = current {
             if widget.has_tooltip() {
                 widget.set_has_tooltip(false);
@@ -260,7 +326,12 @@ impl Shell {
         popover.popup();
     }
 
-    pub fn pick_files(&self, parent: Option<&gtk::ApplicationWindow>, config: &FileDialogConfig, done: Box<dyn FnOnce(Vec<PathBuf>)>) {
+    pub fn pick_files(
+        &self,
+        parent: Option<&gtk::ApplicationWindow>,
+        config: &FileDialogConfig,
+        done: Box<dyn FnOnce(Vec<PathBuf>)>,
+    ) {
         let dialog = gtk::FileDialog::builder().modal(true).build();
         if !config.title.is_empty() {
             dialog.set_title(&config.title);
@@ -292,7 +363,11 @@ impl Shell {
                 let mut paths = Vec::new();
                 if let Ok(files) = result {
                     for index in 0..files.n_items() {
-                        if let Some(path) = files.item(index).and_downcast::<gio::File>().and_then(|file| file.path()) {
+                        if let Some(path) = files
+                            .item(index)
+                            .and_downcast::<gio::File>()
+                            .and_then(|file| file.path())
+                        {
                             paths.push(path);
                         }
                     }
@@ -302,12 +377,22 @@ impl Shell {
             return;
         }
         let single = move |result: Result<gio::File, glib::Error>| {
-            done(result.ok().and_then(|file| file.path()).into_iter().collect());
+            done(
+                result
+                    .ok()
+                    .and_then(|file| file.path())
+                    .into_iter()
+                    .collect(),
+            );
         };
         match config.kind {
             FileDialogKind::Save => dialog.save(parent, gio::Cancellable::NONE, single),
-            FileDialogKind::SelectFolder => dialog.select_folder(parent, gio::Cancellable::NONE, single),
-            FileDialogKind::Open | FileDialogKind::OpenMultiple => dialog.open(parent, gio::Cancellable::NONE, single),
+            FileDialogKind::SelectFolder => {
+                dialog.select_folder(parent, gio::Cancellable::NONE, single)
+            }
+            FileDialogKind::Open | FileDialogKind::OpenMultiple => {
+                dialog.open(parent, gio::Cancellable::NONE, single)
+            }
         }
     }
 
@@ -316,7 +401,10 @@ impl Shell {
         if !notification.body.is_empty() {
             native.set_body(Some(&notification.body));
         }
-        native.set_default_action_and_target_value("app.notification-activated", Some(&notification.id.to_variant()));
+        native.set_default_action_and_target_value(
+            "app.notification-activated",
+            Some(&notification.id.to_variant()),
+        );
         let id = (!notification.id.is_empty()).then_some(notification.id.as_str());
         self.application.send_notification(id, &native);
     }
@@ -325,9 +413,13 @@ impl Shell {
 pub fn window_command(window: &gtk::ApplicationWindow, host: &PamView, command: &WindowCommand) {
     match command {
         WindowCommand::SetTitle(title) => window.set_title(Some(title)),
-        WindowCommand::SetSize(size) => window.set_default_size(size.width.round() as i32, size.height.round() as i32),
+        WindowCommand::SetSize(size) => {
+            window.set_default_size(size.width.round() as i32, size.height.round() as i32)
+        }
         WindowCommand::SetMinSize(size) => match size {
-            Some(size) => host.set_size_request(size.width.round() as i32, size.height.round() as i32),
+            Some(size) => {
+                host.set_size_request(size.width.round() as i32, size.height.round() as i32)
+            }
             None => host.set_size_request(-1, -1),
         },
         WindowCommand::SetResizable(resizable) => window.set_resizable(*resizable),
@@ -357,14 +449,36 @@ pub fn window_command(window: &gtk::ApplicationWindow, host: &PamView, command: 
 /// Dock, Dash to Dock and the Plasma task manager listen to. It reaches an
 /// installed application, whose desktop entry is named after its id.
 fn launcher_progress(window: &gtk::ApplicationWindow, progress: Option<f32>) {
-    let Some(application) = window.application() else { return };
-    let (Some(connection), Some(id)) = (application.dbus_connection(), application.application_id()) else { return };
+    let Some(application) = window.application() else {
+        return;
+    };
+    let (Some(connection), Some(id)) =
+        (application.dbus_connection(), application.application_id())
+    else {
+        return;
+    };
     let properties = glib::VariantDict::new(None);
-    properties.insert("progress", f64::from(progress.unwrap_or(0.0).clamp(0.0, 1.0)));
+    properties.insert(
+        "progress",
+        f64::from(progress.unwrap_or(0.0).clamp(0.0, 1.0)),
+    );
     properties.insert("progress-visible", progress.is_some());
     let entry = format!("application://{id}.desktop");
-    let path = format!("/com/canonical/unity/launcherentry/{}", id.bytes().fold(5381_u32, |hash, byte| hash.wrapping_mul(33) ^ u32::from(byte)));
-    let _ = connection.emit_signal(None, &path, "com.canonical.Unity.LauncherEntry", "Update", Some(&glib::Variant::tuple_from_iter([entry.to_variant(), properties.end()])));
+    let path = format!(
+        "/com/canonical/unity/launcherentry/{}",
+        id.bytes().fold(5381_u32, |hash, byte| hash.wrapping_mul(33)
+            ^ u32::from(byte))
+    );
+    let _ = connection.emit_signal(
+        None,
+        &path,
+        "com.canonical.Unity.LauncherEntry",
+        "Update",
+        Some(&glib::Variant::tuple_from_iter([
+            entry.to_variant(),
+            properties.end(),
+        ])),
+    );
 }
 
 pub fn window_state(window: &gtk::ApplicationWindow) -> WindowState {
@@ -372,7 +486,12 @@ pub fn window_state(window: &gtk::ApplicationWindow) -> WindowState {
         .surface()
         .and_then(|surface| surface.downcast::<gdk::Toplevel>().ok())
         .is_some_and(|toplevel| toplevel.state().contains(gdk::ToplevelState::MINIMIZED));
-    WindowState { maximized: window.is_maximized(), minimized, full_screen: window.is_fullscreen(), focused: window.is_active() }
+    WindowState {
+        maximized: window.is_maximized(),
+        minimized,
+        full_screen: window.is_fullscreen(),
+        focused: window.is_active(),
+    }
 }
 
 /// Reports maximize, full screen and focus changes.
@@ -380,7 +499,10 @@ pub fn watch_window_state(window: &gtk::ApplicationWindow, id: WindowId, events:
     for property in ["maximized", "fullscreened"] {
         let events = Rc::clone(events);
         window.connect_notify_local(Some(property), move |window, _| {
-            events.push(BackendEvent::WindowStateChanged { window: id, state: window_state(window) });
+            events.push(BackendEvent::WindowStateChanged {
+                window: id,
+                state: window_state(window),
+            });
         });
     }
 }
@@ -390,12 +512,18 @@ pub fn accept_file_drops(host: &PamView, window: WindowId, events: &Rc<EventQueu
     let target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
     let events = Rc::clone(events);
     target.connect_drop(move |_, value, x, y| {
-        let Ok(files) = value.get::<gdk::FileList>() else { return false };
+        let Ok(files) = value.get::<gdk::FileList>() else {
+            return false;
+        };
         let paths: Vec<PathBuf> = files.files().iter().filter_map(gio::File::path).collect();
         if paths.is_empty() {
             return false;
         }
-        events.push(BackendEvent::FilesDropped { window, position: Point::new(x as f32, y as f32), paths });
+        events.push(BackendEvent::FilesDropped {
+            window,
+            position: Point::new(x as f32, y as f32),
+            paths,
+        });
         true
     });
     host.add_controller(target);
@@ -406,8 +534,14 @@ pub fn accept_text_drops(host: &PamView, window: WindowId, events: &Rc<EventQueu
     let target = gtk::DropTarget::new(String::static_type(), gdk::DragAction::COPY);
     let events = Rc::clone(events);
     target.connect_drop(move |_, value, x, y| {
-        let Ok(text) = value.get::<String>() else { return false };
-        events.push(BackendEvent::TextDropped { window, position: Point::new(x as f32, y as f32), text });
+        let Ok(text) = value.get::<String>() else {
+            return false;
+        };
+        events.push(BackendEvent::TextDropped {
+            window,
+            position: Point::new(x as f32, y as f32),
+            text,
+        });
         true
     });
     host.add_controller(target);

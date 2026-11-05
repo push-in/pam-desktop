@@ -3,10 +3,12 @@
 
 use pam_desktop_ui::backend::Modifiers;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, GetKeyboardState, ToUnicode, VkKeyScanW, VIRTUAL_KEY, VK_APPS, VK_BACK, VK_BROWSER_BACK, VK_CAPITAL, VK_CONTROL, VK_DELETE,
-    VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F24, VK_HOME, VK_INSERT, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT,
-    VK_NUMLOCK, VK_OEM_2, VK_OEM_COMMA, VK_OEM_MINUS, VK_OEM_PERIOD, VK_OEM_PLUS, VK_PAUSE, VK_PRIOR, VK_RCONTROL, VK_RETURN, VK_RIGHT,
-    VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SCROLL, VK_SHIFT, VK_SNAPSHOT, VK_SPACE, VK_TAB, VK_UP,
+    GetKeyState, GetKeyboardState, ToUnicode, VIRTUAL_KEY, VK_APPS, VK_BACK, VK_BROWSER_BACK,
+    VK_CAPITAL, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F1, VK_F24, VK_HOME,
+    VK_INSERT, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_NEXT, VK_NUMLOCK,
+    VK_OEM_2, VK_OEM_COMMA, VK_OEM_MINUS, VK_OEM_PERIOD, VK_OEM_PLUS, VK_PAUSE, VK_PRIOR,
+    VK_RCONTROL, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SCROLL, VK_SHIFT,
+    VK_SNAPSHOT, VK_SPACE, VK_TAB, VK_UP, VkKeyScanW,
 };
 
 fn is_down(key: VIRTUAL_KEY) -> bool {
@@ -16,7 +18,12 @@ fn is_down(key: VIRTUAL_KEY) -> bool {
 
 /// Modifier keys held as of the message being handled.
 pub fn modifiers() -> Modifiers {
-    Modifiers { shift: is_down(VK_SHIFT), control: is_down(VK_CONTROL), alt: is_down(VK_MENU), meta: is_down(VK_LWIN) || is_down(VK_RWIN) }
+    Modifiers {
+        shift: is_down(VK_SHIFT),
+        control: is_down(VK_CONTROL),
+        alt: is_down(VK_MENU),
+        meta: is_down(VK_LWIN) || is_down(VK_RWIN),
+    }
 }
 
 fn named(key: VIRTUAL_KEY) -> Option<&'static str> {
@@ -53,7 +60,12 @@ fn named(key: VIRTUAL_KEY) -> Option<&'static str> {
 
 /// Whether the key is a modifier by itself.
 pub fn is_modifier(key: u32) -> bool {
-    u16::try_from(key).is_ok_and(|key| matches!(named(VIRTUAL_KEY(key)), Some("Shift" | "Control" | "Alt" | "Meta")))
+    u16::try_from(key).is_ok_and(|key| {
+        matches!(
+            named(VIRTUAL_KEY(key)),
+            Some("Shift" | "Control" | "Alt" | "Meta")
+        )
+    })
 }
 
 /// The text a key produces with `state`, without disturbing dead keys.
@@ -72,7 +84,9 @@ fn typed(key: u32, scan_code: u32, state: &[u8; 256]) -> Option<String> {
 /// The W3C UI Events `key` value of a virtual key (`WM_KEYDOWN` wParam)
 /// with the scan code from its lParam.
 pub fn key_name(key: u32, scan_code: u32) -> String {
-    let Ok(code) = u16::try_from(key) else { return String::from("Unidentified") };
+    let Ok(code) = u16::try_from(key) else {
+        return String::from("Unidentified");
+    };
     if let Some(name) = named(VIRTUAL_KEY(code)) {
         return name.to_owned();
     }
@@ -89,7 +103,14 @@ pub fn key_name(key: u32, scan_code: u32) -> String {
     }
     // Control and Alt chords produce control characters or nothing: name
     // the key by what it types without them (Ctrl+S is "s").
-    for modifier in [VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_MENU, VK_LMENU, VK_RMENU] {
+    for modifier in [
+        VK_CONTROL,
+        VK_LCONTROL,
+        VK_RCONTROL,
+        VK_MENU,
+        VK_LMENU,
+        VK_RMENU,
+    ] {
         state[usize::from(modifier.0)] = 0;
     }
     typed(key, scan_code, &state).unwrap_or_else(|| String::from("Unidentified"))
@@ -124,11 +145,16 @@ pub fn virtual_key(name: &str) -> Option<u16> {
     if let Some(key) = fixed {
         return Some(key.0);
     }
-    if let Some(number) = name.strip_prefix('F').and_then(|rest| rest.parse::<u16>().ok()) {
+    if let Some(number) = name
+        .strip_prefix('F')
+        .and_then(|rest| rest.parse::<u16>().ok())
+    {
         return (1..=24).contains(&number).then(|| VK_F1.0 + number - 1);
     }
     let mut characters = name.chars();
-    let (Some(character), None) = (characters.next(), characters.next()) else { return None };
+    let (Some(character), None) = (characters.next(), characters.next()) else {
+        return None;
+    };
     if character.is_ascii_alphanumeric() {
         // Letters and digits are their own virtual keys.
         return Some(character.to_ascii_uppercase() as u16);

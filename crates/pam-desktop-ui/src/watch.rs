@@ -15,7 +15,16 @@ use std::time::{Duration, UNIX_EPOCH};
 use crate::runtime::{Inbound, Inbox};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(350);
-const IGNORED_DIRECTORIES: [&str; 8] = ["vendor", "node_modules", "dist", "target", "build", "storage", "cache", "tmp"];
+const IGNORED_DIRECTORIES: [&str; 8] = [
+    "vendor",
+    "node_modules",
+    "dist",
+    "target",
+    "build",
+    "storage",
+    "cache",
+    "tmp",
+];
 const WATCHED_EXTENSIONS: [&str; 8] = ["php", "pam", "json", "css", "svg", "png", "jpg", "ttf"];
 const MAX_DEPTH: usize = 12;
 
@@ -23,13 +32,17 @@ fn fingerprint_directory(directory: &Path, depth: usize, hasher: &mut DefaultHas
     if depth > MAX_DEPTH {
         return;
     }
-    let Ok(entries) = std::fs::read_dir(directory) else { return };
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
     let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
     entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        let Ok(kind) = entry.file_type() else { continue };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
         if kind.is_dir() {
             if name.starts_with('.') || IGNORED_DIRECTORIES.contains(&name) {
                 continue;
@@ -43,13 +56,16 @@ fn fingerprint_directory(directory: &Path, depth: usize, hasher: &mut DefaultHas
             if !watched {
                 continue;
             }
-            let Ok(metadata) = entry.metadata() else { continue };
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
             name.hash(hasher);
             metadata.len().hash(hasher);
             if let Ok(modified) = metadata.modified()
-                && let Ok(elapsed) = modified.duration_since(UNIX_EPOCH) {
-                    elapsed.as_nanos().hash(hasher);
-                }
+                && let Ok(elapsed) = modified.duration_since(UNIX_EPOCH)
+            {
+                elapsed.as_nanos().hash(hasher);
+            }
         }
     }
 }
@@ -67,28 +83,30 @@ pub fn fingerprint(roots: &[PathBuf]) -> u64 {
 /// Posts [`Inbound::Reload`] whenever the sources under `roots` change. The
 /// thread ends with the process.
 pub fn watch(roots: Vec<PathBuf>, inbox: Arc<Inbox>) {
-    let _ = thread::Builder::new().name("pam-watch".into()).spawn(move || {
-        let mut current = fingerprint(&roots);
-        loop {
-            thread::sleep(POLL_INTERVAL);
-            let next = fingerprint(&roots);
-            if next == current {
-                continue;
-            }
-            // Editors write in several steps: wait until the tree is quiet.
-            let mut settled = next;
+    let _ = thread::Builder::new()
+        .name("pam-watch".into())
+        .spawn(move || {
+            let mut current = fingerprint(&roots);
             loop {
-                thread::sleep(Duration::from_millis(120));
-                let again = fingerprint(&roots);
-                if again == settled {
-                    break;
+                thread::sleep(POLL_INTERVAL);
+                let next = fingerprint(&roots);
+                if next == current {
+                    continue;
                 }
-                settled = again;
+                // Editors write in several steps: wait until the tree is quiet.
+                let mut settled = next;
+                loop {
+                    thread::sleep(Duration::from_millis(120));
+                    let again = fingerprint(&roots);
+                    if again == settled {
+                        break;
+                    }
+                    settled = again;
+                }
+                current = settled;
+                inbox.post(Inbound::Reload);
             }
-            current = settled;
-            inbox.post(Inbound::Reload);
-        }
-    });
+        });
 }
 
 #[cfg(test)]

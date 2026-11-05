@@ -88,7 +88,10 @@ impl Role {
 
     #[must_use]
     pub fn is_checkable(self) -> bool {
-        matches!(self, Self::Switch | Self::Checkbox | Self::Radio | Self::ToggleButton)
+        matches!(
+            self,
+            Self::Switch | Self::Checkbox | Self::Radio | Self::ToggleButton
+        )
     }
 }
 
@@ -148,7 +151,9 @@ impl Accessibility {
         self.role.hash(&mut hasher);
         (self.hidden, self.hide_descendants, self.disabled, self.busy).hash(&mut hasher);
         (&self.label, &self.hint, &self.identifier, &self.value_text).hash(&mut hasher);
-        self.range.map(|(minimum, maximum, now)| (minimum.to_bits(), maximum.to_bits(), now.to_bits())).hash(&mut hasher);
+        self.range
+            .map(|(minimum, maximum, now)| (minimum.to_bits(), maximum.to_bits(), now.to_bits()))
+            .hash(&mut hasher);
         (self.checked, self.selected, self.expanded, self.live).hash(&mut hasher);
         self.actions.hash(&mut hasher);
         // Zero is reserved for "never pushed".
@@ -179,9 +184,16 @@ impl Accessibility {
             Some(value) => Role::from_wire(value),
             None => Some(default_role),
         };
-        let mut hidden = role.is_none() || importance == 3 || importance == 4 || props.flag(PropKey::Accessible) == Some(false);
+        let mut hidden = role.is_none()
+            || importance == 3
+            || importance == 4
+            || props.flag(PropKey::Accessible) == Some(false);
         // A picture without a description is decoration.
-        if kind == NodeKind::Image && authored.is_none() && label.is_empty() && props.flag(PropKey::Accessible) != Some(true) {
+        if kind == NodeKind::Image
+            && authored.is_none()
+            && label.is_empty()
+            && props.flag(PropKey::Accessible) != Some(true)
+        {
             hidden = true;
         }
         let role = role.unwrap_or(Role::Generic);
@@ -190,16 +202,33 @@ impl Accessibility {
             Some(3) => Some(Checked::Mixed),
             Some(_) => Some(Checked::Unchecked),
             None if role.is_checkable() => {
-                let on = props.flag(PropKey::Checked).or_else(|| props.flag(PropKey::Value)).unwrap_or(false);
-                Some(if on { Checked::Checked } else { Checked::Unchecked })
+                let on = props
+                    .flag(PropKey::Checked)
+                    .or_else(|| props.flag(PropKey::Value))
+                    .unwrap_or(false);
+                Some(if on {
+                    Checked::Checked
+                } else {
+                    Checked::Unchecked
+                })
             }
             None => None,
         };
-        let range = match (props.number(PropKey::AccessibilityValueMin), props.number(PropKey::AccessibilityValueMax), props.number(PropKey::AccessibilityValueNow)) {
-            (Some(minimum), Some(maximum), Some(now)) if minimum <= now && now <= maximum => Some((minimum, maximum, now)),
+        let range = match (
+            props.number(PropKey::AccessibilityValueMin),
+            props.number(PropKey::AccessibilityValueMax),
+            props.number(PropKey::AccessibilityValueNow),
+        ) {
+            (Some(minimum), Some(maximum), Some(now)) if minimum <= now && now <= maximum => {
+                Some((minimum, maximum, now))
+            }
             _ => None,
         };
-        let actions = if props.has(PropKey::OnAccessibilityAction) { parse_actions(props.text_or_empty(PropKey::AccessibilityActions)) } else { Vec::new() };
+        let actions = if props.has(PropKey::OnAccessibilityAction) {
+            parse_actions(props.text_or_empty(PropKey::AccessibilityActions))
+        } else {
+            Vec::new()
+        };
         let resolved = Self {
             role,
             hidden,
@@ -207,13 +236,18 @@ impl Accessibility {
             label: label.to_owned(),
             hint: props.text_or_empty(PropKey::AccessibilityHint).to_owned(),
             identifier: props.text_or_empty(PropKey::TestId).to_owned(),
-            value_text: props.text_or_empty(PropKey::AccessibilityValueText).to_owned(),
+            value_text: props
+                .text_or_empty(PropKey::AccessibilityValueText)
+                .to_owned(),
             range,
             checked,
-            selected: props.flag(PropKey::AccessibilitySelected).or_else(|| props.flag(PropKey::Selected)),
+            selected: props
+                .flag(PropKey::AccessibilitySelected)
+                .or_else(|| props.flag(PropKey::Selected)),
             expanded: props.flag(PropKey::AccessibilityExpanded),
             disabled: props.flag(PropKey::Enabled) == Some(false),
-            busy: props.flag(PropKey::AccessibilityBusy) == Some(true) || props.flag(PropKey::Loading) == Some(true),
+            busy: props.flag(PropKey::AccessibilityBusy) == Some(true)
+                || props.flag(PropKey::Loading) == Some(true),
             live: match props.integer_or(PropKey::AccessibilityLiveRegion, 1) {
                 2 => LiveRegion::Polite,
                 3 => LiveRegion::Assertive,
@@ -231,23 +265,45 @@ fn parse_actions(json: &str) -> Vec<Action> {
     if json.is_empty() || json.len() > 4096 {
         return Vec::new();
     }
-    let Ok(serde_json::Value::Array(entries)) = serde_json::from_str::<serde_json::Value>(json) else { return Vec::new() };
+    let Ok(serde_json::Value::Array(entries)) = serde_json::from_str::<serde_json::Value>(json)
+    else {
+        return Vec::new();
+    };
     if entries.is_empty() || entries.len() > 8 {
         return Vec::new();
     }
     let mut actions: Vec<Action> = Vec::with_capacity(entries.len());
     for entry in &entries {
-        let Some(object) = entry.as_object().filter(|object| object.len() == 2) else { return Vec::new() };
-        let (Some(name), Some(label)) = (object.get("name").and_then(serde_json::Value::as_str), object.get("label").and_then(serde_json::Value::as_str)) else {
+        let Some(object) = entry.as_object().filter(|object| object.len() == 2) else {
+            return Vec::new();
+        };
+        let (Some(name), Some(label)) = (
+            object.get("name").and_then(serde_json::Value::as_str),
+            object.get("label").and_then(serde_json::Value::as_str),
+        ) else {
             return Vec::new();
         };
         let valid_name = name.len() <= 64
-            && name.bytes().next().is_some_and(|byte| byte.is_ascii_lowercase())
-            && name.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-'));
-        if !valid_name || label.is_empty() || label.len() > 128 || actions.iter().any(|action| action.name == name) {
+            && name
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_lowercase())
+            && name.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'.' | b'_' | b'-')
+            });
+        if !valid_name
+            || label.is_empty()
+            || label.len() > 128
+            || actions.iter().any(|action| action.name == name)
+        {
             return Vec::new();
         }
-        actions.push(Action { name: name.to_owned(), label: label.to_owned() });
+        actions.push(Action {
+            name: name.to_owned(),
+            label: label.to_owned(),
+        });
     }
     actions
 }
@@ -258,7 +314,11 @@ mod tests {
     use crate::props::PropMap;
     use pam_desktop_wire::PropValue;
 
-    fn resolve(kind: NodeKind, entries: &[(PropKey, PropValue)], pressable: bool) -> Option<Accessibility> {
+    fn resolve(
+        kind: NodeKind,
+        entries: &[(PropKey, PropValue)],
+        pressable: bool,
+    ) -> Option<Accessibility> {
         let map: PropMap = entries.iter().cloned().collect();
         Accessibility::resolve(kind, Props::new(&map), pressable)
     }
@@ -266,19 +326,51 @@ mod tests {
     #[test]
     fn plain_views_have_nothing_to_say() {
         assert_eq!(resolve(NodeKind::View, &[], false), None);
-        assert_eq!(resolve(NodeKind::Column, &[(PropKey::Width, PropValue::Float(10.0))], false), None);
+        assert_eq!(
+            resolve(
+                NodeKind::Column,
+                &[(PropKey::Width, PropValue::Float(10.0))],
+                false
+            ),
+            None
+        );
     }
 
     #[test]
     fn kinds_bring_their_role() {
-        assert_eq!(resolve(NodeKind::Text, &[], false).map(|a| a.role), Some(Role::Text));
-        assert_eq!(resolve(NodeKind::View, &[], true).map(|a| a.role), Some(Role::Button));
-        let switch = resolve(NodeKind::Switch, &[(PropKey::Checked, PropValue::Boolean(true))], true).unwrap_or_default();
-        assert_eq!((switch.role, switch.checked), (Role::Switch, Some(Checked::Checked)));
+        assert_eq!(
+            resolve(NodeKind::Text, &[], false).map(|a| a.role),
+            Some(Role::Text)
+        );
+        assert_eq!(
+            resolve(NodeKind::View, &[], true).map(|a| a.role),
+            Some(Role::Button)
+        );
+        let switch = resolve(
+            NodeKind::Switch,
+            &[(PropKey::Checked, PropValue::Boolean(true))],
+            true,
+        )
+        .unwrap_or_default();
+        assert_eq!(
+            (switch.role, switch.checked),
+            (Role::Switch, Some(Checked::Checked))
+        );
         // Undescribed pictures are decoration; described ones are images.
         assert!(resolve(NodeKind::Image, &[], false).is_some_and(|a| a.hidden));
-        let described = resolve(NodeKind::Image, &[(PropKey::AccessibilityLabel, PropValue::String("Logo".into()))], false).unwrap_or_default();
-        assert_eq!((described.hidden, described.role, described.label.as_str()), (false, Role::Image, "Logo"));
+        let described = resolve(
+            NodeKind::Image,
+            &[(
+                PropKey::AccessibilityLabel,
+                PropValue::String("Logo".into()),
+            )],
+            false,
+        )
+        .unwrap_or_default();
+        assert_eq!(
+            (described.hidden, described.role, described.label.as_str()),
+            (false, Role::Image, "Logo")
+        );
     }
 
     #[test]
@@ -287,7 +379,10 @@ mod tests {
             NodeKind::View,
             &[
                 (PropKey::AccessibilityRole, PropValue::Integer(10)),
-                (PropKey::AccessibilityHint, PropValue::String("Opens the menu".into())),
+                (
+                    PropKey::AccessibilityHint,
+                    PropValue::String("Opens the menu".into()),
+                ),
                 (PropKey::TestId, PropValue::String("title".into())),
                 (PropKey::AccessibilityExpanded, PropValue::Boolean(false)),
                 (PropKey::AccessibilityLiveRegion, PropValue::Integer(3)),
@@ -310,18 +405,54 @@ mod tests {
 
     #[test]
     fn hiding_roles_and_importance() {
-        assert!(resolve(NodeKind::Text, &[(PropKey::AccessibilityRole, PropValue::Integer(17))], false).is_some_and(|a| a.hidden));
-        let subtree = resolve(NodeKind::View, &[(PropKey::AccessibilityImportance, PropValue::Integer(4))], false).unwrap_or_default();
+        assert!(
+            resolve(
+                NodeKind::Text,
+                &[(PropKey::AccessibilityRole, PropValue::Integer(17))],
+                false
+            )
+            .is_some_and(|a| a.hidden)
+        );
+        let subtree = resolve(
+            NodeKind::View,
+            &[(PropKey::AccessibilityImportance, PropValue::Integer(4))],
+            false,
+        )
+        .unwrap_or_default();
         assert!(subtree.hidden && subtree.hide_descendants);
     }
 
     #[test]
     fn actions_need_the_handler_and_a_valid_list() {
-        let list = PropValue::String(r#"[{"name":"archive","label":"Archive"},{"name":"mark.read","label":"Mark as read"}]"#.into());
-        assert!(resolve(NodeKind::View, &[(PropKey::AccessibilityActions, list.clone())], false).is_none());
-        let resolved = resolve(NodeKind::View, &[(PropKey::AccessibilityActions, list), (PropKey::OnAccessibilityAction, PropValue::Boolean(true))], false).unwrap_or_default();
+        let list = PropValue::String(
+            r#"[{"name":"archive","label":"Archive"},{"name":"mark.read","label":"Mark as read"}]"#
+                .into(),
+        );
+        assert!(
+            resolve(
+                NodeKind::View,
+                &[(PropKey::AccessibilityActions, list.clone())],
+                false
+            )
+            .is_none()
+        );
+        let resolved = resolve(
+            NodeKind::View,
+            &[
+                (PropKey::AccessibilityActions, list),
+                (PropKey::OnAccessibilityAction, PropValue::Boolean(true)),
+            ],
+            false,
+        )
+        .unwrap_or_default();
         assert_eq!(resolved.actions.len(), 2);
-        assert_eq!(resolved.actions[1], Action { name: "mark.read".into(), label: "Mark as read".into() });
+        assert_eq!(
+            resolved.actions[1],
+            Action {
+                name: "mark.read".into(),
+                label: "Mark as read".into()
+            }
+        );
         assert!(parse_actions(r#"[{"name":"Bad","label":"x"}]"#).is_empty());
         assert!(parse_actions(r#"[{"name":"a","label":"x"},{"name":"a","label":"y"}]"#).is_empty());
         assert!(parse_actions(r#"[{"name":"a","label":"x","extra":1}]"#).is_empty());
@@ -329,7 +460,11 @@ mod tests {
 
     #[test]
     fn fingerprints_follow_changes() {
-        let a = Accessibility { label: "Save".into(), role: Role::Button, ..Accessibility::default() };
+        let a = Accessibility {
+            label: "Save".into(),
+            role: Role::Button,
+            ..Accessibility::default()
+        };
         let mut b = a.clone();
         assert_eq!(a.fingerprint(), b.fingerprint());
         b.disabled = true;

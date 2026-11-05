@@ -18,17 +18,21 @@ use std::rc::Rc;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, Sel};
-use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
-use objc2_app_kit::{NSGraphicsContext, NSResponder, NSView, NSViewLayerContentsRedrawPolicy, NSWindowOrderingMode};
+use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
+use objc2_app_kit::{
+    NSGraphicsContext, NSResponder, NSView, NSViewLayerContentsRedrawPolicy, NSWindowOrderingMode,
+};
 use objc2_core_foundation::{CFRetained, CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGContext, CGImage};
 use objc2_core_image::{CIFilter, CIVector};
 use objc2_foundation::{
-    NSArray, NSDictionary, NSKeyValueObservingOptions, NSNumber, NSObjectNSKeyValueCoding, NSObjectNSKeyValueObserverRegistration, NSRect,
-    NSString,
+    NSArray, NSDictionary, NSKeyValueObservingOptions, NSNumber, NSObjectNSKeyValueCoding,
+    NSObjectNSKeyValueObserverRegistration, NSRect, NSString,
 };
-use objc2_quartz_core::{kCAFillRuleEvenOdd, CALayer, CAShapeLayer, CATransaction};
-use pam_desktop_ui::backend::{BackendEvent, DrawCommand, ImageContent, NodeId, TextContent, VerticalAlign};
+use objc2_quartz_core::{CALayer, CAShapeLayer, CATransaction, kCAFillRuleEvenOdd};
+use pam_desktop_ui::backend::{
+    BackendEvent, DrawCommand, ImageContent, NodeId, TextContent, VerticalAlign,
+};
 use pam_desktop_ui::geometry::{Affine, Insets, Point, Rect, Size};
 use pam_desktop_ui::shell::Cursor;
 use pam_desktop_ui::style::{BorderStyle, Decoration, LayerState, Shadow};
@@ -83,7 +87,10 @@ impl ViewState {
             || !self.drawing.is_empty()
             || !decoration.gradients.is_empty()
             || (decoration.border_gradient.is_some() && border.has_width())
-            || decoration.shadows.iter().any(|shadow| shadow.inset && !shadow.color.is_transparent())
+            || decoration
+                .shadows
+                .iter()
+                .any(|shadow| shadow.inset && !shadow.color.is_transparent())
             || !decoration.radii.is_uniform()
             || (border.is_visible() && (!border.is_uniform() || border.style != BorderStyle::Solid))
     }
@@ -129,15 +136,25 @@ fn layer_shape(shape: RoundedRect, height: f32) -> RoundedRect {
         return shape;
     }
     let [top_left, top_right, bottom_right, bottom_left] = shape.corners;
-    RoundedRect { rect: layer_rect(shape.rect, height), corners: [bottom_left, bottom_right, top_right, top_left] }
+    RoundedRect {
+        rect: layer_rect(shape.rect, height),
+        corners: [bottom_left, bottom_right, top_right, top_left],
+    }
 }
 
 fn layer_rect(rect: Rect, height: f32) -> Rect {
-    if LAYERS_Y_DOWN { rect } else { Rect::new(rect.x, height - rect.bottom(), rect.width, rect.height) }
+    if LAYERS_Y_DOWN {
+        rect
+    } else {
+        Rect::new(rect.x, height - rect.bottom(), rect.width, rect.height)
+    }
 }
 
 fn layer_offset(offset: Point) -> CGSize {
-    CGSize::new(CGFloat::from(offset.x), CGFloat::from(if LAYERS_Y_DOWN { offset.y } else { -offset.y }))
+    CGSize::new(
+        CGFloat::from(offset.x),
+        CGFloat::from(if LAYERS_Y_DOWN { offset.y } else { -offset.y }),
+    )
 }
 
 /// Sets the layer transform of a view so that `transform` acts around the
@@ -147,19 +164,44 @@ fn apply_layer_transform(view: &NSView, transform: &Affine) {
     let anchor = layer.anchorPoint();
     let bounds = view.bounds();
     // The anchor, measured from the view's top-left corner.
-    let anchor_y = if LAYERS_Y_DOWN { anchor.y } else { 1.0 - anchor.y };
-    let pivot = Point::new(-(anchor.x * bounds.size.width) as f32, -(anchor_y * bounds.size.height) as f32);
-    let around = if pivot == Point::ZERO { *transform } else { transform.around(pivot) };
+    let anchor_y = if LAYERS_Y_DOWN {
+        anchor.y
+    } else {
+        1.0 - anchor.y
+    };
+    let pivot = Point::new(
+        -(anchor.x * bounds.size.width) as f32,
+        -(anchor_y * bounds.size.height) as f32,
+    );
+    let around = if pivot == Point::ZERO {
+        *transform
+    } else {
+        transform.around(pivot)
+    };
     let native = if LAYERS_Y_DOWN {
         around
     } else {
         // The same transform with the y axis pointing up.
-        Affine { a: around.a, b: -around.b, c: -around.c, d: around.d, tx: around.tx, ty: -around.ty }
+        Affine {
+            a: around.a,
+            b: -around.b,
+            c: -around.c,
+            d: around.d,
+            tx: around.tx,
+            ty: -around.ty,
+        }
     };
     layer.setAffineTransform(paint::cg_affine(&native));
 }
 
-const IDENTITY: CGAffineTransform = CGAffineTransform { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: 0.0, ty: 0.0 };
+const IDENTITY: CGAffineTransform = CGAffineTransform {
+    a: 1.0,
+    b: 0.0,
+    c: 0.0,
+    d: 1.0,
+    tx: 0.0,
+    ty: 0.0,
+};
 
 /// The scale, rotation and skew of a view, kept on its layer.
 ///
@@ -180,7 +222,11 @@ pub struct KeptTransform {
 
 impl KeptTransform {
     fn new() -> Self {
-        Self { linear: Cell::new(Affine::IDENTITY), watched: RefCell::new(None), paused: Cell::new(false) }
+        Self {
+            linear: Cell::new(Affine::IDENTITY),
+            watched: RefCell::new(None),
+            paused: Cell::new(false),
+        }
     }
 
     /// Moves `view` to `frame` and gives its layer the `linear` transform.
@@ -222,7 +268,12 @@ impl KeptTransform {
                         watched.removeObserver_forKeyPath(keeper, &ns_string("transform"));
                     }
                     if let Some(wanted) = &wanted {
-                        wanted.addObserver_forKeyPath_options_context(keeper, &ns_string("transform"), NSKeyValueObservingOptions::New, std::ptr::null_mut());
+                        wanted.addObserver_forKeyPath_options_context(
+                            keeper,
+                            &ns_string("transform"),
+                            NSKeyValueObservingOptions::New,
+                            std::ptr::null_mut(),
+                        );
                     }
                 }
             });
@@ -558,7 +609,10 @@ impl PamView {
     }
 
     pub fn set_text(&self, content: Option<&TextContent>) {
-        let text = content.map(|content| TextState { content: content.clone(), paragraph: Paragraph::new(&content.block) });
+        let text = content.map(|content| TextState {
+            content: content.clone(),
+            paragraph: Paragraph::new(&content.block),
+        });
         self.update(|state| {
             state.text = text;
             state.selection = None;
@@ -659,8 +713,14 @@ impl PamView {
                 VerticalAlign::Bottom => free.max(0.0),
             };
         // Whole device pixels keep the glyphs crisp.
-        let scale = self.window().map_or(1.0, |window| window.backingScaleFactor() as f32).max(1.0);
-        (Point::new(insets.left, (top * scale).round() / scale), available)
+        let scale = self
+            .window()
+            .map_or(1.0, |window| window.backingScaleFactor() as f32)
+            .max(1.0);
+        (
+            Point::new(insets.left, (top * scale).round() / scale),
+            available,
+        )
     }
 
     /// The UTF-16 offset of the character boundary nearest to `point`.
@@ -668,7 +728,13 @@ impl PamView {
         let state = self.ivars().state.borrow();
         let text = state.text.as_ref()?;
         let (origin, width) = self.text_placement(text, util::size(self.bounds().size));
-        Some(text.paragraph.index_at(width, CGPoint::new(CGFloat::from(point.x - origin.x), CGFloat::from(point.y - origin.y))))
+        Some(text.paragraph.index_at(
+            width,
+            CGPoint::new(
+                CGFloat::from(point.x - origin.x),
+                CGFloat::from(point.y - origin.y),
+            ),
+        ))
     }
 
     fn paint(&self, context: &CGContext) {
@@ -688,7 +754,10 @@ impl PamView {
             paint::paint_image(context, size, decoration, &image.content, &image.image);
         }
         if !state.drawing.is_empty() {
-            let scale = self.window().map_or(1.0, |window| window.backingScaleFactor() as f32).max(1.0);
+            let scale = self
+                .window()
+                .map_or(1.0, |window| window.backingScaleFactor() as f32)
+                .max(1.0);
             CGContext::save_g_state(Some(context));
             CGContext::clip_to_rect(Some(context), cg_rect(Rect::from_size(size)));
             paint::paint_drawing(context, &state.drawing, 1.0 / scale);
@@ -696,7 +765,8 @@ impl PamView {
         }
         if let Some(text) = &state.text {
             let (origin, width) = self.text_placement(text, size);
-            text.paragraph.draw(context, util::cg_point(origin), width, state.selection);
+            text.paragraph
+                .draw(context, util::cg_point(origin), width, state.selection);
         }
         if decoration.clip {
             CGContext::restore_g_state(Some(context));
@@ -897,14 +967,24 @@ impl NodeView {
     /// the border box, so content frames mean the same with and without it.
     fn layout_clip(&self) {
         let Some(clip) = &self.clip else { return };
-        let (decoration_radii, [left, top, right, bottom]) = self.view.with_state(|state| (state.decoration.radii, state.decoration.border.widths));
-        let inner = RoundedRect::new(self.frame.size(), decoration_radii, Insets::new(left, top, right, bottom));
+        let (decoration_radii, [left, top, right, bottom]) = self
+            .view
+            .with_state(|state| (state.decoration.radii, state.decoration.border.widths));
+        let inner = RoundedRect::new(
+            self.frame.size(),
+            decoration_radii,
+            Insets::new(left, top, right, bottom),
+        );
         clip.setFrame(cg_rect(inner.rect));
         clip.setBoundsOrigin(CGPoint::new(CGFloat::from(left), CGFloat::from(top)));
         set_clips(clip, true);
         let Some(layer) = clip.layer() else { return };
         without_animation(|| {
-            let radius = if inner.is_rect() { Some(0.0) } else { inner.uniform_radius() };
+            let radius = if inner.is_rect() {
+                Some(0.0)
+            } else {
+                inner.uniform_radius()
+            };
             match radius {
                 Some(radius) => {
                     layer.setCornerRadius(CGFloat::from(radius));
@@ -915,7 +995,9 @@ impl NodeView {
                     // Corners that differ need a shape.
                     let mask = CAShapeLayer::new();
                     mask.setFrame(cg_rect(inner.rect));
-                    mask.setPath(Some(&layer_shape(inner.translate(-left, -top), inner.rect.height).path()));
+                    mask.setPath(Some(
+                        &layer_shape(inner.translate(-left, -top), inner.rect.height).path(),
+                    ));
                     layer.setCornerRadius(0.0);
                     // SAFETY: the mask is a fresh layer without a superlayer.
                     unsafe { layer.setMask(Some(&mask)) };
@@ -925,14 +1007,22 @@ impl NodeView {
     }
 
     fn outer_shadows(decoration: &Decoration) -> impl Iterator<Item = &Shadow> {
-        decoration.shadows.iter().filter(|shadow| !shadow.inset && !shadow.color.is_transparent())
+        decoration
+            .shadows
+            .iter()
+            .filter(|shadow| !shadow.inset && !shadow.color.is_transparent())
     }
 
     /// Builds the shadow layers for the current decoration and size.
     fn layout_shadows(&mut self) {
         let size = self.frame.size();
         let view = &self.view;
-        let (count, opaque) = view.with_state(|state| (Self::outer_shadows(&state.decoration).count(), state.decoration.background.is_opaque()));
+        let (count, opaque) = view.with_state(|state| {
+            (
+                Self::outer_shadows(&state.decoration).count(),
+                state.decoration.background.is_opaque(),
+            )
+        });
         if count == 0 {
             if let Some(shadow) = self.shadow.take() {
                 shadow.view.retire();
@@ -948,12 +1038,23 @@ impl NodeView {
             host.setHidden(!self.layer.visible);
             // SAFETY: the superview is only used to insert the sibling.
             if let Some(parent) = unsafe { view.superview() } {
-                parent.addSubview_positioned_relativeTo(&host, NSWindowOrderingMode::Below, Some(view));
+                parent.addSubview_positioned_relativeTo(
+                    &host,
+                    NSWindowOrderingMode::Below,
+                    Some(view),
+                );
             }
-            self.shadow = Some(ShadowHost { view: host, layers: Vec::new() });
+            self.shadow = Some(ShadowHost {
+                view: host,
+                layers: Vec::new(),
+            });
         }
-        let Some(host) = self.shadow.as_mut() else { return };
-        let Some(root) = host.view.layer() else { return };
+        let Some(host) = self.shadow.as_mut() else {
+            return;
+        };
+        let Some(root) = host.view.layer() else {
+            return;
+        };
         without_animation(|| {
             while host.layers.len() > count {
                 if let Some(layer) = host.layers.pop() {
@@ -969,9 +1070,16 @@ impl NodeView {
             view.with_state(|state| {
                 let outline = RoundedRect::new(size, state.decoration.radii, Insets::ZERO);
                 // The first shadow of the list is the topmost one.
-                for (layer, shadow) in host.layers.iter().rev().zip(Self::outer_shadows(&state.decoration)) {
+                for (layer, shadow) in host
+                    .layers
+                    .iter()
+                    .rev()
+                    .zip(Self::outer_shadows(&state.decoration))
+                {
                     layer.setFrame(cg_rect(bounds));
-                    layer.setShadowPath(Some(&layer_shape(outline.outset(shadow.spread), size.height).path()));
+                    layer.setShadowPath(Some(
+                        &layer_shape(outline.outset(shadow.spread), size.height).path(),
+                    ));
                     layer.setShadowColor(Some(&cg_color(shadow.color)));
                     layer.setShadowOpacity(1.0);
                     layer.setShadowOffset(layer_offset(shadow.offset));
@@ -997,22 +1105,35 @@ impl NodeView {
     }
 
     fn apply_filters(&mut self, decoration: &Decoration) {
-        let filters = Filters { blur: decoration.blur, backdrop_blur: decoration.backdrop_blur, color_matrix: decoration.color_matrix };
+        let filters = Filters {
+            blur: decoration.blur,
+            backdrop_blur: decoration.backdrop_blur,
+            color_matrix: decoration.color_matrix,
+        };
         if filters == self.filters {
             return;
         }
         self.filters = filters;
         let content: Vec<Retained<CIFilter>> = [
             filters.color_matrix.as_ref().and_then(color_matrix),
-            (filters.blur > 0.0).then(|| gaussian_blur(filters.blur)).flatten(),
+            (filters.blur > 0.0)
+                .then(|| gaussian_blur(filters.blur))
+                .flatten(),
         ]
         .into_iter()
         .flatten()
         .collect();
-        let backdrop: Vec<Retained<CIFilter>> = (filters.backdrop_blur > 0.0).then(|| gaussian_blur(filters.backdrop_blur)).flatten().into_iter().collect();
-        self.view.setLayerUsesCoreImageFilters(!content.is_empty() || !backdrop.is_empty());
-        self.view.setContentFilters(&NSArray::from_retained_slice(&content));
-        self.view.setBackgroundFilters(&NSArray::from_retained_slice(&backdrop));
+        let backdrop: Vec<Retained<CIFilter>> = (filters.backdrop_blur > 0.0)
+            .then(|| gaussian_blur(filters.backdrop_blur))
+            .flatten()
+            .into_iter()
+            .collect();
+        self.view
+            .setLayerUsesCoreImageFilters(!content.is_empty() || !backdrop.is_empty());
+        self.view
+            .setContentFilters(&NSArray::from_retained_slice(&content));
+        self.view
+            .setBackgroundFilters(&NSArray::from_retained_slice(&backdrop));
     }
 
     pub fn set_decoration(&mut self, decoration: &Decoration) {
@@ -1033,7 +1154,14 @@ impl NodeView {
     /// moves the frame, the rest of its transform is the layer's.
     fn placement(&self) -> (Rect, Affine) {
         let transform = self.layer.transform;
-        (self.frame.translate(transform.tx, transform.ty), Affine { tx: 0.0, ty: 0.0, ..transform })
+        (
+            self.frame.translate(transform.tx, transform.ty),
+            Affine {
+                tx: 0.0,
+                ty: 0.0,
+                ..transform
+            },
+        )
     }
 
     fn place(&self) {
@@ -1116,7 +1244,11 @@ pub fn node_view_of(view: &NSView) -> Option<Retained<PamView>> {
 /// Replaces the subviews of `parent` when they differ from `wanted`.
 pub fn arrange(parent: &NSView, wanted: &[Retained<NSView>]) {
     let current = parent.subviews();
-    let same = current.len() == wanted.len() && current.iter().zip(wanted).all(|(left, right)| Retained::as_ptr(&left) == Retained::as_ptr(right));
+    let same = current.len() == wanted.len()
+        && current
+            .iter()
+            .zip(wanted)
+            .all(|(left, right)| Retained::as_ptr(&left) == Retained::as_ptr(right));
     if !same {
         parent.setSubviews(&NSArray::from_retained_slice(wanted));
     }

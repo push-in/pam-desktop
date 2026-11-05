@@ -10,7 +10,11 @@ use pam_desktop_ui::geometry::{Point, Rect, Size};
 
 /// Core Animation raises an exception on geometry that is not finite.
 fn finite(value: f32) -> CGFloat {
-    if value.is_finite() { CGFloat::from(value) } else { 0.0 }
+    if value.is_finite() {
+        CGFloat::from(value)
+    } else {
+        0.0
+    }
 }
 
 pub fn cg_point(point: Point) -> CGPoint {
@@ -36,12 +40,22 @@ pub fn size(size: CGSize) -> Size {
 /// Engine colors are sRGB; so are the colors handed to Core Graphics.
 pub fn cg_color(color: Color) -> CFRetained<CGColor> {
     let [red, green, blue, alpha] = color.to_f32();
-    CGColor::new_srgb(CGFloat::from(red), CGFloat::from(green), CGFloat::from(blue), CGFloat::from(alpha))
+    CGColor::new_srgb(
+        CGFloat::from(red),
+        CGFloat::from(green),
+        CGFloat::from(blue),
+        CGFloat::from(alpha),
+    )
 }
 
 pub fn ns_color(color: Color) -> Retained<NSColor> {
     let [red, green, blue, alpha] = color.to_f32();
-    NSColor::colorWithSRGBRed_green_blue_alpha(CGFloat::from(red), CGFloat::from(green), CGFloat::from(blue), CGFloat::from(alpha))
+    NSColor::colorWithSRGBRed_green_blue_alpha(
+        CGFloat::from(red),
+        CGFloat::from(green),
+        CGFloat::from(blue),
+        CGFloat::from(alpha),
+    )
 }
 
 pub fn ns_string(text: &str) -> Retained<NSString> {

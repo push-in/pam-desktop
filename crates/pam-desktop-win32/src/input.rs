@@ -11,32 +11,42 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use pam_desktop_ui::backend::{BackendEvent, InputConfig, InputEvent, InputPurpose, NodeId, PointerButton, PointerPhase, VerticalAlign};
+use pam_desktop_ui::backend::{
+    BackendEvent, InputConfig, InputEvent, InputPurpose, NodeId, PointerButton, PointerPhase,
+    VerticalAlign,
+};
 use pam_desktop_ui::color::Color;
 use pam_desktop_ui::geometry::{Rect, Size};
 use pam_desktop_ui::text::TextAlign;
-use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateFontW, CreateRectRgn, CreateSolidBrush, DeleteObject, DrawTextW, GetDC, GetTextMetricsW, InvalidateRect, ReleaseDC, SelectObject, SetBkColor,
-    SetBkMode, SetTextColor, SetWindowRgn, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DT_CENTER, DT_EDITCONTROL, DT_LEFT, DT_NOPREFIX,
-    DT_RIGHT, DT_SINGLELINE, DT_WORDBREAK, HBRUSH, HDC, HFONT, HGDIOBJ, OUT_DEFAULT_PRECIS, TEXTMETRICW, TRANSPARENT,
+    CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, CreateFontW, CreateRectRgn, CreateSolidBrush,
+    DEFAULT_CHARSET, DT_CENTER, DT_EDITCONTROL, DT_LEFT, DT_NOPREFIX, DT_RIGHT, DT_SINGLELINE,
+    DT_WORDBREAK, DeleteObject, DrawTextW, GetDC, GetTextMetricsW, HBRUSH, HDC, HFONT, HGDIOBJ,
+    InvalidateRect, OUT_DEFAULT_PRECIS, ReleaseDC, SelectObject, SetBkColor, SetBkMode,
+    SetTextColor, SetWindowRgn, TEXTMETRICW, TRANSPARENT,
 };
 use windows::Win32::UI::Controls::{
-    EM_GETFIRSTVISIBLELINE, EM_GETLINECOUNT, EM_GETRECT, EM_GETSEL, EM_SCROLLCARET, EM_SETLIMITTEXT, EM_SETMARGINS, EM_SETPASSWORDCHAR, EM_SETREADONLY, EM_SETSEL, EM_UNDO,
+    EM_GETFIRSTVISIBLELINE, EM_GETLINECOUNT, EM_GETRECT, EM_GETSEL, EM_SCROLLCARET,
+    EM_SETLIMITTEXT, EM_SETMARGINS, EM_SETPASSWORDCHAR, EM_SETREADONLY, EM_SETSEL, EM_UNDO,
     WM_MOUSELEAVE,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    EnableWindow, GetFocus, SetFocus, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_BACK, VK_ESCAPE, VK_F1, VK_F24, VK_RETURN, VK_TAB,
+    EnableWindow, GetFocus, SetFocus, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VK_BACK,
+    VK_ESCAPE, VK_F1, VK_F24, VK_RETURN, VK_TAB,
 };
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, GetAncestor, GetClientRect, GetWindowTextLengthW, GetWindowTextW, HideCaret, IsWindowVisible, PostMessageW, SendMessageW, SetWindowPos,
-    SetWindowTextW, ShowWindow, EC_LEFTMARGIN, EC_RIGHTMARGIN, EN_CHANGE, ES_AUTOHSCROLL, ES_AUTOVSCROLL, ES_CENTER, ES_LEFT, ES_MULTILINE,
-    ES_RIGHT, ES_WANTRETURN, GA_ROOT, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOWNA, WINDOW_STYLE, WM_CHAR, WS_EX_NOPARENTNOTIFY,
-    WM_CONTEXTMENU, WM_KEYDOWN, WM_KEYUP, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETFOCUS, WM_SETFONT, WM_SYSKEYDOWN, WS_CHILD, WS_CLIPSIBLINGS,
+    CreateWindowExW, DestroyWindow, EC_LEFTMARGIN, EC_RIGHTMARGIN, EN_CHANGE, ES_AUTOHSCROLL,
+    ES_AUTOVSCROLL, ES_CENTER, ES_LEFT, ES_MULTILINE, ES_RIGHT, ES_WANTRETURN, GA_ROOT,
+    GetAncestor, GetClientRect, GetWindowTextLengthW, GetWindowTextW, HideCaret, IsWindowVisible,
+    PostMessageW, SW_HIDE, SW_SHOWNA, SWP_NOACTIVATE, SWP_NOZORDER, SendMessageW, SetWindowPos,
+    SetWindowTextW, ShowWindow, WINDOW_STYLE, WM_CHAR, WM_CONTEXTMENU, WM_KEYDOWN, WM_KEYUP,
+    WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE,
+    WM_MOUSEWHEEL, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETFOCUS, WM_SETFONT,
+    WM_SYSKEYDOWN, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_NOPARENTNOTIFY,
 };
+use windows::core::{PCWSTR, w};
 
 use crate::app::{App, State};
 use crate::events;
@@ -151,7 +161,11 @@ impl InputHost {
         };
         // Password masking is switched at run time (EM_SETPASSWORDCHAR),
         // so it is not a reason to rebuild the control.
-        let kind = if self.multiline { ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN } else { ES_AUTOHSCROLL };
+        let kind = if self.multiline {
+            ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN
+        } else {
+            ES_AUTOHSCROLL
+        };
         (alignment | kind) as u32
     }
 }
@@ -180,7 +194,10 @@ fn from_control_offset(control_text: &[u16], offset: u32, multiline: bool) -> u3
         return offset;
     }
     let end = (offset as usize).min(control_text.len());
-    let breaks = control_text[..end].windows(2).filter(|pair| pair[0] == u16::from(b'\r') && pair[1] == u16::from(b'\n')).count();
+    let breaks = control_text[..end]
+        .windows(2)
+        .filter(|pair| pair[0] == u16::from(b'\r') && pair[1] == u16::from(b'\n'))
+        .count();
     offset.saturating_sub(breaks as u32)
 }
 
@@ -189,7 +206,11 @@ fn to_control_offset(text: &str, offset: u32, multiline: bool) -> u32 {
     if !multiline {
         return offset;
     }
-    let breaks = text.encode_utf16().take(offset as usize).filter(|unit| *unit == u16::from(b'\n')).count();
+    let breaks = text
+        .encode_utf16()
+        .take(offset as usize)
+        .filter(|unit| *unit == u16::from(b'\n'))
+        .count();
     offset + breaks as u32
 }
 
@@ -208,14 +229,23 @@ fn read_selection(hwnd: HWND) -> (u32, u32) {
     let (mut start, mut end) = (0_u32, 0_u32);
     // SAFETY: EM_GETSEL writes two DWORDs through the pointers passed.
     unsafe {
-        SendMessageW(hwnd, EM_GETSEL, Some(WPARAM(std::ptr::from_mut(&mut start) as usize)), Some(LPARAM(std::ptr::from_mut(&mut end) as isize)));
+        SendMessageW(
+            hwnd,
+            EM_GETSEL,
+            Some(WPARAM(std::ptr::from_mut(&mut start) as usize)),
+            Some(LPARAM(std::ptr::from_mut(&mut end) as isize)),
+        );
     }
     (start, end)
 }
 
 fn protocol_text(control_text: &[u16], multiline: bool) -> String {
     let text = String::from_utf16_lossy(control_text);
-    if multiline { text.replace("\r\n", "\n") } else { text }
+    if multiline {
+        text.replace("\r\n", "\n")
+    } else {
+        text
+    }
 }
 
 fn send(hwnd: HWND, message: u32, wparam: usize, lparam: isize) -> LRESULT {
@@ -300,17 +330,34 @@ pub fn place(app: &Rc<App>, id: NodeId, placement: &Placement) {
             let parent = state.scene.windows.get(&placement.window)?.hwnd;
             // SAFETY: plain query; it sends no message.
             let window_shown = unsafe { IsWindowVisible(parent) }.as_bool();
-            let wanted_colors = (colorref(background_of(state, id)), colorref(state.scene.views.get(&id)?.input.as_ref()?.config.color.unwrap_or(state.theme.text)));
+            let wanted_colors = (
+                colorref(background_of(state, id)),
+                colorref(
+                    state
+                        .scene
+                        .views
+                        .get(&id)?
+                        .input
+                        .as_ref()?
+                        .config
+                        .color
+                        .unwrap_or(state.theme.text),
+                ),
+            );
             let view = state.scene.views.get_mut(&id)?;
             let host = view.input.as_mut()?;
             let family = state.text.family(&host.config.font);
             let style = host.creation_style();
-            let stale = host.hwnd.filter(|_| host.created_style != style || host.parent != parent);
+            let stale = host
+                .hwnd
+                .filter(|_| host.created_style != style || host.parent != parent);
             if stale.is_some() {
                 host.hwnd = None;
                 host.resources = None;
             }
-            let font_stale = host.resources.as_ref().is_none_or(|resources| resources.made_for != (placement.scale, host.config.font.clone()));
+            let font_stale = host.resources.as_ref().is_none_or(|resources| {
+                resources.made_for != (placement.scale, host.config.font.clone())
+            });
             let previous = host.placement.replace(*placement);
             Some(Plan {
                 hwnd: host.hwnd,
@@ -367,7 +414,12 @@ pub fn place(app: &Rc<App>, id: NodeId, placement: &Placement) {
         };
         plan.hwnd = Some(hwnd);
         app.with_state(|state| {
-            if let Some(host) = state.scene.views.get_mut(&id).and_then(|view| view.input.as_mut()) {
+            if let Some(host) = state
+                .scene
+                .views
+                .get_mut(&id)
+                .and_then(|view| view.input.as_mut())
+            {
                 host.hwnd = Some(hwnd);
                 host.parent = plan.parent;
                 host.created_style = style;
@@ -381,9 +433,19 @@ pub fn place(app: &Rc<App>, id: NodeId, placement: &Placement) {
             let _ = SetWindowTextW(hwnd, PCWSTR(text.as_ptr()));
         }
         let (start, end) = plan.selection;
-        send(hwnd, EM_SETSEL, to_control_offset(&plan.text, start, plan.multiline) as usize, to_control_offset(&plan.text, end, plan.multiline) as isize);
+        send(
+            hwnd,
+            EM_SETSEL,
+            to_control_offset(&plan.text, start, plan.multiline) as usize,
+            to_control_offset(&plan.text, end, plan.multiline) as isize,
+        );
         app.with_state(|state| {
-            if let Some(host) = state.scene.views.get_mut(&id).and_then(|view| view.input.as_mut()) {
+            if let Some(host) = state
+                .scene
+                .views
+                .get_mut(&id)
+                .and_then(|view| view.input.as_mut())
+            {
                 host.updating = false;
                 // The change notification of the initial text moved it.
                 host.selection = plan.selection;
@@ -392,25 +454,62 @@ pub fn place(app: &Rc<App>, id: NodeId, placement: &Placement) {
         crate::accessibility::control_created(app, id, hwnd);
     }
     let Some(hwnd) = plan.hwnd else { return };
-    let mut line_height = app.with_state(|state| state.scene.views.get(&id)?.input.as_ref()?.resources.as_ref().map(|resources| resources.line_height)).flatten();
+    let mut line_height = app
+        .with_state(|state| {
+            state
+                .scene
+                .views
+                .get(&id)?
+                .input
+                .as_ref()?
+                .resources
+                .as_ref()
+                .map(|resources| resources.line_height)
+        })
+        .flatten();
     if plan.font_stale || created || line_height.is_none() {
         let font = make_font(&plan.family, &plan.config, plan.placement.scale);
         send(hwnd, WM_SETFONT, font.0 as usize, 1);
         // The control adds margins of its own when the font changes.
-        send(hwnd, EM_SETMARGINS, (EC_LEFTMARGIN | EC_RIGHTMARGIN) as usize, 0);
+        send(
+            hwnd,
+            EM_SETMARGINS,
+            (EC_LEFTMARGIN | EC_RIGHTMARGIN) as usize,
+            0,
+        );
         let height = line_height_of(hwnd, font);
         line_height = Some(height);
         app.with_state(|state| {
-            if let Some(host) = state.scene.views.get_mut(&id).and_then(|view| view.input.as_mut()) {
-                let (brush, brush_color) = host.resources.as_mut().map_or((HBRUSH::default(), COLORREF(0)), |resources| {
-                    (std::mem::take(&mut resources.brush), resources.brush_color)
+            if let Some(host) = state
+                .scene
+                .views
+                .get_mut(&id)
+                .and_then(|view| view.input.as_mut())
+            {
+                let (brush, brush_color) = host
+                    .resources
+                    .as_mut()
+                    .map_or((HBRUSH::default(), COLORREF(0)), |resources| {
+                        (std::mem::take(&mut resources.brush), resources.brush_color)
+                    });
+                host.resources = Some(Resources {
+                    font,
+                    line_height: height,
+                    made_for: (plan.placement.scale, plan.config.font.clone()),
+                    brush,
+                    brush_color,
                 });
-                host.resources = Some(Resources { font, line_height: height, made_for: (plan.placement.scale, plan.config.font.clone()), brush, brush_color });
             }
         });
     }
     if plan.previous != Some(plan.placement) || created || plan.font_stale {
-        move_control(hwnd, &plan.placement, &plan.config, plan.multiline, line_height.unwrap_or(16));
+        move_control(
+            hwnd,
+            &plan.placement,
+            &plan.config,
+            plan.multiline,
+            line_height.unwrap_or(16),
+        );
         // A new width or font wraps the text differently.
         report_content_size(app, id, hwnd);
     }
@@ -430,10 +529,21 @@ pub fn place(app: &Rc<App>, id: NodeId, placement: &Placement) {
     }
 }
 
-fn move_control(hwnd: HWND, placement: &Placement, config: &InputConfig, multiline: bool, line_height: i32) {
+fn move_control(
+    hwnd: HWND,
+    placement: &Placement,
+    config: &InputConfig,
+    multiline: bool,
+    line_height: i32,
+) {
     let scale = placement.scale;
     let content = placement.rect.inset_by(config.insets);
-    let content = Rect::new(content.x, content.y, content.width.max(0.0), content.height.max(0.0));
+    let content = Rect::new(
+        content.x,
+        content.y,
+        content.width.max(0.0),
+        content.height.max(0.0),
+    );
     let mut rect = pixel_rect_nearest(content, scale);
     if !multiline {
         // A single-line control has no vertical alignment of its own: it is
@@ -448,7 +558,10 @@ fn move_control(hwnd: HWND, placement: &Placement, config: &InputConfig, multili
         rect.bottom = (top + line_height).min(rect.bottom.max(top + 1));
         rect.top = top;
     }
-    let (width, height) = ((rect.right - rect.left).max(0), (rect.bottom - rect.top).max(0));
+    let (width, height) = (
+        (rect.right - rect.left).max(0),
+        (rect.bottom - rect.top).max(0),
+    );
     let visible = placement.visible && width > 0 && height > 0;
     // SAFETY: the control is live; these calls dispatch messages and no
     // state borrow is held. The region passed to SetWindowRgn is owned by
@@ -458,11 +571,24 @@ fn move_control(hwnd: HWND, placement: &Placement, config: &InputConfig, multili
             let _ = ShowWindow(hwnd, SW_HIDE);
             return;
         }
-        let _ = SetWindowPos(hwnd, None, rect.left, rect.top, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            rect.left,
+            rect.top,
+            width,
+            height,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        );
         match placement.clip {
             Some(clip) => {
                 let clip = pixel_rect_nearest(clip, scale);
-                let region = CreateRectRgn(clip.left - rect.left, clip.top - rect.top, clip.right - rect.left, clip.bottom - rect.top);
+                let region = CreateRectRgn(
+                    clip.left - rect.left,
+                    clip.top - rect.top,
+                    clip.right - rect.left,
+                    clip.bottom - rect.top,
+                );
                 SetWindowRgn(hwnd, Some(region), true);
             }
             None => {
@@ -475,10 +601,20 @@ fn move_control(hwnd: HWND, placement: &Placement, config: &InputConfig, multili
 
 fn apply_config(hwnd: HWND, config: &InputConfig, multiline: bool) {
     if !multiline {
-        send(hwnd, EM_SETPASSWORDCHAR, if config.secure { PASSWORD_CHARACTER } else { 0 }, 0);
+        send(
+            hwnd,
+            EM_SETPASSWORDCHAR,
+            if config.secure { PASSWORD_CHARACTER } else { 0 },
+            0,
+        );
     }
     // Zero restores the control's own (very large) limit.
-    send(hwnd, EM_SETLIMITTEXT, config.max_length.map_or(0, |length| length as usize), 0);
+    send(
+        hwnd,
+        EM_SETLIMITTEXT,
+        config.max_length.map_or(0, |length| length as usize),
+        0,
+    );
     send(hwnd, EM_SETREADONLY, usize::from(!config.editable), 0);
     let scope = match config.purpose {
         _ if config.secure => 31,
@@ -537,10 +673,11 @@ pub fn configure(app: &Rc<App>, id: NodeId, config: &InputConfig) {
             host.placement = None;
             let (hwnd, multiline) = (host.hwnd, host.multiline);
             if let Some(window) = state.scene.window_of(id)
-                && let Some(entry) = state.scene.windows.get_mut(&window) {
-                    entry.natives_dirty = true;
-                    entry.damage(None);
-                }
+                && let Some(entry) = state.scene.windows.get_mut(&window)
+            {
+                entry.natives_dirty = true;
+                entry.damage(None);
+            }
             Some((hwnd, multiline))
         })
         .flatten();
@@ -567,7 +704,9 @@ pub fn set_text(app: &Rc<App>, id: NodeId, text: &str, selection: Option<(u32, u
             Some((hwnd, host.multiline, changed, was_empty != text.is_empty()))
         })
         .flatten();
-    let Some((hwnd, multiline, changed, emptiness_changed)) = known else { return };
+    let Some((hwnd, multiline, changed, emptiness_changed)) = known else {
+        return;
+    };
     if changed {
         let units = to_control(text, multiline);
         // SAFETY: the text is NUL-terminated and outlives the call.
@@ -575,7 +714,12 @@ pub fn set_text(app: &Rc<App>, id: NodeId, text: &str, selection: Option<(u32, u
             let _ = SetWindowTextW(hwnd, PCWSTR(units.as_ptr()));
         }
     }
-    send(hwnd, EM_SETSEL, to_control_offset(text, selection.0, multiline) as usize, to_control_offset(text, selection.1, multiline) as isize);
+    send(
+        hwnd,
+        EM_SETSEL,
+        to_control_offset(text, selection.0, multiline) as usize,
+        to_control_offset(text, selection.1, multiline) as isize,
+    );
     send(hwnd, EM_SCROLLCARET, 0, 0);
     if emptiness_changed {
         // The placeholder appears or goes.
@@ -585,7 +729,12 @@ pub fn set_text(app: &Rc<App>, id: NodeId, text: &str, selection: Option<(u32, u
         }
     }
     app.with_state(|state| {
-        if let Some(host) = state.scene.views.get_mut(&id).and_then(|view| view.input.as_mut()) {
+        if let Some(host) = state
+            .scene
+            .views
+            .get_mut(&id)
+            .and_then(|view| view.input.as_mut())
+        {
             host.updating = false;
             // What the change notification recorded was the caret before
             // the selection was applied.
@@ -605,14 +754,24 @@ pub fn set_selection(app: &Rc<App>, id: NodeId, start: u32, end: u32) {
             host.selection = (start, end);
             let hwnd = host.hwnd?;
             host.updating = true;
-            let (from, to) = (to_control_offset(&host.text, start, host.multiline), to_control_offset(&host.text, end, host.multiline));
+            let (from, to) = (
+                to_control_offset(&host.text, start, host.multiline),
+                to_control_offset(&host.text, end, host.multiline),
+            );
             Some((hwnd, from, to))
         })
         .flatten();
-    let Some((hwnd, from, to)) = known else { return };
+    let Some((hwnd, from, to)) = known else {
+        return;
+    };
     send(hwnd, EM_SETSEL, from as usize, to as isize);
     app.with_state(|state| {
-        if let Some(host) = state.scene.views.get_mut(&id).and_then(|view| view.input.as_mut()) {
+        if let Some(host) = state
+            .scene
+            .views
+            .get_mut(&id)
+            .and_then(|view| view.input.as_mut())
+        {
             host.updating = false;
         }
     });
@@ -706,13 +865,22 @@ fn report_content_size(app: &Rc<App>, id: NodeId, hwnd: HWND) {
             }
             host.lines = lines;
             let placement = host.placement?;
-            let line_height = host.resources.as_ref().map_or(16, |resources| resources.line_height);
+            let line_height = host
+                .resources
+                .as_ref()
+                .map_or(16, |resources| resources.line_height);
             let width = (placement.rect.width - host.config.insets.horizontal()).max(0.0);
-            Some(Size::new(width, lines.max(1) as f32 * line_height as f32 / placement.scale))
+            Some(Size::new(
+                width,
+                lines.max(1) as f32 * line_height as f32 / placement.scale,
+            ))
         })
         .flatten();
     if let Some(size) = size {
-        app.emit_later(BackendEvent::Input { id, event: InputEvent::ContentSizeChanged { size } });
+        app.emit_later(BackendEvent::Input {
+            id,
+            event: InputEvent::ContentSizeChanged { size },
+        });
     }
 }
 
@@ -738,7 +906,9 @@ pub fn notification(app: &Rc<App>, hwnd: HWND, code: u32) {
             Some((host.updating, text, caret, emptiness_changed))
         })
         .flatten();
-    let Some((updating, text, caret, emptiness_changed)) = report else { return };
+    let Some((updating, text, caret, emptiness_changed)) = report else {
+        return;
+    };
     if emptiness_changed {
         // SAFETY: invalidating a live control.
         unsafe {
@@ -747,7 +917,13 @@ pub fn notification(app: &Rc<App>, hwnd: HWND, code: u32) {
     }
     report_content_size(app, id, hwnd);
     if !updating {
-        app.emit_later(BackendEvent::Input { id, event: InputEvent::Edited { text, selection: (caret, caret) } });
+        app.emit_later(BackendEvent::Input {
+            id,
+            event: InputEvent::Edited {
+                text,
+                selection: (caret, caret),
+            },
+        });
     }
 }
 
@@ -792,16 +968,31 @@ fn paint_placeholder(app: &Rc<App>, hwnd: HWND, id: NodeId) {
                 return None;
             }
             // Without an authored color the hint is a dimmed version of the text.
-            let color = host.config.placeholder_color.unwrap_or_else(|| background.lerp(host.config.color.unwrap_or(default_text), 0.45));
-            Some((host.config.placeholder.clone(), color, host.config.align, host.multiline, host.resources.as_ref()?.font))
+            let color = host.config.placeholder_color.unwrap_or_else(|| {
+                background.lerp(host.config.color.unwrap_or(default_text), 0.45)
+            });
+            Some((
+                host.config.placeholder.clone(),
+                color,
+                host.config.align,
+                host.multiline,
+                host.resources.as_ref()?.font,
+            ))
         })
         .flatten();
-    let Some((placeholder, color, align, multiline, font)) = wanted else { return };
+    let Some((placeholder, color, align, multiline, font)) = wanted else {
+        return;
+    };
     let mut text: Vec<u16> = placeholder.encode_utf16().collect();
     // SAFETY: GDI calls on a DC of the live control, released before returning.
     unsafe {
         let mut rect = RECT::default();
-        SendMessageW(hwnd, EM_GETRECT, Some(WPARAM(0)), Some(LPARAM(std::ptr::from_mut(&mut rect) as isize)));
+        SendMessageW(
+            hwnd,
+            EM_GETRECT,
+            Some(WPARAM(0)),
+            Some(LPARAM(std::ptr::from_mut(&mut rect) as isize)),
+        );
         if rect.right <= rect.left {
             let _ = GetClientRect(hwnd, &mut rect);
         }
@@ -814,7 +1005,11 @@ fn paint_placeholder(app: &Rc<App>, hwnd: HWND, id: NodeId) {
             TextAlign::Center => DT_CENTER,
             TextAlign::End => DT_RIGHT,
         };
-        let layout = if multiline { DT_WORDBREAK | DT_EDITCONTROL } else { DT_SINGLELINE };
+        let layout = if multiline {
+            DT_WORDBREAK | DT_EDITCONTROL
+        } else {
+            DT_SINGLELINE
+        };
         DrawTextW(dc, &mut text, &mut rect, DT_NOPREFIX | alignment | layout);
         SelectObject(dc, previous);
         ReleaseDC(Some(hwnd), dc);
@@ -824,11 +1019,23 @@ fn paint_placeholder(app: &Rc<App>, hwnd: HWND, id: NodeId) {
 /// Reports a changed selection after a message that may have moved it.
 fn check_selection(app: &Rc<App>, hwnd: HWND, id: NodeId) {
     let (start, end) = read_selection(hwnd);
-    let multiline = app.with_state(|state| state.scene.views.get(&id).and_then(|view| view.input.as_ref()).is_some_and(|host| host.multiline)).unwrap_or(false);
+    let multiline = app
+        .with_state(|state| {
+            state
+                .scene
+                .views
+                .get(&id)
+                .and_then(|view| view.input.as_ref())
+                .is_some_and(|host| host.multiline)
+        })
+        .unwrap_or(false);
     // Offsets of a multi-line control count CR LF line breaks.
     let (start, end) = if multiline {
         let control_text = read_text(hwnd);
-        (from_control_offset(&control_text, start, true), from_control_offset(&control_text, end, true))
+        (
+            from_control_offset(&control_text, start, true),
+            from_control_offset(&control_text, end, true),
+        )
     } else {
         (start, end)
     };
@@ -843,7 +1050,10 @@ fn check_selection(app: &Rc<App>, hwnd: HWND, id: NodeId) {
         })
         .flatten();
     if let Some((start, end)) = changed {
-        app.emit_later(BackendEvent::Input { id, event: InputEvent::SelectionChanged { start, end } });
+        app.emit_later(BackendEvent::Input {
+            id,
+            event: InputEvent::SelectionChanged { start, end },
+        });
     }
 }
 
@@ -851,7 +1061,14 @@ fn check_selection(app: &Rc<App>, hwnd: HWND, id: NodeId) {
 /// nothing about: whenever it may have drawn over it, it paints again.
 fn refresh_placeholder(app: &Rc<App>, hwnd: HWND, id: NodeId) {
     let shows = app
-        .with_state(|state| state.scene.views.get(&id).and_then(|view| view.input.as_ref()).is_some_and(|host| host.text.is_empty() && !host.config.placeholder.is_empty()))
+        .with_state(|state| {
+            state
+                .scene
+                .views
+                .get(&id)
+                .and_then(|view| view.input.as_ref())
+                .is_some_and(|host| host.text.is_empty() && !host.config.placeholder.is_empty())
+        })
         .unwrap_or(false);
     if shows {
         // SAFETY: invalidating a live control.
@@ -865,8 +1082,17 @@ fn refresh_placeholder(app: &Rc<App>, hwnd: HWND, id: NodeId) {
 /// does on focus: (select everything, hide the caret).
 fn focus_changed(app: &Rc<App>, id: NodeId, focused: bool) -> (bool, bool) {
     crate::focus::native_changed(app, id, focused);
-    app.with_state(|state| state.scene.views.get(&id).and_then(|view| view.input.as_ref()).map_or((false, false), |host| (host.config.select_on_focus, host.config.caret_hidden)))
-        .unwrap_or((false, false))
+    app.with_state(|state| {
+        state
+            .scene
+            .views
+            .get(&id)
+            .and_then(|view| view.input.as_ref())
+            .map_or((false, false), |host| {
+                (host.config.select_on_focus, host.config.caret_hidden)
+            })
+    })
+    .unwrap_or((false, false))
 }
 
 /// Editing chords the control implements itself.
@@ -878,14 +1104,27 @@ fn is_edit_chord(key: u32, control: bool, shift: bool) -> bool {
     const INSERT: u32 = 0x2D;
     const DELETE: u32 = 0x2E;
     if control {
-        return matches!(key, 0x41 | 0x43 | 0x56 | 0x58 | 0x59 | 0x5A | HOME | END | INSERT | DELETE) || (LEFT..=DOWN).contains(&key) || key == u32::from(VK_BACK.0);
+        return matches!(
+            key,
+            0x41 | 0x43 | 0x56 | 0x58 | 0x59 | 0x5A | HOME | END | INSERT | DELETE
+        ) || (LEFT..=DOWN).contains(&key)
+            || key == u32::from(VK_BACK.0);
     }
     shift && matches!(key, INSERT | DELETE)
 }
 
 /// Subclass procedure of every input control.
-unsafe extern "system" fn edit_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _subclass: usize, _data: usize) -> LRESULT {
-    let handled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| edit_message(hwnd, message, wparam, lparam)));
+unsafe extern "system" fn edit_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _subclass: usize,
+    _data: usize,
+) -> LRESULT {
+    let handled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        edit_message(hwnd, message, wparam, lparam)
+    }));
     match handled {
         Ok(Some(result)) => result,
         // SAFETY: forwarding the unmodified message down the subclass chain.
@@ -935,33 +1174,67 @@ fn edit_message(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Opt
         WM_KEYDOWN | WM_SYSKEYDOWN => {
             let key = wparam.0 as u32;
             let modifiers = events::modifiers();
-            let (multiline, submit_on_enter) =
-                app.with_state(|state| state.scene.views.get(&id)?.input.as_ref().map(|host| (host.multiline, host.config.submit_on_enter))).flatten()?;
+            let (multiline, submit_on_enter) = app
+                .with_state(|state| {
+                    state
+                        .scene
+                        .views
+                        .get(&id)?
+                        .input
+                        .as_ref()
+                        .map(|host| (host.multiline, host.config.submit_on_enter))
+                })
+                .flatten()?;
             let chord = modifiers.control || modifiers.alt || modifiers.meta;
             if key == u32::from(VK_TAB.0) && !chord {
                 // Tab moves the focus; an EDIT would insert it or ignore it.
                 // SAFETY: plain query on a live control.
                 let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
-                if let Some(window) = app.with_state(|state| state.scene.windows.iter().find(|(_, entry)| entry.hwnd == root).map(|(window, _)| *window)).flatten() {
+                if let Some(window) = app
+                    .with_state(|state| {
+                        state
+                            .scene
+                            .windows
+                            .iter()
+                            .find(|(_, entry)| entry.hwnd == root)
+                            .map(|(window, _)| *window)
+                    })
+                    .flatten()
+                {
                     app.with_state(|state| state.scene.focus_visible = true);
                     crate::focus::advance(&app, window, !modifiers.shift);
                 }
                 return Some(LRESULT(0));
             }
             if key == u32::from(VK_RETURN.0) && !chord {
-                app.emit_later(BackendEvent::Input { id, event: InputEvent::KeyPressed { key: "Enter".into() } });
+                app.emit_later(BackendEvent::Input {
+                    id,
+                    event: InputEvent::KeyPressed {
+                        key: "Enter".into(),
+                    },
+                });
                 if !multiline || (submit_on_enter && !modifiers.shift) {
-                    app.emit_later(BackendEvent::Input { id, event: InputEvent::Submitted });
+                    app.emit_later(BackendEvent::Input {
+                        id,
+                        event: InputEvent::Submitted,
+                    });
                     return Some(LRESULT(0));
                 }
             } else if key == u32::from(VK_BACK.0) && !chord {
-                app.emit_later(BackendEvent::Input { id, event: InputEvent::KeyPressed { key: "Backspace".into() } });
+                app.emit_later(BackendEvent::Input {
+                    id,
+                    event: InputEvent::KeyPressed {
+                        key: "Backspace".into(),
+                    },
+                });
             }
             // Keys the control has no use for go to the window: Escape,
             // function keys and chords that are not editing commands.
             let unused = key == u32::from(VK_ESCAPE.0)
                 || (u32::from(VK_F1.0)..=u32::from(VK_F24.0)).contains(&key)
-                || (chord && !events::is_modifier(key) && !is_edit_chord(key, modifiers.control && !modifiers.alt, modifiers.shift));
+                || (chord
+                    && !events::is_modifier(key)
+                    && !is_edit_chord(key, modifiers.control && !modifiers.alt, modifiers.shift));
             if unused {
                 crate::window::key_from_child(&app, hwnd, true, wparam, lparam);
                 if message == WM_SYSKEYDOWN {
@@ -982,7 +1255,9 @@ fn edit_message(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Opt
         }
         WM_KEYUP => {
             let key = wparam.0 as u32;
-            if key == u32::from(VK_ESCAPE.0) || (u32::from(VK_F1.0)..=u32::from(VK_F24.0)).contains(&key) {
+            if key == u32::from(VK_ESCAPE.0)
+                || (u32::from(VK_F1.0)..=u32::from(VK_F24.0)).contains(&key)
+            {
                 crate::window::key_from_child(&app, hwnd, false, wparam, lparam);
             }
             let result = default(hwnd, message, wparam, lparam);
@@ -991,20 +1266,37 @@ fn edit_message(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Opt
         }
         WM_CHAR => {
             let unit = wparam.0 as u32;
-            let (multiline, submit_on_enter) =
-                app.with_state(|state| state.scene.views.get(&id)?.input.as_ref().map(|host| (host.multiline, host.config.submit_on_enter))).flatten()?;
+            let (multiline, submit_on_enter) = app
+                .with_state(|state| {
+                    state
+                        .scene
+                        .views
+                        .get(&id)?
+                        .input
+                        .as_ref()
+                        .map(|host| (host.multiline, host.config.submit_on_enter))
+                })
+                .flatten()?;
             let modifiers = events::modifiers();
             match unit {
                 // Tab and Escape were handled as keys; a single-line control
                 // would only beep at them and at Enter.
                 0x09 | 0x1B => return Some(LRESULT(0)),
-                0x0D if !multiline || (submit_on_enter && !modifiers.shift) => return Some(LRESULT(0)),
+                0x0D if !multiline || (submit_on_enter && !modifiers.shift) => {
+                    return Some(LRESULT(0));
+                }
                 // Control+Enter (a line feed) and Control+Backspace (DEL)
                 // were reported as keys; the control would insert them.
                 0x0A | 0x7F => return Some(LRESULT(0)),
                 // Control characters of chords that were reported as keys
                 // (copy, paste, cut, undo and redo are the control's own).
-                0x01..=0x1F if unit != 0x08 && unit != 0x0D && !matches!(unit, 0x03 | 0x16 | 0x18 | 0x1A | 0x19) => return Some(LRESULT(0)),
+                0x01..=0x1F
+                    if unit != 0x08
+                        && unit != 0x0D
+                        && !matches!(unit, 0x03 | 0x16 | 0x18 | 0x1A | 0x19) =>
+                {
+                    return Some(LRESULT(0));
+                }
                 _ => {}
             }
             if unit >= 0x20 {
@@ -1026,7 +1318,10 @@ fn edit_message(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Opt
                     })
                     .flatten();
                 if let Some(key) = typed {
-                    app.emit_later(BackendEvent::Input { id, event: InputEvent::KeyPressed { key } });
+                    app.emit_later(BackendEvent::Input {
+                        id,
+                        event: InputEvent::KeyPressed { key },
+                    });
                 }
             }
             let result = default(hwnd, message, wparam, lparam);
@@ -1034,7 +1329,8 @@ fn edit_message(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Opt
             refresh_placeholder(&app, hwnd, id);
             Some(result)
         }
-        WM_LBUTTONDOWN | WM_LBUTTONUP | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_RBUTTONUP | WM_MOUSEMOVE => {
+        WM_LBUTTONDOWN | WM_LBUTTONUP | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_RBUTTONUP
+        | WM_MOUSEMOVE => {
             // The core keeps hover and press state for the node under the control.
             let (phase, button) = match message {
                 WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => (PointerPhase::Down, PointerButton::Primary),
@@ -1051,10 +1347,22 @@ fn edit_message(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Opt
                 // The window's own leave tracking ended when the pointer
                 // entered the control: the control watches for the exit.
                 let arm = app
-                    .with_state(|state| state.scene.views.get_mut(&id).and_then(|view| view.input.as_mut()).is_some_and(|host| !std::mem::replace(&mut host.tracking_leave, true)))
+                    .with_state(|state| {
+                        state
+                            .scene
+                            .views
+                            .get_mut(&id)
+                            .and_then(|view| view.input.as_mut())
+                            .is_some_and(|host| !std::mem::replace(&mut host.tracking_leave, true))
+                    })
                     .unwrap_or(false);
                 if arm {
-                    let mut track = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
+                    let mut track = TRACKMOUSEEVENT {
+                        cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                        dwFlags: TME_LEAVE,
+                        hwndTrack: hwnd,
+                        dwHoverTime: 0,
+                    };
                     // SAFETY: the structure is a live local with its size set.
                     unsafe {
                         let _ = TrackMouseEvent(&mut track);
@@ -1070,7 +1378,12 @@ fn edit_message(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Opt
         }
         WM_MOUSELEAVE => {
             app.with_state(|state| {
-                if let Some(host) = state.scene.views.get_mut(&id).and_then(|view| view.input.as_mut()) {
+                if let Some(host) = state
+                    .scene
+                    .views
+                    .get_mut(&id)
+                    .and_then(|view| view.input.as_mut())
+                {
                     host.tracking_leave = false;
                 }
             });
@@ -1078,12 +1391,26 @@ fn edit_message(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Opt
             None
         }
         WM_MOUSEWHEEL | WM_MOUSEHWHEEL => {
-            let multiline = app.with_state(|state| state.scene.views.get(&id)?.input.as_ref().map(|host| host.multiline)).flatten()?;
+            let multiline = app
+                .with_state(|state| {
+                    state
+                        .scene
+                        .views
+                        .get(&id)?
+                        .input
+                        .as_ref()
+                        .map(|host| host.multiline)
+                })
+                .flatten()?;
             // A field that does not scroll (a single line, or an editor
             // already at its end) leaves the wheel to the scroll view
             // around it.
             let before = send(hwnd, EM_GETFIRSTVISIBLELINE, 0, 0);
-            let result = if multiline { default(hwnd, message, wparam, lparam) } else { LRESULT(0) };
+            let result = if multiline {
+                default(hwnd, message, wparam, lparam)
+            } else {
+                LRESULT(0)
+            };
             if !multiline || send(hwnd, EM_GETFIRSTVISIBLELINE, 0, 0) == before {
                 // SAFETY: posting the same wheel message to the top-level window.
                 unsafe {
@@ -1093,7 +1420,17 @@ fn edit_message(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Opt
             Some(result)
         }
         WM_CONTEXTMENU => {
-            let hidden = app.with_state(|state| state.scene.views.get(&id)?.input.as_ref().map(|host| host.config.context_menu_hidden)).flatten()?;
+            let hidden = app
+                .with_state(|state| {
+                    state
+                        .scene
+                        .views
+                        .get(&id)?
+                        .input
+                        .as_ref()
+                        .map(|host| host.config.context_menu_hidden)
+                })
+                .flatten()?;
             hidden.then_some(LRESULT(0))
         }
         WM_PAINT => {

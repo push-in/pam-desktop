@@ -3,13 +3,15 @@
 
 use objc2_core_foundation::{CFRetained, CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
-    kCGColorSpaceSRGB, CGBlendMode, CGColorSpace, CGContext, CGGradient, CGGradientDrawingOptions, CGImage, CGLineCap,
-    CGLineJoin, CGMutablePath, CGPath,
+    CGBlendMode, CGColorSpace, CGContext, CGGradient, CGGradientDrawingOptions, CGImage, CGLineCap,
+    CGLineJoin, CGMutablePath, CGPath, kCGColorSpaceSRGB,
 };
 use pam_desktop_ui::backend::{DrawCommand, ImageContent, ImageFit};
 use pam_desktop_ui::color::Color;
 use pam_desktop_ui::geometry::{Insets, Point, Rect, Size};
-use pam_desktop_ui::style::{BorderStyle, Decoration, Gradient, GradientShape, GradientStop, Radii, Shadow};
+use pam_desktop_ui::style::{
+    BorderStyle, Decoration, Gradient, GradientShape, GradientStop, Radii, Shadow,
+};
 
 use crate::util::{cg_color, cg_point, cg_rect};
 
@@ -27,7 +29,14 @@ const SHADOW_SPACE_Y_DOWN: bool = true;
 
 /// A shadow offset of the engine (y points down) for Core Graphics.
 pub fn shadow_offset(offset: Point) -> CGSize {
-    CGSize::new(CGFloat::from(offset.x), CGFloat::from(if SHADOW_SPACE_Y_DOWN { offset.y } else { -offset.y }))
+    CGSize::new(
+        CGFloat::from(offset.x),
+        CGFloat::from(if SHADOW_SPACE_Y_DOWN {
+            offset.y
+        } else {
+            -offset.y
+        }),
+    )
 }
 
 /// Receives path segments: the current path of a context, or a path object.
@@ -71,12 +80,26 @@ struct ObjectPath(CFRetained<CGMutablePath>);
 impl PathSink for ObjectPath {
     fn move_to(&mut self, x: f32, y: f32) {
         // SAFETY: a null transform means "no transform".
-        unsafe { CGMutablePath::move_to_point(Some(&self.0), std::ptr::null(), CGFloat::from(x), CGFloat::from(y)) };
+        unsafe {
+            CGMutablePath::move_to_point(
+                Some(&self.0),
+                std::ptr::null(),
+                CGFloat::from(x),
+                CGFloat::from(y),
+            )
+        };
     }
 
     fn line_to(&mut self, x: f32, y: f32) {
         // SAFETY: as above.
-        unsafe { CGMutablePath::add_line_to_point(Some(&self.0), std::ptr::null(), CGFloat::from(x), CGFloat::from(y)) };
+        unsafe {
+            CGMutablePath::add_line_to_point(
+                Some(&self.0),
+                std::ptr::null(),
+                CGFloat::from(x),
+                CGFloat::from(y),
+            )
+        };
     }
 
     fn curve_to(&mut self, control_1: (f32, f32), control_2: (f32, f32), end: (f32, f32)) {
@@ -118,7 +141,9 @@ impl RoundedRect {
             (size.height - insets.vertical()).max(0.0),
         );
         let radii = radii.clamped(size);
-        let corner = |radius: f32, horizontal: f32, vertical: f32| ((radius - horizontal).max(0.0), (radius - vertical).max(0.0));
+        let corner = |radius: f32, horizontal: f32, vertical: f32| {
+            ((radius - horizontal).max(0.0), (radius - vertical).max(0.0))
+        };
         Self {
             rect,
             corners: [
@@ -133,30 +158,51 @@ impl RoundedRect {
     /// The outline grown by `amount` on every side (shadow spread). Sharp
     /// corners stay sharp, as in CSS.
     pub fn outset(&self, amount: f32) -> Self {
-        let grow = |radius: f32| if radius <= 0.0 && amount > 0.0 { 0.0 } else { (radius + amount).max(0.0) };
+        let grow = |radius: f32| {
+            if radius <= 0.0 && amount > 0.0 {
+                0.0
+            } else {
+                (radius + amount).max(0.0)
+            }
+        };
         let rect = self.rect.outset(amount);
         Self {
             rect: Rect::new(rect.x, rect.y, rect.width.max(0.0), rect.height.max(0.0)),
-            corners: self.corners.map(|(horizontal, vertical)| (grow(horizontal), grow(vertical))),
+            corners: self
+                .corners
+                .map(|(horizontal, vertical)| (grow(horizontal), grow(vertical))),
         }
     }
 
     pub fn translate(&self, dx: f32, dy: f32) -> Self {
-        Self { rect: self.rect.translate(dx, dy), corners: self.corners }
+        Self {
+            rect: self.rect.translate(dx, dy),
+            corners: self.corners,
+        }
     }
 
     pub fn is_rect(&self) -> bool {
-        self.corners.iter().all(|(horizontal, vertical)| *horizontal <= 0.0 || *vertical <= 0.0)
+        self.corners
+            .iter()
+            .all(|(horizontal, vertical)| *horizontal <= 0.0 || *vertical <= 0.0)
     }
 
     /// The radius when every corner is the same circular arc.
     pub fn uniform_radius(&self) -> Option<f32> {
         let (radius, _) = self.corners[0];
-        self.corners.iter().all(|(horizontal, vertical)| *horizontal == radius && *vertical == radius).then_some(radius)
+        self.corners
+            .iter()
+            .all(|(horizontal, vertical)| *horizontal == radius && *vertical == radius)
+            .then_some(radius)
     }
 
     pub fn add_to(&self, sink: &mut impl PathSink) {
-        let Rect { x, y, width, height } = self.rect;
+        let Rect {
+            x,
+            y,
+            width,
+            height,
+        } = self.rect;
         let (right, bottom) = (x + width, y + height);
         if self.is_rect() {
             sink.move_to(x, y);
@@ -168,11 +214,20 @@ impl RoundedRect {
         }
         // Radii never exceed half the box they were clamped to, but an
         // inset or outset copy is clamped again to stay a valid outline.
-        let limit = |(horizontal, vertical): (f32, f32)| (horizontal.min(width / 2.0).max(0.0), vertical.min(height / 2.0).max(0.0));
+        let limit = |(horizontal, vertical): (f32, f32)| {
+            (
+                horizontal.min(width / 2.0).max(0.0),
+                vertical.min(height / 2.0).max(0.0),
+            )
+        };
         let [top_left, top_right, bottom_right, bottom_left] = self.corners.map(limit);
         sink.move_to(x + top_left.0, y);
         sink.line_to(right - top_right.0, y);
-        sink.curve_to((right - top_right.0 * (1.0 - KAPPA), y), (right, y + top_right.1 * (1.0 - KAPPA)), (right, y + top_right.1));
+        sink.curve_to(
+            (right - top_right.0 * (1.0 - KAPPA), y),
+            (right, y + top_right.1 * (1.0 - KAPPA)),
+            (right, y + top_right.1),
+        );
         sink.line_to(right, bottom - bottom_right.1);
         sink.curve_to(
             (right, bottom - bottom_right.1 * (1.0 - KAPPA)),
@@ -180,9 +235,17 @@ impl RoundedRect {
             (right - bottom_right.0, bottom),
         );
         sink.line_to(x + bottom_left.0, bottom);
-        sink.curve_to((x + bottom_left.0 * (1.0 - KAPPA), bottom), (x, bottom - bottom_left.1 * (1.0 - KAPPA)), (x, bottom - bottom_left.1));
+        sink.curve_to(
+            (x + bottom_left.0 * (1.0 - KAPPA), bottom),
+            (x, bottom - bottom_left.1 * (1.0 - KAPPA)),
+            (x, bottom - bottom_left.1),
+        );
         sink.line_to(x, y + top_left.1);
-        sink.curve_to((x, y + top_left.1 * (1.0 - KAPPA)), (x + top_left.0 * (1.0 - KAPPA), y), (x + top_left.0, y));
+        sink.curve_to(
+            (x, y + top_left.1 * (1.0 - KAPPA)),
+            (x + top_left.0 * (1.0 - KAPPA), y),
+            (x + top_left.0, y),
+        );
         sink.close();
     }
 
@@ -239,13 +302,22 @@ fn cg_gradient(stops: &[GradientStop]) -> Option<CFRetained<CGGradient>> {
     }
     // SAFETY: `components` holds four values per location and both buffers
     // outlive the call, which copies them.
-    unsafe { CGGradient::with_color_components(srgb().as_deref(), components.as_ptr(), locations.as_ptr(), locations.len()) }
+    unsafe {
+        CGGradient::with_color_components(
+            srgb().as_deref(),
+            components.as_ptr(),
+            locations.as_ptr(),
+            locations.len(),
+        )
+    }
 }
 
 /// Stops of a repeating gradient unrolled over `from..to` (in units of the
 /// gradient line), renormalised to `0..1` over that range.
 fn repeated_stops(stops: &[GradientStop], from: f32, to: f32) -> Vec<GradientStop> {
-    let (Some(first), Some(last)) = (stops.first(), stops.last()) else { return Vec::new() };
+    let (Some(first), Some(last)) = (stops.first(), stops.last()) else {
+        return Vec::new();
+    };
     let period = last.offset - first.offset;
     let span = to - from;
     if period <= 1e-4 || span <= 0.0 {
@@ -260,7 +332,10 @@ fn repeated_stops(stops: &[GradientStop], from: f32, to: f32) -> Vec<GradientSto
                 return repeated;
             }
             let offset = stop.offset + cycle as f32 * period;
-            repeated.push(GradientStop { color: stop.color, offset: ((offset - from) / span).clamp(0.0, 1.0) });
+            repeated.push(GradientStop {
+                color: stop.color,
+                offset: ((offset - from) / span).clamp(0.0, 1.0),
+            });
         }
     }
     repeated
@@ -271,26 +346,60 @@ fn paint_gradient(context: &CGContext, size: Size, gradient: &Gradient) {
     if gradient.stops.is_empty() || size.is_empty() {
         return;
     }
-    let extend = CGGradientDrawingOptions::DrawsBeforeStartLocation | CGGradientDrawingOptions::DrawsAfterEndLocation;
-    let corners = [Point::ZERO, Point::new(size.width, 0.0), Point::new(size.width, size.height), Point::new(0.0, size.height)];
+    let extend = CGGradientDrawingOptions::DrawsBeforeStartLocation
+        | CGGradientDrawingOptions::DrawsAfterEndLocation;
+    let corners = [
+        Point::ZERO,
+        Point::new(size.width, 0.0),
+        Point::new(size.width, size.height),
+        Point::new(0.0, size.height),
+    ];
     match &gradient.shape {
         GradientShape::Linear { .. } | GradientShape::LinearPoints { .. } => {
-            let Some((start, end)) = gradient.line(size) else { return };
+            let Some((start, end)) = gradient.line(size) else {
+                return;
+            };
             let (dx, dy) = (end.x - start.x, end.y - start.y);
             let length_squared = dx * dx + dy * dy;
             if gradient.repeating && length_squared > 0.0 {
                 // Cover the box: project its corners on the gradient line.
-                let project = |corner: Point| ((corner.x - start.x) * dx + (corner.y - start.y) * dy) / length_squared;
-                let from = corners.iter().map(|corner| project(*corner)).fold(f32::MAX, f32::min);
-                let to = corners.iter().map(|corner| project(*corner)).fold(f32::MIN, f32::max);
-                let Some(native) = cg_gradient(&repeated_stops(&gradient.stops, from, to)) else { return };
+                let project = |corner: Point| {
+                    ((corner.x - start.x) * dx + (corner.y - start.y) * dy) / length_squared
+                };
+                let from = corners
+                    .iter()
+                    .map(|corner| project(*corner))
+                    .fold(f32::MAX, f32::min);
+                let to = corners
+                    .iter()
+                    .map(|corner| project(*corner))
+                    .fold(f32::MIN, f32::max);
+                let Some(native) = cg_gradient(&repeated_stops(&gradient.stops, from, to)) else {
+                    return;
+                };
                 let at = |t: f32| cg_point(Point::new(start.x + dx * t, start.y + dy * t));
-                CGContext::draw_linear_gradient(Some(context), Some(&native), at(from), at(to), extend);
+                CGContext::draw_linear_gradient(
+                    Some(context),
+                    Some(&native),
+                    at(from),
+                    at(to),
+                    extend,
+                );
             } else if let Some(native) = cg_gradient(&gradient.stops) {
-                CGContext::draw_linear_gradient(Some(context), Some(&native), cg_point(start), cg_point(end), extend);
+                CGContext::draw_linear_gradient(
+                    Some(context),
+                    Some(&native),
+                    cg_point(start),
+                    cg_point(end),
+                    extend,
+                );
             }
         }
-        GradientShape::Radial { center, radius_x, radius_y } => {
+        GradientShape::Radial {
+            center,
+            radius_x,
+            radius_y,
+        } => {
             let center = Point::new(center.x * size.width, center.y * size.height);
             // Farthest-corner sizing, like the CSS default.
             let horizontal = (radius_x * size.width * std::f32::consts::SQRT_2).max(1.0);
@@ -300,37 +409,70 @@ fn paint_gradient(context: &CGContext, size: Size, gradient: &Gradient) {
             let reach = if gradient.repeating {
                 corners
                     .iter()
-                    .map(|corner| (((corner.x - center.x) / horizontal).powi(2) + ((corner.y - center.y) / vertical).powi(2)).sqrt())
+                    .map(|corner| {
+                        (((corner.x - center.x) / horizontal).powi(2)
+                            + ((corner.y - center.y) / vertical).powi(2))
+                        .sqrt()
+                    })
                     .fold(1.0, f32::max)
             } else {
                 1.0
             };
-            let stops = if gradient.repeating { repeated_stops(&gradient.stops, 0.0, reach) } else { gradient.stops.clone() };
-            let Some(native) = cg_gradient(&stops) else { return };
+            let stops = if gradient.repeating {
+                repeated_stops(&gradient.stops, 0.0, reach)
+            } else {
+                gradient.stops.clone()
+            };
+            let Some(native) = cg_gradient(&stops) else {
+                return;
+            };
             CGContext::save_g_state(Some(context));
             // Core Graphics draws circles: squash the space into the ellipse.
-            CGContext::translate_ctm(Some(context), CGFloat::from(center.x), CGFloat::from(center.y));
+            CGContext::translate_ctm(
+                Some(context),
+                CGFloat::from(center.x),
+                CGFloat::from(center.y),
+            );
             CGContext::scale_ctm(Some(context), 1.0, CGFloat::from(vertical / horizontal));
             let origin = CGPoint::new(0.0, 0.0);
-            CGContext::draw_radial_gradient(Some(context), Some(&native), origin, 0.0, origin, CGFloat::from(horizontal * reach), extend);
+            CGContext::draw_radial_gradient(
+                Some(context),
+                Some(&native),
+                origin,
+                0.0,
+                origin,
+                CGFloat::from(horizontal * reach),
+                extend,
+            );
             CGContext::restore_g_state(Some(context));
         }
         GradientShape::Conic { center, angle } => {
             let center = Point::new(center.x * size.width, center.y * size.height);
-            let radius = corners.iter().map(|corner| corner.distance(center)).fold(0.0, f32::max) + 1.0;
+            let radius = corners
+                .iter()
+                .map(|corner| corner.distance(center))
+                .fold(0.0, f32::max)
+                + 1.0;
             // Core Graphics has no conic gradient before macOS 14: a fan of
             // one-degree wedges, unsmoothed so their edges do not show.
             const WEDGES: u32 = 360;
             CGContext::save_g_state(Some(context));
             CGContext::set_should_antialias(Some(context), false);
             for wedge in 0..WEDGES {
-                let turn = |index: u32| (angle - 90.0 + index as f32 * 360.0 / WEDGES as f32).to_radians();
+                let turn =
+                    |index: u32| (angle - 90.0 + index as f32 * 360.0 / WEDGES as f32).to_radians();
                 let (from, to) = (turn(wedge), turn(wedge + 1) + 0.005);
-                set_fill(context, gradient.color_at((wedge as f32 + 0.5) / WEDGES as f32));
+                set_fill(
+                    context,
+                    gradient.color_at((wedge as f32 + 0.5) / WEDGES as f32),
+                );
                 let mut path = ContextPath(context);
                 CGContext::begin_path(Some(context));
                 path.move_to(center.x, center.y);
-                path.line_to(center.x + radius * from.cos(), center.y + radius * from.sin());
+                path.line_to(
+                    center.x + radius * from.cos(),
+                    center.y + radius * from.sin(),
+                );
                 path.line_to(center.x + radius * to.cos(), center.y + radius * to.sin());
                 path.close();
                 CGContext::fill_path(Some(context));
@@ -344,14 +486,26 @@ fn paint_gradient(context: &CGContext, size: Size, gradient: &Gradient) {
 /// through the box. The frame itself lies outside the clip.
 fn paint_inset_shadow(context: &CGContext, outline: &RoundedRect, shadow: &Shadow) {
     let hole = outline.outset(-shadow.spread);
-    let reach = shadow.blur * 2.0 + shadow.offset.x.abs() + shadow.offset.y.abs() + shadow.spread.abs() + 8.0;
+    let reach = shadow.blur * 2.0
+        + shadow.offset.x.abs()
+        + shadow.offset.y.abs()
+        + shadow.spread.abs()
+        + 8.0;
     CGContext::save_g_state(Some(context));
     CGContext::begin_path(Some(context));
     outline.add_to_context(context);
     CGContext::clip(Some(context));
-    CGContext::set_shadow_with_color(Some(context), shadow_offset(shadow.offset), CGFloat::from(shadow.blur.max(0.0)), Some(&cg_color(shadow.color)));
+    CGContext::set_shadow_with_color(
+        Some(context),
+        shadow_offset(shadow.offset),
+        CGFloat::from(shadow.blur.max(0.0)),
+        Some(&cg_color(shadow.color)),
+    );
     // The frame casts at full strength; the shadow color carries the alpha.
-    set_fill(context, Color::rgba(shadow.color.r, shadow.color.g, shadow.color.b, 255));
+    set_fill(
+        context,
+        Color::rgba(shadow.color.r, shadow.color.g, shadow.color.b, 255),
+    );
     CGContext::begin_path(Some(context));
     let mut path = ContextPath(context);
     add_rect(&mut path, outline.rect.outset(reach));
@@ -382,7 +536,11 @@ pub fn paint_background(context: &CGContext, size: Size, decoration: &Decoration
         }
         CGContext::restore_g_state(Some(context));
     }
-    for shadow in decoration.shadows.iter().filter(|shadow| shadow.inset && !shadow.color.is_transparent()) {
+    for shadow in decoration
+        .shadows
+        .iter()
+        .filter(|shadow| shadow.inset && !shadow.color.is_transparent())
+    {
         paint_inset_shadow(context, &outline, shadow);
     }
 }
@@ -394,7 +552,11 @@ pub fn paint_border(context: &CGContext, size: Size, decoration: &Decoration) {
     }
     let [left, top, right, bottom] = border.widths;
     let outline = RoundedRect::new(size, decoration.radii, Insets::ZERO);
-    let inner = RoundedRect::new(size, decoration.radii, Insets::new(left, top, right, bottom));
+    let inner = RoundedRect::new(
+        size,
+        decoration.radii,
+        Insets::new(left, top, right, bottom),
+    );
     // The ring between the border box and the padding box.
     let clip_to_ring = || {
         CGContext::begin_path(Some(context));
@@ -424,13 +586,53 @@ pub fn paint_border(context: &CGContext, size: Size, decoration: &Decoration) {
         } else {
             // Each side owns the trapezoid between its outer edge and the
             // matching edge of the padding box (corners split diagonally).
-            let (inner_left, inner_top, inner_right, inner_bottom) =
-                (inner.rect.x, inner.rect.y, inner.rect.right(), inner.rect.bottom());
+            let (inner_left, inner_top, inner_right, inner_bottom) = (
+                inner.rect.x,
+                inner.rect.y,
+                inner.rect.right(),
+                inner.rect.bottom(),
+            );
             let sides = [
-                (border.colors[0], left, [(0.0, 0.0), (inner_left, inner_top), (inner_left, inner_bottom), (0.0, size.height)]),
-                (border.colors[1], top, [(0.0, 0.0), (size.width, 0.0), (inner_right, inner_top), (inner_left, inner_top)]),
-                (border.colors[2], right, [(size.width, 0.0), (size.width, size.height), (inner_right, inner_bottom), (inner_right, inner_top)]),
-                (border.colors[3], bottom, [(0.0, size.height), (inner_left, inner_bottom), (inner_right, inner_bottom), (size.width, size.height)]),
+                (
+                    border.colors[0],
+                    left,
+                    [
+                        (0.0, 0.0),
+                        (inner_left, inner_top),
+                        (inner_left, inner_bottom),
+                        (0.0, size.height),
+                    ],
+                ),
+                (
+                    border.colors[1],
+                    top,
+                    [
+                        (0.0, 0.0),
+                        (size.width, 0.0),
+                        (inner_right, inner_top),
+                        (inner_left, inner_top),
+                    ],
+                ),
+                (
+                    border.colors[2],
+                    right,
+                    [
+                        (size.width, 0.0),
+                        (size.width, size.height),
+                        (inner_right, inner_bottom),
+                        (inner_right, inner_top),
+                    ],
+                ),
+                (
+                    border.colors[3],
+                    bottom,
+                    [
+                        (0.0, size.height),
+                        (inner_left, inner_bottom),
+                        (inner_right, inner_bottom),
+                        (size.width, size.height),
+                    ],
+                ),
             ];
             for (color, width, corners) in sides {
                 if width <= 0.0 || color.is_transparent() {
@@ -454,7 +656,12 @@ pub fn paint_border(context: &CGContext, size: Size, decoration: &Decoration) {
     // Dashed and dotted borders follow the center line of the ring.
     let width = left.max(top).max(right).max(bottom);
     let center_line = RoundedRect::new(size, decoration.radii, Insets::all(width / 2.0));
-    let color = border.colors.iter().copied().find(|color| !color.is_transparent()).unwrap_or(Color::TRANSPARENT);
+    let color = border
+        .colors
+        .iter()
+        .copied()
+        .find(|color| !color.is_transparent())
+        .unwrap_or(Color::TRANSPARENT);
     let dashes: [CGFloat; 2] = if border.style == BorderStyle::Dotted {
         [0.0, CGFloat::from(width * 2.0)]
     } else {
@@ -478,7 +685,12 @@ pub fn paint_border(context: &CGContext, size: Size, decoration: &Decoration) {
 pub fn clip_to_padding_box(context: &CGContext, size: Size, decoration: &Decoration) {
     let [left, top, right, bottom] = decoration.border.widths;
     CGContext::begin_path(Some(context));
-    RoundedRect::new(size, decoration.radii, Insets::new(left, top, right, bottom)).add_to_context(context);
+    RoundedRect::new(
+        size,
+        decoration.radii,
+        Insets::new(left, top, right, bottom),
+    )
+    .add_to_context(context);
     CGContext::clip(Some(context));
 }
 
@@ -486,9 +698,16 @@ pub fn clip_to_padding_box(context: &CGContext, size: Size, decoration: &Decorat
 /// origin at the bottom-left, the view at the top-left).
 fn draw_upright(context: &CGContext, image: &CGImage, target: Rect, tiled: bool) {
     CGContext::save_g_state(Some(context));
-    CGContext::translate_ctm(Some(context), CGFloat::from(target.x), CGFloat::from(target.y + target.height));
+    CGContext::translate_ctm(
+        Some(context),
+        CGFloat::from(target.x),
+        CGFloat::from(target.y + target.height),
+    );
     CGContext::scale_ctm(Some(context), 1.0, -1.0);
-    let rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(CGFloat::from(target.width), CGFloat::from(target.height)));
+    let rect = CGRect::new(
+        CGPoint::new(0.0, 0.0),
+        CGSize::new(CGFloat::from(target.width), CGFloat::from(target.height)),
+    );
     if tiled {
         CGContext::draw_tiled_image(Some(context), rect, Some(image));
     } else {
@@ -497,10 +716,24 @@ fn draw_upright(context: &CGContext, image: &CGImage, target: Rect, tiled: bool)
     CGContext::restore_g_state(Some(context));
 }
 
-pub fn paint_image(context: &CGContext, size: Size, decoration: &Decoration, content: &ImageContent, image: &CGImage) {
+pub fn paint_image(
+    context: &CGContext,
+    size: Size,
+    decoration: &Decoration,
+    content: &ImageContent,
+    image: &CGImage,
+) {
     let insets = content.insets;
-    let area = Rect::new(insets.left, insets.top, (size.width - insets.horizontal()).max(0.0), (size.height - insets.vertical()).max(0.0));
-    let natural = Size::new(CGImage::width(Some(image)) as f32, CGImage::height(Some(image)) as f32);
+    let area = Rect::new(
+        insets.left,
+        insets.top,
+        (size.width - insets.horizontal()).max(0.0),
+        (size.height - insets.vertical()).max(0.0),
+    );
+    let natural = Size::new(
+        CGImage::width(Some(image)) as f32,
+        CGImage::height(Some(image)) as f32,
+    );
     if area.is_empty() || natural.is_empty() || content.opacity <= 0.0 {
         return;
     }
@@ -514,7 +747,12 @@ pub fn paint_image(context: &CGContext, size: Size, decoration: &Decoration, con
         ImageFit::Repeat => Rect::new(area.x, area.y, natural.width, natural.height),
         _ => {
             let (width, height) = (natural.width * scale, natural.height * scale);
-            Rect::new(area.x + (area.width - width) / 2.0, area.y + (area.height - height) / 2.0, width, height)
+            Rect::new(
+                area.x + (area.width - width) / 2.0,
+                area.y + (area.height - height) / 2.0,
+                width,
+                height,
+            )
         }
     };
     let tiled = content.fit == ImageFit::Repeat;
@@ -567,38 +805,86 @@ pub fn paint_drawing(context: &CGContext, commands: &[DrawCommand], hairline: f3
     };
     for command in commands {
         match command {
-            DrawCommand::Rect { rect, radius, color } => {
+            DrawCommand::Rect {
+                rect,
+                radius,
+                color,
+            } => {
                 set_fill(context, *color);
                 let radius = radius.min(rect.width / 2.0).min(rect.height / 2.0).max(0.0);
                 CGContext::begin_path(Some(context));
-                RoundedRect { rect: *rect, corners: [(radius, radius); 4] }.add_to_context(context);
+                RoundedRect {
+                    rect: *rect,
+                    corners: [(radius, radius); 4],
+                }
+                .add_to_context(context);
                 CGContext::fill_path(Some(context));
             }
-            DrawCommand::Circle { center, radius, color } => {
+            DrawCommand::Circle {
+                center,
+                radius,
+                color,
+            } => {
                 set_fill(context, *color);
-                let bounds = Rect::new(center.x - radius, center.y - radius, radius * 2.0, radius * 2.0);
+                let bounds = Rect::new(
+                    center.x - radius,
+                    center.y - radius,
+                    radius * 2.0,
+                    radius * 2.0,
+                );
                 CGContext::begin_path(Some(context));
                 CGContext::add_ellipse_in_rect(Some(context), cg_rect(bounds));
                 CGContext::fill_path(Some(context));
             }
-            DrawCommand::Line { from, to, width, color } => {
+            DrawCommand::Line {
+                from,
+                to,
+                width,
+                color,
+            } => {
                 set_stroke(context, *color);
                 CGContext::set_line_cap(Some(context), CGLineCap::Round);
-                CGContext::set_line_width(Some(context), CGFloat::from(if *width > 0.0 { *width } else { hairline }));
+                CGContext::set_line_width(
+                    Some(context),
+                    CGFloat::from(if *width > 0.0 { *width } else { hairline }),
+                );
                 CGContext::begin_path(Some(context));
-                CGContext::move_to_point(Some(context), CGFloat::from(from.x), CGFloat::from(from.y));
-                CGContext::add_line_to_point(Some(context), CGFloat::from(to.x), CGFloat::from(to.y));
+                CGContext::move_to_point(
+                    Some(context),
+                    CGFloat::from(from.x),
+                    CGFloat::from(from.y),
+                );
+                CGContext::add_line_to_point(
+                    Some(context),
+                    CGFloat::from(to.x),
+                    CGFloat::from(to.y),
+                );
                 CGContext::stroke_path(Some(context));
             }
-            DrawCommand::Stroke { points, width, color, erase } => {
-                let Some(first) = points.first() else { continue };
+            DrawCommand::Stroke {
+                points,
+                width,
+                color,
+                erase,
+            } => {
+                let Some(first) = points.first() else {
+                    continue;
+                };
                 // Erasing clears whatever the current group (or the view) holds.
                 let color = if *erase { Color::BLACK } else { *color };
-                CGContext::set_blend_mode(Some(context), if *erase { CGBlendMode::Clear } else { CGBlendMode::Normal });
+                CGContext::set_blend_mode(
+                    Some(context),
+                    if *erase {
+                        CGBlendMode::Clear
+                    } else {
+                        CGBlendMode::Normal
+                    },
+                );
                 CGContext::begin_path(Some(context));
                 if points.len() == 1 {
                     set_fill(context, color);
-                    let bounds = Rect::new(first.x - width / 2.0, first.y - width / 2.0, *width, *width);
+                    let bounds =
+                        Rect::new(first.x - width / 2.0, first.y - width / 2.0, *width, *width);
                     CGContext::add_ellipse_in_rect(Some(context), cg_rect(bounds));
                     CGContext::fill_path(Some(context));
                 } else {
@@ -606,9 +892,17 @@ pub fn paint_drawing(context: &CGContext, commands: &[DrawCommand], hairline: f3
                     CGContext::set_line_cap(Some(context), CGLineCap::Round);
                     CGContext::set_line_join(Some(context), CGLineJoin::Round);
                     CGContext::set_line_width(Some(context), CGFloat::from(*width));
-                    CGContext::move_to_point(Some(context), CGFloat::from(first.x), CGFloat::from(first.y));
+                    CGContext::move_to_point(
+                        Some(context),
+                        CGFloat::from(first.x),
+                        CGFloat::from(first.y),
+                    );
                     for point in &points[1..] {
-                        CGContext::add_line_to_point(Some(context), CGFloat::from(point.x), CGFloat::from(point.y));
+                        CGContext::add_line_to_point(
+                            Some(context),
+                            CGFloat::from(point.x),
+                            CGFloat::from(point.y),
+                        );
                     }
                     CGContext::stroke_path(Some(context));
                 }
