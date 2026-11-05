@@ -65,6 +65,7 @@ use windows::core::{PCWSTR, PWSTR, w};
 use crate::app::{App, State};
 use crate::events;
 use crate::gfx::Surface;
+use crate::media::Press as MediaPress;
 use crate::scroll::{BarDrag, LINE_EXTENT};
 use crate::util::{from_wide, hiword, loword, lparam_point, pixel_rect, wide};
 
@@ -132,6 +133,8 @@ pub struct WindowEntry {
     last_click: Option<Click>,
     press_count: u8,
     pub bar_drag: Option<BarDrag>,
+    /// The media player whose seek bar is held.
+    pub scrub: Option<NodeId>,
     /// Reused by hit tests.
     pub path: Vec<NodeId>,
     /// The child that had keyboard focus when the window was deactivated.
@@ -306,6 +309,7 @@ pub fn open(app: &Rc<App>, window: WindowId, config: &WindowConfig) {
         last_click: None,
         press_count: 1,
         bar_drag: None,
+        scrub: None,
         path: Vec::new(),
         focus_restore: None,
         gesture_start: 1.0,
@@ -1050,6 +1054,21 @@ fn pointer(
             state.schedule_scroll_work();
             return Some(plan);
         }
+        // So does a held seek bar: moves seek, the release ends the scrub
+        // where it is.
+        if let Some(id) = entry.scrub {
+            match phase {
+                PointerPhase::Up if button == PointerButton::Primary => {
+                    entry.scrub = None;
+                    entry.buttons &= !button_bit(button);
+                    plan.release = entry.buttons == 0;
+                    crate::media::scrub(state, id, Some(position), true);
+                }
+                PointerPhase::Move => crate::media::scrub(state, id, Some(position), false),
+                _ => {}
+            }
+            return Some(plan);
+        }
         if phase == PointerPhase::Down {
             let count = match entry.last_click {
                 Some(last)
@@ -1098,12 +1117,20 @@ fn pointer(
                     .map(|entry| std::mem::take(&mut entry.path))
                     .unwrap_or_default();
                 let grabbed = state.scrolling().press(&path, position);
-                let consumed = grabbed.is_some() || crate::media::press(state, &path, position);
+                let media = if grabbed.is_some() {
+                    MediaPress::Missed
+                } else {
+                    crate::media::press(state, &path, position)
+                };
                 if let Some(entry) = state.scene.windows.get_mut(&window) {
                     entry.path = path;
                     entry.bar_drag = grabbed;
+                    entry.scrub = match media {
+                        MediaPress::Scrub(id) => Some(id),
+                        MediaPress::Missed | MediaPress::Taken => None,
+                    };
                 }
-                if consumed {
+                if grabbed.is_some() || !matches!(media, MediaPress::Missed) {
                     state.schedule_scroll_work();
                     return Some(plan);
                 }
@@ -1810,6 +1837,16 @@ fn handle(
                             scroll.bar_held = false;
                         }
                         state.schedule_scroll_work();
+                    }
+                    let scrub = state
+                        .scene
+                        .windows
+                        .get_mut(&window)
+                        .and_then(|entry| entry.scrub.take());
+                    if let Some(id) = scrub {
+                        // The seek bar is no longer held: the media stays
+                        // where the pointer last was.
+                        crate::media::scrub(state, id, None, true);
                     }
                     Some(PointerEvent {
                         window,

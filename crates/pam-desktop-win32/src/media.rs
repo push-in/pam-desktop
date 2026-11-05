@@ -158,6 +158,16 @@ impl MediaShared {
     }
 }
 
+/// A press held on the seek bar of the drawn controls.
+struct Scrub {
+    /// Where the pointer is along the track, from 0 to 1: the bar shows it.
+    fraction: f32,
+    /// The last position the engine was asked for.
+    sought: f32,
+    /// What one pixel of the track is worth: a smaller move is not sought.
+    step: f32,
+}
+
 pub struct MediaPlayer {
     /// Identifies the current engine in events (0 = none).
     token: u64,
@@ -183,6 +193,7 @@ pub struct MediaPlayer {
     fit: ImageFit,
     controls: bool,
     hovered: bool,
+    scrub: Option<Scrub>,
     /// Position to resume from after a device loss.
     resume: Option<(f64, bool)>,
 }
@@ -207,6 +218,7 @@ impl MediaPlayer {
             fit: ImageFit::Cover,
             controls: false,
             hovered: false,
+            scrub: None,
             resume: None,
         }
     }
@@ -224,6 +236,7 @@ impl MediaPlayer {
         self.frame = None;
         self.has_frame = false;
         self.awaiting_frame = 0;
+        self.scrub = None;
         self.engine.take()
     }
 
@@ -423,7 +436,38 @@ impl MediaPlayer {
     }
 
     fn controls_visible(&self) -> bool {
-        self.controls && self.hovered && self.ready
+        // A scrub keeps them while the captured pointer is off the player.
+        self.controls && (self.hovered || self.scrub.is_some()) && self.ready
+    }
+
+    /// Whether the scrub is a visible step away from the last seek.
+    fn scrub_pending(&self) -> bool {
+        self.scrub
+            .as_ref()
+            .is_some_and(|scrub| (scrub.fraction - scrub.sought).abs() >= scrub.step)
+    }
+
+    /// Seeks to where the scrub is. While the button is held, only a
+    /// visible step seeks, and not before the engine is done with the
+    /// previous seek (the tick tries again), so a drag does not flood it.
+    /// The release (`last`) seeks whatever is left.
+    fn seek_scrub(&mut self, last: bool) {
+        let (Some(engine), Some(scrub)) = (&self.engine, self.scrub.as_mut()) else {
+            return;
+        };
+        let moved = (scrub.fraction - scrub.sought).abs();
+        if self.duration <= 0.0 || moved == 0.0 {
+            return;
+        }
+        // SAFETY: plain calls on the live engine.
+        unsafe {
+            if !last && (moved < scrub.step || engine.IsSeeking().as_bool()) {
+                return;
+            }
+            let _ = engine.SetCurrentTime(self.duration * f64::from(scrub.fraction));
+        }
+        scrub.sought = scrub.fraction;
+        self.awaiting_frame = FRAME_WAIT_TICKS;
     }
 
     /// The video frame, fitted in the box (the view's clip cuts the
@@ -550,6 +594,11 @@ impl MediaPlayer {
                 },
                 device.solid(Color::rgba(255, 255, 255, 70)),
             );
+            // A scrub shows where the pointer is, ahead of the engine.
+            let time = match &self.scrub {
+                Some(scrub) => self.duration * f64::from(scrub.fraction),
+                None => time,
+            };
             let progress = if self.duration > 0.0 && time.is_finite() {
                 (time / self.duration).clamp(0.0, 1.0) as f32
             } else {
@@ -971,6 +1020,11 @@ pub fn tick(state: &mut State) -> bool {
             changed = true;
             again = true;
         }
+        // A scrub that got ahead of the engine seeks once the engine is free.
+        if player.scrub_pending() {
+            player.seek_scrub(false);
+            again = true;
+        }
         if first_frame {
             state.events.push(BackendEvent::Media {
                 id,
@@ -1035,8 +1089,18 @@ pub fn hover(state: &mut State, window: WindowId, position: Point) {
     }
 }
 
+/// What the transport controls did with a primary press.
+pub enum Press {
+    /// It did not land on them.
+    Missed,
+    Taken,
+    /// It landed on the seek bar: the player owns the pointer until the
+    /// button is released, and is told through `scrub`.
+    Scrub(NodeId),
+}
+
 /// A primary press: the transport controls take it when it lands on them.
-pub fn press(state: &mut State, path: &[NodeId], position: Point) -> bool {
+pub fn press(state: &mut State, path: &[NodeId], position: Point) -> Press {
     let Some(id) = path.iter().rev().copied().find(|id| {
         state
             .scene
@@ -1044,7 +1108,7 @@ pub fn press(state: &mut State, path: &[NodeId], position: Point) -> bool {
             .get(id)
             .is_some_and(|view| view.media.is_some())
     }) else {
-        return false;
+        return Press::Missed;
     };
     let Some(local) = state
         .scene
@@ -1052,29 +1116,30 @@ pub fn press(state: &mut State, path: &[NodeId], position: Point) -> bool {
         .and_then(|(_, transform)| transform.invert())
         .map(|inverse| inverse.apply(position))
     else {
-        return false;
+        return Press::Missed;
     };
     let Some(view) = state.scene.views.get(&id) else {
-        return false;
+        return Press::Missed;
     };
     let size = view.frame.size();
     let Some(player) = view.media.as_ref() else {
-        return false;
+        return Press::Missed;
     };
     if !player.controls_visible() {
-        return false;
+        return Press::Missed;
     }
     let Some(layout) = ControlsLayout::new(size) else {
-        return false;
+        return Press::Missed;
     };
     if !layout.bar.contains(local) {
-        return false;
+        return Press::Missed;
     }
     let Some(engine) = player.engine.clone() else {
-        return true;
+        return Press::Taken;
     };
     let duration = player.duration;
     let mut toggled = None;
+    let mut scrub = None;
     // SAFETY: plain calls on the live engine.
     unsafe {
         if layout.play.contains(local) {
@@ -1097,9 +1162,17 @@ pub fn press(state: &mut State, path: &[NodeId], position: Point) -> bool {
         {
             let fraction = ((local.x - layout.track.x) / layout.track.width).clamp(0.0, 1.0);
             let _ = engine.SetCurrentTime(duration * f64::from(fraction));
+            // The press already sought: moves seek from here on.
+            scrub = Some(Scrub {
+                fraction,
+                sought: fraction,
+                step: 1.0 / layout.track.width,
+            });
         }
     }
+    let scrubbing = scrub.is_some();
     if let Some(player) = player_mut(state, id) {
+        player.scrub = scrub;
         player.awaiting_frame = FRAME_WAIT_TICKS;
         if let Some(playing) = toggled {
             player.play_when_ready = playing;
@@ -1114,7 +1187,44 @@ pub fn press(state: &mut State, path: &[NodeId], position: Point) -> bool {
     }
     state.scene.damage_view(id);
     state.request_tick();
-    true
+    if scrubbing {
+        Press::Scrub(id)
+    } else {
+        Press::Taken
+    }
+}
+
+/// The pointer that holds the seek bar of a player moved to `position`
+/// (`None` when the capture was lost: the bar stays where the pointer last
+/// was). `last` ends the scrub.
+pub fn scrub(state: &mut State, id: NodeId, position: Option<Point>, last: bool) {
+    let local = position.and_then(|position| {
+        let (_, transform) = state.scene.world_transform(id)?;
+        Some(transform.invert()?.apply(position))
+    });
+    let Some(view) = state.scene.views.get_mut(&id) else {
+        return;
+    };
+    let size = view.frame.size();
+    let Some(player) = view.media.as_deref_mut() else {
+        return;
+    };
+    // A scrub ends on its own when the media is replaced under it.
+    let Some(scrub) = player.scrub.as_mut() else {
+        return;
+    };
+    if let (Some(local), Some(layout)) = (local, ControlsLayout::new(size))
+        && layout.track.width > 0.0
+    {
+        scrub.fraction = ((local.x - layout.track.x) / layout.track.width).clamp(0.0, 1.0);
+        scrub.step = 1.0 / layout.track.width;
+    }
+    player.seek_scrub(last);
+    if last {
+        player.scrub = None;
+    }
+    state.scene.damage_view(id);
+    state.request_tick();
 }
 
 /// The graphics device was lost: frames and decoders died with it. The

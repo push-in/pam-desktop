@@ -104,6 +104,7 @@ System:
 13. **Console**: a release host is a windowed program. `pam-desktop build` from a terminal must still print (the host attaches to the parent console), and no console window may open beside an application or its PHP worker.
 14. **Share** (`examples/modules`, the Share button): files are resolved before the dialog shows, waiting up to 3 seconds on the UI thread; if that wait never completes, every share with files fails. Check text only, files only (a path with spaces and non-ASCII), both, two shares in a row, and closing the application with the dialog open.
 15. **Head and middle ellipsis** (`ellipsize()` with `numberOfLines(1)`): DirectWrite only trims the end of a line, so the backend shortens the text itself, measuring candidates until one fits. Check a one-line text narrower than its content in both modes: one ellipsis, at the start or in the middle, and the text reaching the right edge without being clipped. Then resize the window slowly (the cut must move without flicker and the ellipsis must go away when the text fits), try runs of different styles (the ellipsis takes the style of the run next to it), emoji and combining marks next to the cut (no broken glyph), and a pressable span or a selection after the cut (they must answer for the characters shown).
+16. **Dragging the seek bar** (`examples/media`, the controls drawn over a player): a press on the track seeks as before and now holds the bar until the button is released. Check that the white part of the bar and the elapsed time follow the pointer at once, also when the pointer leaves the player or the window with the button down; that the picture catches up during a slow drag and lands on the release position after a fast one (moves only seek when `IMFMediaEngine::IsSeeking` says the previous seek is done; if it never does, only the release seeks); that a plain click still seeks once; that the controls hide again after a release outside the player; and that Alt+Tab in the middle of a drag ends it without the bar following the pointer afterwards.
 
 ### Known differences from the GTK backend
 
@@ -118,7 +119,6 @@ Painting, pointer and media:
 
 - `backdropBlur` is not implemented.
 - `Magnify` and `Rotate` come from touch only; a touchpad pinch arrives as Control plus wheel, which the core treats as a pinch.
-- The seek bar of the drawn media controls takes clicks, not drags.
 
 Web view and accessibility:
 
