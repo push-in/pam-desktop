@@ -36,6 +36,7 @@ pub enum Command {
     Image(NodeId, Option<ImageContent>),
     Drawing(NodeId, Vec<crate::backend::DrawCommand>),
     Media(NodeId, crate::backend::MediaState),
+    WebView(NodeId, crate::backend::WebViewState),
     ScrollContent(NodeId, Size),
     ScrollConfig(NodeId, ScrollConfig),
     ScrollTo(NodeId, Point, bool),
@@ -222,6 +223,10 @@ impl Backend for RecordingBackend {
 
     fn media_position(&self, _id: NodeId) -> Option<(f64, f64)> {
         None
+    }
+
+    fn set_web_view(&mut self, id: NodeId, state: &crate::backend::WebViewState) {
+        self.commands.push(Command::WebView(id, state.clone()));
     }
 
     fn set_drawing(&mut self, id: NodeId, commands: &[crate::backend::DrawCommand]) {

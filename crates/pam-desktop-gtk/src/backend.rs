@@ -35,6 +35,8 @@ struct ViewEntry {
     input: Option<InputHost>,
     /// The player of a media view.
     media: Option<crate::media::MediaHost>,
+    #[cfg(feature = "webview")]
+    web: Option<crate::webview::WebHost>,
     /// What assistive technology was told, when it is more than the defaults.
     accessibility: Option<Box<pam_desktop_ui::accessibility::Accessibility>>,
     /// The text the view shows and the accessible name last applied.
@@ -382,7 +384,23 @@ impl Backend for GtkBackend {
             _ => None,
         };
         let media = (class == ViewClass::Media).then(|| crate::media::MediaHost::new(id, &container, &self.events));
-        self.views.insert(id, ViewEntry { widget, container, class, input, media, accessibility: None, plain_text: None, announced: String::new() });
+        #[cfg(feature = "webview")]
+        let web = (class == ViewClass::WebView).then(|| crate::webview::WebHost::new(id, &container, &self.events));
+        self.views.insert(
+            id,
+            ViewEntry {
+                widget,
+                container,
+                class,
+                input,
+                media,
+                #[cfg(feature = "webview")]
+                web,
+                accessibility: None,
+                plain_text: None,
+                announced: String::new(),
+            },
+        );
     }
 
     fn destroy_view(&mut self, id: NodeId) {
@@ -392,6 +410,10 @@ impl Backend for GtkBackend {
             }
             if let Some(media) = &mut entry.media {
                 media.destroy();
+            }
+            #[cfg(feature = "webview")]
+            if let Some(web) = &mut entry.web {
+                web.destroy();
             }
             if entry.widget.parent().is_some() {
                 entry.widget.unparent();
@@ -572,6 +594,21 @@ impl Backend for GtkBackend {
     fn set_media(&mut self, id: NodeId, state: &pam_desktop_ui::backend::MediaState) {
         if let Some(media) = self.views.get_mut(&id).and_then(|entry| entry.media.as_mut()) {
             media.apply(state);
+        }
+    }
+
+    #[cfg(feature = "webview")]
+    fn set_web_view(&mut self, id: NodeId, state: &pam_desktop_ui::backend::WebViewState) {
+        if let Some(web) = self.views.get_mut(&id).and_then(|entry| entry.web.as_mut()) {
+            web.apply(state);
+        }
+    }
+
+    #[cfg(not(feature = "webview"))]
+    fn set_web_view(&mut self, id: NodeId, state: &pam_desktop_ui::backend::WebViewState) {
+        if state.source != pam_desktop_ui::backend::WebSource::None {
+            let event = pam_desktop_ui::backend::WebViewEvent::Failed("WebView is not available in this build".into());
+            self.events.push(BackendEvent::WebView { id, event });
         }
     }
 

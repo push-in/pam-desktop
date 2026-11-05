@@ -10,6 +10,12 @@ repository.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 pam-desktop-ui.workspace = true
 gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
+webkit = { package = "webkit6", version = "0.6", optional = true }
+
+[features]
+default = ["webview"]
+# Embedded web pages through WebKitGTK 6 (libwebkitgtk-6.0).
+webview = ["dep:webkit"]
 
 [lints]
 workspace = true

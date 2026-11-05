@@ -32,6 +32,7 @@ pub mod style;
 pub mod testing;
 pub mod text;
 pub mod watch;
+pub mod webview;
 pub mod wiremap;
 pub mod worker;
 

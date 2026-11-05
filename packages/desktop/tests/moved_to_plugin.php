@@ -49,7 +49,6 @@ foreach ([
     'Pam\\Desktop\\System\\MediaLibrary' => 'pushinbr/pam-desktop-media',
     'Pam\\Desktop\\System\\IncomingShares' => 'pushinbr/pam-desktop-share-extension',
     'Pam\\Desktop\\System\\Biometrics' => 'pushinbr/pam-desktop-auth',
-    'Pam\\Desktop\\UI\\WebView' => 'pushinbr/pam-desktop-webview',
 ] as $legacy => $package) {
     if ($testPluginRoots !== []) continue;
     $message = '';

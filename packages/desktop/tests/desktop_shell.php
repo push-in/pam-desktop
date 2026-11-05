@@ -216,3 +216,30 @@ $assert(
 Runtime::setModuleTransport(null);
 ShellEvents::reset();
 Shortcut::resetRuntime();
+
+// --- WebView (part of the desktop core, not a plugin) ---------------------------
+$web = \Pam\Desktop\UI\WebView::make('https://example.com/help')
+    ->allowedHosts('Example.com', 'cdn.example.com', 'example.com')
+    ->injectedJavaScript('window.ready = true;')
+    ->userAgent(null)
+    ->onMessage(static fn (string $message, string $url): string => $message.'@'.$url);
+$webProperties = $web->properties();
+$assert(
+    $webProperties[PropKey::WebViewSource->value] === 'https://example.com/help'
+        && $webProperties[PropKey::WebViewJavaScriptEnabled->value] === true
+        && $webProperties[PropKey::WebViewAllowedHosts->value] === "example.com\ncdn.example.com"
+        && $webProperties[PropKey::WebViewInjectedJavaScript->value] === 'window.ready = true;'
+        && $webProperties[PropKey::WebViewUserAgent->value] === ''
+        && $webProperties[PropKey::OnWebViewMessage->value] === true,
+    'WebView sends its source, policy and bridge properties.',
+);
+$assert(\Pam\Desktop\UI\WebView::make('<h1>Hi</h1>')->properties()[PropKey::WebViewSource->value] === '<h1>Hi</h1>', 'Inline HTML is a valid WebView source.');
+foreach (['ftp://example.com/', 'javascript:alert(1)', ''] as $invalid) {
+    $rejected = false;
+    try {
+        \Pam\Desktop\UI\WebView::make($invalid);
+    } catch (InvalidArgumentException) {
+        $rejected = true;
+    }
+    $assert($rejected, "WebView must reject the source {$invalid}.");
+}

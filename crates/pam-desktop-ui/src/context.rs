@@ -49,6 +49,9 @@ pub mod event_kind {
     pub const TOUCH_END: u16 = 41;
     pub const BOTTOM_SHEET_CHANGE: u16 = 46;
     pub const BOTTOM_SHEET_DISMISS: u16 = 47;
+    pub const WEBVIEW_LOAD: u16 = 48;
+    pub const WEBVIEW_ERROR: u16 = 49;
+    pub const WEBVIEW_MESSAGE: u16 = 50;
     pub const MEDIA_READY: u16 = 51;
     pub const MEDIA_PROGRESS: u16 = 52;
     pub const MEDIA_END: u16 = 53;
@@ -107,6 +110,7 @@ pub enum HostCommand {
     SetImage { id: NodeId, content: Option<crate::backend::ImageContent> },
     SetDrawing { id: NodeId, commands: Vec<crate::backend::DrawCommand> },
     SetMedia { id: NodeId, state: Box<crate::backend::MediaState> },
+    SetWebView { id: NodeId, state: Box<crate::backend::WebViewState> },
 }
 
 pub struct Ctx<'a> {

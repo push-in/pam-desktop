@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.webview",
+    "name": "PAM Desktop web view",
+    "entry": "index.php",
+    "window": {
+        "width": 860,
+        "height": 620
+    }
+}

@@ -16,5 +16,7 @@ mod paint;
 mod shell;
 mod text;
 mod view;
+#[cfg(feature = "webview")]
+mod webview;
 
 pub use backend::{run, GtkBackend};

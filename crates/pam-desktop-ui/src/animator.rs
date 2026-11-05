@@ -414,6 +414,8 @@ pub enum Timer {
     MediaProgress(NodeId),
     /// A hidden or ungranted media node gives its decoder back.
     MediaRelease(NodeId),
+    /// A web page took too long to load.
+    WebViewTimeout(NodeId),
 }
 
 #[derive(Default)]

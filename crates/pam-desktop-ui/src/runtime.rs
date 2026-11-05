@@ -254,6 +254,7 @@ pub struct Runtime<B: Backend> {
     images: crate::images::Images,
     drawings: crate::drawing::Drawings,
     media: crate::media::Media,
+    web_views: crate::webview::WebViews,
     pub(crate) modules: Registry,
     pub(crate) directories: Directories,
     pub(crate) shell: Shell,
@@ -397,6 +398,7 @@ impl<B: Backend> Runtime<B> {
             images,
             drawings: crate::drawing::Drawings::default(),
             media,
+            web_views: crate::webview::WebViews::default(),
             modules,
             directories,
             shell: Shell::default(),
@@ -479,6 +481,7 @@ impl<B: Backend> Runtime<B> {
                 HostCommand::SetImage { id, content } => self.backend.set_image(id, content.as_ref()),
                 HostCommand::SetDrawing { id, commands } => self.backend.set_drawing(id, &commands),
                 HostCommand::SetMedia { id, state } => self.backend.set_media(id, &state),
+                HostCommand::SetWebView { id, state } => self.backend.set_web_view(id, &state),
             }
         }
         if let Some(worker) = &mut self.worker {
@@ -536,6 +539,7 @@ impl<B: Backend> Runtime<B> {
                 self.images.on_change(&mut ctx, change);
                 self.drawings.on_change(&mut ctx, change);
                 self.media.on_change(&mut ctx, change);
+                self.web_views.on_change(&mut ctx, change);
             }
             self.navigation.after_commit(&mut ctx);
             self.tabs.after_commit(&mut ctx);
@@ -549,6 +553,7 @@ impl<B: Backend> Runtime<B> {
             for (id, size) in self.images.take_natural_sizes() {
                 self.drawings.set_natural_size(&mut ctx, id, size);
             }
+            self.web_views.after_commit(&mut ctx);
             self.media.after_commit(&mut ctx);
             for (id, hidden) in self.media.take_poster_changes() {
                 self.images.set_suppressed(&mut ctx, id, hidden);
@@ -809,6 +814,7 @@ impl<B: Backend> Runtime<B> {
                 for timer in due {
                     match timer {
                         Timer::InputDebounce(id) => self.inputs.on_timer(&mut ctx, id),
+                        Timer::WebViewTimeout(id) => self.web_views.on_timer(&mut ctx, id),
                         Timer::MediaProgress(id) | Timer::MediaRelease(id) => {
                             let position = self.backend.media_position(id);
                             self.media.on_timer(&mut ctx, timer, position);
@@ -827,6 +833,10 @@ impl<B: Backend> Runtime<B> {
                 // Players that start when scrolled into view follow the offset.
                 self.media.on_scroll();
                 self.media.evaluate(&mut ctx);
+            }
+            BackendEvent::WebView { id, event } => {
+                let mut ctx = ctx!(self);
+                self.web_views.on_event(&mut ctx, id, event);
             }
             BackendEvent::Media { id, event } => {
                 let mut ctx = ctx!(self);

@@ -136,6 +136,7 @@ pub enum BackendEvent {
     Wake,
     ScrollChanged { id: NodeId, offset: Point },
     Media { id: NodeId, event: MediaEvent },
+    WebView { id: NodeId, event: WebViewEvent },
     /// Assistive technology ran an action on a view: `activate` (the default
     /// press) or the name of one of its custom actions.
     AccessibilityAction { id: NodeId, name: String },
@@ -318,6 +319,54 @@ pub enum MediaEvent {
     Playing(bool),
 }
 
+/// What a web view shows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum WebSource {
+    /// Nothing new to load; the page on screen stays.
+    #[default]
+    None,
+    Url(String),
+    /// Inline HTML, loaded with an `about:blank` origin.
+    Html(String),
+}
+
+/// Everything a web view should be. The backend compares it with the
+/// previous state: a new `source` navigates, a new `stop` serial stops the
+/// load in progress, a new non-empty `injected_script` is evaluated at once
+/// when a page is loaded, the rest applies live.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebViewState {
+    pub source: WebSource,
+    pub stop: u32,
+    pub javascript: bool,
+    /// Local and session storage.
+    pub dom_storage: bool,
+    /// Empty keeps the engine's own.
+    pub user_agent: String,
+    /// Evaluated after every page finish (when JavaScript is enabled).
+    pub injected_script: String,
+    /// Media may play without a user gesture.
+    pub inline_media: bool,
+    /// Lower-cased hosts main-frame navigations are limited to; empty
+    /// allows everything. See `webview::navigation_allowed`.
+    pub allowed_hosts: Vec<String>,
+    pub scroll_enabled: bool,
+}
+
+/// What a platform web view reports.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WebViewEvent {
+    /// A main-frame page finished loading; `url` is its address.
+    Loaded { url: String },
+    /// A main-frame load failed (not an HTTP error status).
+    Failed(String),
+    /// The backend refused a main-frame navigation the allow-list excludes.
+    Blocked { url: String },
+    /// The page called `PamNative.postMessage(text)`; `url` is the main
+    /// frame's address at that moment.
+    Message { message: String, url: String },
+}
+
 /// One primitive of a drawing surface, in the view's logical coordinates.
 /// Commands paint in order, each over the previous ones, anti-aliased.
 #[derive(Clone, Debug, PartialEq)]
@@ -478,6 +527,9 @@ pub trait Backend {
     fn set_media(&mut self, id: NodeId, state: &MediaState);
     /// Current position and duration of a prepared player, in seconds.
     fn media_position(&self, id: NodeId) -> Option<(f64, f64)>;
+    /// Brings the page of a `WebView` view to `state`. A backend without a
+    /// web engine reports `WebViewEvent::Failed` for any source.
+    fn set_web_view(&mut self, id: NodeId, state: &WebViewState);
     /// Replaces what a view draws above its image and below its children.
     /// The view is clipped to its bounds; an empty list draws nothing.
     fn set_drawing(&mut self, id: NodeId, commands: &[DrawCommand]);
