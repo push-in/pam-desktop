@@ -6,6 +6,18 @@ declare(strict_types=1);
 if (!class_exists(\Pam\Desktop\Protocol::class)) {
     require_once dirname(__DIR__, 3).'/vendor/autoload.php';
 }
+// Without ext-intl, Normalizer comes from the package's polyfill dependency.
+if (!class_exists(Normalizer::class)) {
+    foreach ([dirname(__DIR__).'/vendor/autoload.php', dirname(__DIR__, 3).'/vendor/autoload.php'] as $autoload) {
+        if (is_file($autoload)) {
+            require_once $autoload;
+            break;
+        }
+    }
+}
+if (!class_exists(Normalizer::class)) {
+    throw new RuntimeException('Unicode normalization needs ext-intl or symfony/polyfill-intl-normalizer (composer install).');
+}
 
 $normalizationCases = [
     ["Café", "Cafe\u{0301}"],
