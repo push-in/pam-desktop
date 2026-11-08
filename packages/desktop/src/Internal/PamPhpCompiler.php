@@ -479,6 +479,10 @@ final class PamPhpCompiler
         string $cachePath,
     ): PamPhpComponent {
         $cachePath = self::$cacheRedirects[$cachePath] ?? $cachePath;
+        // The same identity compileDirectory() gives the file (a linked
+        // temp folder, a different case or 8.3 name on Windows), so a later
+        // compile of one file reuses its cache entry.
+        $source = realpath($source) ?: $source;
         $contents = file_get_contents($source);
 
         if ($contents === false) {

@@ -50,7 +50,7 @@ try {
         $key = basename($component->classFile, '.class.php');
         foreach (['class', 'template'] as $part) {
             [$offset, $length] = $recoveryIndex['components'][$key][$part];
-            $file = dirname($component->classFile).'/'.$key.'.'.$part.'.php';
+            $file = dirname($component->classFile).DIRECTORY_SEPARATOR.$key.'.'.$part.'.php';
             $contents = substr($recoveryPack, 8 + $recoveryIndexLength + $offset, $length);
             $recoveryExpected[$file] = $contents;
             if (!is_dir(dirname($file))) mkdir(dirname($file), 0o755, true);

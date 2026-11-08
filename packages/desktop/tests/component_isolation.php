@@ -12,6 +12,12 @@ if (!class_exists(\Pam\Desktop\Internal\PamPhpCompiler::class)) {
 // A broken component must not take the others down, and symlinked folders
 // (path repositories, shared component folders) are followed once, but only
 // into the project, its vendor/ or a path repository its composer.json declares.
+// Windows removes a link to a folder with rmdir(), not unlink().
+$removeLink = static function (string $link): void {
+    if (!@unlink($link)) {
+        rmdir($link);
+    }
+};
 $root = sys_get_temp_dir().'/pam-desktop-isolation-'.bin2hex(random_bytes(6));
 $shared = $root.'-shared';
 mkdir($root.'/src', 0700, true);
@@ -48,16 +54,17 @@ try {
                 throw $error;
             }
         } finally {
-            unlink($link);
+            $removeLink($link);
         }
     }
     echo "Component isolation and symlinked component folders: passed\n";
 } finally {
     foreach ([$root, $shared, $outside] as $directory) {
-        if (is_link($root.'/src/shared')) unlink($root.'/src/shared');
-        if (is_link($root.'/src/shared-loop')) unlink($root.'/src/shared-loop');
+        foreach ([$root.'/src/shared', $root.'/src/shared-loop'] as $folderLink) {
+            if (is_link($folderLink)) $removeLink($folderLink);
+        }
         $items = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($directory, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
-        foreach ($items as $item) $item->isDir() && !$item->isLink() ? rmdir($item->getPathname()) : unlink($item->getPathname());
+        foreach ($items as $item) $item->isDir() && !$item->isLink() ? rmdir($item->getPathname()) : $removeLink($item->getPathname());
         rmdir($directory);
     }
 }

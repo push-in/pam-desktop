@@ -196,7 +196,7 @@ final class RouteCompiler
             foreach ($exclude as $prefix) if (str_starts_with($path, $prefix)) continue 2;
             $source = (string) file_get_contents($path);
             if (!str_contains($source, 'navigate') && !str_contains($source, 'redirect') && !str_contains($source, '<Link')) continue;
-            $relative = ltrim(substr($path, strlen($directory)), '/');
+            $relative = ltrim(str_replace(DIRECTORY_SEPARATOR, '/', substr($path, strlen($directory))), '/');
             foreach (self::phpCalls($source) as $call) {
                 $route = $call['class'] !== null ? ($screens[strtolower($call['class'])] ?? null) : ($routes[$call['route']] ?? null);
                 if ($route === null) {

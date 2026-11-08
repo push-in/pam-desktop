@@ -130,13 +130,16 @@ final readonly class RuntimeError
      */
     public static function shortenPath(string $path): string
     {
+        $path = self::portablePath($path);
         $short = preg_replace('#^.*?/files/pam/(?:ota-)?releases/[^/]+/#', '', $path, 1) ?? $path;
         if ($short !== $path) {
             return $short;
         }
+        $windows = DIRECTORY_SEPARATOR === '\\';
         foreach (self::projectRoots() as $root) {
-            if (str_starts_with($path, $root.'/')) {
-                return substr($path, strlen($root) + 1);
+            $prefix = rtrim($root, '/').'/';
+            if ($windows ? strncasecmp($path, $prefix, strlen($prefix)) === 0 : str_starts_with($path, $prefix)) {
+                return substr($path, strlen($prefix));
             }
         }
 
@@ -229,7 +232,8 @@ final readonly class RuntimeError
         }
         $kind = StackFrame::APP;
         // The package: its sources and the worker bootstrap in bin/.
-        $package = dirname(__DIR__, 2);
+        $package = self::portablePath(dirname(__DIR__, 2));
+        $file = self::portablePath($file);
         if (str_starts_with($file, $package.'/src/') || str_starts_with($file, $package.'/bin/')
             || str_contains($file, '/vendor/pushinbr/pam-desktop')) {
             $kind = StackFrame::FRAMEWORK;
@@ -295,12 +299,12 @@ final readonly class RuntimeError
     {
         $roots = [];
         $script = $_SERVER['SCRIPT_FILENAME'] ?? null;
-        if (is_string($script) && $script !== '' && str_starts_with($script, '/')) {
-            $roots[] = dirname($script);
+        if (is_string($script) && preg_match('#^(?:/|[A-Za-z]:/)#', self::portablePath($script)) === 1) {
+            $roots[] = self::portablePath(dirname($script));
         }
         $cwd = getcwd();
-        if ($cwd !== false && $cwd !== '/') {
-            $roots[] = $cwd;
+        if ($cwd !== false && preg_match('#^(?:/|[A-Za-z]:/?)$#', self::portablePath($cwd)) !== 1) {
+            $roots[] = self::portablePath($cwd);
         }
 
         $roots = array_values(array_unique($roots));
@@ -308,5 +312,11 @@ final readonly class RuntimeError
         usort($roots, static fn (string $a, string $b): int => strlen($a) <=> strlen($b));
 
         return $roots;
+    }
+
+    /** Forward slashes on Windows, so paths compare and print alike everywhere. */
+    private static function portablePath(string $path): string
+    {
+        return DIRECTORY_SEPARATOR === '\\' ? str_replace('\\', '/', $path) : $path;
     }
 }

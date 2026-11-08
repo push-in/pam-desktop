@@ -8,6 +8,8 @@ use Pam\Desktop\Internal\TemplateRenderer;
 // Components precompiled into the bundle (build time) are relocatable and
 // fingerprint-validated: an installed copy at another path boots without
 // compiling; an edited component (hot reload) compiles as before.
+// Paths compare with forward slashes: Windows joins with either separator.
+$slashes = static fn (?string $path): string => str_replace('\\', '/', (string) $path);
 $prebuiltRoot = sys_get_temp_dir().'/pam-desktop-prebuilt-'.getmypid();
 $prebuiltCopy = $prebuiltRoot.'-installed';
 foreach ([$prebuiltRoot, $prebuiltCopy] as $prebuiltDirectory) {
@@ -64,13 +66,13 @@ $installedComponents = PamPhpCompiler::compileDirectory($prebuiltCopy.'/src', $i
 $installedComponent = $installedComponents[0] ?? null;
 // The compiler reports resolved paths (on macOS the temp folder /var is a
 // link to /private/var).
-$prebuiltCopy = realpath($prebuiltCopy) ?: $prebuiltCopy;
+$prebuiltCopy = $slashes(realpath($prebuiltCopy) ?: $prebuiltCopy);
 $assert(
     $installedComponent !== null
-        && str_starts_with($installedComponent->classFile, $prebuiltCopy.'/'.PamPhpCompiler::PREBUILT_DIRECTORY.'/.')
+        && str_starts_with($slashes($installedComponent->classFile), $prebuiltCopy.'/'.PamPhpCompiler::PREBUILT_DIRECTORY.'/.')
         && !is_file($installedComponent->classFile)
         && (glob($installedCache.'/*') ?: []) === []
-        && $installedComponent->template->children[0]->source === $prebuiltCopy.'/src/Components/Badge.pam.php',
+        && $slashes($installedComponent->template->children[0]->source) === $prebuiltCopy.'/src/Components/Badge.pam.php',
     'A relocated bundle must boot from its prebuilt components without compiling them.',
 );
 $installedElement = TemplateRenderer::render($installedComponent->template, null, ['active' => true, 'label' => 'Ok']);
@@ -92,7 +94,7 @@ file_put_contents(
 );
 $editedComponents = PamPhpCompiler::compileDirectory($prebuiltCopy.'/src', $installedCache);
 $assert(
-    str_starts_with($editedComponents[0]->classFile, $installedCache.'/'),
+    str_starts_with($slashes($editedComponents[0]->classFile), $slashes($installedCache).'/'),
     'An edited component must ignore its stale prebuilt copy and compile into the writable cache.',
 );
 // A read-only bundle (an iOS app) writes its component files under the
@@ -109,11 +111,22 @@ try {
     $readOnlyComponent = PamPhpCompiler::compileDirectory($readOnlyCopy.'/src', $readOnlyCopy.'-cache')[0] ?? null;
     $readOnlyElement = $readOnlyComponent === null ? null
         : TemplateRenderer::render($readOnlyComponent->template, null, ['active' => false, 'label' => 'Ro']);
+    // chmod() cannot make a folder read-only on Windows (only its access
+    // list can): there the bundle stays writable and keeps its own files.
+    $readOnlyBundle = !is_writable($readOnlyCopy.'/'.PamPhpCompiler::PREBUILT_DIRECTORY);
     $assert(
         $readOnlyComponent !== null
-            && str_starts_with($readOnlyComponent->classFile, $readOnlyState.'/prebuilt-components/')
-            && !is_dir($readOnlyState.'/prebuilt-components/stale-pack')
             && $readOnlyElement?->domClasses() === ['badge']
+            && ($readOnlyBundle || str_starts_with(
+                $slashes($readOnlyComponent->classFile),
+                $slashes(realpath($readOnlyCopy) ?: $readOnlyCopy).'/'.PamPhpCompiler::PREBUILT_DIRECTORY.'/.',
+            )),
+        'A bundle must boot from its prebuilt components, writable or not.',
+    );
+    $assert(
+        !$readOnlyBundle || $readOnlyComponent !== null
+            && str_starts_with($slashes($readOnlyComponent->classFile), $slashes($readOnlyState).'/prebuilt-components/')
+            && !is_dir($readOnlyState.'/prebuilt-components/stale-pack')
             && (glob($readOnlyCopy.'/'.PamPhpCompiler::PREBUILT_DIRECTORY.'/.*', GLOB_ONLYDIR) ?: []) === [
                 $readOnlyCopy.'/'.PamPhpCompiler::PREBUILT_DIRECTORY.'/.',
                 $readOnlyCopy.'/'.PamPhpCompiler::PREBUILT_DIRECTORY.'/..',
@@ -143,12 +156,13 @@ exec('rm -rf '.escapeshellarg($stagedCopy));
 exec('cp -R '.escapeshellarg($prebuiltRoot).' '.escapeshellarg($stagedCopy));
 file_put_contents($stagedCopy.'/manifest.sha256', "staged\n");
 chmod($stagedCopy.'/src/Components/Badge.pam.php', 0o000);
+$stagedResolved = $slashes(realpath($stagedCopy) ?: $stagedCopy);
 try {
     $stagedComponent = PamPhpCompiler::compileDirectory($stagedCopy.'/src', $stagedCopy.'/.cache')[0] ?? null;
     $assert(
         $stagedComponent !== null
             && $stagedComponent->className === 'Pam\\Desktop\\Tests\\Prebuilt\\Badge'
-            && str_starts_with($stagedComponent->classFile, $stagedCopy.'/'.PamPhpCompiler::PREBUILT_DIRECTORY.'/.')
+            && str_starts_with($slashes($stagedComponent->classFile), $stagedResolved.'/'.PamPhpCompiler::PREBUILT_DIRECTORY.'/.')
             && (glob($stagedCopy.'/.cache/*') ?: []) === [],
         'A staged bundle must boot from its pack listing without reading its component sources.',
     );
