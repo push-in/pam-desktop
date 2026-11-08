@@ -241,6 +241,8 @@ require __DIR__.'/../src/functions.php';
 // Match Composer's autoload.files for this direct source test runner. Several
 // tests evaluate templates that call mb_* before the later differential suite.
 require __DIR__.'/../src/Polyfill/mbstring_functions.php';
+require_once __DIR__.'/../src/Routing/functions.php';
+require_once __DIR__.'/../src/Testing/functions.php';
 require __DIR__.'/Fixtures/ExamplePluginProvider.php';
 require __DIR__.'/Fixtures/TemplateEnumScope.php';
 

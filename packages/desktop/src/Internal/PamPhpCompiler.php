@@ -341,9 +341,36 @@ final class PamPhpCompiler
     private static function isInside(string $path, string $root): bool
     {
         $root = rtrim($root, '/\\');
-        return $path === $root
+        if ($path === $root
             || str_starts_with($path, $root.DIRECTORY_SEPARATOR)
-            || ($root === '' && str_starts_with($path, DIRECTORY_SEPARATOR));
+            || ($root === '' && str_starts_with($path, DIRECTORY_SEPARATOR))) {
+            return true;
+        }
+        if (PHP_OS_FAMILY !== 'Windows') {
+            return false;
+        }
+        // Windows paths are case-insensitive and the same folder can surface
+        // in long or 8.3 short form (C:\Users\RUNNER~1 vs C:\Users\runneradmin),
+        // so fall back to comparing directory identity up the parent chain.
+        $folded = strtolower(str_replace('/', '\\', $path));
+        $foldedRoot = strtolower(str_replace('/', '\\', $root));
+        if ($folded === $foldedRoot || str_starts_with($folded, $foldedRoot.'\\')) {
+            return true;
+        }
+        $rootStat = @stat($root);
+        if ($rootStat === false || $rootStat['ino'] === 0) {
+            return false;
+        }
+        for ($current = $path; ; $current = $parent) {
+            $stat = @stat($current);
+            if ($stat !== false && $stat['ino'] === $rootStat['ino'] && $stat['dev'] === $rootStat['dev']) {
+                return true;
+            }
+            $parent = dirname($current);
+            if ($parent === $current) {
+                return false;
+            }
+        }
     }
 
     /** @param list<string> $roots */
