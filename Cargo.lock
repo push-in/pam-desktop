@@ -1868,7 +1868,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-appkit"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "block2",
  "objc2",
@@ -1891,7 +1891,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-engine"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "pam-desktop-wire",
  "ttf-parser",
@@ -1899,7 +1899,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-gtk"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "async-channel",
  "gtk4",
@@ -1911,7 +1911,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-host"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -1937,7 +1937,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-ui"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
@@ -1950,7 +1950,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-win32"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "pam-desktop-ui",
  "webview2-com",
@@ -1963,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "pam-desktop-wire"
-version = "2.0.0"
+version = "2.0.1"
 
 [[package]]
 name = "pango"

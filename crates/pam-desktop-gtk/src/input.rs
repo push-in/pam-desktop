@@ -411,7 +411,7 @@ impl InputHost {
                 css_color(color)
             ));
         }
-        self.provider.load_from_string(&css);
+        crate::compat::load_css(&self.provider, &css);
 
         let purpose = match config.purpose {
             InputPurpose::Text | InputPurpose::Search => gtk::InputPurpose::FreeForm,

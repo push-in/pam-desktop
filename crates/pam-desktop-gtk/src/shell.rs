@@ -335,19 +335,11 @@ impl Shell {
         config: &FileDialogConfig,
         done: Box<dyn FnOnce(Vec<PathBuf>)>,
     ) {
-        let dialog = gtk::FileDialog::builder().modal(true).build();
-        if !config.title.is_empty() {
-            dialog.set_title(&config.title);
-        }
-        if !config.default_name.is_empty() {
-            dialog.set_initial_name(Some(&config.default_name));
-        }
-        if let Some(directory) = &config.directory {
-            dialog.set_initial_folder(Some(&gio::File::for_path(directory)));
-        }
-        if !config.filters.is_empty() {
-            let filters = gio::ListStore::new::<gtk::FileFilter>();
-            for filter in &config.filters {
+        use crate::compat::Pick;
+        let filters = config
+            .filters
+            .iter()
+            .map(|filter| {
                 let entry = gtk::FileFilter::new();
                 entry.set_name(Some(&filter.name));
                 for extension in &filter.extensions {
@@ -357,46 +349,26 @@ impl Shell {
                         entry.add_suffix(extension);
                     }
                 }
-                filters.append(&entry);
-            }
-            dialog.set_filters(Some(&filters));
-        }
-        if config.kind == FileDialogKind::OpenMultiple {
-            dialog.open_multiple(parent, gio::Cancellable::NONE, move |result| {
-                let mut paths = Vec::new();
-                if let Ok(files) = result {
-                    for index in 0..files.n_items() {
-                        if let Some(path) = files
-                            .item(index)
-                            .and_downcast::<gio::File>()
-                            .and_then(|file| file.path())
-                        {
-                            paths.push(path);
-                        }
-                    }
-                }
-                done(paths);
-            });
-            return;
-        }
-        let single = move |result: Result<gio::File, glib::Error>| {
-            done(
-                result
-                    .ok()
-                    .and_then(|file| file.path())
-                    .into_iter()
-                    .collect(),
-            );
+                entry
+            })
+            .collect();
+        let dialog = crate::compat::FileDialog {
+            pick: match config.kind {
+                FileDialogKind::Open => Pick::Open,
+                FileDialogKind::OpenMultiple => Pick::OpenMultiple,
+                FileDialogKind::Save => Pick::Save,
+                FileDialogKind::SelectFolder => Pick::Folder,
+            },
+            title: &config.title,
+            initial_name: &config.default_name,
+            initial_folder: config.directory.as_ref().map(gio::File::for_path),
+            filters,
         };
-        match config.kind {
-            FileDialogKind::Save => dialog.save(parent, gio::Cancellable::NONE, single),
-            FileDialogKind::SelectFolder => {
-                dialog.select_folder(parent, gio::Cancellable::NONE, single)
-            }
-            FileDialogKind::Open | FileDialogKind::OpenMultiple => {
-                dialog.open(parent, gio::Cancellable::NONE, single)
-            }
-        }
+        crate::compat::pick_files(
+            parent.map(|parent| parent.upcast_ref()),
+            dialog,
+            Box::new(move |files| done(files.iter().filter_map(|file| file.path()).collect())),
+        );
     }
 
     pub fn notify(&self, notification: &NotificationConfig) {

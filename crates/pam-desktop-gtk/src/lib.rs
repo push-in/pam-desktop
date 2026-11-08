@@ -10,6 +10,7 @@
 
 mod accessibility;
 mod backend;
+mod compat;
 mod fonts;
 #[cfg(feature = "hotkeys")]
 mod hotkeys;

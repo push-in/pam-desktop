@@ -157,7 +157,7 @@ impl GtkBackend {
                 if (phase == gtk::PropagationPhase::Capture) != modifiers.control {
                     return glib::Propagation::Proceed;
                 }
-                let scale = if controller.unit() == gdk::ScrollUnit::Wheel {
+                let scale = if crate::compat::scrolls_in_wheel_steps(controller) {
                     NOTCH
                 } else {
                     1.0
@@ -1078,13 +1078,8 @@ impl Backend for GtkBackend {
         else {
             return false;
         };
-        let priority = if assertive {
-            gtk::AccessibleAnnouncementPriority::High
-        } else {
-            gtk::AccessibleAnnouncementPriority::Medium
-        };
-        entry.host.announce(message, priority);
-        crate::accessibility::screen_reader_active()
+        crate::compat::announce(&entry.host, message, assertive)
+            && crate::accessibility::screen_reader_active()
     }
 
     fn screen_reader_active(&self) -> bool {
@@ -1293,30 +1288,27 @@ impl Backend for GtkBackend {
                 .map(|button| button.label.as_str())
                 .collect()
         };
-        let dialog = gtk::AlertDialog::builder()
-            .modal(true)
-            .message(alert.title.as_str())
-            .detail(alert.message.as_str())
-            .buttons(labels)
-            .build();
-        if let Some(cancel) = alert
-            .buttons
-            .iter()
-            .position(|button| button.style == AlertButtonStyle::Cancel)
-        {
-            dialog.set_cancel_button(cancel as i32);
-        }
-        // The first non-cancel button answers to Enter.
-        let default = alert
-            .buttons
-            .iter()
-            .position(|button| button.style != AlertButtonStyle::Cancel)
-            .unwrap_or(0);
-        dialog.set_default_button(default as i32);
+        let alert = crate::compat::Alert {
+            message: &alert.title,
+            detail: &alert.message,
+            buttons: labels,
+            cancel: alert
+                .buttons
+                .iter()
+                .position(|button| button.style == AlertButtonStyle::Cancel),
+            // The first non-cancel button answers to Enter.
+            default: alert
+                .buttons
+                .iter()
+                .position(|button| button.style != AlertButtonStyle::Cancel)
+                .unwrap_or(0),
+        };
         let parent = self.windows.get(&window).map(|entry| entry.window.clone());
-        dialog.choose(parent.as_ref(), gio::Cancellable::NONE, move |result| {
-            done(result.ok().and_then(|index| usize::try_from(index).ok()));
-        });
+        crate::compat::choose(
+            parent.as_ref().map(|parent| parent.upcast_ref()),
+            &alert,
+            done,
+        );
     }
 
     fn set_appearance(&mut self, dark: Option<bool>) {
@@ -1591,7 +1583,7 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
         };
         if let Some(display) = gdk::Display::default() {
             let provider = gtk::CssProvider::new();
-            provider.load_from_string(STYLESHEET);
+            crate::compat::load_css(&provider, STYLESHEET);
             gtk::style_context_add_provider_for_display(
                 &display,
                 &provider,
@@ -1812,7 +1804,7 @@ fn add_scrollbar_rule(class: &str, rule: impl FnOnce() -> String) {
             }
             let css = styles.2.clone();
             if let Some(provider) = styles.0.as_ref() {
-                provider.load_from_string(&css);
+                crate::compat::load_css(provider, &css);
             }
         }
     });
@@ -1939,7 +1931,7 @@ fn skip_gl_without_gpu() {
     };
     // SAFETY: called first in `run`, before GTK or any other thread starts.
     unsafe {
-        // GTK 4.14 reads GDK_DEBUG; GTK 4.16 and later read GDK_DISABLE.
+        // GTK up to 4.14 reads GDK_DEBUG; GTK 4.16 and later read GDK_DISABLE.
         std::env::set_var("GDK_DEBUG", debug);
         std::env::set_var("GDK_DISABLE", "gl");
     }

@@ -285,7 +285,7 @@ mod imp {
             }
             if let Some(text_state) = state.text.as_mut() {
                 let (left, top) = text_state.place(size);
-                let color = widget.color();
+                let color = crate::compat::widget_color(&*widget);
                 snapshot.save();
                 snapshot.translate(&graphene::Point::new(left, top));
                 for (rect, decoration) in &text_state.boxes {
@@ -418,18 +418,40 @@ fn paint_image(snapshot: &gtk::Snapshot, size: Size, decoration: &Decoration, im
     let draw = |snapshot: &gtk::Snapshot| {
         if content.fit == ImageFit::Repeat {
             snapshot.push_repeat(&area_rect, Some(&bounds));
-            snapshot.append_scaled_texture(&image.texture, gsk::ScalingFilter::Linear, &bounds);
+            crate::compat::append_scaled_texture(
+                snapshot,
+                &image.texture,
+                gsk::ScalingFilter::Linear,
+                &bounds,
+            );
             snapshot.pop();
         } else {
-            snapshot.append_scaled_texture(&image.texture, gsk::ScalingFilter::Trilinear, &bounds);
+            crate::compat::append_scaled_texture(
+                snapshot,
+                &image.texture,
+                gsk::ScalingFilter::Trilinear,
+                &bounds,
+            );
         }
     };
     match content.tint {
-        Some(tint) => {
-            snapshot.push_mask(gsk::MaskMode::Alpha);
+        Some(tint) if crate::compat::push_alpha_mask(snapshot) => {
             draw(snapshot);
             snapshot.pop();
             snapshot.append_color(&paint::rgba(tint), &area_rect);
+            snapshot.pop();
+        }
+        // Without masks (GTK before 4.10), the same: the tint color with the
+        // alpha of the image.
+        Some(tint) => {
+            let [red, green, blue, alpha] = tint.to_f32();
+            let mut matrix = [0.0; 16];
+            matrix[15] = alpha;
+            snapshot.push_color_matrix(
+                &graphene::Matrix::from_float(matrix),
+                &graphene::Vec4::new(red, green, blue, 0.0),
+            );
+            draw(snapshot);
             snapshot.pop();
         }
         None => draw(snapshot),
@@ -446,7 +468,7 @@ fn paint_image(snapshot: &gtk::Snapshot, size: Size, decoration: &Decoration, im
 glib::wrapper! {
     pub struct PamView(ObjectSubclass<imp::PamView>)
         @extends gtk::Widget,
-        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+        @implements gtk::Buildable, gtk::ConstraintTarget;
 }
 
 impl Default for PamView {

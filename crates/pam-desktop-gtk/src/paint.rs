@@ -168,8 +168,29 @@ pub fn paint_border(snapshot: &gtk::Snapshot, size: Size, decoration: &Decoratio
     let outline = rounded(size, decoration.radii, Insets::ZERO);
 
     if let Some(gradient) = &decoration.border_gradient {
+        if !crate::compat::push_alpha_mask(snapshot) {
+            // GTK before 4.10 has no masks: Cairo fills the ring.
+            let inner = rounded(
+                size,
+                decoration.radii,
+                Insets {
+                    left,
+                    top,
+                    right,
+                    bottom,
+                },
+            );
+            if let Some(pattern) = cairo_gradient(size, gradient) {
+                let context = snapshot.append_cairo(&bounds(size));
+                context.set_fill_rule(gtk::cairo::FillRule::EvenOdd);
+                trace_rounded(&context, &outline);
+                trace_rounded(&context, &inner);
+                let _ = context.set_source(&pattern);
+                let _ = context.fill();
+            }
+            return;
+        }
         // The gradient shows only through the border ring.
-        snapshot.push_mask(gsk::MaskMode::Alpha);
         let opaque = gdk::RGBA::new(0.0, 0.0, 0.0, 1.0);
         snapshot.append_border(
             &outline,
@@ -204,23 +225,180 @@ pub fn paint_border(snapshot: &gtk::Snapshot, size: Size, decoration: &Decoratio
     let width = left.max(top).max(right).max(bottom);
     let half = width / 2.0;
     let center_line = rounded(size, decoration.radii, Insets::all(half));
-    let builder = gsk::PathBuilder::new();
-    builder.add_rounded_rect(&center_line);
-    let path = builder.to_path();
-    let stroke = gsk::Stroke::new(width);
-    if border.style == BorderStyle::Dotted {
-        stroke.set_line_cap(gsk::LineCap::Round);
-        stroke.set_dash(&[0.0, width * 2.0]);
+    let dotted = border.style == BorderStyle::Dotted;
+    let dash = if dotted {
+        [0.0, width * 2.0]
     } else {
-        stroke.set_dash(&[width * 3.0, width * 2.0]);
+        [width * 3.0, width * 2.0]
+    };
+    let color = rgba(
+        border
+            .colors
+            .iter()
+            .copied()
+            .find(|color| !color.is_transparent())
+            .unwrap_or(Color::TRANSPARENT),
+    );
+    if crate::compat::stroke_rounded_rect(snapshot, &center_line, width, &dash, dotted, &color) {
+        return;
     }
-    let color = border
-        .colors
-        .iter()
-        .copied()
-        .find(|color| !color.is_transparent())
-        .unwrap_or(Color::TRANSPARENT);
-    snapshot.append_stroke(&path, &stroke, &rgba(color));
+    // GTK before 4.14 strokes no paths: Cairo does.
+    let context = snapshot.append_cairo(&bounds(size));
+    trace_rounded(&context, &center_line);
+    context.set_source_rgba(
+        f64::from(color.red()),
+        f64::from(color.green()),
+        f64::from(color.blue()),
+        f64::from(color.alpha()),
+    );
+    context.set_line_width(f64::from(width));
+    if dotted {
+        context.set_line_cap(gtk::cairo::LineCap::Round);
+    }
+    context.set_dash(&dash.map(f64::from), 0.0);
+    let _ = context.stroke();
+}
+
+/// Adds the outline of `rect` to the Cairo path, clockwise from the top
+/// left corner.
+fn trace_rounded(context: &gtk::cairo::Context, rect: &gsk::RoundedRect) {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let bounds = rect.bounds();
+    let (x, y) = (f64::from(bounds.x()), f64::from(bounds.y()));
+    let (width, height) = (f64::from(bounds.width()), f64::from(bounds.height()));
+    let corners = rect.corner();
+    // Corner centers, and the angle each quarter ellipse starts at.
+    let arcs = [
+        (x, y, 1.0, 1.0, PI),
+        (x + width, y, -1.0, 1.0, -FRAC_PI_2),
+        (x + width, y + height, -1.0, -1.0, 0.0),
+        (x, y + height, 1.0, -1.0, FRAC_PI_2),
+    ];
+    context.new_sub_path();
+    for (corner, (cx, cy, sx, sy, start)) in corners.iter().zip(arcs) {
+        let (rx, ry) = (f64::from(corner.width()), f64::from(corner.height()));
+        if rx <= 0.0 || ry <= 0.0 {
+            context.line_to(cx, cy);
+            continue;
+        }
+        context.save().ok();
+        context.translate(cx + sx * rx, cy + sy * ry);
+        context.scale(rx, ry);
+        context.arc(0.0, 0.0, 1.0, start, start + FRAC_PI_2);
+        context.restore().ok();
+    }
+    context.close_path();
+}
+
+/// `gradient` as a Cairo pattern over a box of `size`.
+fn cairo_gradient(size: Size, gradient: &Gradient) -> Option<gtk::cairo::Pattern> {
+    use gtk::cairo::{Extend, LinearGradient, Matrix, Mesh, RadialGradient};
+    let stops = stops(gradient);
+    if stops.len() < 2 {
+        return None;
+    }
+    let add = |pattern: &gtk::cairo::Gradient| {
+        for stop in &stops {
+            let color = stop.color();
+            pattern.add_color_stop_rgba(
+                f64::from(stop.offset()),
+                f64::from(color.red()),
+                f64::from(color.green()),
+                f64::from(color.blue()),
+                f64::from(color.alpha()),
+            );
+        }
+        pattern.set_extend(if gradient.repeating {
+            Extend::Repeat
+        } else {
+            Extend::Pad
+        });
+    };
+    match &gradient.shape {
+        GradientShape::Linear { .. } | GradientShape::LinearPoints { .. } => {
+            let (start, end) = gradient.line(size)?;
+            let pattern = LinearGradient::new(
+                f64::from(start.x),
+                f64::from(start.y),
+                f64::from(end.x),
+                f64::from(end.y),
+            );
+            add(&pattern);
+            Some(gtk::cairo::Pattern::clone(&pattern))
+        }
+        GradientShape::Radial {
+            center,
+            radius_x,
+            radius_y,
+        } => {
+            let (cx, cy) = (
+                f64::from(center.x * size.width),
+                f64::from(center.y * size.height),
+            );
+            let horizontal = f64::from((radius_x * size.width * std::f32::consts::SQRT_2).max(1.0));
+            let vertical = f64::from((radius_y * size.height * std::f32::consts::SQRT_2).max(1.0));
+            let pattern = RadialGradient::new(cx, cy, 0.0, cx, cy, horizontal);
+            // An ellipse: the circle stretched vertically.
+            let ratio = horizontal / vertical;
+            pattern.set_matrix(Matrix::new(1.0, 0.0, 0.0, ratio, 0.0, cy - cy * ratio));
+            add(&pattern);
+            Some(gtk::cairo::Pattern::clone(&pattern))
+        }
+        GradientShape::Conic { center, angle } => {
+            // Cairo has no conic gradient: thin triangles around the center.
+            let (cx, cy) = (
+                f64::from(center.x * size.width),
+                f64::from(center.y * size.height),
+            );
+            let reach = f64::from(size.width + size.height) * 2.0;
+            let color_at = |offset: f32| {
+                let after = stops.iter().position(|stop| stop.offset() >= offset);
+                let (from, to) = match after {
+                    Some(0) => (&stops[0], &stops[0]),
+                    Some(index) => (&stops[index - 1], &stops[index]),
+                    None => (&stops[stops.len() - 1], &stops[stops.len() - 1]),
+                };
+                let span = to.offset() - from.offset();
+                let t = if span > 0.0 {
+                    (offset - from.offset()) / span
+                } else {
+                    0.0
+                };
+                let (a, b) = (from.color(), to.color());
+                let mix = |a: f32, b: f32| f64::from(a + (b - a) * t);
+                [
+                    mix(a.red(), b.red()),
+                    mix(a.green(), b.green()),
+                    mix(a.blue(), b.blue()),
+                    mix(a.alpha(), b.alpha()),
+                ]
+            };
+            let point = |offset: f32| {
+                let radians = f64::from(*angle + offset * 360.0).to_radians();
+                (cx + reach * radians.sin(), cy - reach * radians.cos())
+            };
+            let mesh = Mesh::new();
+            const SEGMENTS: u16 = 72;
+            for segment in 0..SEGMENTS {
+                let (from, to) = (
+                    f32::from(segment) / f32::from(SEGMENTS),
+                    f32::from(segment + 1) / f32::from(SEGMENTS),
+                );
+                let (start, end) = (point(from), point(to));
+                mesh.begin_patch();
+                mesh.move_to(cx, cy);
+                mesh.line_to(start.0, start.1);
+                mesh.line_to(end.0, end.1);
+                mesh.line_to(cx, cy);
+                for (corner, offset) in [(0, from), (1, from), (2, to), (3, to)] {
+                    let [r, g, b, a] = color_at(offset);
+                    mesh.set_corner_color_rgba(gtk::cairo::MeshCorner::from(corner), r, g, b, a);
+                }
+                mesh.end_patch();
+            }
+            Some(gtk::cairo::Pattern::clone(&mesh))
+        }
+    }
 }
 
 /// Rasterises a drawing surface with Cairo. `hairline` is the width of one

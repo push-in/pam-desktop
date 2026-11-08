@@ -47,19 +47,19 @@ What this means in practice:
 
 | Package (Debian and Ubuntu names) | Needed for |
 | --- | --- |
-| `libgtk-4-dev` | The backend. GTK 4.14 or newer. |
+| `libgtk-4-dev` | The backend. GTK 4.6 or newer. |
 
 At run time the application uses what GTK uses: Pango for text, gdk-pixbuf for image decoding (the formats are those of the installed loaders) and GStreamer, through `GtkMediaFile`, for media.
 
 ### Running a released host
 
-The host that `vendor/bin/pam-desktop` downloads is built on Ubuntu 24.04, for x86_64 and arm64. It needs:
+The host that `vendor/bin/pam-desktop` downloads is built on Ubuntu 22.04, for x86_64 and arm64, against GTK 4.6. The GTK functions newer than 4.6 (alert and file dialogs, URI and file launchers, masks, path strokes, screen reader announcements and others) are looked up when first used and used when the installed GTK has them; on an older GTK the backend takes a GTK 4.6 path instead (for example a `GtkFileChooserNative`, or Cairo for dashed borders). It needs:
 
 | Requirement | Debian and Ubuntu package |
 | --- | --- |
-| glibc 2.39 or newer | `libc6` |
-| GTK 4.14 or newer | `libgtk-4-1` |
-| WebKitGTK 6, only for applications that show a `WebView` | `libwebkitgtk-6.0-4` |
+| glibc 2.35 or newer | `libc6` |
+| GTK 4.6 or newer | `libgtk-4-1` |
+| WebKitGTK 6, only for applications that show a `WebView` | `libwebkitgtk-6.0-4` (Ubuntu 24.04 and later) |
 | GStreamer plugins, for media | `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good` |
 
 A host built from a checkout needs what the machine that built it had.
