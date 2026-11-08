@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.shell",
+    "name": "PAM Desktop shell",
+    "entry": "index.php",
+    "window": {
+        "width": 820,
+        "height": 560
+    }
+}

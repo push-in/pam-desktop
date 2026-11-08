@@ -1,0 +1,218 @@
+[package]
+name = "pam-desktop-appkit"
+description = "AppKit backend of PAM Desktop (macOS)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Only the framework features the backend uses are compiled.
+[target.'cfg(target_os = "macos")'.dependencies]
+pam-desktop-ui.workspace = true
+objc2 = "0.6.5"
+block2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "NSArray",
+    "NSAttributedString",
+    "NSBundle",
+    "NSData",
+    "NSDictionary",
+    "NSEnumerator",
+    "NSError",
+    "NSGeometry",
+    "NSKeyValueCoding",
+    "NSKeyValueObserving",
+    "NSNotification",
+    "NSObject",
+    "NSOperation",
+    "NSProcessInfo",
+    "NSRange",
+    "NSRunLoop",
+    "NSString",
+    "NSThread",
+    "NSTimer",
+    "NSURL",
+    "NSURLRequest",
+    "NSUUID",
+    "NSUserDefaults",
+    "NSValue",
+    "block2",
+    "std",
+] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "NSAccessibility",
+    "NSAccessibilityConstants",
+    "NSAccessibilityCustomAction",
+    "NSAccessibilityProtocols",
+    "NSAlert",
+    "NSAnimationContext",
+    "NSAppearance",
+    "NSApplication",
+    "NSAttributedString",
+    "NSBitmapImageRep",
+    "NSButton",
+    "NSCell",
+    "NSClipView",
+    "NSColor",
+    "NSControl",
+    "NSCursor",
+    "NSDockTile",
+    "NSDragging",
+    "NSDraggingItem",
+    "NSDraggingSession",
+    "NSEvent",
+    "NSFont",
+    "NSFontDescriptor",
+    "NSFontManager",
+    "NSGraphics",
+    "NSGraphicsContext",
+    "NSImage",
+    "NSImageRep",
+    "NSLayoutManager",
+    "NSMenu",
+    "NSMenuItem",
+    "NSOpenPanel",
+    "NSPanel",
+    "NSParagraphStyle",
+    "NSPrintInfo",
+    "NSPrintOperation",
+    "NSPasteboard",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSSavePanel",
+    "NSScreen",
+    "NSScrollView",
+    "NSScroller",
+    "NSSecureTextField",
+    "NSStatusBar",
+    "NSStatusBarButton",
+    "NSStatusItem",
+    "NSText",
+    "NSTextContainer",
+    "NSTextField",
+    "NSTextInputClient",
+    "NSTextLayoutFragment",
+    "NSTextStorage",
+    "NSTextView",
+    "NSTrackingArea",
+    "NSView",
+    "NSWindow",
+    "NSSharingService",
+    "NSWorkspace",
+    "block2",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "objc2-core-image",
+    "objc2-quartz-core",
+    "objc2-uniform-type-identifiers",
+    "std",
+] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = [
+    "CABase",
+    "CADisplayLink",
+    "CALayer",
+    "CAShapeLayer",
+    "CATransaction",
+    "objc2-core-foundation",
+    "objc2-core-graphics",
+    "std",
+] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+    "CFCGTypes",
+    "CFData",
+    "CFDictionary",
+    "CFNumber",
+    "CFString",
+    "CFURL",
+    "objc2",
+    "std",
+] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+    "CGColor",
+    "CGColorSpace",
+    "CGContext",
+    "CGGradient",
+    "CGImage",
+    "CGPath",
+    "objc2",
+    "std",
+] }
+objc2-core-text = { version = "0.3.2", default-features = false, features = [
+    "CTFont",
+    "CTFontDescriptor",
+    "CTFontManager",
+    "objc2-core-graphics",
+    "std",
+] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = [
+    "CMTime",
+    "objc2",
+    "std",
+] }
+objc2-core-image = { version = "0.3.2", default-features = false, features = [
+    "CIFilter",
+    "CIVector",
+    "objc2-core-foundation",
+    "std",
+] }
+objc2-image-io = { version = "0.3.2", default-features = false, features = [
+    "CGImageSource",
+    "objc2-core-graphics",
+    "std",
+] }
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = [
+    "AVAnimation",
+    "AVPlayer",
+    "AVPlayerItem",
+    "AVPlayerLayer",
+    "objc2-core-foundation",
+    "objc2-core-media",
+    "std",
+] }
+objc2-av-kit = { version = "0.3.2", default-features = false, features = [
+    "AVPlayerView",
+    "objc2-app-kit",
+    "objc2-av-foundation",
+    "std",
+] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = [
+    "WKFrameInfo",
+    "WKNavigation",
+    "WKNavigationAction",
+    "WKNavigationDelegate",
+    "WKPreferences",
+    "WKScriptMessage",
+    "WKScriptMessageHandler",
+    "WKSecurityOrigin",
+    "WKUIDelegate",
+    "WKUserContentController",
+    "WKUserScript",
+    "WKWebView",
+    "WKWebViewConfiguration",
+    "WKWebpagePreferences",
+    "WKWebsiteDataStore",
+    "WKWindowFeatures",
+    "block2",
+    "objc2-app-kit",
+    "objc2-core-foundation",
+    "std",
+] }
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = [
+    "UNNotification",
+    "UNNotificationContent",
+    "UNNotificationRequest",
+    "UNNotificationResponse",
+    "UNNotificationSound",
+    "UNNotificationTrigger",
+    "UNUserNotificationCenter",
+    "block2",
+    "std",
+] }
+objc2-uniform-type-identifiers = { version = "0.3.2", default-features = false, features = [
+    "UTType",
+    "std",
+] }
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop;
+
+enum TextAlignment: int
+{
+    case Start = 1;
+    case Center = 2;
+    case End = 3;
+    case Justify = 4;
+}

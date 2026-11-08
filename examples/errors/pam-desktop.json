@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.errors",
+    "name": "PAM Desktop errors",
+    "entry": "index.php",
+    "window": {
+        "width": 760,
+        "height": 560
+    }
+}

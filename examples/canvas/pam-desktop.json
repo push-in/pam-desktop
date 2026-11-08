@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.canvas",
+    "name": "PAM Desktop canvas",
+    "entry": "index.php",
+    "window": {
+        "width": 940,
+        "height": 600
+    }
+}

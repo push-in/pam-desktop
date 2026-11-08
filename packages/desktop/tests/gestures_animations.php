@@ -1,0 +1,466 @@
+<?php
+
+declare(strict_types=1);
+
+use Pam\Desktop\Animation\Animation;
+use Pam\Desktop\Animation\AnimationPreset;
+use Pam\Desktop\Animation\Drag;
+use Pam\Desktop\Animation\Easing;
+use Pam\Desktop\Animation\Spring;
+use Pam\Desktop\Animation\TapEffect;
+use Pam\Desktop\Animation\Transition;
+use Pam\Desktop\EventKind;
+use Pam\Desktop\GestureEvent;
+use Pam\Desktop\GestureSettleEvent;
+use Pam\Desktop\GestureState;
+use Pam\Desktop\GestureType;
+use Pam\Desktop\Internal\TemplateCompiler;
+use Pam\Desktop\Internal\TemplateExpression;
+use Pam\Desktop\Internal\TemplateRenderer;
+use Pam\Desktop\Internal\Wire;
+use Pam\Desktop\PageChangeEvent;
+use Pam\Desktop\PressEvent;
+use Pam\Desktop\PropKey;
+use Pam\Desktop\ScrollPhaseEvent;
+use Pam\Desktop\TextEllipsizeMode;
+use Pam\Desktop\TextLayoutEvent;
+use Pam\Desktop\UI\GestureDetector;
+use Pam\Desktop\UI\Pressable;
+use Pam\Desktop\UI\Scroll;
+use Pam\Desktop\UI\Swipeable;
+use Pam\Desktop\UI\Text;
+use Pam\Desktop\UI\View;
+
+/** @var Closure(bool, string): void $assert */
+
+// --- Animation programs -----------------------------------------------------
+$pop = Animation::spring(['scale' => 1.2], stiffness: 400, damping: 8)
+    ->then(Animation::spring(['scale' => 1]));
+$assert(
+    str_starts_with($pop->encode(), 'pam-motion 1 id=')
+        && str_ends_with($pop->encode(), "iterations=1\n0 scale spring(1.2,400,8,1,0,0)\n1 scale spring(1,100,10,1,0,0)"),
+    'Animation::then() must emit one phase per barrier with Reanimated spring defaults.',
+);
+$assert(
+    $pop->id() === Animation::spring(['scale' => 1.2], stiffness: 400, damping: 8)
+        ->then(Animation::spring(['scale' => 1]))->id()
+        && $pop->id() !== $pop->key(2)->id(),
+    'Identical animations must share an identity so re-renders never replay them; key() must change it.',
+);
+$perProperty = Animation::timing(['translateX' => 24], 300, Easing::EaseOut)
+    ->with(Animation::timing(['opacity' => 0], 120, 'cubic-bezier(0.4, 0, 0.2, 1)', delay: 40));
+$assert(
+    str_contains($perProperty->encode(), "0 translateX timing(24,300,ease-out,0)\n0 opacity timing(0,120,bezier:0.4:0:0.2:1,40)"),
+    'Parallel tracks must keep per-property durations, easings and delays.',
+);
+$sequence = Animation::sequence(
+    Animation::set(['opacity' => 0]),
+    Animation::timing(['opacity' => 1], 60, Easing::Linear),
+    Animation::wait(360),
+    Animation::timing(['opacity' => 0], 260, Easing::EaseInQuad),
+)->repeat();
+$assert(
+    str_contains($sequence->encode(), 'iterations=-1')
+        && str_contains($sequence->encode(), '0 opacity set(0) timing(1,60,linear,0) wait(360) timing(0,260,ease-in-quad,0)'),
+    'Animation::sequence() must chain per-property steps like withSequence and repeat like withRepeat.',
+);
+$assert(
+    str_contains(Animation::timing(['x' => '-100%'], 200)->delay(150)->encode(), '0 translateX wait(150) timing(-100%,200,ease-in-out,0)'),
+    'delay() must prefix the first phase and percentages must survive encoding.',
+);
+$invalidAnimatedProperty = false;
+try {
+    Animation::timing(['width' => 10]);
+} catch (InvalidArgumentException) {
+    $invalidAnimatedProperty = true;
+}
+$assert($invalidAnimatedProperty, 'Only UI-thread composited properties can be animated.');
+$heart = AnimationPreset::heartBurst()->encode();
+$assert(
+    str_contains($heart, '0 scale set(0.5) spring(1.1,300,7,0.5,0,0) timing(1,120,ease-in-out-quad,0)')
+        && str_contains($heart, '0 opacity set(0) timing(1,60,linear,0) wait(360) timing(0,260,ease-in-quad,0)')
+        && str_contains($heart, '0 translateY set(0) wait(420) timing(-36,260,ease-in-quad,0)'),
+    'heartBurst() must reproduce the ReelPage scale/opacity/float timeline.',
+);
+$assert(
+    str_contains(AnimationPreset::shimmer()->encode(), '0 translateX set(-100%) timing(100%,1200,linear,0)')
+        && str_contains(AnimationPreset::marquee(80)->encode(), 'wait(1200) timing(-80,2667,linear,0) wait(1200) timing(0,260,ease-out-quad,0)'),
+    'Shimmer and marquee presets must loop natively.',
+);
+$springDuration = (new Spring())->durationMs(0.0, 1.0);
+$assert(
+    $springDuration > 600 && $springDuration < 2_500
+        && (new Spring(1000, 200, 1))->durationMs(0.0, 1.0) < $springDuration,
+    'Spring settling time must follow the shared closed-form oscillator.',
+);
+
+// --- CSS transitions ----------------------------------------------------------
+$assert(
+    Transition::apply('', 'transition', 'transform 300ms spring(1 260 18), opacity 120ms ease-out 40ms')
+        === "@property transform,opacity\n@duration 300,120\n@timing spring:260:18:1,ease-out\n@delay 0,40",
+    'Element transitions must compile per-property lists with spring().',
+);
+$transitioned = View::make()->transition('opacity 200ms ease-in');
+$assert(
+    $transitioned->properties()[PropKey::TransitionSpec->value] === "@property opacity\n@duration 200\n@timing ease-in\n@delay 0"
+        && $transitioned->properties()[PropKey::AnimateChanges->value] === true,
+    'Element::transition() must enable implicit animation with its spec.',
+);
+
+// --- Press, double tap and tap effects ---------------------------------------
+$pressPayload = Wire::map(['x' => 12.5, 'y' => 30.0, 'pageX' => 112.5, 'pageY' => 430.0, 'timestamp' => 9, 'pointerId' => 0]);
+$received = [];
+$pressable = Pressable::make(Text::make('Like'))
+    ->onPress(static function (PressEvent $event) use (&$received): void { $received['press'] = $event; })
+    ->onLongPress(static function (mixed $payload = null) use (&$received): void { $received['long'] = $payload; })
+    ->onDoubleTap(static function (PressEvent $event) use (&$received): void { $received['double'] = $event; })
+    ->doubleTapDelay(260)
+    ->tapEffect(TapEffect::make('heart', tilt: 30));
+$pressable->events()[EventKind::Press->value]($pressPayload);
+$pressable->events()[EventKind::LongPress->value]($pressPayload);
+$pressable->events()[EventKind::DoubleTap->value]($pressPayload);
+$assert(
+    $received['press'] instanceof PressEvent && $received['press']->x === 12.5 && $received['press']->pageY === 430.0
+        && $received['long'] === ''
+        && $received['double'] instanceof PressEvent && $received['double']->y === 30.0,
+    'Typed press handlers must receive coordinates; untyped ones keep the legacy empty payload.',
+);
+$assert(
+    PressEvent::fromPayload('')->x === 0.0,
+    'Hosts that send empty press payloads must still decode.',
+);
+$assert(
+    $pressable->properties()[PropKey::OnDoubleTap->value] === true
+        && $pressable->properties()[PropKey::PressDoubleTapDelayMs->value] === 260
+        && str_starts_with($pressable->properties()[PropKey::PressTapEffect->value], "ref=heart;tilt=30\npam-motion 1 "),
+    'Double tap, its delay and the native tap effect must be encoded on the Pressable.',
+);
+
+$likePop = \Pam\Desktop\Animation\TapEffect::pop('like-icon');
+$assert(
+    str_starts_with($likePop->encode(), "ref=like-icon;tilt=0;origin=anchor;trigger=tap\npam-motion 1 ")
+        && str_starts_with($likePop->armed(false)->encode(), "ref=like-icon;tilt=0;origin=anchor;trigger=tap;armed=0\n")
+        && str_starts_with($likePop->unlessSelected()->encode(), "ref=like-icon;tilt=0;origin=anchor;trigger=tap;when=unselected\n")
+        && str_starts_with(
+            TapEffect::make('heart', tilt: 0)->origin(\Pam\Desktop\Animation\TapEffectOrigin::Center)->encode(),
+            "ref=heart;tilt=0;origin=center\n",
+        )
+        && str_starts_with(
+            TapEffect::make('heart')->trigger(\Pam\Desktop\Animation\TapEffectTrigger::Tap)->encode(),
+            "ref=heart;tilt=15;trigger=tap\n",
+        ),
+    'TapEffect encodes origin/trigger/armed only when they differ from the double-tap-at-touch default.',
+);
+
+$ring = \Pam\Desktop\Animation\Animation::timing(['opacity' => 0.0], 560);
+$layered = TapEffect::make('heart', tilt: 13)->layer($ring)->armed(false);
+$layeredText = $layered->encode();
+$assert(
+    substr_count($layeredText, "pam-motion 1 ") === 2
+        && str_starts_with($layeredText, "ref=heart;tilt=13;armed=0\npam-motion 1 ")
+        && str_ends_with(rtrim($layeredText), rtrim(substr($ring->encode(), strpos($ring->encode(), "\n"))))
+        && substr_count(TapEffect::make('heart')->encode(), "pam-motion 1 ") === 1,
+    'TapEffect layers append one program per extra child after the first, kept through the option withers.',
+);
+
+// --- Scroll page transform and media start buffer ------------------------------
+$cubePager = \Pam\Desktop\UI\ScrollView::make(Text::make('page'))->horizontal()->pageTransform(\Pam\Desktop\ScrollPageTransform::Cube);
+$assert(
+    $cubePager->properties()[PropKey::ScrollPageTransform->value] === 1
+        && $cubePager->contentOffsetAnimation(280)->properties()[PropKey::ScrollOffsetAnimationMs->value] === 280
+        && $cubePager->contentOffsetAnimation(9_000)->properties()[PropKey::ScrollOffsetAnimationMs->value] === 2_000,
+    'pageTransform(Cube) sends 1 on the extension key; contentOffsetAnimation is clamped to 0..2000 ms.',
+);
+$player = \Pam\Desktop\UI\MediaPlayer::make('https://example.com/a.mp4');
+$assert(
+    $player->startBufferMs(350)->properties()[PropKey::MediaStartBufferMs->value] === 350
+        && $player->startBufferMs(-5)->properties()[PropKey::MediaStartBufferMs->value] === 0
+        && $player->startBufferMs(99_000)->properties()[PropKey::MediaStartBufferMs->value] === 30_000,
+    'startBufferMs is clamped to 0..30000 ms.',
+);
+
+// --- Drag and Swipeable ---------------------------------------------------------
+$storyDrag = Drag::vertical()
+    ->bounds(min: 0)
+    ->snapPoints(0, '100%')
+    ->threshold(120, velocity: 900)
+    ->settle(new Spring(230, 22, 0.72))
+    ->settleAt(1, Easing::EaseOut, 190)
+    ->drive('', 'scale', [0, '50%'], [1, 0.955])
+    ->drive('', 'borderRadius', [0, 120], [0, 18]);
+$assert(
+    $storyDrag->encode() === implode("\n", [
+        'axis=y', 'min=0', 'snaps=0,100%', 'settle=spring:230:22:0.72', 'settle.1=timing:190:ease-out',
+        'threshold=120', 'velocity=900', 'drive=|scale|0,50%|1,0.955', 'drive=|borderRadius|0,120|0,18',
+    ]),
+    'Story drag-to-dismiss must encode bounds, snaps, thresholds, settles and drivers.',
+);
+$assert(
+    Drag::vertical()->bounds(0, 0)->drive('', 'opacity', [0, 100], [1, 0])
+        ->driveRaw('hero', 'scale', [0, 100], [1, 2])->encode() === implode("\n", [
+            'axis=y', 'min=0', 'max=0', 'snaps=0', 'settle=spring:260:22:1',
+            'drive=|opacity|0,100|1,0', 'driveRaw=hero|scale|0,100|1,2',
+        ])
+        && str_contains(Drag::horizontal()->driveUnbounded()->drive('', 'scale', [0, 1], [1, 2])->encode(), "driveUnbounded=1\ndrive=|scale|0,1|1,2")
+        && !str_contains(Drag::horizontal()->driveUnbounded()->driveUnbounded(false)->encode(), 'driveUnbounded'),
+    'Raw drivers must encode as driveRaw lines and driveUnbounded as a flag.',
+);
+$detector = GestureDetector::make(GestureType::Pan, View::make())
+    ->drag($storyDrag)
+    ->snapTo(0, 3)
+    ->onSettle(static function (GestureSettleEvent $event) use (&$received): void { $received['settle'] = $event; });
+$detector->events()[EventKind::GestureSettle->value](Wire::map(['snapIndex' => 1, 'position' => 640.0]));
+$assert(
+    $detector->properties()[PropKey::GestureDragSnapIndex->value] === 3 * 64
+        && $received['settle']->snapIndex === 1 && $received['settle']->isOpen(),
+    'Drags must expose programmatic snaps and settle events.',
+);
+$assert(
+    Drag::snapRequestValue('2@5') === 5 * 64 + 2 && Drag::snapRequestValue(1) === 1,
+    'Template snap requests must accept index@request.',
+);
+$ended = GestureEvent::fromPayload(Wire::map([
+    'type' => GestureType::Pan->value,
+    'state' => GestureState::Ended->value,
+    'snapIndex' => 1,
+    'thresholdReached' => true,
+]));
+$assert(
+    $ended->snapIndex === 1 && $ended->thresholdReached
+        && GestureEvent::fromPayload(Wire::map(['type' => 1, 'state' => 3]))->snapIndex === -1,
+    'Gesture end events must report the release snap and threshold.',
+);
+$assert(
+    $ended->nativeScale === null && $ended->nativeTranslationX === null && $ended->nativeTranslationY === null,
+    'Older native gesture payloads must keep the applied transform optional.',
+);
+$applied = GestureEvent::fromPayload(Wire::map([
+    'type' => GestureType::Pinch->value,
+    'state' => GestureState::Ended->value,
+    'scale' => 1.2,
+    'translationX' => 40.0,
+    'translationY' => 25.0,
+    'nativeScale' => 1.92,
+    'nativeTranslationX' => 18.5,
+    'nativeTranslationY' => -4,
+]));
+$assert(
+    $applied->nativeScale === 1.92 && $applied->nativeTranslationX === 18.5
+        && $applied->nativeTranslationY === -4.0 && $applied->scale === 1.2
+        && $applied->translationX === 40.0 && $applied->translationY === 25.0,
+    'Applied native transforms must decode separately from the unchanged relative gesture deltas.',
+);
+$invalidApplied = GestureEvent::fromPayload(Wire::map([
+    'type' => GestureType::Pan->value,
+    'state' => GestureState::Ended->value,
+    'nativeScale' => '1.92',
+    'nativeTranslationX' => false,
+]));
+$assert(
+    $invalidApplied->nativeScale === null && $invalidApplied->nativeTranslationX === null
+        && $invalidApplied->nativeTranslationY === null,
+    'Missing or nonnumeric applied transforms must remain absent instead of resetting a gesture to zero.',
+);
+$row = Swipeable::make(Text::make('Conversation'))
+    ->rightActions(Text::make('Archive'), 160)
+    ->leftActions(Text::make('Pin'), 80)
+    ->group('inbox')
+    ->closeRequest(4)
+    ->toElement();
+$rowDrag = $row->properties()[PropKey::GestureDrag->value];
+$rowLayers = $row->children()[0]->children();
+$assert(
+    str_contains($rowDrag, 'snaps=-160,0,80') && str_contains($rowDrag, 'group=inbox')
+        && str_contains($rowDrag, 'target=pam-swipeable-content') && str_contains($rowDrag, 'min=-160')
+        && $row->properties()[PropKey::GestureDragSnapIndex->value] === 4 * 64 + 1
+        && $row->properties()[PropKey::GestureComposition->value] === 3
+        && count($rowLayers) === 3
+        && $rowLayers[2]->properties()[PropKey::NativeRef->value] === Swipeable::CONTENT_REF,
+    'Swipeable must reveal both action panels, close programmatically and keep one row open per group.',
+);
+
+// --- Scroll phases and text layout ------------------------------------------------
+$scrollPayload = Wire::map(['x' => 720.0, 'y' => 0.0, 'velocityX' => 1800.0, 'velocityY' => 0.0, 'page' => 2]);
+$momentum = ScrollPhaseEvent::fromPayload($scrollPayload);
+$assert($momentum->page === 2 && $momentum->velocityX === 1800.0, 'Scroll phase events must decode the page index.');
+$assert($momentum->contentHeight === 0.0 && $momentum->distanceFromEnd() === null, 'A host without sizes reports no end distance.');
+$sized = ScrollPhaseEvent::fromPayload(Wire::map([
+    'x' => 0.0, 'y' => 1200.0, 'velocityX' => 0.0, 'velocityY' => 0.0, 'page' => 0,
+    'contentWidth' => 390.0, 'contentHeight' => 5000.0, 'layoutWidth' => 390.0, 'layoutHeight' => 700.0,
+]));
+$assert(
+    $sized->contentHeight === 5000.0 && $sized->layoutHeight === 700.0 && $sized->distanceFromEnd() === 3100.0,
+    'Scroll phase events must decode RN contentSize/layoutMeasurement and the distance to the end.',
+);
+$pageChanges = [];
+$carousel = Scroll::make(Text::make('Slide'))
+    ->onPageChange(static function (PageChangeEvent $event) use (&$pageChanges): void {
+        $pageChanges[] = [$event->previousPage, $event->page];
+    })
+    ->toElement();
+$carousel->events()[EventKind::PageChange->value](Wire::map(['page' => 3, 'previousPage' => 2]));
+$assert(
+    EventKind::PageChange->value === 77 && PropKey::OnPageChange->value === 528
+        && ($carousel->properties()[PropKey::OnPageChange->value] ?? null) === true
+        && $pageChanges === [[2, 3]]
+        && PageChangeEvent::fromPayload('')->page === 0,
+    'onPageChange must register the native page-change event and decode the current and previous page.',
+);
+$layout = TextLayoutEvent::fromPayload(Wire::map([
+    'lines' => 4, 'visibleLines' => 2, 'truncated' => true, 'width' => 300.0, 'height' => 80.0,
+    'lineWidths' => '[290.5,288,300,120.25]',
+]));
+$assert(
+    $layout->exceeds(2) && $layout->truncated && $layout->lineWidths === [290.5, 288.0, 300.0, 120.25],
+    'Text layout events must report wrapped lines, truncation and line widths.',
+);
+
+// --- Templates -----------------------------------------------------------------------
+$templateScope = new class {
+    public ?PressEvent $liked = null;
+    public ?TextLayoutEvent $layout = null;
+    public ?ScrollPhaseEvent $page = null;
+    public ?PageChangeEvent $pageChange = null;
+    public string $legacy = 'unset';
+    public Animation $bounce;
+
+    public function __construct()
+    {
+        $this->bounce = AnimationPreset::likeBounce()->key(1);
+    }
+
+    public function like(PressEvent $event): void
+    {
+        $this->liked = $event;
+    }
+
+    public function open(string $payload = 'none'): void
+    {
+        $this->legacy = $payload;
+    }
+
+    public function measured(TextLayoutEvent $event): void
+    {
+        $this->layout = $event;
+    }
+
+    public function pageChanged(PageChangeEvent $event): void
+    {
+        $this->pageChange = $event;
+    }
+
+    public function paged(ScrollPhaseEvent $event): void
+    {
+        $this->page = $event;
+    }
+};
+$template = TemplateRenderer::render(
+    TemplateCompiler::compile(
+        '<Column>'
+        .'<Pressable on:doubleTap="like" on:press="open" doubleTapDelay="240" nativeRef="surface"><Text>Reel</Text></Pressable>'
+        .'<View nativeRef="heart" :animation="$bounce"><Text>♥</Text></View>'
+        .'<Text numberOfLines="2" on:textLayout="measured" ellipsizeMode="marquee">Caption</Text>'
+        .'<Scroll horizontal="true" pagingEnabled="true" on:momentumScrollEnd="paged" on:pageChange="pageChanged"><Text>Page</Text></Scroll>'
+        .'<Swipeable rightWidth="96" group="inbox"><Text>Delete</Text><Text>Row</Text></Swipeable>'
+        .'</Column>',
+        'gestures-animations.pam.php',
+    ),
+    $templateScope,
+    [],
+);
+[$surface, $heartView, $caption, $pager, $swipeRow] = $template->children();
+$surface->events()[EventKind::DoubleTap->value]($pressPayload);
+$surface->events()[EventKind::Press->value]($pressPayload);
+$caption->events()[EventKind::TextLayout->value](Wire::map(['lines' => 3, 'visibleLines' => 2, 'truncated' => true]));
+$pager->events()[EventKind::MomentumScrollEnd->value]($scrollPayload);
+$pager->events()[EventKind::PageChange->value](Wire::map(['page' => 1, 'previousPage' => 0]));
+$assert(
+    $templateScope->liked instanceof PressEvent && $templateScope->liked->x === 12.5
+        && $templateScope->legacy === ''
+        && $surface->properties()[PropKey::PressDoubleTapDelayMs->value] === 240
+        && $surface->properties()[PropKey::NativeRef->value] === 'surface',
+    'Template double taps must hydrate PressEvent while untyped press handlers keep their payload.',
+);
+$assert(
+    $heartView->properties()[PropKey::AnimationProgram->value] === $templateScope->bounce->encode()
+        && $heartView->properties()[PropKey::NativeRef->value] === 'heart',
+    'Template :animation must attach the native animation program.',
+);
+$assert(
+    $templateScope->layout instanceof TextLayoutEvent && $templateScope->layout->exceeds(2)
+        && $caption->properties()[PropKey::TextEllipsizeMode->value] === TextEllipsizeMode::Marquee->value,
+    'Template on:textLayout must hydrate TextLayoutEvent and ellipsizeMode must accept marquee.',
+);
+$assert(
+    $templateScope->page instanceof ScrollPhaseEvent && $templateScope->page->page === 2
+        && $pager->properties()[PropKey::ScrollPagingEnabled->value] === true,
+    'Template on:momentumScrollEnd must hydrate the page index.',
+);
+$assert(
+    $templateScope->pageChange instanceof PageChangeEvent && $templateScope->pageChange->page === 1
+        && $templateScope->pageChange->previousPage === 0,
+    'Template on:pageChange must hydrate PageChangeEvent.',
+);
+$assert(
+    str_contains($swipeRow->properties()[PropKey::GestureDrag->value], 'snaps=-96,0'),
+    'The Swipeable template tag must compile its action panels.',
+);
+TemplateExpression::evaluate('like($event)', $templateScope, ['event' => Wire::map(['x' => 3.0])]);
+$assert(
+    $templateScope->liked->x === 3.0,
+    'Explicit $event arguments must honor typed PressEvent parameters.',
+);
+
+$transitionCss = \Pam\Desktop\Internal\ScopedStyleCompiler::compile(
+    '.bubble { transition: transform 280ms spring(1 260 18), opacity 120ms ease-out 40ms; }',
+    'TransitionCss.pam.php',
+);
+$transitionTemplate = TemplateCompiler::compile('<Column><View class="bubble" /></Column>');
+$transitionStyled = new \Pam\Desktop\Internal\CompiledTemplateNode(
+    kind: $transitionTemplate->kind,
+    name: $transitionTemplate->name,
+    attributes: [
+        ...$transitionTemplate->attributes,
+        '__pamStyles' => json_encode($transitionCss, JSON_THROW_ON_ERROR),
+    ],
+    source: $transitionTemplate->source,
+    line: $transitionTemplate->line,
+    column: $transitionTemplate->column,
+    value: $transitionTemplate->value,
+);
+$transitionStyled->children = $transitionTemplate->children;
+$bubble = TemplateRenderer::render($transitionStyled, null, [])->children()[0];
+$assert(
+    ($bubble->properties()[PropKey::TransitionSpec->value] ?? null)
+        === "@property transform,opacity\n@duration 280,120\n@timing spring:260:18:1,ease-out\n@delay 0,40"
+        && $bubble->properties()[PropKey::AnimateChanges->value] === true,
+    'Scoped CSS transitions must reach the native TransitionSpec property.',
+);
+
+$easedKeyframe = new \Pam\Desktop\AnimationKeyframe(0.5, scaleX: 1.1, easing: Easing::EaseOutQuad->value);
+$assert(
+    str_contains(json_encode($easedKeyframe, JSON_THROW_ON_ERROR), '"easing":"ease-out-quad"'),
+    'Keyframes must carry their per-segment easing to the native runtime.',
+);
+$invalidKeyframeEasing = false;
+try {
+    new \Pam\Desktop\AnimationKeyframe(0.5, easing: 'cubic-bezier(0.4, 0, 0.2, 1)');
+} catch (InvalidArgumentException) {
+    $invalidKeyframeEasing = true;
+}
+$assert($invalidKeyframeEasing, 'Keyframe easings must use native tokens (Easing::bezier() for curves).');
+
+// Proportional native following keeps the default wire unchanged.
+$default = Drag::vertical()->encode();
+$follow = Drag::vertical()->follow(0.92);
+$assert(!str_contains($default, 'follow='), 'Default drag wire must stay unchanged.');
+$assert(str_contains($follow->bounds(0, 300)->rubberBand(0.2)->encode(), 'follow=0.92'), 'follow survives immutable drag builders.');
+$assert(str_contains(Drag::horizontal()->follow(0)->encode(), 'follow=0'), 'Zero follow keeps the resting position.');
+foreach ([-0.1, 1.1, NAN, INF] as $invalid) {
+    try {
+        Drag::vertical()->follow($invalid);
+        $assert(false, 'Invalid follow must throw.');
+    } catch (InvalidArgumentException) {
+        $assert(true, 'Invalid follow rejected.');
+    }
+}

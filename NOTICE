@@ -1,0 +1,19 @@
+PAM Desktop
+Copyright (c) Pushin
+
+PAM Desktop 2.x is an independent project. Its reactive PHP component core,
+binary wire protocol and layout/diff engine started as a copy of PAM Native
+(https://github.com/push-in/pam-native, Apache-2.0):
+
+  origin release : pam-native 1.46.34
+  origin commit  : 76eb554 (2026-11-02)
+  copied into    : packages/desktop/src, packages/desktop/tests,
+                   packages/desktop/resources, packages/desktop/bin/pam-desktop-*,
+                   crates/pam-desktop-wire, crates/pam-desktop-engine,
+                   examples/showcase
+
+The copied files were renamed (Pam\Native -> Pam\Desktop, pam_native_* ->
+pam_desktop_*) and are modified here for desktop platforms. They remain under
+the Apache License 2.0 (see crates/pam-desktop-wire/LICENSE); everything
+written for PAM Desktop is MIT (see LICENSE). Fixes are ported between the two
+projects by hand; neither depends on the other.

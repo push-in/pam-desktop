@@ -1,0 +1,77 @@
+[package]
+name = "pam-desktop-host"
+description = "The PAM Desktop native host: runs PHP applications with real platform widgets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "pam-desktop"
+path = "src/main.rs"
+
+[features]
+default = ["sqlite", "webview", "tray", "hotkeys"]
+# Optional parts of the backends: embedded web pages on Windows (WebView2;
+# on Linux WebKitGTK is loaded at run time), and on Linux the tray icon and
+# global shortcuts.
+webview = ["pam-desktop-win32/webview"]
+tray = ["pam-desktop-gtk/tray"]
+hotkeys = ["pam-desktop-gtk/hotkeys"]
+# The `sqlite` module. SQLite is compiled from C, so a build that only
+# type-checks for another system turns this off.
+sqlite = ["dep:rusqlite"]
+
+[dependencies]
+pam-desktop-ui.workspace = true
+serde_json.workspace = true
+serde = { version = "1", features = ["derive"] }
+aes-gcm = "0.10"
+base64 = "0.22"
+# Update feeds are signed with Ed25519; bundles and archives are identified
+# by their SHA-256. Both are pure Rust.
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast"] }
+getrandom = "0.3"
+# Release archives (`.tar.gz`) are unpacked in Rust, so neither `tar` nor
+# `gzip` is taken from PATH; no extended attributes or owners are restored.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+tar = { version = "0.4", default-features = false }
+sha2 = "0.10"
+rusqlite = { version = "0.38", features = ["bundled"], optional = true }
+tungstenite = { version = "0.30.0", default-features = false, features = ["handshake", "rustls-tls-native-roots"] }
+
+# HTTPS uses the TLS stack of the system where it has one (Secure Transport,
+# SChannel) and rustls elsewhere; certificates are always verified against the
+# system's trust store. Secrets go to the keychain of the system.
+[target.'cfg(target_os = "macos")'.dependencies]
+pam-desktop-appkit.workspace = true
+ureq = { version = "3.5", default-features = false, features = ["native-tls"] }
+keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# By path for the same reason as the GTK backend below.
+pam-desktop-win32 = { path = "../pam-desktop-win32", default-features = false }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_LibraryLoader"] }
+# Mozilla's root certificates, for the CA bundle PHP's curl and OpenSSL use
+# beside the roots of the Windows store (see `windows_php::ca_bundle`).
+webpki-root-certs = "1"
+ureq = { version = "3.5", default-features = false, features = ["native-tls"] }
+keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(not(any(target_os = "macos", target_os = "windows")))'.dependencies]
+ureq = { version = "3.5", default-features = false, features = ["rustls", "platform-verifier"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# By path, not from the workspace: an inherited dependency cannot turn the
+# default features off, and each one is forwarded by a feature above.
+pam-desktop-gtk = { path = "../pam-desktop-gtk", default-features = false }
+# The Secret Service over a pure Rust D-Bus implementation: no libdbus.
+keyring = { version = "3.6", default-features = false, features = ["async-secret-service", "async-io", "crypto-rust"] }
+
+[build-dependencies]
+# Pure Rust: writes the manifest resource without the Windows SDK tools.
+embed-manifest = "1.4"
+
+[lints]
+workspace = true

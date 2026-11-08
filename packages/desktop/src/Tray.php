@@ -4,42 +4,53 @@ declare(strict_types=1);
 
 namespace Pam\Desktop;
 
-use InvalidArgumentException;
+use Closure;
+use Pam\Desktop\Internal\ShellEvents;
 
-final readonly class Tray
+/**
+ * The icon of the application in the system tray (menu bar extras on macOS,
+ * notification area on Windows, status notifier on Linux).
+ *
+ * ```php
+ * Tray::show(
+ *     tooltip: 'Sync is running',
+ *     menu: Menu::make('Sync',
+ *         MenuItem::make('Open', Window::show(...)),
+ *         MenuItem::role(MenuRole::Quit),
+ *     ),
+ *     onActivate: Window::focus(...),
+ * );
+ * ```
+ */
+final class Tray
 {
-    private function __construct(
-        public string $menuId,
-        public string $tooltip,
-        public TrayCloseBehavior $closeBehavior,
-    ) {
-        Identifier::assert($menuId, 'The tray menu identifier');
-        if (trim($tooltip) === '' || strlen($tooltip) > 128) {
-            throw new InvalidArgumentException(
-                'The tray tooltip must contain at most 128 bytes of printable text.',
-            );
-        }
-    }
-
-    public static function create(string $menuId, string $tooltip): self
+    private function __construct()
     {
-        return new self($menuId, $tooltip, TrayCloseBehavior::Exit);
-    }
-
-    public function closeBehavior(TrayCloseBehavior $behavior): self
-    {
-        return new self($this->menuId, $this->tooltip, $behavior);
     }
 
     /**
-     * @return array{menuId: string, tooltip: string, closeBehavior: int}
+     * @param string|null $icon path of a PNG file; the application icon when null
+     * @param Closure|null $onActivate the icon was clicked
      */
-    public function toArray(): array
+    public static function show(?Menu $menu = null, string $tooltip = '', ?string $icon = null, ?Closure $onActivate = null): void
     {
-        return [
-            'menuId' => $this->menuId,
-            'tooltip' => $this->tooltip,
-            'closeBehavior' => $this->closeBehavior->value,
-        ];
+        if ($onActivate === null) {
+            ShellEvents::forget('tray', 'activate');
+        } else {
+            ShellEvents::handle('tray', 'activate', static fn (): mixed => $onActivate());
+        }
+        ShellEvents::send('tray', [
+            'visible' => true,
+            'tooltip' => $tooltip,
+            'icon' => $icon ?? '',
+            'items' => ShellEvents::menu('tray', $menu->items ?? []),
+        ]);
+    }
+
+    public static function hide(): void
+    {
+        ShellEvents::forget('tray', 'activate');
+        ShellEvents::forgetPrefix('menu', 'tray:');
+        ShellEvents::send('tray', ['visible' => false]);
     }
 }

@@ -1,0 +1,1119 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop;
+
+use BackedEnum;
+use Closure;
+use LogicException;
+use Pam\Desktop\Attributes\Computed;
+use Pam\Desktop\Internal\ComponentLifecycle;
+use Pam\Desktop\Internal\PamPhpRegistry;
+use Pam\Desktop\Internal\Runtime;
+use Pam\Desktop\Internal\DependencyTracker;
+use ReflectionMethod;
+use Throwable;
+use WeakMap;
+use Pam\Desktop\Diagnostics\Profiler;
+use Pam\Desktop\Routing\Navigation;
+
+use function array_key_exists;
+use function count;
+use function in_array;
+use function is_array;
+use function is_object;
+
+abstract class Component implements Renderable
+{
+    /** @var WeakMap<object, string>|null */
+    private static ?WeakMap $persisted = null;
+
+    /** @var array<string, Closure> */
+    private array $pamEventListeners = [];
+
+    /** @var array<string, list<Renderable>> */
+    private array $pamSlots = [];
+
+    /** @var array<string, mixed> */
+    private array $pamInheritedStyles = [];
+
+    private ?ComponentState $pamState = null;
+    private ?Component $pamParent = null;
+    /** @var array<class-string, mixed> */
+    private array $pamProvided = [];
+    /** @var array<string, array{dependencies: string, cleanup: Closure|null, ran: bool}> */
+    private array $pamEffects = [];
+    /** @var array<string, array{dependencies: string, value: mixed}> */
+    private array $pamMemo = [];
+    /** @var array<string, array{revision: int, value: mixed}> */
+    private array $pamComputed = [];
+    /** @var array<string, array{previous: mixed, current: mixed}> */
+    private array $pamChanges = [];
+    private int $pamRevision = 0;
+    private int $pamFailureAttempt = 0;
+    private bool $pamSkipRender = false;
+    private ?Element $pamLastElement = null;
+    /** @var array<string, mixed>|null Own state captured after the last real render. */
+    private ?array $pamSnapshot = null;
+    private int $pamEpoch = -1;
+    /** @var array<string, Closure> event handlers bound to this scope, by expression */
+    private array $pamHandlers = [];
+    /** @var array<int, Disposable> resources released on unmount, by object id */
+    private array $pamOwned = [];
+    private ?\Pam\Desktop\System\ComponentTimers $pamTimers = null;
+    /** Scope of the last setup(): watchers, composables and lifecycle hooks. */
+    private ?\Pam\Desktop\Signals\EffectScope $pamScope = null;
+    /** @var array<string, mixed>|null parameters of the route that created this screen */
+    private ?array $pamRouteParams = null;
+    private ?\Pam\Desktop\Navigation\RouteContext $pamRouteContext = null;
+    /** True for components a router shows as a screen (they own onFocus/onBlur). */
+    private bool $pamIsRoute = false;
+    /** Last navigation focus delivered to this screen (null before the first). */
+    private ?bool $pamFocused = null;
+    /** @var array<int, \Pam\Desktop\Signals\EffectScope> setup scopes following this screen's focus */
+    private array $pamFocusScopes = [];
+    /** True when setup() must run again on remount (its scope was disposed). */
+    private bool $pamSetupStale = false;
+    /** Nearest ancestor screen whose focus drives this component's onFocus()/onBlur(). */
+    private ?Component $pamFocusOwner = null;
+    /** @var list<Closure> navigation focus waiting for the first mount (setup() not run yet) */
+    private array $pamPendingFocus = [];
+
+    /** @var array<class-string, bool> */
+    private static array $pamAlwaysRender = [];
+
+    /** @var array<class-string, array{0: int, 1: list<string>}> */
+    private static array $pamObjectKeys = [];
+
+    /** @var array<class-string, bool> */
+    private static array $pamHasEffects = [];
+
+    /** @internal True when the component's class declares effects or watchers. */
+    final public static function __pamHasEffects(Component $component): bool
+    {
+        return self::$pamHasEffects[$component::class] ??= self::pamDeclaresEffects($component::class);
+    }
+
+    /** @param class-string $class */
+    private static function pamDeclaresEffects(string $class): bool
+    {
+        return (new ReflectionMethod($class, 'effects'))->getDeclaringClass()->getName() !== self::class
+            || (new ReflectionMethod($class, 'watchers'))->getDeclaringClass()->getName() !== self::class;
+    }
+
+    /** Component bookkeeping that never affects rendered output. */
+    /** @var array<string, true>|null mangled names of PAM_SNAPSHOT_EXCLUDED */
+    private static ?array $pamSnapshotExcludedKeys = null;
+
+    private const PAM_SNAPSHOT_EXCLUDED = [
+        'pamEventListeners',
+        'pamEffects',
+        'pamMemo',
+        'pamComputed',
+        'pamChanges',
+        'pamFailureAttempt',
+        'pamSkipRender',
+        'pamLastElement',
+        'pamSnapshot',
+        'pamEpoch',
+        'pamHandlers',
+        'pamOwned',
+        'pamTimers',
+        'pamScope',
+        'pamRouteParams',
+        'pamRouteContext',
+        'pamIsRoute',
+        'pamFocused',
+        'pamFocusScopes',
+        'pamSetupStale',
+        'pamFocusOwner',
+    ];
+
+    public function render(): Renderable
+    {
+        return PamPhpRegistry::view($this);
+    }
+
+    public function boot(): void
+    {
+    }
+
+    /*
+     * setup(...$params) is not declared here so each component can declare
+     * its own typed parameters, e.g. `public function setup(string $id): void`.
+     * It runs once per mount, receives the route parameters by name, and may
+     * call signal(), computed(), watch(), onMounted(), onUnmounted(),
+     * onFocus(), onBlur() and any use*() composable; everything it creates is
+     * released when the component unmounts.
+     */
+
+    /**
+     * @deprecated Since architecture v2. Declare `public function setup(...)`
+     * and register `onMounted(fn () => ...)` inside it; subscriptions made
+     * through composables (`useKeyboard()`, `useResource()`...) are released
+     * automatically. mount() keeps working and runs after setup().
+     */
+    public function mount(): void
+    {
+    }
+
+    public function rendered(): void
+    {
+    }
+
+    /**
+     * Marks an explicit restoration as authoritative so the first render does
+     * not overwrite it with a second lookup from the component state store.
+     */
+    final protected function stateWasRestored(): void
+    {
+        $persisted = self::$persisted ??= new WeakMap();
+        $persisted[$this] = '';
+    }
+
+    public function rendering(): void
+    {
+    }
+
+    public function attached(): void
+    {
+    }
+
+    public function resumed(): void
+    {
+    }
+
+    public function updated(string $property): void
+    {
+    }
+
+    public function updating(string $property, mixed $next, mixed $previous): void
+    {
+    }
+
+    public function propsChanged(ComponentChanges $changes): void
+    {
+    }
+
+    public function shouldUpdate(ComponentChanges $changes): bool
+    {
+        return true;
+    }
+
+    public function paused(): void
+    {
+    }
+
+    /** The main window lost focus while the app stays visible. */
+    public function inactive(): void
+    {
+    }
+
+    /** The transient system UI closed and the app is the foreground window again, without having been paused. */
+    public function activated(): void
+    {
+    }
+
+    public function unmount(): void
+    {
+    }
+
+    public function cleanup(): void
+    {
+    }
+
+    /**
+     * @deprecated Since architecture v2. Keep local state in signals created
+     * in setup(): `$this->count = signal(0)`, read as `$count.value`.
+     *
+     * @return array<string, mixed>
+     */
+    protected function initialState(): array
+    {
+        return [];
+    }
+
+    /**
+     * @deprecated Since architecture v2. Call `watch($source, fn ($next, $previous) => ...)`
+     * inside setup(); it stops on unmount.
+     *
+     * @return list<Effect>
+     */
+    protected function effects(): array
+    {
+        return [];
+    }
+
+    /**
+     * @deprecated Since architecture v2. Call `watch()` inside setup().
+     *
+     * @return list<Effect>
+     */
+    protected function watchers(): array
+    {
+        return [];
+    }
+
+    /** @return array<string, Slot> */
+    protected function slots(): array
+    {
+        return [];
+    }
+
+    /** @return array<class-string, mixed> */
+    protected function provide(): array
+    {
+        return [];
+    }
+
+    /** @return list<class-string<ComponentEvent>> */
+    protected function events(): array
+    {
+        return [];
+    }
+
+    public function failed(Throwable $error, ErrorContext $context): ?Renderable
+    {
+        return null;
+    }
+
+    public function fallback(): ?Renderable
+    {
+        return null;
+    }
+
+    /** @param string|int|float|bool|null ...$params */
+    final protected function pushRoute(string|BackedEnum $route, mixed ...$params): void
+    {
+        Navigation::push($route, $params);
+    }
+
+    /** @param string|int|float|bool|null ...$params */
+    final protected function navigateRoute(string|BackedEnum $route, mixed ...$params): bool
+    {
+        return Navigation::navigate($route, $params);
+    }
+
+    /** @param string|int|float|bool|null ...$params */
+    final protected function replaceRoute(string|BackedEnum $route, mixed ...$params): void
+    {
+        Navigation::replace($route, $params);
+    }
+
+    final protected function popRoute(): bool
+    {
+        return Navigation::back();
+    }
+
+    final public function __get(string $name): mixed
+    {
+        if ($name === 'state') {
+            return $this->pamLocalState();
+        }
+        if (method_exists($this, $name)) {
+            $method = new ReflectionMethod($this, $name);
+            if ($method->getAttributes(Computed::class) !== []) {
+                $cached = $this->pamComputed[$name] ?? null;
+                if ($cached !== null && $cached['revision'] === $this->pamRevision) {
+                    return $cached['value'];
+                }
+                $value = $method->invoke($this);
+                $this->pamComputed[$name] = ['revision' => $this->pamRevision, 'value' => $value];
+
+                return $value;
+            }
+        }
+
+        if (Globals::has($name)) {
+            return Globals::get($name);
+        }
+
+        throw new LogicException(
+            "Unknown component property {$name}. Declare it, or register it with App::global('{$name}', ...).",
+        );
+    }
+
+    final protected function memo(string $key, array $dependencies, Closure $compute): mixed
+    {
+        $fingerprint = hash('xxh3', serialize($dependencies));
+        $cached = $this->pamMemo[$key] ?? null;
+        if ($cached === null || $cached['dependencies'] !== $fingerprint) {
+            $cached = ['dependencies' => $fingerprint, 'value' => $compute()];
+            $this->pamMemo[$key] = $cached;
+        }
+
+        return $cached['value'];
+    }
+
+    /** @template T @param class-string<T> $type @return T */
+    final protected function inject(string $type): mixed
+    {
+        $component = $this->pamParent;
+        while ($component !== null) {
+            if (array_key_exists($type, $component->pamProvided)) {
+                DependencyTracker::read($component, '__pamProvided');
+
+                return $component->pamProvided[$type];
+            }
+            $component = $component->pamParent;
+        }
+
+        throw new LogicException("No provider found for {$type}.");
+    }
+
+    final protected function exposeTo(ComponentRef $ref): void
+    {
+        $ref->attach($this);
+    }
+
+    /** @return list<Renderable> */
+    final protected function slot(string $name = 'slot'): array
+    {
+        return $this->pamSlots[$name] ?? [];
+    }
+
+    final public function toElement(): Element
+    {
+        ComponentLifecycle::enter($this);
+        try {
+            $element = $this->pamElement();
+            $this->rendered();
+
+            return $element;
+        } finally {
+            ComponentLifecycle::leave();
+        }
+    }
+
+    private function pamElement(): Element
+    {
+            if (
+                $this->pamLastElement !== null
+                && ($this->pamSkipRender || $this->pamCanReuse())
+            ) {
+                $this->pamSkipRender = false;
+                ComponentLifecycle::retainSubtree($this);
+
+                return $this->pamLastElement;
+            }
+            ComponentLifecycle::beginComponentRender($this);
+            DependencyTracker::begin($this);
+            try {
+                $this->rendering();
+            if ($this instanceof Restorable) {
+                $persisted = self::$persisted ??= new WeakMap();
+                if (!isset($persisted[$this])) {
+                    $state = State::get('component.'.$this->stateKey(), []);
+                    $this->restoreState(is_array($state) ? $state : []);
+                    $persisted[$this] = '';
+                }
+            }
+            try {
+                $started = Profiler::start();
+                try {
+                    $rendered = $this->render();
+                } finally {
+                    Profiler::record('component.render', $started, ['component' => $this::class]);
+                }
+
+                if ($rendered instanceof View) {
+                    $element = $rendered->withScope($this)->toElement();
+                } else {
+                    if ($rendered === $this) {
+                        throw new LogicException('A component cannot render itself.');
+                    }
+
+                    $element = $rendered->toElement();
+                }
+                $this->pamFailureAttempt = 0;
+            } catch (Throwable $error) {
+                $this->pamFailureAttempt++;
+                $recovery = $this->failed(
+                    $error,
+                    new ErrorContext($this::class, 'render', $this->pamFailureAttempt),
+                );
+                if ($recovery === null) {
+                    $recovery = $this->fallback();
+                }
+                if ($recovery === null) {
+                    throw $error;
+                }
+                $element = $recovery->toElement();
+            }
+
+            if ($this instanceof Restorable) {
+                $state = $this->saveState();
+                $hash = hash('xxh3', serialize($state));
+                $persisted = self::$persisted ??= new WeakMap();
+                if (($persisted[$this] ?? '') !== $hash) {
+                    State::set('component.'.$this->stateKey(), $state);
+                    $persisted[$this] = $hash;
+                }
+            }
+
+                $this->pamLastElement = $element;
+                $this->pamEpoch = DependencyTracker::epoch();
+                $this->pamSnapshot = $this->pamOwnState();
+
+                return $element;
+            } finally {
+                DependencyTracker::end($this);
+            }
+        }
+
+    /**
+     * @internal Reconfigures an instance whose call site evaluated exactly
+     * the same inputs as last time: only the (fresh) listeners change. False
+     * when the slots, parent or inherited styles differ.
+     *
+     * @param array<string, list<Renderable>> $slots
+     * @param array<string, Closure> $listeners
+     * @param array<string, mixed> $inheritedStyles
+     */
+    final public function __pamReconfigure(
+        array $slots,
+        array $listeners,
+        ?Component $parent,
+        array $inheritedStyles,
+    ): bool {
+        if (
+            $slots !== $this->pamSlots
+            || $parent !== $this->pamParent
+            || $inheritedStyles !== $this->pamInheritedStyles
+        ) {
+            return false;
+        }
+        $this->pamEventListeners = $listeners;
+        $provided = $this->provide();
+        if ($provided !== $this->pamProvided) {
+            DependencyTracker::invalidate($this, '__pamProvided');
+        }
+        $this->pamProvided = $provided;
+
+        return true;
+    }
+
+    /**
+     * @param array<string, list<Renderable>> $slots
+     * @param array<string, Closure> $listeners
+     * @param array<string, mixed> $inheritedStyles
+     */
+    final public function __pamConfigure(
+        array $slots,
+        array $listeners,
+        ?Component $parent = null,
+        array $inheritedStyles = [],
+    ): void {
+        $this->pamSlots = $slots;
+        $this->pamEventListeners = $listeners;
+        $this->pamParent = $parent;
+        $this->pamInheritedStyles = $inheritedStyles;
+        $provided = $this->provide();
+        if ($provided !== $this->pamProvided) {
+            DependencyTracker::invalidate($this, '__pamProvided');
+        }
+        $this->pamProvided = $provided;
+        foreach ($this->slots() as $name => $definition) {
+            if (!$definition instanceof Slot) {
+                throw new LogicException('Component slot definitions must contain Slot instances.');
+            }
+            $count = count($slots[$name] ?? []);
+            if ($count < $definition->minimum || ($definition->maximum !== null && $count > $definition->maximum)) {
+                throw new LogicException("Slot {$name} received {$count} children.");
+            }
+        }
+    }
+
+    /** @return array<string, list<Renderable>> */
+    final public function __pamSlots(): array
+    {
+        return $this->pamSlots;
+    }
+
+    /** @return array<string, mixed> */
+    final public function __pamInheritedStyles(): array
+    {
+        return $this->pamInheritedStyles;
+    }
+
+    /**
+     * Requests a re-render of this component on the next frame even though
+     * none of its properties changed (e.g. it reads a mutable service).
+     */
+    final protected function markForRender(): void
+    {
+        DependencyTracker::markDirty($this);
+        Runtime::scheduleRender();
+    }
+
+    /** @internal True when own properties changed since the last real render. */
+    /**
+     * @internal True when every property a subclass declares holds scalars,
+     * arrays of them or enums: the state snapshot then compares exactly
+     * (see Internal\HandlerPurity).
+     */
+    final public function __pamPlainState(): bool
+    {
+        foreach ((array) $this as $key => $value) {
+            if (str_starts_with($key, "\0".self::class."\0")) {
+                continue;
+            }
+            if ((is_object($value) || is_array($value)) && !Internal\HandlerPurity::plainValue($value)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    final public function __pamStateChanged(): bool
+    {
+        return $this->pamSnapshot !== null && $this->pamSnapshot !== $this->pamOwnState();
+    }
+
+    private function pamCanReuse(): bool
+    {
+        if (
+            $this->pamEpoch !== DependencyTracker::epoch()
+            || !DependencyTracker::canSkip($this)
+        ) {
+            return false;
+        }
+        $class = static::class;
+        $always = self::$pamAlwaysRender[$class] ??= self::pamAlwaysRenders($class);
+
+        return !$always && $this->pamSnapshot === $this->pamOwnState();
+    }
+
+    /** @param class-string $class */
+    private static function pamAlwaysRenders(string $class): bool
+    {
+        for ($reflection = new \ReflectionClass($class); $reflection !== false; $reflection = $reflection->getParentClass()) {
+            if ($reflection->getAttributes(\Pam\Desktop\Attributes\AlwaysRender::class) !== []) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Shallow copy of every property (public, protected and private, including
+     * subclasses) except render bookkeeping. Arrays compare by value and
+     * objects by identity.
+     *
+     * @return array<string, mixed>
+     */
+    private function pamOwnState(): array
+    {
+        $values = array_diff_key((array) $this, self::$pamSnapshotExcludedKeys ??= array_fill_keys(
+            array_map(
+                static fn (string $name): string => "\0".self::class."\0".$name,
+                self::PAM_SNAPSHOT_EXCLUDED,
+            ),
+            true,
+        ));
+        $plan = self::$pamObjectKeys[static::class] ??= self::pamObjectKeys(static::class);
+        if (count($values) > $plan[0]) {
+            // Dynamic properties: any value may hold an object.
+            return self::pamExpandObjects($values, 0);
+        }
+        // Only properties whose declared type admits an object can need
+        // expanding; scalar and array properties compare as they are.
+        foreach ($plan[1] as $key) {
+            $value = $values[$key] ?? null;
+            if (
+                is_object($value)
+                && !$value instanceof Component
+                && !$value instanceof Closure
+                && !$value instanceof \UnitEnum
+                && !$value instanceof Element
+                && !$value instanceof ComponentState
+                && !$value instanceof Disposable
+            ) {
+                $values[$key] = [$value, self::pamExpandObjects((array) $value, 1)];
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * Declared instance property count and the mangled array keys of the
+     * properties whose type admits an object.
+     *
+     * @param class-string $class
+     * @return array{0: int, 1: list<string>}
+     */
+    private static function pamObjectKeys(string $class): array
+    {
+        $declared = [];
+        $objects = [];
+        for ($reflection = new \ReflectionClass($class); $reflection !== false; $reflection = $reflection->getParentClass()) {
+            $name = $reflection->getName();
+            foreach ($reflection->getProperties() as $property) {
+                if ($property->isStatic() || $property->getDeclaringClass()->getName() !== $name) {
+                    continue;
+                }
+                $key = match (true) {
+                    $property->isPrivate() => "\0".$name."\0".$property->getName(),
+                    $property->isProtected() => "\0*\0".$property->getName(),
+                    default => $property->getName(),
+                };
+                if (isset($declared[$key])) {
+                    continue;
+                }
+                $declared[$key] = true;
+                if (self::pamTypeAdmitsObject($property->getType())) {
+                    $objects[] = $key;
+                }
+            }
+        }
+
+        $excluded = self::$pamSnapshotExcludedKeys ?? [];
+        // Framework references compared by identity: the parent component and
+        // the local state (whose every change bumps pamRevision).
+        $identity = ["\0".self::class."\0pamParent" => true, "\0".self::class."\0pamState" => true];
+        $objects = array_values(array_filter($objects, static fn (string $key): bool => !isset($identity[$key])));
+        $objects = array_values(array_filter($objects, static fn (string $key): bool => !isset($excluded[$key])));
+
+        return [count(array_diff_key($declared, $excluded)), $objects];
+    }
+
+    private static function pamTypeAdmitsObject(?\ReflectionType $type): bool
+    {
+        if ($type === null) {
+            return true;
+        }
+        if ($type instanceof \ReflectionNamedType) {
+            return !$type->isBuiltin()
+                || in_array($type->getName(), ['object', 'mixed', 'iterable', 'callable'], true);
+        }
+        if ($type instanceof \ReflectionUnionType || $type instanceof \ReflectionIntersectionType) {
+            foreach ($type->getTypes() as $member) {
+                if (self::pamTypeAdmitsObject($member)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Plain objects held by a component (services, view models, records) are
+     * captured with their own properties, two levels deep, so in-place
+     * mutations such as `$this->model->draft = ...` are detected. Components
+     * track themselves; closures, enums and elements compare by identity.
+     *
+     * @param array<array-key, mixed> $values
+     * @return array<array-key, mixed>
+     */
+    private static function pamExpandObjects(array $values, int $depth): array
+    {
+        foreach ($values as $key => $value) {
+            if (
+                is_object($value)
+                && !$value instanceof Component
+                && !$value instanceof Closure
+                && !$value instanceof \UnitEnum
+                && !$value instanceof Element
+                && !$value instanceof Disposable
+            ) {
+                $values[$key] = [
+                    $value,
+                    $depth < 1 ? self::pamExpandObjects((array) $value, $depth + 1) : (array) $value,
+                ];
+            }
+        }
+
+        return $values;
+    }
+
+    final public function __pamNotifyUpdating(string $property, mixed $next, mixed $previous): void
+    {
+        $this->updating($property, $next, $previous);
+        DependencyTracker::markDirty($this);
+        $this->pamChanges[$property] = ['previous' => $previous, 'current' => $next];
+    }
+
+    final public function __pamNotifyUpdated(string $property): void
+    {
+        $this->pamRevision++;
+        $this->pamComputed = [];
+        $this->updated($property);
+    }
+
+    final public function __pamFlushChanges(): void
+    {
+        if ($this->pamChanges === []) {
+            return;
+        }
+        $changes = new ComponentChanges($this->pamChanges);
+        $this->pamChanges = [];
+        $this->propsChanged($changes);
+        $this->pamSkipRender = !$this->shouldUpdate($changes);
+    }
+
+    final public function __pamSetup(): void
+    {
+        $this->pamLocalState();
+        $this->pamSetupStale = false;
+        if (!method_exists($this, 'setup')) {
+            return;
+        }
+        $scope = new \Pam\Desktop\Signals\EffectScope();
+        $this->pamScope = $scope;
+        $this->pamAttachFocusOwner($scope);
+        $method = new ReflectionMethod($this, 'setup');
+        $params = $this->pamRouteParams;
+        if ($params === null && class_exists(\Pam\Desktop\Routing\RouteArguments::class)) {
+            // Screens created by the Route facade carry their params there.
+            $params = \Pam\Desktop\Routing\RouteArguments::params($this);
+        }
+        $arguments = \Pam\Desktop\Internal\SetupArguments::resolve(
+            $method,
+            $params ?? [],
+            $this->pamRouteContext,
+            static::class,
+        );
+        $scope->run(fn () => $method->invokeArgs($this, $arguments));
+    }
+
+    /**
+     * @internal Route parameters for setup(), given by the router (or by
+     * App::make()) before the first render. Marks the component as a screen.
+     *
+     * @param array<string, mixed> $params
+     */
+    final public function __pamRouteParams(array $params, ?\Pam\Desktop\Navigation\RouteContext $route = null): static
+    {
+        $this->pamRouteParams = $params;
+        $this->pamRouteContext = $route;
+        $this->pamIsRoute = true;
+
+        return $this;
+    }
+
+    /** @internal The element of the last render (Testing reads screen content). */
+    final public function __pamRendered(): ?Element
+    {
+        return $this->pamLastElement;
+    }
+
+    /** @internal True for screens shown by a router. */
+    final public function __pamIsRoute(): bool
+    {
+        return $this->pamIsRoute;
+    }
+
+    /** @internal The scope of the current setup(), when setup() is declared. */
+    final public function __pamScope(): ?\Pam\Desktop\Signals\EffectScope
+    {
+        return $this->pamScope;
+    }
+
+    /** @internal Navigation focused or blurred this screen. */
+    final public function __pamNavigationFocus(bool $focused): void
+    {
+        $this->pamIsRoute = true;
+        if ($this->pamFocused === $focused) {
+            return;
+        }
+        $this->pamFocused = $focused;
+        foreach ($this->pamFocusScopes as $scope) {
+            if ($focused && !$scope->isMounted()) {
+                continue;
+            }
+            $scope->focusChanged($focused);
+        }
+    }
+
+    /** @internal The component was attached in this mount cycle: run onMounted() hooks and initial focus. */
+    final public function __pamMounted(): void
+    {
+        $scope = $this->pamScope;
+        if ($scope === null || $scope->disposed()) {
+            return;
+        }
+        $scope->mount();
+        $pending = $this->pamPendingFocus;
+        $this->pamPendingFocus = [];
+        foreach ($pending as $deliver) {
+            $deliver();
+        }
+        $owner = $this->pamFocusOwner;
+        if ($owner === null || $owner->pamFocused === true) {
+            $scope->focusChanged(true);
+        }
+    }
+
+    /**
+     * @internal Runs a navigation focus now, or after the first mount when
+     * setup() has not run yet: focus always follows setup() and onMounted().
+     */
+    final public function __pamWhenMounted(Closure $deliver): void
+    {
+        $scope = $this->pamScope;
+        if (!method_exists($this, 'setup') || ($scope !== null && !$this->pamSetupStale && $scope->isMounted())) {
+            $deliver();
+
+            return;
+        }
+        $this->pamPendingFocus[] = $deliver;
+    }
+
+    /** @internal setup() must run again because its scope was released at unmount. */
+    final public function __pamSetupStale(): bool
+    {
+        return $this->pamSetupStale;
+    }
+
+    private function pamAttachFocusOwner(\Pam\Desktop\Signals\EffectScope $scope): void
+    {
+        $owner = null;
+        foreach (array_reverse(ComponentLifecycle::ancestors()) as $ancestor) {
+            if ($ancestor->pamIsRoute) {
+                $owner = $ancestor;
+                break;
+            }
+        }
+        $this->pamFocusOwner = $owner;
+        if ($owner === null) {
+            return;
+        }
+        $id = spl_object_id($scope);
+        $owner->pamFocusScopes[$id] = $scope;
+        $reference = \WeakReference::create($owner);
+        $scope->onDispose(static function () use ($reference, $id): void {
+            $owner = $reference->get();
+            if ($owner !== null) {
+                unset($owner->pamFocusScopes[$id]);
+            }
+        });
+    }
+
+    final public function __pamRunEffects(): void
+    {
+        $class = static::class;
+        // Components that override neither effects() nor watchers() have none.
+        if (!(self::$pamHasEffects[$class] ??= self::pamDeclaresEffects($class)) && $this->pamEffects === []) {
+            return;
+        }
+        foreach ([...$this->effects(), ...$this->watchers()] as $index => $effect) {
+            if (!$effect instanceof Effect) {
+                throw new LogicException('Component effects must contain Effect instances.');
+            }
+            $key = (string) $index;
+            $dependencyValue = ($effect->dependencies)();
+            $dependencies = hash('xxh3', serialize($dependencyValue));
+            $state = $this->pamEffects[$key] ?? ['dependencies' => '', 'cleanup' => null, 'ran' => false];
+            if (($effect->once && $state['ran']) || (!$effect->once && $state['dependencies'] === $dependencies)) {
+                continue;
+            }
+            $state['cleanup']?->__invoke();
+            $cleanup = ($effect->run)($dependencyValue);
+            $state = [
+                'dependencies' => $dependencies,
+                'cleanup' => $cleanup instanceof Closure ? $cleanup : null,
+                'ran' => true,
+            ];
+            $this->pamEffects[$key] = $state;
+        }
+    }
+
+    /**
+     * @internal Drops the render references of an instance the registry
+     * discarded (its last element tree, slots, listeners and parent), so the
+     * reference cycles through event closures are freed at once instead of
+     * waiting for the cycle collector.
+     */
+    /** @internal An event handler closure this scope already built. */
+    final public function __pamHandler(string $key): ?Closure
+    {
+        return $this->pamHandlers[$key] ?? null;
+    }
+
+    /** @internal */
+    final public function __pamRememberHandler(string $key, Closure $handler): Closure
+    {
+        if (count($this->pamHandlers) >= 256) {
+            $this->pamHandlers = [];
+        }
+
+        return $this->pamHandlers[$key] = $handler;
+    }
+
+    /**
+     * Releases $resource (an event Subscription, a Debouncer, any Disposable)
+     * when this component unmounts. Subscribe in mount(): a remounted
+     * component runs mount() again.
+     *
+     * @template T of Disposable
+     * @param T $resource
+     * @return T
+     */
+    final protected function own(Disposable $resource): Disposable
+    {
+        $this->__pamOwn($resource);
+
+        return $resource;
+    }
+
+    /**
+     * Timers that stop on unmount and pause in the background:
+     * `$this->timers()->timeout(3_000, fn () => ...)`, `->every()`,
+     * `->debounce()` and `->throttle()`.
+     */
+    final protected function timers(): \Pam\Desktop\System\ComponentTimers
+    {
+        return $this->pamTimers ??= new \Pam\Desktop\System\ComponentTimers();
+    }
+
+    /** @internal Use own() or Subscription::ownedBy(). */
+    final public function __pamOwn(Disposable $resource): void
+    {
+        if ($resource->disposed()) {
+            return;
+        }
+        if (count($this->pamOwned) >= 128) {
+            $this->pamOwned = array_filter($this->pamOwned, static fn (Disposable $owned): bool => !$owned->disposed());
+        }
+        $this->pamOwned[spl_object_id($resource)] = $resource;
+    }
+
+    /** @internal The component was paused (app in the background). */
+    final public function __pamSuspendResources(): void
+    {
+        $this->pamTimers?->suspend();
+    }
+
+    /** @internal The component resumed. */
+    final public function __pamResumeResources(): void
+    {
+        $this->pamTimers?->resume();
+    }
+
+    /** @internal The component unmounted: release owned resources and timers. */
+    final public function __pamDisposeResources(): void
+    {
+        $owned = $this->pamOwned;
+        $this->pamOwned = [];
+        $failure = null;
+        $scope = $this->pamScope;
+        if ($scope !== null && !$scope->disposed()) {
+            // setup() runs again on every remount; own() resources and timers are released below.
+            $this->pamSetupStale = true;
+            try {
+                $scope->dispose();
+            } catch (Throwable $error) {
+                $failure = $error;
+            }
+        }
+        $this->pamFocusOwner = null;
+        // The child components of the last render are released with this
+        // unmount (PamPhpRegistry::finishRender()): a kept instance that
+        // mounts again (a lazy row back in the window) renders anew instead
+        // of reusing an element whose handlers reach released children.
+        $this->pamLastElement = null;
+        foreach ($owned as $resource) {
+            try {
+                $resource->dispose();
+            } catch (Throwable $error) {
+                $failure ??= $error;
+            }
+        }
+        $this->pamTimers?->cancelAll();
+        if ($failure !== null) {
+            throw $failure;
+        }
+    }
+
+    final public function __pamRelease(): void
+    {
+        $this->pamHandlers = [];
+        $this->pamLastElement = null;
+        $this->pamSnapshot = null;
+        $this->pamEventListeners = [];
+        $this->pamSlots = [];
+        $this->pamParent = null;
+        $this->pamFocusOwner = null;
+        $this->pamFocusScopes = [];
+    }
+
+    final public function __pamCleanup(): void
+    {
+        $failure = null;
+        foreach ($this->pamEffects as $effect) {
+            try {
+                $effect['cleanup']?->__invoke();
+            } catch (Throwable $error) {
+                $failure ??= $error;
+            }
+        }
+        $this->pamEffects = [];
+        $this->pamMemo = [];
+        $this->pamComputed = [];
+        try {
+            $this->cleanup();
+        } catch (Throwable $error) {
+            $failure ??= $error;
+        }
+        if ($failure !== null) {
+            throw $failure;
+        }
+    }
+
+    final protected function emit(string|ComponentEvent $event, mixed $payload = null): void
+    {
+        if ($event instanceof ComponentEvent) {
+            $allowed = $this->events();
+            if ($allowed !== [] && !in_array($event::class, $allowed, true)) {
+                throw new LogicException('Typed component event '.$event::class.' is not declared.');
+            }
+            $payload = $event->payload();
+            $event = $event->name();
+        }
+        if (preg_match('/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/D', $event) !== 1) {
+            throw new LogicException('Component event names must be safe identifiers.');
+        }
+
+        $listener = $this->pamEventListeners[$event] ?? null;
+
+        if ($listener !== null) {
+            if ($payload === null) {
+                $listener();
+            } else {
+                $listener($payload);
+            }
+        }
+    }
+
+    private function pamLocalState(): ComponentState
+    {
+        // A weak reference keeps the state's callback from forming a cycle
+        // with its component, so a discarded component is freed at once.
+        $owner = \WeakReference::create($this);
+
+        return $this->pamState ??= new ComponentState(
+            $this->initialState(),
+            static function (string $name, mixed $current, mixed $previous) use ($owner): void {
+                $component = $owner->get();
+                if ($component === null) {
+                    return;
+                }
+                $component->pamRevision++;
+                $component->pamComputed = [];
+                $component->pamSkipRender = false;
+                $component->pamChanges['state.'.$name] = [
+                    'previous' => $previous,
+                    'current' => $current,
+                ];
+                Runtime::scheduleRender();
+            },
+        );
+    }
+}

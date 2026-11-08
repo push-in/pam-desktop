@@ -1,0 +1,516 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+$autoloadCandidates = [
+    dirname(__DIR__, 3).'/autoload.php',
+    dirname(__DIR__).'/vendor/autoload.php',
+];
+foreach ($autoloadCandidates as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+        break;
+    }
+}
+if (!class_exists(Pam\Desktop\Tooling\PamFormatter::class)) {
+    spl_autoload_register(static function (string $class): void {
+        $prefix = 'Pam\\Desktop\\';
+        if (!str_starts_with($class, $prefix)) {
+            return;
+        }
+        $path = dirname(__DIR__).'/src/'
+            .str_replace('\\', '/', substr($class, strlen($prefix))).'.php';
+        if (is_file($path)) {
+            require $path;
+        }
+    });
+}
+
+use Pam\Desktop\Tooling\PamFormatter;
+
+/** @var array<string, string> $documents */
+$documents = [];
+$shutdown = false;
+$workspaceRoot = null;
+
+while (($message = readMessage(STDIN)) !== null) {
+    $method = $message['method'] ?? null;
+    $id = $message['id'] ?? null;
+    $params = is_array($message['params'] ?? null) ? $message['params'] : [];
+
+    if ($method === 'initialize') {
+        $workspaceRoot = workspacePath($params);
+        respond($id, [
+            'capabilities' => [
+                'textDocumentSync' => 1,
+                'documentFormattingProvider' => true,
+                'completionProvider' => ['triggerCharacters' => ['<', ':', '@']],
+                'hoverProvider' => true,
+                'definitionProvider' => true,
+                'referencesProvider' => true,
+                'renameProvider' => ['prepareProvider' => false],
+                'documentSymbolProvider' => true,
+                'signatureHelpProvider' => ['triggerCharacters' => ['(', ',']],
+                'codeActionProvider' => true,
+                'semanticTokensProvider' => [
+                    'legend' => [
+                        'tokenTypes' => ['class', 'property', 'method', 'keyword', 'variable'],
+                        'tokenModifiers' => ['declaration', 'readonly'],
+                    ],
+                    'full' => true,
+                ],
+            ],
+            'serverInfo' => ['name' => 'PAM Desktop Language Server', 'version' => '2.0.0'],
+        ]);
+        continue;
+    }
+    if ($method === 'shutdown') {
+        $shutdown = true;
+        respond($id, null);
+        continue;
+    }
+    if ($method === 'exit') {
+        exit($shutdown ? 0 : 1);
+    }
+    if ($method === 'textDocument/didOpen') {
+        $document = $params['textDocument'] ?? [];
+        $uri = (string) ($document['uri'] ?? '');
+        $documents[$uri] = (string) ($document['text'] ?? '');
+        diagnose($uri, $documents[$uri]);
+        continue;
+    }
+    if ($method === 'textDocument/didChange') {
+        $uri = (string) ($params['textDocument']['uri'] ?? '');
+        $changes = $params['contentChanges'] ?? [];
+        $last = is_array($changes) ? end($changes) : false;
+        if (is_array($last) && isset($last['text'])) {
+            $documents[$uri] = (string) $last['text'];
+            diagnose($uri, $documents[$uri]);
+        }
+        continue;
+    }
+    if ($method === 'textDocument/didClose') {
+        $uri = (string) ($params['textDocument']['uri'] ?? '');
+        unset($documents[$uri]);
+        notify('textDocument/publishDiagnostics', ['uri' => $uri, 'diagnostics' => []]);
+        continue;
+    }
+    if ($method === 'textDocument/formatting') {
+        $uri = (string) ($params['textDocument']['uri'] ?? '');
+        $source = $documents[$uri] ?? readUri($uri);
+        try {
+            $formatted = PamFormatter::format($source, basename(parse_url($uri, PHP_URL_PATH) ?: 'Component.pam'));
+            respond($id, [[
+                'range' => [
+                    'start' => ['line' => 0, 'character' => 0],
+                    'end' => ['line' => substr_count($source, "\n") + 1, 'character' => 0],
+                ],
+                'newText' => $formatted,
+            ]]);
+        } catch (Throwable $error) {
+            fail($id, -32603, $error->getMessage());
+        }
+        continue;
+    }
+    if ($method === 'textDocument/completion') {
+        $uri = (string) ($params['textDocument']['uri'] ?? '');
+        respond($id, completionItems($documents[$uri] ?? readUri($uri), $workspaceRoot));
+        continue;
+    }
+    if ($method === 'textDocument/hover') {
+        $uri = (string) ($params['textDocument']['uri'] ?? '');
+        $source = $documents[$uri] ?? readUri($uri);
+        $position = $params['position'] ?? [];
+        $word = wordAt($source, (int) ($position['line'] ?? 0), (int) ($position['character'] ?? 0));
+        $help = pamHelp($word);
+        respond($id, $help === null ? null : ['contents' => ['kind' => 'markdown', 'value' => $help]]);
+        continue;
+    }
+    if ($method === 'textDocument/definition') {
+        $uri = (string) ($params['textDocument']['uri'] ?? '');
+        $source = $documents[$uri] ?? readUri($uri);
+        $position = $params['position'] ?? [];
+        $word = wordAt($source, (int) ($position['line'] ?? 0), (int) ($position['character'] ?? 0));
+        $definition = componentDefinitions($workspaceRoot)[$word] ?? null;
+        respond($id, $definition);
+        continue;
+    }
+    if ($method === 'textDocument/documentSymbol') {
+        $uri = (string) ($params['textDocument']['uri'] ?? '');
+        respond($id, documentSymbols($documents[$uri] ?? readUri($uri)));
+        continue;
+    }
+    if ($method === 'textDocument/signatureHelp') {
+        $uri = (string) ($params['textDocument']['uri'] ?? '');
+        $source = $documents[$uri] ?? readUri($uri);
+        $position = $params['position'] ?? [];
+        respond($id, signatureHelp($source, (int) ($position['line'] ?? 0), (int) ($position['character'] ?? 0)));
+        continue;
+    }
+    if ($method === 'textDocument/references') {
+        $uri = (string) ($params['textDocument']['uri'] ?? '');
+        $source = $documents[$uri] ?? readUri($uri);
+        $position = $params['position'] ?? [];
+        $word = wordAt($source, (int) ($position['line'] ?? 0), (int) ($position['character'] ?? 0));
+        respond($id, workspaceOccurrences($workspaceRoot, $word));
+        continue;
+    }
+    if ($method === 'textDocument/rename') {
+        $uri = (string) ($params['textDocument']['uri'] ?? '');
+        $source = $documents[$uri] ?? readUri($uri);
+        $position = $params['position'] ?? [];
+        $word = wordAt($source, (int) ($position['line'] ?? 0), (int) ($position['character'] ?? 0));
+        $newName = (string) ($params['newName'] ?? '');
+        respond($id, renameEdit($workspaceRoot, $word, $newName));
+        continue;
+    }
+    if ($method === 'textDocument/semanticTokens/full') {
+        $uri = (string) ($params['textDocument']['uri'] ?? '');
+        respond($id, ['data' => semanticTokens($documents[$uri] ?? readUri($uri))]);
+        continue;
+    }
+    if ($method === 'textDocument/codeAction') {
+        $uri = (string) ($params['textDocument']['uri'] ?? '');
+        respond($id, language2CodeActions($uri, $params));
+        continue;
+    }
+    if ($id !== null) {
+        fail($id, -32601, 'Method not found');
+    }
+}
+
+/** @return array<string, mixed>|null */
+function readMessage($stream): ?array
+{
+    $length = null;
+    while (($line = fgets($stream)) !== false) {
+        $line = rtrim($line, "\r\n");
+        if ($line === '') {
+            break;
+        }
+        if (stripos($line, 'Content-Length:') === 0) {
+            $length = (int) trim(substr($line, 15));
+        }
+    }
+    if ($length === null || $length < 0 || $length > 16_777_216) {
+        return null;
+    }
+    $body = '';
+    while (strlen($body) < $length && !feof($stream)) {
+        $chunk = fread($stream, $length - strlen($body));
+        if ($chunk === false || $chunk === '') {
+            break;
+        }
+        $body .= $chunk;
+    }
+    $decoded = json_decode($body, true);
+    return is_array($decoded) ? $decoded : null;
+}
+
+function respond(mixed $id, mixed $result): void
+{
+    send(['jsonrpc' => '2.0', 'id' => $id, 'result' => $result]);
+}
+
+function fail(mixed $id, int $code, string $message): void
+{
+    send(['jsonrpc' => '2.0', 'id' => $id, 'error' => ['code' => $code, 'message' => $message]]);
+}
+
+/** @param array<string, mixed> $params */
+function notify(string $method, array $params): void
+{
+    send(['jsonrpc' => '2.0', 'method' => $method, 'params' => $params]);
+}
+
+/** @param array<string, mixed> $payload */
+function send(array $payload): void
+{
+    $json = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+    fwrite(STDOUT, 'Content-Length: '.strlen($json)."\r\n\r\n".$json);
+    fflush(STDOUT);
+}
+
+function diagnose(string $uri, string $source): void
+{
+    $diagnostics = [];
+    try {
+        PamFormatter::format($source, basename(parse_url($uri, PHP_URL_PATH) ?: 'Component.pam'));
+    } catch (Throwable $error) {
+        $diagnostics[] = [
+            'range' => [
+                'start' => ['line' => 0, 'character' => 0],
+                'end' => ['line' => 0, 'character' => 1],
+            ],
+            'severity' => 1,
+            'source' => 'pam-desktop',
+            'message' => $error->getMessage(),
+        ];
+    }
+    notify('textDocument/publishDiagnostics', ['uri' => $uri, 'diagnostics' => $diagnostics]);
+}
+
+function readUri(string $uri): string
+{
+    $path = parse_url($uri, PHP_URL_PATH);
+    if (!is_string($path)) {
+        return '';
+    }
+    $source = @file_get_contents(rawurldecode($path));
+    return is_string($source) ? $source : '';
+}
+
+/** @return list<array<string, mixed>> */
+function completionItems(string $source, ?string $workspaceRoot): array
+{
+    $items = [];
+    $tags = [
+        'Screen', 'SafeAreaView', 'View', 'Column', 'Row', 'Text', 'Button',
+        'Input', 'Image', 'ScrollView', 'VirtualizedList', 'VirtualGrid',
+        'Modal', 'BottomSheet', 'GestureDetector', 'Slot', 'Fragment',
+        'Show', 'Match', 'Case', 'Default', 'Await', 'Pending', 'Content',
+        'Empty', 'Error', 'Offline', 'Stale', 'Animated',
+    ];
+    foreach ($tags as $tag) {
+        $items[] = ['label' => $tag, 'kind' => 7, 'detail' => 'PAM Desktop component'];
+    }
+    foreach (componentDefinitions($workspaceRoot) as $name => $_definition) {
+        $items[] = ['label' => $name, 'kind' => 7, 'detail' => 'Project PAM component'];
+    }
+    foreach (['p-if', 'p-else-if', 'p-else', 'p-for', 'p-key', 'p-index', 'p-model', 'p-model:checked', 'bind:value', 'bind:checked', 'recipe', 'variant:'] as $directive) {
+        $items[] = ['label' => $directive, 'kind' => 14, 'detail' => 'PAM template directive'];
+    }
+    preg_match_all('/public\s+(?:readonly\s+)?[\\?A-Za-z0-9_|]+\s+\$([A-Za-z_][A-Za-z0-9_]*)/', $source, $properties);
+    foreach (array_unique($properties[1] ?? []) as $property) {
+        $items[] = ['label' => '$'.$property, 'kind' => 6, 'detail' => 'Component property'];
+    }
+    preg_match_all('/public\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/', $source, $methods);
+    foreach (array_unique($methods[1] ?? []) as $method) {
+        if ($method === '__construct') {
+            continue;
+        }
+        $items[] = ['label' => $method, 'kind' => 2, 'detail' => 'Component action'];
+    }
+    return $items;
+}
+
+/** @param array<string, mixed> $params */
+function workspacePath(array $params): ?string
+{
+    $uri = $params['rootUri'] ?? null;
+    if (!is_string($uri) || $uri === '') {
+        $folders = $params['workspaceFolders'] ?? [];
+        $uri = is_array($folders) && is_array($folders[0] ?? null)
+            ? ($folders[0]['uri'] ?? null)
+            : null;
+    }
+    if (!is_string($uri)) {
+        return null;
+    }
+    $path = parse_url($uri, PHP_URL_PATH);
+    return is_string($path) && is_dir(rawurldecode($path)) ? rawurldecode($path) : null;
+}
+
+/** @return array<string, array<string, mixed>> */
+function componentDefinitions(?string $workspaceRoot): array
+{
+    if ($workspaceRoot === null || !is_dir($workspaceRoot)) {
+        return [];
+    }
+    $definitions = [];
+    $directory = new RecursiveDirectoryIterator($workspaceRoot, FilesystemIterator::SKIP_DOTS);
+    $filter = new RecursiveCallbackFilterIterator(
+        $directory,
+        static function (SplFileInfo $file): bool {
+            if (!$file->isDir()) {
+                return true;
+            }
+            return !in_array($file->getFilename(), ['vendor', 'node_modules', '.git', '.pam-desktop'], true);
+        },
+    );
+    $files = new RecursiveIteratorIterator($filter);
+    $seen = 0;
+    foreach ($files as $file) {
+        if (!$file->isFile() || ++$seen > 20_000) {
+            continue;
+        }
+        $filename = $file->getFilename();
+        if (!str_ends_with($filename, '.pam') && !str_ends_with($filename, '.pam.php')) {
+            continue;
+        }
+        $source = @file_get_contents($file->getPathname());
+        if (!is_string($source) || !preg_match('/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)/', $source, $match, PREG_OFFSET_CAPTURE)) {
+            continue;
+        }
+        $name = $match[1][0];
+        $offset = $match[1][1];
+        $before = substr($source, 0, $offset);
+        $line = substr_count($before, "\n");
+        $lastNewline = strrpos($before, "\n");
+        $character = $lastNewline === false ? strlen($before) : strlen($before) - $lastNewline - 1;
+        $uri = 'file://'.str_replace('%2F', '/', rawurlencode($file->getPathname()));
+        $definitions[$name] = [
+            'uri' => $uri,
+            'range' => [
+                'start' => ['line' => $line, 'character' => $character],
+                'end' => ['line' => $line, 'character' => $character + strlen($name)],
+            ],
+        ];
+    }
+    return $definitions;
+}
+
+function wordAt(string $source, int $line, int $character): string
+{
+    $lines = preg_split('/\R/', $source) ?: [];
+    $text = $lines[$line] ?? '';
+    $character = max(0, min(strlen($text), $character));
+    $start = $character;
+    while ($start > 0 && preg_match('/[A-Za-z0-9_:@-]/', $text[$start - 1]) === 1) {
+        $start--;
+    }
+    $end = $character;
+    while ($end < strlen($text) && preg_match('/[A-Za-z0-9_:@-]/', $text[$end]) === 1) {
+        $end++;
+    }
+    return substr($text, $start, $end - $start);
+}
+
+function pamHelp(string $word): ?string
+{
+    return match ($word) {
+        'p-if' => '**p-if** — Renders the element only when its bounded PAM expression is truthy.',
+        'p-for' => '**p-for** — Repeats the element for an iterable or positive integer. Pair it with a stable key.',
+        'bind:value' => '**bind:value** — Two-way native input binding to typed component state.',
+        'bind:checked' => '**bind:checked** — Two-way native boolean binding.',
+        'p-model' => '**p-model** — Vue-like two-way binding. Inputs bind value; Switch and Toggle bind checked state.',
+        'p-model:checked' => '**p-model:checked** — Explicit two-way boolean binding for checked controls.',
+        '@press' => '**@press** — Calls a component action after a native press event.',
+        'Show' => '**Show** — Declarative conditional rendering with a typed `when` expression.',
+        'Match' => '**Match** — Strictly matches a value against `Case` branches.',
+        'Await' => '**Await** — Renders a branch for each typed `AsyncValue` state.',
+        'recipe' => '**recipe** — Applies a compiled design-system recipe and its typed variants.',
+        'Fragment' => '**Fragment** — Groups component output without creating a native layout view.',
+        default => null,
+    };
+}
+
+/** @return list<array<string, mixed>> */
+function documentSymbols(string $source): array
+{
+    $symbols = [];
+    preg_match_all('/\b(class|function)\s+([A-Za-z_][A-Za-z0-9_]*)|\bpublic\s+(?:readonly\s+)?[?A-Za-z0-9_|\\\\]+\s+\$([A-Za-z_][A-Za-z0-9_]*)/', $source, $matches, PREG_OFFSET_CAPTURE);
+    foreach ($matches[0] ?? [] as $index => $whole) {
+        $name = ($matches[2][$index][0] ?? '') ?: ($matches[3][$index][0] ?? '');
+        if ($name === '') continue;
+        $offset = (int) $whole[1];
+        $before = substr($source, 0, $offset);
+        $line = substr_count($before, "\n");
+        $character = $offset - ((strrpos($before, "\n") ?: -1) + 1);
+        $kind = ($matches[1][$index][0] ?? '') === 'class' ? 5 : (($matches[1][$index][0] ?? '') === 'function' ? 6 : 7);
+        $range = ['start' => ['line' => $line, 'character' => $character], 'end' => ['line' => $line, 'character' => $character + strlen($whole[0])]];
+        $symbols[] = ['name' => $name, 'kind' => $kind, 'range' => $range, 'selectionRange' => $range];
+    }
+    return $symbols;
+}
+
+/** @return array<string, mixed>|null */
+function signatureHelp(string $source, int $line, int $character): ?array
+{
+    $lines = preg_split('/\R/', $source) ?: [];
+    $prefix = substr($lines[$line] ?? '', 0, $character);
+    if (preg_match('/([A-Za-z_][A-Za-z0-9_]*)\s*\([^()]*$/', $prefix, $match) !== 1) return null;
+    if (preg_match('/public\s+function\s+'.preg_quote($match[1], '/').'\s*\(([^)]*)\)/', $source, $signature) !== 1) return null;
+    return ['signatures' => [['label' => $match[1].'('.trim($signature[1]).')', 'parameters' => []]], 'activeSignature' => 0, 'activeParameter' => substr_count($match[0], ',')];
+}
+
+/** @return list<array<string, mixed>> */
+function workspaceOccurrences(?string $root, string $word): array
+{
+    if ($root === null || $word === '' || preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/D', $word) !== 1) return [];
+    $locations = [];
+    foreach (pamFiles($root) as $path) {
+        $source = @file_get_contents($path);
+        if (!is_string($source)) continue;
+        preg_match_all('/\b'.preg_quote($word, '/').'\b/', $source, $matches, PREG_OFFSET_CAPTURE);
+        foreach ($matches[0] as $match) {
+            $before = substr($source, 0, $match[1]);
+            $line = substr_count($before, "\n");
+            $character = $match[1] - ((strrpos($before, "\n") ?: -1) + 1);
+            $locations[] = ['uri' => pathUri($path), 'range' => ['start' => ['line' => $line, 'character' => $character], 'end' => ['line' => $line, 'character' => $character + strlen($word)]]];
+        }
+    }
+    return $locations;
+}
+
+/** @return array<string, mixed> */
+function renameEdit(?string $root, string $word, string $newName): array
+{
+    if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/D', $newName) !== 1) return ['changes' => []];
+    $changes = [];
+    foreach (workspaceOccurrences($root, $word) as $location) {
+        $changes[$location['uri']][] = ['range' => $location['range'], 'newText' => $newName];
+    }
+    return ['changes' => $changes];
+}
+
+/** @return list<int> */
+function semanticTokens(string $source): array
+{
+    $tokens = [];
+    preg_match_all('/<([A-Z][A-Za-z0-9_.-]*)|\bpublic\s+(?:readonly\s+)?[?A-Za-z0-9_|\\\\]+\s+\$([A-Za-z_][A-Za-z0-9_]*)|\bfunction\s+([A-Za-z_][A-Za-z0-9_]*)/', $source, $matches, PREG_OFFSET_CAPTURE);
+    $entries = [];
+    foreach ($matches[0] as $index => $whole) {
+        $name = ($matches[1][$index][0] ?? '') ?: (($matches[2][$index][0] ?? '') ?: ($matches[3][$index][0] ?? ''));
+        if ($name === '') continue;
+        $offset = strpos($source, $name, (int) $whole[1]);
+        if ($offset === false) continue;
+        $before = substr($source, 0, $offset);
+        $entries[] = [substr_count($before, "\n"), $offset - ((strrpos($before, "\n") ?: -1) + 1), strlen($name), ($matches[1][$index][0] ?? '') !== '' ? 0 : (($matches[2][$index][0] ?? '') !== '' ? 1 : 2), 0];
+    }
+    usort($entries, static fn(array $a, array $b): int => [$a[0], $a[1]] <=> [$b[0], $b[1]]);
+    $previousLine = 0; $previousCharacter = 0;
+    foreach ($entries as $entry) {
+        $deltaLine = $entry[0] - $previousLine;
+        $deltaCharacter = $deltaLine === 0 ? $entry[1] - $previousCharacter : $entry[1];
+        array_push($tokens, $deltaLine, $deltaCharacter, $entry[2], $entry[3], $entry[4]);
+        $previousLine = $entry[0]; $previousCharacter = $entry[1];
+    }
+    return $tokens;
+}
+
+/** @param array<string, mixed> $params @return list<array<string, mixed>> */
+function language2CodeActions(string $uri, array $params): array
+{
+    $actions = [];
+    foreach (($params['context']['diagnostics'] ?? []) as $diagnostic) {
+        if (!is_array($diagnostic) || !str_contains((string) ($diagnostic['message'] ?? ''), 'PAM2301')) continue;
+        $actions[] = ['title' => 'Mark image as decorative', 'kind' => 'quickfix', 'edit' => ['changes' => [$uri => [['range' => $diagnostic['range'], 'newText' => ' decorative="true"']]]]];
+    }
+    return $actions;
+}
+
+/** @return list<string> */
+function pamFiles(string $root): array
+{
+    $paths = [];
+    $iterator = new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), static fn(SplFileInfo $file): bool => !$file->isDir() || !in_array($file->getFilename(), ['vendor', 'node_modules', '.git', '.pam-desktop'], true)));
+    foreach ($iterator as $file) {
+        if (
+            !$file->isLink()
+            && $file->isFile()
+            && $file->getSize() <= 2_097_152
+            && (str_ends_with($file->getFilename(), '.pam') || str_ends_with($file->getFilename(), '.pam.php'))
+        ) {
+            $paths[] = $file->getPathname();
+        }
+        if (count($paths) >= 20_000) break;
+    }
+    return $paths;
+}
+
+function pathUri(string $path): string
+{
+    return 'file://'.str_replace('%2F', '/', rawurlencode($path));
+}

@@ -1,0 +1,70 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop;
+
+use InvalidArgumentException;
+
+use function strlen;
+
+final readonly class AsyncValue
+{
+    private function __construct(
+        public AsyncStatus $status,
+        public mixed $data = null,
+        public ?string $message = null,
+        public bool $retryable = false,
+    ) {
+        if ($message !== null && strlen($message) > 16_384) {
+            throw new InvalidArgumentException('Async state messages cannot exceed 16 KiB.');
+        }
+    }
+
+    public static function loading(mixed $previous = null): self
+    {
+        return new self(AsyncStatus::Loading, $previous);
+    }
+
+    public static function content(mixed $data): self
+    {
+        return new self(AsyncStatus::Content, $data);
+    }
+
+    public static function empty(?string $message = null): self
+    {
+        return new self(AsyncStatus::Empty, message: $message);
+    }
+
+    public static function error(
+        string $message,
+        bool $retryable = true,
+        mixed $previous = null,
+    ): self {
+        return new self(AsyncStatus::Error, $previous, $message, $retryable);
+    }
+
+    public static function offline(
+        mixed $cached = null,
+        ?string $message = null,
+    ): self {
+        return new self(AsyncStatus::Offline, $cached, $message ?? \Pam\Desktop\I18n\FrameworkText::get('async.offline'), true);
+    }
+
+    public static function stale(
+        mixed $data,
+        ?string $message = null,
+    ): self {
+        return new self(AsyncStatus::Stale, $data, $message ?? \Pam\Desktop\I18n\FrameworkText::get('async.stale'), true);
+    }
+
+    public function hasData(): bool
+    {
+        return $this->data !== null;
+    }
+
+    public function isBusy(): bool
+    {
+        return $this->status === AsyncStatus::Loading;
+    }
+}

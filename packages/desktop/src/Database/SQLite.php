@@ -1,0 +1,267 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Database;
+
+use Closure;
+use InvalidArgumentException;
+use JsonException;
+use Pam\Desktop\Internal\Wire;
+use Pam\Desktop\ModuleResultStatus;
+use Pam\Desktop\Modules\NativeModuleException;
+use Pam\Desktop\Modules\NativeModules;
+use Throwable;
+
+use function count;
+use function is_array;
+use function is_string;
+use function strlen;
+
+final class SQLite
+{
+    private function __construct()
+    {
+    }
+
+    /** @param list<string|int|float|bool|null> $arguments */
+    public static function execute(
+        string $database,
+        string $sql,
+        array $arguments = [],
+        ?Closure $callback = null,
+        ?Closure $onError = null,
+    ): int {
+        return self::call('execute', $database, $sql, $arguments, $callback, $onError);
+    }
+
+    /**
+     * @param list<string|int|float|bool|null> $arguments
+     * @param Closure(list<array<string, string|int|float|bool|null>>): void $callback
+     * @param (Closure(NativeModuleException): void)|null $onError Receives native
+     *        failures (SQL errors, results over the 1 MiB bridge limit) instead
+     *        of the runtime error overlay.
+     */
+    public static function query(
+        string $database,
+        string $sql,
+        array $arguments,
+        Closure $callback,
+        ?Closure $onError = null,
+    ): int {
+        return self::call('query', $database, $sql, $arguments, $callback, $onError);
+    }
+
+    /**
+     * Executes one prepared statement for every argument set inside one native transaction.
+     *
+     * @param list<list<string|int|float|bool|null>> $argumentSets
+     */
+    public static function executeMany(
+        string $database,
+        string $sql,
+        array $argumentSets,
+        ?Closure $callback = null,
+        ?Closure $onError = null,
+    ): int {
+        if ($argumentSets === [] || count($argumentSets) > 10_000) {
+            throw new InvalidArgumentException(
+                'SQLite executeMany requires between 1 and 10000 argument sets.',
+            );
+        }
+
+        return self::call('executeMany', $database, $sql, $argumentSets, $callback, $onError);
+    }
+
+    /**
+     * Executes heterogeneous prepared statements atomically in one native transaction.
+     *
+     * @param list<array{
+     *   sql: string,
+     *   arguments?: list<string|int|float|bool|null>,
+     *   argumentSets?: list<list<string|int|float|bool|null>>
+     * }> $statements
+     */
+    public static function transaction(
+        string $database,
+        array $statements,
+        ?Closure $callback = null,
+        ?Closure $onError = null,
+    ): int {
+        self::validateName($database);
+        $normalized = self::normalizeStatements($statements);
+        try {
+            $encoded = json_encode(
+                $normalized,
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE,
+            );
+        } catch (JsonException $error) {
+            throw new InvalidArgumentException(
+                'SQLite transaction arguments must be JSON scalars.',
+                0,
+                $error,
+            );
+        }
+
+        return NativeModules::call(
+            'sqlite',
+            'transaction',
+            [
+                'database' => $database,
+                'sql' => '',
+                'arguments' => $encoded,
+            ],
+            static function ($result) use ($callback): void {
+                if ($result->status === ModuleResultStatus::Failure) {
+                    throw new NativeModuleException('sqlite', 'transaction', $result->payload);
+                }
+                $callback?->__invoke();
+            },
+            $onError,
+        );
+    }
+
+    /**
+     * Checks a readonly single integer boolean inside BEGIN IMMEDIATE before
+     * executing the statements. False commits no changes and returns false.
+     * @param list<string|int|float|bool|null> $guardArguments
+     * @param list<array{sql:string,arguments?:list<string|int|float|bool|null>,argumentSets?:list<list<string|int|float|bool|null>>}> $statements
+     * @param Closure(bool): void $callback
+     * @param (Closure(NativeModuleException): void)|null $onError
+     */
+    public static function transactionIf(string $database, string $guardSql, array $guardArguments, array $statements, Closure $callback, ?Closure $onError = null): int
+    {
+        self::validateName($database);
+        if ($guardSql === '' || strlen($guardSql) > 1_048_576) throw new InvalidArgumentException('SQLite guard SQL exceeds its bounds.');
+        $encoded = json_encode(['guardArguments' => $guardArguments, 'statements' => self::normalizeStatements($statements)], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        return NativeModules::call('sqlite', 'transactionIf', ['database' => $database, 'sql' => $guardSql, 'arguments' => $encoded],
+            static function ($result) use ($callback): void {
+                if ($result->status === ModuleResultStatus::Failure) throw new NativeModuleException('sqlite', 'transactionIf', $result->payload);
+                $values = Wire::decodeMap($result->payload);
+                $applied = $values['applied'] ?? null;
+                if ($applied !== '0' && $applied !== '1') throw new NativeModuleException('sqlite', 'transactionIf', 'Invalid conditional transaction result.');
+                $callback($applied === '1');
+            }, $onError);
+    }
+
+    /**
+     * @param list<array{sql:string,arguments?:list<string|int|float|bool|null>,argumentSets?:list<list<string|int|float|bool|null>>}> $statements
+     * @return list<array{sql:string,arguments:list<string|int|float|bool|null>,argumentSets?:list<list<string|int|float|bool|null>>}>
+     */
+    private static function normalizeStatements(array $statements): array
+    {
+        if ($statements === [] || count($statements) > 10_000) {
+            throw new InvalidArgumentException(
+                'SQLite transaction requires between 1 and 10000 statements.',
+            );
+        }
+        $normalized = [];
+        foreach ($statements as $statement) {
+            $sql = $statement['sql'] ?? '';
+            $arguments = $statement['arguments'] ?? [];
+            $argumentSets = $statement['argumentSets'] ?? null;
+            if (!is_string($sql) || $sql === '' || strlen($sql) > 1_048_576) {
+                throw new InvalidArgumentException(
+                    'Every SQLite transaction SQL statement must contain between 1 and 1048576 bytes.',
+                );
+            }
+            if (!is_array($arguments)) {
+                throw new InvalidArgumentException(
+                    'SQLite transaction arguments must be arrays.',
+                );
+            }
+            if ($argumentSets !== null
+                && (!is_array($argumentSets)
+                    || $argumentSets === []
+                    || count($argumentSets) > 10_000)) {
+                throw new InvalidArgumentException(
+                    'SQLite transaction argumentSets must contain between 1 and 10000 rows.',
+                );
+            }
+            $normalized[] = [
+                'sql' => $sql,
+                'arguments' => array_values($arguments),
+                ...($argumentSets === null
+                    ? []
+                    : ['argumentSets' => array_values($argumentSets)]),
+            ];
+        }
+        return $normalized;
+    }
+
+    /**
+     * @param list<string|int|float|bool|null>|list<list<string|int|float|bool|null>> $arguments
+     */
+    private static function call(
+        string $method,
+        string $database,
+        string $sql,
+        array $arguments,
+        ?Closure $callback,
+        ?Closure $onError,
+    ): int {
+        self::validateName($database);
+        if ($sql === '' || strlen($sql) > 1_048_576) {
+            throw new InvalidArgumentException('SQLite SQL must contain between 1 and 1048576 bytes.');
+        }
+
+        try {
+            $encodedArguments = json_encode(
+                array_values($arguments),
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE,
+            );
+        } catch (JsonException $error) {
+            throw new InvalidArgumentException('SQLite arguments must be JSON scalars.', 0, $error);
+        }
+
+        return NativeModules::call(
+            'sqlite',
+            $method,
+            ['database' => $database, 'sql' => $sql, 'arguments' => $encodedArguments],
+            static function ($result) use ($callback, $method, $onError): void {
+                if ($result->status === ModuleResultStatus::Failure) {
+                    throw new NativeModuleException('sqlite', $method, $result->payload);
+                }
+                if ($callback === null) {
+                    return;
+                }
+                if ($method !== 'query') {
+                    $callback();
+
+                    return;
+                }
+                try {
+                    $values = Wire::decodeMap($result->payload);
+                    $rows = json_decode(
+                        (string) ($values['rows'] ?? '[]'),
+                        true,
+                        512,
+                        JSON_THROW_ON_ERROR,
+                    );
+                } catch (Throwable $error) {
+                    $failure = new NativeModuleException(
+                        'sqlite',
+                        $method,
+                        'SQLite query result could not be decoded: '.$error->getMessage(),
+                        $error,
+                    );
+                    if ($onError === null) {
+                        throw $failure;
+                    }
+                    $onError($failure);
+
+                    return;
+                }
+                $callback(is_array($rows) ? $rows : []);
+            },
+            $onError,
+        );
+    }
+
+    private static function validateName(string $database): void
+    {
+        if (preg_match('/^[A-Za-z0-9_.-]{1,128}$/D', $database) !== 1) {
+            throw new InvalidArgumentException('SQLite database name is invalid.');
+        }
+    }
+}

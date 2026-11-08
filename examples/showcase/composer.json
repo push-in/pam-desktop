@@ -1,0 +1,33 @@
+{
+    "name": "pam/example-desktop-showcase",
+    "description": "PAM Desktop showcase application.",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": "^8.5",
+        "pushinbr/pam-desktop": "*"
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../..",
+            "options": {
+                "symlink": true
+            }
+        },
+        {
+            "packagist.org": false
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "config": {
+        "platform-check": true,
+        "sort-packages": true
+    }
+}

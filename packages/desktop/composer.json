@@ -1,12 +1,19 @@
 {
     "name": "pushinbr/pam-desktop",
-    "description": "Elegant PHP-first desktop applications powered by Pam, Rust, and Servo.",
+    "description": "Build fast native Linux, macOS and Windows applications with PHP and PAM.",
     "type": "library",
     "license": "MIT",
     "require": {
-        "php": "^8.5"
+        "php": "^8.5",
+        "symfony/polyfill-intl-normalizer": "^1.43"
     },
     "autoload": {
+        "files": [
+            "src/Polyfill/mbstring_functions.php",
+            "src/Routing/functions.php",
+            "src/functions.php",
+            "src/Testing/functions.php"
+        ],
         "psr-4": {
             "Pam\\Desktop\\": "src/"
         }
@@ -33,10 +40,9 @@
         "sort-packages": true
     },
     "scripts": {
-        "analyse": "phpstan analyse --configuration=phpstan.neon.dist",
+        "analyse": "phpstan analyse --configuration=phpstan.neon",
         "test": [
-            "php tests/run.php",
-            "php tests/compatibility.php"
+            "php tests/run.php"
         ]
     },
     "require-dev": {

@@ -1,0 +1,9 @@
+{
+    "name": "pushinbr/pam-desktop-realtime",
+    "description": "Lifecycle-bound private Reverb channels over PAM Desktop native WebSockets.",
+    "type": "library",
+    "license": "MIT",
+    "require": {"php": "^8.5", "pushinbr/pam-desktop": "^2.0"},
+    "autoload": {"psr-4": {"Pam\\Desktop\\Realtime\\": "src/"}},
+    "scripts": {"test": "php tests/run.php"}
+}

@@ -1,0 +1,17 @@
+FROM ubuntu:24.04
+
+# Keep the host distribution unchanged while building against the supported GTK.
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-cache show libgtk-4-dev pkg-config clang xvfb xdotool imagemagick fonts-dejavu-core > /tmp/package-metadata \
+    && apt-get install --simulate --no-install-recommends libgtk-4-dev pkg-config clang xvfb xdotool imagemagick fonts-dejavu-core ca-certificates curl xauth dbus-x11 \
+    && apt-get install -y --no-install-recommends libgtk-4-dev pkg-config clang xvfb xdotool imagemagick fonts-dejavu-core ca-certificates curl xauth dbus-x11 \
+    && rm -rf /var/lib/apt/lists/* /tmp/package-metadata
+
+ENV GDK_BACKEND=x11 GSK_RENDERER=cairo GTK_A11Y=none
+RUN apt-get update \
+    && apt-cache show libsodium23 libedit2 libargon2-1 > /tmp/php-runtime-metadata \
+    && apt-get install --simulate --no-install-recommends libsodium23 libedit2 libargon2-1 \
+    && apt-get install -y --no-install-recommends libsodium23 libedit2 libargon2-1 \
+    && rm -rf /var/lib/apt/lists/* /tmp/php-runtime-metadata
+WORKDIR /workspace

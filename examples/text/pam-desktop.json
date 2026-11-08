@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.text",
+    "name": "PAM Desktop text",
+    "entry": "index.php",
+    "window": {
+        "width": 640,
+        "height": 520
+    }
+}

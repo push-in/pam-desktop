@@ -1,0 +1,12507 @@
+use std::cell::Cell;
+use std::collections::{BTreeMap, BTreeSet};
+
+use pam_desktop_wire::{Layout, Node, NodeKind, PropKey, Tree};
+
+use crate::font_metrics::TextMetrics;
+
+const DEFAULT_TEXT_HEIGHT: f32 = 28.0;
+const DEFAULT_CONTROL_HEIGHT: f32 = 48.0;
+const DEFAULT_SWITCH_WIDTH: f32 = 46.5;
+const DEFAULT_SWITCH_HEIGHT: f32 = 27.0;
+// Host switch control size (bits of f32; 0 = the default above). React Native
+// sizes a Switch by the platform control: Android 46.5 x 27 dp, iOS the
+// UISwitch `sizeThatFits` (51 x 31 pt, 63 x 28 pt since iOS 26). The control is
+// the same for every engine of the process, so the host sets it once.
+static HOST_SWITCH_WIDTH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static HOST_SWITCH_HEIGHT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Sets the intrinsic Switch size measured by the host (non-positive or
+/// non-finite values restore the default).
+pub fn set_host_switch_size(width: f32, height: f32) {
+    let valid = |value: f32| value.is_finite() && value > 0.0;
+    let (width, height) = if valid(width) && valid(height) {
+        (width, height)
+    } else {
+        (0.0, 0.0)
+    };
+    HOST_SWITCH_WIDTH.store(width.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    HOST_SWITCH_HEIGHT.store(height.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn switch_extent(axis: Axis) -> f32 {
+    let (cell, default) = match axis {
+        Axis::Horizontal => (&HOST_SWITCH_WIDTH, DEFAULT_SWITCH_WIDTH),
+        Axis::Vertical => (&HOST_SWITCH_HEIGHT, DEFAULT_SWITCH_HEIGHT),
+    };
+    let host = f32::from_bits(cell.load(std::sync::atomic::Ordering::Relaxed));
+    if host > 0.0 { host } else { default }
+}
+/// Width CSS `scrollbar-gutter: stable` reserves, by `scrollbar-width`:
+/// Chromium's classic scrollbar (15) and its measured thin variant (10).
+const SCROLLBAR_GUTTER_AUTO: f32 = 15.0;
+const SCROLLBAR_GUTTER_THIN: f32 = 10.0;
+
+/// `(start, end)` space a vertical scroller reserves for its scrollbar so
+/// content keeps the same width whether or not it overflows. Platforms with
+/// overlay scrollbars draw their indicator inside this gutter.
+fn scrollbar_gutter(node: &Node) -> (f32, f32) {
+    let mode = integer(node, PropKey::ScrollbarGutter).unwrap_or(1);
+    if mode < 2
+        || boolean(node, PropKey::ScrollHorizontal)
+        || boolean(node, PropKey::ListHorizontal)
+    {
+        return (0.0, 0.0);
+    }
+    let thickness = match number(node, PropKey::ScrollbarThickness) {
+        Some(px) => px.clamp(0.0, 64.0),
+        None => match integer(node, PropKey::ScrollbarWidth).unwrap_or(1) {
+            2 => SCROLLBAR_GUTTER_THIN,
+            3 => 0.0,
+            _ => SCROLLBAR_GUTTER_AUTO,
+        },
+    };
+    (if mode == 3 { thickness } else { 0.0 }, thickness)
+}
+
+const DEFAULT_IMAGE_HEIGHT: f32 = 160.0;
+const DEFAULT_LIST_HEIGHT: f32 = 240.0;
+
+thread_local! {
+    /// Height of the window being laid out: the most a content-sized
+    /// vertical `VirtualizedList` without a numeric `max-height` grows to.
+    static WINDOW_HEIGHT: Cell<f32> = const { Cell::new(f32::INFINITY) };
+}
+
+/// A vertical `VirtualizedList` sizes its height by its rows (React Native
+/// FlatList, a CSS block with `overflow: auto`): the sum of the measured
+/// rows and the estimate of the rows not built yet, limited by a numeric
+/// `max-height` or, without one, by the window height. Only the rows inside
+/// that height are materialized.
+fn content_sized_list(node: &Node, axis: Axis) -> bool {
+    axis == Axis::Vertical
+        && node.kind == NodeKind::VirtualList
+        && !boolean(node, PropKey::ListHorizontal)
+}
+const MAX_LAYOUT_DEPTH: usize = 512;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Size {
+    pub width: f32,
+    pub height: f32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Axis {
+    Vertical,
+    Horizontal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CrossAlignment {
+    Start,
+    Center,
+    End,
+    Stretch,
+    Baseline,
+}
+
+struct LayoutContext<'a> {
+    tree: &'a Tree,
+    children: &'a BTreeMap<u64, Vec<&'a Node>>,
+    text_scale: f32,
+    text_metrics: &'a TextMetrics,
+    previous: Option<&'a BTreeMap<u64, Layout>>,
+    dirty_path: Option<&'a BTreeSet<u64>>,
+    visited_nodes: Cell<usize>,
+    /// Window of the surface being laid out (root window, or a modal's own
+    /// presentation surface).
+    viewport: Cell<Layout>,
+    /// Top window inset while a modal surface is laid out: bottom-sheet snap
+    /// points resolve against the window minus it.
+    window_top_inset: Cell<f32>,
+}
+
+#[derive(Clone, Copy)]
+struct GridPlacement<'a> {
+    child: &'a Node,
+    row: usize,
+    column: usize,
+    width: f32,
+    height: f32,
+}
+
+#[cfg(test)]
+fn calculate(tree: &Tree, viewport: Size) -> Result<BTreeMap<u64, Layout>, LayoutError> {
+    calculate_with_text_scale(tree, viewport, 1.0)
+}
+
+#[cfg(test)]
+fn calculate_with_text_scale(
+    tree: &Tree,
+    viewport: Size,
+    text_scale: f32,
+) -> Result<BTreeMap<u64, Layout>, LayoutError> {
+    calculate_with_text_metrics(tree, viewport, text_scale, &TextMetrics::new())
+}
+
+pub fn calculate_with_text_metrics(
+    tree: &Tree,
+    viewport: Size,
+    text_scale: f32,
+    text_metrics: &TextMetrics,
+) -> Result<BTreeMap<u64, Layout>, LayoutError> {
+    if !viewport.width.is_finite()
+        || !viewport.height.is_finite()
+        || viewport.width <= 0.0
+        || viewport.height <= 0.0
+        || !text_scale.is_finite()
+        || text_scale <= 0.0
+    {
+        return Err(LayoutError::InvalidDimension);
+    }
+    WINDOW_HEIGHT.with(|height| height.set(viewport.height));
+    let children = child_index(tree);
+    let context = LayoutContext {
+        tree,
+        children: &children,
+        text_scale,
+        text_metrics,
+        previous: None,
+        dirty_path: None,
+        visited_nodes: Cell::new(0),
+        viewport: Cell::new(Layout {
+            x: 0.0,
+            y: 0.0,
+            width: viewport.width,
+            height: viewport.height,
+        }),
+        window_top_inset: Cell::new(0.0),
+    };
+    let mut result = BTreeMap::new();
+    layout_node(
+        &context,
+        tree.root,
+        Layout {
+            x: 0.0,
+            y: 0.0,
+            width: viewport.width,
+            height: viewport.height,
+        },
+        true,
+        0,
+        &mut result,
+    )?;
+    layout_modal_surfaces(&context, &mut result)?;
+    settle_auto_safe_area(&context, &mut result)?;
+    Ok(result)
+}
+
+pub fn calculate_incremental_with_text_metrics(
+    tree: &Tree,
+    viewport: Size,
+    text_scale: f32,
+    text_metrics: &TextMetrics,
+    previous: &BTreeMap<u64, Layout>,
+    dirty_nodes: &BTreeSet<u64>,
+) -> Result<(BTreeMap<u64, Layout>, usize), LayoutError> {
+    if !viewport.width.is_finite()
+        || !viewport.height.is_finite()
+        || viewport.width <= 0.0
+        || viewport.height <= 0.0
+        || !text_scale.is_finite()
+        || text_scale <= 0.0
+    {
+        return Err(LayoutError::InvalidDimension);
+    }
+    WINDOW_HEIGHT.with(|height| height.set(viewport.height));
+    let children = child_index(tree);
+    let mut dirty_path = BTreeSet::new();
+    for dirty in dirty_nodes {
+        let mut current = *dirty;
+        for _ in 0..=MAX_LAYOUT_DEPTH {
+            if !dirty_path.insert(current) {
+                break;
+            }
+            let Some(node) = tree.nodes.get(&current) else {
+                return Err(LayoutError::MissingNode(current));
+            };
+            if node.parent == 0 {
+                break;
+            }
+            current = node.parent;
+        }
+    }
+    let context = LayoutContext {
+        tree,
+        children: &children,
+        text_scale,
+        text_metrics,
+        previous: Some(previous),
+        dirty_path: Some(&dirty_path),
+        visited_nodes: Cell::new(0),
+        viewport: Cell::new(Layout {
+            x: 0.0,
+            y: 0.0,
+            width: viewport.width,
+            height: viewport.height,
+        }),
+        window_top_inset: Cell::new(0.0),
+    };
+    let mut result = previous.clone();
+    let mut pending = dirty_nodes.iter().copied().collect::<Vec<_>>();
+    while let Some(id) = pending.pop() {
+        result.remove(&id);
+        if let Some(descendants) = children.get(&id) {
+            pending.extend(descendants.iter().map(|node| node.id));
+        }
+    }
+    layout_node(
+        &context,
+        tree.root,
+        Layout {
+            x: 0.0,
+            y: 0.0,
+            width: viewport.width,
+            height: viewport.height,
+        },
+        true,
+        0,
+        &mut result,
+    )?;
+    layout_modal_surfaces(&context, &mut result)?;
+    settle_auto_safe_area(&context, &mut result)?;
+    Ok((result, context.visited_nodes.get()))
+}
+
+/// Thickness of the host-drawn tab bar for each `TabPosition`.
+pub const TAB_BAR_BOTTOM_HEIGHT: f32 = 64.0;
+pub const TAB_BAR_TOP_HEIGHT: f32 = 56.0;
+pub const TAB_BAR_RAIL_WIDTH: f32 = 104.0;
+
+/// The part of a `TabHost` its scenes occupy: 1 bottom bar, 2 top strip,
+/// 3 side rail (leading edge).
+fn tab_scene_area(node: &Node, inner: Layout) -> Layout {
+    match integer(node, PropKey::TabPosition).unwrap_or(1) {
+        2 => Layout {
+            y: inner.y + TAB_BAR_TOP_HEIGHT.min(inner.height),
+            height: (inner.height - TAB_BAR_TOP_HEIGHT).max(0.0),
+            ..inner
+        },
+        3 => Layout {
+            x: inner.x + TAB_BAR_RAIL_WIDTH.min(inner.width),
+            width: (inner.width - TAB_BAR_RAIL_WIDTH).max(0.0),
+            ..inner
+        },
+        _ => Layout {
+            height: (inner.height - TAB_BAR_BOTTOM_HEIGHT).max(0.0),
+            ..inner
+        },
+    }
+}
+
+/// Lays out every visible `Modal`/`BottomSheet` on its own presentation
+/// surface: the surface viewport and safe area come from the window insets
+/// and the host's [`SurfacePolicy`](crate::surface::SurfacePolicy), so a
+/// `SafeAreaView` inside a modal window never re-applies an inset the window
+/// already excludes.
+fn layout_modal_surfaces(
+    context: &LayoutContext<'_>,
+    output: &mut BTreeMap<u64, Layout>,
+) -> Result<(), LayoutError> {
+    let window = context.viewport.get();
+    let window_insets = crate::text_measure::safe_area();
+    let policy = crate::text_measure::surface_policy();
+    for modal in context.tree.nodes.values().filter(|node| {
+        node.kind == NodeKind::Modal && visible(node) && node.id != context.tree.root
+    }) {
+        layout_modal_surface(context, modal, window, window_insets, policy, output)?;
+    }
+    Ok(())
+}
+
+fn layout_modal_surface(
+    context: &LayoutContext<'_>,
+    modal: &Node,
+    window: Layout,
+    window_insets: Option<[f32; 4]>,
+    policy: crate::surface::SurfacePolicy,
+    output: &mut BTreeMap<u64, Layout>,
+) -> Result<(), LayoutError> {
+    let surface = crate::surface::modal_surface(modal, window, window_insets, policy);
+    let _insets = crate::text_measure::SurfaceInsetsScope::enter(surface.insets);
+    let _keyboard =
+        crate::text_measure::SurfaceKeyboardScope::enter(modal.id, window.y + window.height);
+    context.viewport.set(surface.viewport);
+    context
+        .window_top_inset
+        .set(window_insets.map_or(0.0, |insets| insets[1]));
+    let laid_out = layout_node(context, modal.id, surface.viewport, false, 0, output);
+    context.viewport.set(window);
+    context.window_top_inset.set(0.0);
+    laid_out
+}
+
+/// Automatic safe area (see [`crate::auto_safe_area`]): measures how far each
+/// surface's content stays from the window insets and pads its content
+/// container where content would end inside an inset, then lays the surface
+/// out again. The padding is sticky, so a settled surface costs one pass.
+fn settle_auto_safe_area(
+    context: &LayoutContext<'_>,
+    output: &mut BTreeMap<u64, Layout>,
+) -> Result<(), LayoutError> {
+    let Some(window_insets) = crate::text_measure::safe_area() else {
+        return Ok(());
+    };
+    if !crate::auto_safe_area::enabled() {
+        return Ok(());
+    }
+    let surfaces = crate::auto_safe_area::surfaces(context.tree, context.children);
+    let containers = surfaces
+        .iter()
+        .filter_map(|surface| surface.container)
+        .collect::<Vec<_>>();
+    crate::auto_safe_area::retain(&containers);
+    if containers.is_empty() {
+        return Ok(());
+    }
+    let window = context.viewport.get();
+    let policy = crate::text_measure::surface_policy();
+    // Relayouts start from scratch: no incremental reuse of stale frames.
+    let full = LayoutContext {
+        tree: context.tree,
+        children: context.children,
+        text_scale: context.text_scale,
+        text_metrics: context.text_metrics,
+        previous: None,
+        dirty_path: None,
+        visited_nodes: Cell::new(0),
+        viewport: Cell::new(window),
+        window_top_inset: Cell::new(0.0),
+    };
+    let mut rects = Vec::new();
+    for _ in 0..3 {
+        let mut changed = Vec::new();
+        for surface in &surfaces {
+            let Some(container) = surface.container else {
+                continue;
+            };
+            let Some((viewport, insets)) =
+                auto_surface_geometry(context.tree, surface, window, window_insets, policy)
+            else {
+                continue;
+            };
+            rects.clear();
+            crate::auto_safe_area::content(
+                context.tree,
+                context.children,
+                surface,
+                output,
+                viewport,
+                false,
+                &mut rects,
+            );
+            let current = crate::auto_safe_area::padding(container);
+            let clearance = crate::auto_safe_area::clearance(&rects, viewport);
+            let next =
+                crate::auto_safe_area::settle_padding(current, insets, clearance, surface.edges);
+            if next
+                .iter()
+                .zip(current.iter())
+                .any(|(next, current)| (next - current).abs() > 0.5)
+            {
+                crate::auto_safe_area::set_padding(container, next);
+                changed.push(surface);
+            }
+        }
+        if changed.is_empty() {
+            break;
+        }
+        for surface in changed {
+            relayout_auto_surface(&full, surface, window, window_insets, policy, output)?;
+        }
+    }
+    context
+        .visited_nodes
+        .set(context.visited_nodes.get() + full.visited_nodes.get());
+    Ok(())
+}
+
+/// Viewport and insets a surface's content must clear.
+fn auto_surface_geometry(
+    tree: &Tree,
+    surface: &crate::auto_safe_area::AutoSurface,
+    window: Layout,
+    window_insets: [f32; 4],
+    policy: crate::surface::SurfacePolicy,
+) -> Option<(Layout, [f32; 4])> {
+    use crate::auto_safe_area::SurfaceKind;
+    match surface.kind {
+        SurfaceKind::Root => Some((window, window_insets)),
+        SurfaceKind::Modal(id) => {
+            let modal = tree.nodes.get(&id)?;
+            let surface = crate::surface::modal_surface(modal, window, Some(window_insets), policy);
+            Some((surface.viewport, surface.insets.unwrap_or([0.0; 4])))
+        }
+        SurfaceKind::Route { host, .. } => {
+            let host_node = tree.nodes.get(&host)?;
+            let (viewport, insets) = match enclosing_modal(tree, host_node)
+                .and_then(|id| tree.nodes.get(&id))
+            {
+                Some(modal) => {
+                    let surface =
+                        crate::surface::modal_surface(modal, window, Some(window_insets), policy);
+                    (surface.viewport, surface.insets.unwrap_or([0.0; 4]))
+                }
+                None => (window, window_insets),
+            };
+            let insets = crate::surface::navigation_route_insets(host_node, Some(insets), policy)
+                .flatten()
+                .unwrap_or(insets);
+            Some((viewport, insets))
+        }
+    }
+}
+
+fn relayout_auto_surface(
+    context: &LayoutContext<'_>,
+    surface: &crate::auto_safe_area::AutoSurface,
+    window: Layout,
+    window_insets: [f32; 4],
+    policy: crate::surface::SurfacePolicy,
+    output: &mut BTreeMap<u64, Layout>,
+) -> Result<(), LayoutError> {
+    use crate::auto_safe_area::SurfaceKind;
+    match surface.kind {
+        SurfaceKind::Root => {
+            layout_node(context, context.tree.root, window, true, 0, output)?;
+        }
+        SurfaceKind::Modal(id) => {
+            if let Some(modal) = context.tree.nodes.get(&id) {
+                layout_modal_surface(context, modal, window, Some(window_insets), policy, output)?;
+            }
+        }
+        SurfaceKind::Route { host, route } => {
+            let Some(frame) = output.get(&route).copied() else {
+                return Ok(());
+            };
+            let Some(host_node) = context.tree.nodes.get(&host) else {
+                return Ok(());
+            };
+            let modal =
+                enclosing_modal(context.tree, host_node).and_then(|id| context.tree.nodes.get(&id));
+            let surface_geometry = modal.map(|modal| {
+                crate::surface::modal_surface(modal, window, Some(window_insets), policy)
+            });
+            let scope_insets =
+                surface_geometry.map_or(Some(window_insets), |surface| surface.insets);
+            let route_insets =
+                crate::surface::navigation_route_insets(host_node, scope_insets, policy)
+                    .flatten()
+                    .or(scope_insets);
+            let _insets = crate::text_measure::SurfaceInsetsScope::enter(route_insets);
+            let _keyboard = modal.map(|modal| {
+                crate::text_measure::SurfaceKeyboardScope::enter(modal.id, window.y + window.height)
+            });
+            context
+                .viewport
+                .set(surface_geometry.map_or(window, |surface| surface.viewport));
+            context.window_top_inset.set(if modal.is_some() {
+                window_insets[1]
+            } else {
+                0.0
+            });
+            let depth = node_depth(context.tree, route);
+            let laid_out = layout_node(context, route, frame, false, depth, output);
+            context.viewport.set(window);
+            context.window_top_inset.set(0.0);
+            laid_out?;
+        }
+    }
+    Ok(())
+}
+
+/// Snap points (fractions) of a bottom sheet; empty means dynamic sizing
+/// (the sheet fits its content, @gorhom `enableDynamicSizing`).
+pub(crate) fn sheet_snap_points(node: &Node) -> Vec<f32> {
+    let Some(pam_desktop_wire::PropValue::Bytes(bytes)) =
+        node.properties.get(&PropKey::BottomSheetSnapPoints)
+    else {
+        return vec![0.5, 0.9];
+    };
+    if bytes.len() < 2 {
+        return vec![0.5, 0.9];
+    }
+    let count = usize::from(u16::from_le_bytes([bytes[0], bytes[1]]));
+    if count > 16 || bytes.len() != 2 + count * 8 {
+        return vec![0.5, 0.9];
+    }
+    let mut points = (0..count)
+        .map(|index| {
+            let start = 2 + index * 8;
+            let mut raw = [0_u8; 8];
+            raw.copy_from_slice(&bytes[start..start + 8]);
+            (f64::from_le_bytes(raw) as f32).clamp(0.05, 1.0)
+        })
+        .collect::<Vec<_>>();
+    points.sort_by(f32::total_cmp);
+    points.dedup();
+    points
+}
+
+/// Frame of a bottom sheet's content: its detent, anchored to the bottom of
+/// the surface. Fractions resolve against the window minus its top inset
+/// (the native sheets' base); a dynamic sheet fits its content up to it.
+fn sheet_content_frame(
+    context: &LayoutContext<'_>,
+    sheet: &Node,
+    child: &Node,
+    inner: Layout,
+    depth: usize,
+) -> Result<Layout, LayoutError> {
+    let base = (inner.height - context.window_top_inset.get()).max(1.0);
+    let points = sheet_snap_points(sheet);
+    let height = if points.is_empty() {
+        intrinsic_extent(
+            context.children,
+            child,
+            Axis::Vertical,
+            inner.width,
+            base,
+            context.text_scale,
+            context.text_metrics,
+            depth + 1,
+        )?
+        .min(base)
+    } else {
+        let index = integer(sheet, PropKey::BottomSheetIndex)
+            .unwrap_or(0)
+            .clamp(0, points.len() as i64 - 1) as usize;
+        base * points[index]
+    }
+    .max(1.0);
+    Ok(Layout {
+        x: inner.x,
+        y: inner.y + inner.height - height,
+        width: inner.width,
+        height,
+    })
+}
+
+/// Text, inputs, buttons, pressables and list ends that end inside a window
+/// inset (the safe-area lint). Every surface is checked, including the ones
+/// the application manages explicitly or opted out of.
+pub fn safe_area_violations(
+    tree: &Tree,
+    layouts: &BTreeMap<u64, Layout>,
+    viewport: Size,
+    insets: [f32; 4],
+    policy: crate::surface::SurfacePolicy,
+) -> Vec<crate::auto_safe_area::SafeAreaViolation> {
+    let children = child_index(tree);
+    let window = Layout {
+        x: 0.0,
+        y: 0.0,
+        width: viewport.width,
+        height: viewport.height,
+    };
+    let mut rects = Vec::new();
+    let mut violations = Vec::new();
+    for surface in crate::auto_safe_area::surfaces(tree, &children) {
+        let Some((surface_viewport, surface_insets)) =
+            auto_surface_geometry(tree, &surface, window, insets, policy)
+        else {
+            continue;
+        };
+        rects.clear();
+        crate::auto_safe_area::content(
+            tree,
+            &children,
+            &surface,
+            layouts,
+            surface_viewport,
+            true,
+            &mut rects,
+        );
+        crate::auto_safe_area::violations_of(
+            tree,
+            &rects,
+            surface_viewport,
+            surface_insets,
+            surface.edges,
+            &mut violations,
+        );
+    }
+    violations.sort_by(|a, b| a.id.cmp(&b.id).then(a.edge.cmp(&b.edge)));
+    violations.dedup_by(|a, b| a.id == b.id && a.edge == b.edge);
+    violations
+}
+
+fn node_depth(tree: &Tree, id: u64) -> usize {
+    let mut depth = 0;
+    let mut current = tree.nodes.get(&id);
+    while let Some(node) = current {
+        if node.id == tree.root || depth > MAX_LAYOUT_DEPTH {
+            break;
+        }
+        depth += 1;
+        current = tree.nodes.get(&node.parent);
+    }
+    depth
+}
+
+fn layout_node(
+    context: &LayoutContext<'_>,
+    id: u64,
+    bounds: Layout,
+    resolve_dimensions: bool,
+    depth: usize,
+    output: &mut BTreeMap<u64, Layout>,
+) -> Result<(), LayoutError> {
+    context
+        .visited_nodes
+        .set(context.visited_nodes.get().saturating_add(1));
+    if depth > MAX_LAYOUT_DEPTH {
+        return Err(LayoutError::DepthExceeded);
+    }
+    let node = context
+        .tree
+        .nodes
+        .get(&id)
+        .ok_or(LayoutError::MissingNode(id))?;
+    let frame = if resolve_dimensions {
+        let explicit_width = dimension(node, PropKey::Width, PropKey::WidthPercent, bounds.width);
+        let explicit_height =
+            dimension(node, PropKey::Height, PropKey::HeightPercent, bounds.height);
+        let aspect_ratio = number(node, PropKey::AspectRatio).filter(|value| *value > 0.0);
+        let width = match (explicit_width, explicit_height, aspect_ratio) {
+            (None, Some(height), Some(ratio)) => height * ratio,
+            (Some(width), _, _) => width,
+            _ => bounds.width,
+        };
+        let height = match (explicit_width, explicit_height, aspect_ratio) {
+            (Some(width), None, Some(ratio)) => width / ratio,
+            (_, Some(height), _) => height,
+            _ => bounds.height,
+        };
+        let max_width = dimension(
+            node,
+            PropKey::MaxWidth,
+            PropKey::MaxWidthPercent,
+            bounds.width,
+        );
+        let max_height = dimension(
+            node,
+            PropKey::MaxHeight,
+            PropKey::MaxHeightPercent,
+            bounds.height,
+        );
+        Layout {
+            width: constrained(
+                width,
+                dimension(
+                    node,
+                    PropKey::MinWidth,
+                    PropKey::MinWidthPercent,
+                    bounds.width,
+                ),
+                max_width,
+            )?,
+            height: constrained(
+                height,
+                dimension(
+                    node,
+                    PropKey::MinHeight,
+                    PropKey::MinHeightPercent,
+                    bounds.height,
+                ),
+                max_height,
+            )?,
+            ..bounds
+        }
+    } else {
+        bounds
+    }
+    // Hosts reject a non-finite origin or a negative/non-finite size; a
+    // degenerate computation (for example an over-constrained box) must
+    // never ship one. Negative origins are valid and kept.
+    .sanitized();
+    let keyboard = surface_keyboard_avoidance(node, frame)
+        .or_else(|| root_keyboard_avoidance(context, node, frame));
+    let frame = match keyboard {
+        Some(SurfaceKeyboardAvoidance::Resize(overlap)) => Layout {
+            height: frame.height - overlap,
+            ..frame
+        },
+        Some(SurfaceKeyboardAvoidance::Position(overlap)) => Layout {
+            y: frame.y - overlap,
+            ..frame
+        },
+        _ => frame,
+    };
+    if context
+        .previous
+        .is_some_and(|previous| previous.get(&id) == Some(&frame))
+        && context
+            .dirty_path
+            .is_some_and(|dirty_path| !dirty_path.contains(&id))
+    {
+        // A clean subtree under a dirty node was dropped from the output
+        // before the pass; it keeps its previous frames.
+        if !output.contains_key(&id) {
+            restore_previous_subtree(context, id, output);
+        }
+        return Ok(());
+    }
+    output.insert(id, frame);
+
+    let node_children = context.children.get(&id).map_or(&[][..], Vec::as_slice);
+    if node_children.is_empty() {
+        return Ok(());
+    }
+
+    let padding = finite_non_negative(number(node, PropKey::Padding).unwrap_or(0.0))?;
+    let padding_horizontal =
+        finite_non_negative(number(node, PropKey::PaddingHorizontal).unwrap_or(padding))?;
+    let padding_vertical =
+        finite_non_negative(number(node, PropKey::PaddingVertical).unwrap_or(padding))?;
+    let padding_left =
+        finite_non_negative(number(node, PropKey::PaddingLeft).unwrap_or(padding_horizontal))?;
+    let padding_top =
+        finite_non_negative(number(node, PropKey::PaddingTop).unwrap_or(padding_vertical))?;
+    let padding_right =
+        finite_non_negative(number(node, PropKey::PaddingRight).unwrap_or(padding_horizontal))?;
+    let padding_bottom =
+        finite_non_negative(number(node, PropKey::PaddingBottom).unwrap_or(padding_vertical))?;
+    // Yoga: the border is part of the padding box and insets content.
+    let (border_left, border_top, border_right, border_bottom) = border_edges(node);
+    // Yoga's containing block for absolute children: the padding box
+    // (inside the border). Their insets ignore padding, safe-area and
+    // keyboard insets.
+    let padding_box = Layout {
+        x: frame.x + border_left,
+        y: frame.y + border_top,
+        width: (frame.width - border_left - border_right).max(0.0),
+        height: (frame.height - border_top - border_bottom).max(0.0),
+    };
+    let padding_left = padding_left + border_left;
+    let padding_top = padding_top + border_top;
+    let padding_right = padding_right + border_right;
+    let padding_bottom = padding_bottom + border_bottom;
+    let (safe_left, safe_top, safe_right, safe_bottom) =
+        safe_area_padding(node, frame, context.viewport.get());
+    let [auto_left, auto_top, auto_right, auto_bottom] = crate::auto_safe_area::padding(id);
+    let padding_left = padding_left + safe_left + auto_left;
+    let padding_top = padding_top + safe_top + auto_top;
+    let padding_right = padding_right + safe_right + auto_right;
+    let padding_bottom = padding_bottom
+        + safe_bottom
+        + auto_bottom
+        + match keyboard {
+            Some(SurfaceKeyboardAvoidance::Padding(overlap)) => overlap,
+            _ => 0.0,
+        };
+    let gap = finite_non_negative(number(node, PropKey::Gap).unwrap_or(0.0))?;
+    let inner = Layout {
+        x: frame.x + padding_left,
+        y: frame.y + padding_top,
+        width: (frame.width - padding_left - padding_right).max(0.0),
+        height: (frame.height - padding_top - padding_bottom).max(0.0),
+    };
+    if node.kind == NodeKind::Scroll {
+        let (gutter_start, gutter_end) = scrollbar_gutter(node);
+        let inner = Layout {
+            x: inner.x + gutter_start,
+            width: (inner.width - gutter_start - gutter_end).max(0.0),
+            ..inner
+        };
+        let axis = if boolean(node, PropKey::ScrollHorizontal) {
+            Axis::Horizontal
+        } else {
+            Axis::Vertical
+        };
+        let fill_viewport = !matches!(
+            node.properties.get(&PropKey::ScrollFillViewport),
+            Some(pam_desktop_wire::PropValue::Boolean(false))
+        );
+        for child in node_children {
+            if !visible(child) {
+                continue;
+            }
+            let available_main = match axis {
+                Axis::Vertical => inner.height,
+                Axis::Horizontal => inner.width,
+            };
+            let available_cross = match axis {
+                Axis::Vertical => inner.width,
+                Axis::Horizontal => inner.height,
+            };
+            let natural = natural_scroll_extent(
+                context.children,
+                child,
+                axis,
+                available_main,
+                available_cross,
+                context.text_scale,
+                context.text_metrics,
+                depth + 1,
+            )?;
+            let main = if fill_viewport {
+                natural.max(available_main)
+            } else {
+                natural
+            };
+            let content_frame = match axis {
+                Axis::Vertical => Layout {
+                    width: inner.width,
+                    height: main,
+                    ..inner
+                },
+                Axis::Horizontal => Layout {
+                    width: main,
+                    height: inner.height,
+                    ..inner
+                },
+            };
+            layout_node(context, child.id, content_frame, false, depth + 1, output)?;
+        }
+        return Ok(());
+    }
+    if node.kind == NodeKind::Modal {
+        let presentation = integer(node, PropKey::ModalPresentation).unwrap_or(2);
+        let dialog = presentation == 2;
+        for child in node_children {
+            if !visible(child) {
+                continue;
+            }
+            if presentation == 3 && node.id != context.tree.root {
+                // A bottom sheet's content occupies its detent at the bottom
+                // of the surface, like the native sheet: safe-area padding,
+                // keyboard avoidance and flex all see the real sheet height.
+                let frame = sheet_content_frame(context, node, child, inner, depth)?;
+                layout_node(context, child.id, frame, true, depth + 1, output)?;
+                continue;
+            }
+            if !dialog {
+                layout_node(context, child.id, inner, true, depth + 1, output)?;
+                continue;
+            }
+
+            let left = dimension(child, PropKey::Left, PropKey::LeftPercent, inner.width);
+            let right = dimension(child, PropKey::Right, PropKey::RightPercent, inner.width);
+            let top = dimension(child, PropKey::Top, PropKey::TopPercent, inner.height);
+            let bottom = dimension(child, PropKey::Bottom, PropKey::BottomPercent, inner.height);
+            // A growing child (`flex: 1`, React Native's modal root: a
+            // full-window backdrop or KeyboardAvoidingView) fills the dialog
+            // window like a Modal's content does in React Native (column,
+            // stretch). Compact cards keep the intrinsic centered contract.
+            if flex_grow(child) > 0.0 {
+                let width = constrained(
+                    dimension(child, PropKey::Width, PropKey::WidthPercent, inner.width)
+                        .unwrap_or(inner.width),
+                    dimension(
+                        child,
+                        PropKey::MinWidth,
+                        PropKey::MinWidthPercent,
+                        inner.width,
+                    ),
+                    dimension(
+                        child,
+                        PropKey::MaxWidth,
+                        PropKey::MaxWidthPercent,
+                        inner.width,
+                    ),
+                )?
+                .min(inner.width);
+                let height = constrained(
+                    dimension(child, PropKey::Height, PropKey::HeightPercent, inner.height)
+                        .unwrap_or(inner.height),
+                    dimension(
+                        child,
+                        PropKey::MinHeight,
+                        PropKey::MinHeightPercent,
+                        inner.height,
+                    ),
+                    dimension(
+                        child,
+                        PropKey::MaxHeight,
+                        PropKey::MaxHeightPercent,
+                        inner.height,
+                    ),
+                )?
+                .min(inner.height);
+                layout_node(
+                    context,
+                    child.id,
+                    Layout {
+                        x: inner.x + (inner.width - width) / 2.0,
+                        y: inner.y + (inner.height - height) / 2.0,
+                        width,
+                        height,
+                    },
+                    false,
+                    depth + 1,
+                    output,
+                )?;
+                continue;
+            }
+            let width = constrained(
+                dimension(child, PropKey::Width, PropKey::WidthPercent, inner.width)
+                    .or_else(|| match (left, right) {
+                        (Some(left), Some(right)) => Some((inner.width - left - right).max(0.0)),
+                        _ => None,
+                    })
+                    .unwrap_or(intrinsic_extent(
+                        context.children,
+                        child,
+                        Axis::Horizontal,
+                        inner.width,
+                        inner.height,
+                        context.text_scale,
+                        context.text_metrics,
+                        depth + 1,
+                    )?),
+                dimension(
+                    child,
+                    PropKey::MinWidth,
+                    PropKey::MinWidthPercent,
+                    inner.width,
+                ),
+                dimension(
+                    child,
+                    PropKey::MaxWidth,
+                    PropKey::MaxWidthPercent,
+                    inner.width,
+                ),
+            )?
+            .min(inner.width);
+            let height = constrained(
+                dimension(child, PropKey::Height, PropKey::HeightPercent, inner.height)
+                    .or_else(|| match (top, bottom) {
+                        (Some(top), Some(bottom)) => Some((inner.height - top - bottom).max(0.0)),
+                        _ => None,
+                    })
+                    .unwrap_or(intrinsic_extent(
+                        context.children,
+                        child,
+                        Axis::Vertical,
+                        width,
+                        inner.height,
+                        context.text_scale,
+                        context.text_metrics,
+                        depth + 1,
+                    )?),
+                dimension(
+                    child,
+                    PropKey::MinHeight,
+                    PropKey::MinHeightPercent,
+                    inner.height,
+                ),
+                dimension(
+                    child,
+                    PropKey::MaxHeight,
+                    PropKey::MaxHeightPercent,
+                    inner.height,
+                ),
+            )?
+            .min(inner.height);
+            layout_node(
+                context,
+                child.id,
+                Layout {
+                    x: inner.x + (inner.width - width) / 2.0,
+                    y: inner.y + (inner.height - height) / 2.0,
+                    width,
+                    height,
+                },
+                false,
+                depth + 1,
+                output,
+            )?;
+        }
+        return Ok(());
+    }
+    if matches!(
+        node.kind,
+        NodeKind::RefreshControl | NodeKind::NavigationHost | NodeKind::TabHost
+    ) {
+        // The active route of a sheet-presented navigation stack sits on its
+        // own sheet surface, which starts below the status bar.
+        let route_insets = (node.kind == NodeKind::NavigationHost)
+            .then(|| {
+                crate::surface::navigation_route_insets(
+                    node,
+                    crate::text_measure::safe_area(),
+                    crate::text_measure::surface_policy(),
+                )
+            })
+            .flatten();
+        let active_route = node_children
+            .iter()
+            .rev()
+            .find(|child| visible(child))
+            .map(|child| child.id);
+        // Desktop: the host draws the tab bar inside the TabHost, so scenes
+        // are laid out in the area the bar leaves free (the mobile hosts
+        // shrink the mounted views instead).
+        let inner = if node.kind == NodeKind::TabHost {
+            tab_scene_area(node, inner)
+        } else {
+            inner
+        };
+        for child in node_children {
+            if visible(child) {
+                let _sheet = route_insets
+                    .filter(|_| Some(child.id) == active_route)
+                    .map(crate::text_measure::SurfaceInsetsScope::enter);
+                layout_node(context, child.id, inner, true, depth + 1, output)?;
+            }
+        }
+        return Ok(());
+    }
+    if node.kind == NodeKind::DrawerLayout {
+        let permanent = integer(node, PropKey::DrawerType) == Some(4)
+            || number(node, PropKey::DrawerPermanentBreakpoint)
+                .is_some_and(|breakpoint| breakpoint > 0.0 && inner.width >= breakpoint);
+        let drawer_width = number(node, PropKey::DrawerWidth)
+            .or_else(|| {
+                node_children
+                    .iter()
+                    .filter(|child| visible(child))
+                    .nth(1)
+                    .and_then(|child| number(child, PropKey::Width))
+            })
+            .unwrap_or(inner.width * 0.82)
+            .clamp(0.0, inner.width);
+        let content_width = (inner.width - drawer_width).max(0.0);
+        let right = integer(node, PropKey::DrawerPosition) == Some(3);
+        for (position, child) in node_children
+            .iter()
+            .filter(|child| visible(child))
+            .enumerate()
+        {
+            let child_frame = if permanent && position == 0 {
+                Layout {
+                    x: if right {
+                        inner.x
+                    } else {
+                        inner.x + drawer_width
+                    },
+                    width: content_width,
+                    ..inner
+                }
+            } else if permanent {
+                Layout {
+                    x: if right {
+                        inner.x + content_width
+                    } else {
+                        inner.x
+                    },
+                    width: drawer_width,
+                    ..inner
+                }
+            } else if position == 0 {
+                inner
+            } else {
+                Layout {
+                    width: drawer_width,
+                    ..inner
+                }
+            };
+            layout_node(context, child.id, child_frame, false, depth + 1, output)?;
+        }
+        return Ok(());
+    }
+    if node.kind == NodeKind::VirtualList {
+        let (gutter_start, gutter_end) = scrollbar_gutter(node);
+        let inner = Layout {
+            x: inner.x + gutter_start,
+            width: (inner.width - gutter_start - gutter_end).max(0.0),
+            ..inner
+        };
+        let horizontal = boolean(node, PropKey::ListHorizontal);
+        let columns = if horizontal {
+            1
+        } else {
+            integer(node, PropKey::ListNumColumns)
+                .unwrap_or(1)
+                .clamp(1, 64) as usize
+        };
+        // Vertical cells are content-sized (React Native FlatList); rowHeight
+        // is the estimate for unpopulated cells and the fixed width of
+        // horizontal cells, which are otherwise content-sized too.
+        let authored_row = number(node, PropKey::ListRowHeight).map(|height| height.max(1.0));
+        let row_height = authored_row.unwrap_or(DEFAULT_CONTROL_HEIGHT);
+        // CSS column-gap/row-gap (GridColumnGap/GridRowGap) separate the
+        // cells of a vertical list, like a CSS grid of cards. Without them
+        // cells touch, as in a React Native FlatList.
+        let column_gap = if horizontal || columns < 2 {
+            0.0
+        } else {
+            number(node, PropKey::GridColumnGap).unwrap_or(0.0).max(0.0)
+        };
+        let row_gap = if horizontal {
+            0.0
+        } else {
+            number(node, PropKey::GridRowGap).unwrap_or(0.0).max(0.0)
+        };
+        let cell_width = if horizontal {
+            row_height
+        } else {
+            ((inner.width - column_gap * (columns - 1) as f32) / columns as f32).max(0.0)
+        };
+        let visible_children = node_children
+            .iter()
+            .filter(|child| visible(child))
+            .collect::<Vec<_>>();
+
+        // Keyed sections (`listSection`/`activeSection`): every section of a
+        // contiguous block starts at the block's origin, so a row's frame
+        // never depends on which section is active and switching sections
+        // moves nothing but the rows after the block.
+        let active_section = section_key(node, PropKey::ListActiveSection).unwrap_or("");
+        // Rows may keep their measured extents only while the list keeps its
+        // own frame (a content-sized cell can depend on the list height).
+        let list_unchanged = context
+            .previous
+            .is_some_and(|previous| previous.get(&id) == Some(&frame));
+        let mut sections = SectionFlow::default();
+        if horizontal {
+            let mut cursor = inner.x;
+            for child in visible_children {
+                let section = section_key(child, PropKey::ListSection);
+                let start = sections.start(section, cursor, active_section);
+                if section.is_none() {
+                    cursor = start;
+                }
+                // Like a React Native cell, the slot includes the root's
+                // margins and the root is inset by them. An authored width
+                // stays the root's own width; rowHeight stays the slot.
+                let margins = cell_margins(child);
+                let item_width = match (number(child, PropKey::Width), authored_row) {
+                    (Some(width), _) => width + margins.left + margins.right,
+                    (None, Some(width)) => width,
+                    (None, None) => {
+                        intrinsic_extent(
+                            context.children,
+                            child,
+                            Axis::Horizontal,
+                            f32::INFINITY,
+                            (inner.height - margins.top - margins.bottom).max(0.0),
+                            context.text_scale,
+                            context.text_metrics,
+                            depth + 1,
+                        )? + margins.left
+                            + margins.right
+                    }
+                }
+                .max(1.0);
+                let item_frame = Layout {
+                    x: start + margins.left,
+                    y: inner.y + margins.top,
+                    width: (item_width - margins.left - margins.right).max(0.0),
+                    height: (inner.height - margins.top - margins.bottom).max(0.0),
+                };
+                layout_node(context, child.id, item_frame, false, depth + 1, output)?;
+                if let Some(section) = section {
+                    sections.advance(section, start + item_width);
+                } else {
+                    cursor = start + item_width;
+                }
+            }
+        } else {
+            let mut cursor = inner.y;
+            // ListHeaderComponent/ListFooterComponent-style full-span items
+            // occupy a whole row; the others fill `columns` per row. A row
+            // never mixes sections.
+            let mut rows: Vec<Vec<&Node>> = Vec::new();
+            let mut pending: Vec<&Node> = Vec::new();
+            for child in visible_children.iter().copied() {
+                if pending.first().is_some_and(|first| {
+                    section_key(first, PropKey::ListSection)
+                        != section_key(child, PropKey::ListSection)
+                }) {
+                    rows.push(std::mem::take(&mut pending));
+                }
+                if boolean(child, PropKey::ListFullSpan) {
+                    if !pending.is_empty() {
+                        rows.push(std::mem::take(&mut pending));
+                    }
+                    rows.push(vec![child]);
+                } else {
+                    pending.push(child);
+                    if pending.len() == columns {
+                        rows.push(std::mem::take(&mut pending));
+                    }
+                }
+            }
+            if !pending.is_empty() {
+                rows.push(pending);
+            }
+            for (row_index, row) in rows.iter().enumerate() {
+                if row_index > 0 {
+                    cursor += row_gap;
+                }
+                let section = section_key(row[0], PropKey::ListSection);
+                let start = sections.start(section, cursor, active_section);
+                if section.is_none() {
+                    cursor = start;
+                }
+                let full_span = row.len() == 1 && boolean(row[0], PropKey::ListFullSpan);
+                let cell_width = if full_span { inner.width } else { cell_width };
+                let retained = if list_unchanged {
+                    retained_row_extent(context, row, inner.x, cell_width)
+                } else {
+                    None
+                };
+                // The slot of a cell includes its root's margins (React
+                // Native/Yoga measure the cell around the item's margin box);
+                // an authored height stays the root's own height.
+                let authored = row
+                    .iter()
+                    .filter_map(|child| {
+                        number(child, PropKey::Height).map(|height| {
+                            let margins = cell_margins(child);
+                            height + margins.top + margins.bottom
+                        })
+                    })
+                    .reduce(f32::max);
+                let item_height = match (authored, retained) {
+                    // An authored height of 0 is an empty row (Yoga/FlashList: no space).
+                    (Some(height), _) => height.max(0.0),
+                    // A clean row keeps its measured extent: re-laying out a
+                    // list (a section switch, one changed row) measures only
+                    // the rows that changed.
+                    (None, Some(height)) => height,
+                    // Cells without an authored height are content-sized, like
+                    // React Native FlatList cells (the tallest cell of a
+                    // multi-column row). The estimate only remains for cells
+                    // not mounted yet (no children at all) or without a
+                    // definite intrinsic extent. A mounted cell whose content
+                    // is hidden measures 0: a component rendering an empty
+                    // root must not become a blank row of the estimated height.
+                    (None, None) => {
+                        let mut tallest = 0.0_f32;
+                        let mut mounted_empty = false;
+                        for child in row.iter().copied() {
+                            let Some(cell) = context.children.get(&child.id) else {
+                                continue;
+                            };
+                            if cell.is_empty() {
+                                continue;
+                            }
+                            if !cell.iter().any(|grandchild| visible(grandchild)) {
+                                mounted_empty = true;
+                                continue;
+                            }
+                            let margins = cell_margins(child);
+                            tallest = tallest.max(
+                                constrained_intrinsic_extent(
+                                    context.children,
+                                    child,
+                                    Axis::Vertical,
+                                    (cell_width - margins.left - margins.right).max(0.0),
+                                    inner.height,
+                                    context.text_scale,
+                                    context.text_metrics,
+                                    depth + 1,
+                                )? + margins.top
+                                    + margins.bottom,
+                            );
+                        }
+                        if tallest > 0.0 {
+                            tallest
+                        } else if mounted_empty {
+                            0.0
+                        } else {
+                            // A placeholder run stands for ListPlaceholderRows
+                            // rows of the estimate (single-column lists only).
+                            let rows = if row.len() == 1 {
+                                integer(row[0], PropKey::ListPlaceholderRows)
+                                    .unwrap_or(1)
+                                    .max(1)
+                            } else {
+                                1
+                            };
+                            row_height.max(1.0) * rows as f32
+                        }
+                    }
+                };
+                for (column, child) in row.iter().copied().enumerate() {
+                    let margins = cell_margins(child);
+                    let item_frame = Layout {
+                        x: inner.x + column as f32 * (cell_width + column_gap) + margins.left,
+                        y: start + margins.top,
+                        width: (cell_width - margins.left - margins.right).max(0.0),
+                        height: (item_height - margins.top - margins.bottom).max(0.0),
+                    };
+                    layout_node(context, child.id, item_frame, false, depth + 1, output)?;
+                }
+                if let Some(section) = section {
+                    sections.advance(section, start + item_height);
+                } else {
+                    cursor = start + item_height;
+                }
+            }
+        }
+        return Ok(());
+    }
+    if is_grid(node) {
+        layout_grid(
+            context,
+            node,
+            node_children,
+            inner,
+            padding_box,
+            gap,
+            depth,
+            output,
+        )?;
+        return Ok(());
+    }
+    let default_direction = if node.kind == NodeKind::Row { 2 } else { 1 };
+    let direction = integer(node, PropKey::FlexDirection).unwrap_or(default_direction);
+    let axis = if matches!(direction, 2 | 4) {
+        Axis::Horizontal
+    } else {
+        Axis::Vertical
+    };
+    let inner = if direction == 1 {
+        reserve_keyboard_space(context, node, node_children, inner)
+    } else {
+        inner
+    };
+    let column_gap = finite_non_negative(number(node, PropKey::GridColumnGap).unwrap_or(gap))?;
+    let row_gap = finite_non_negative(number(node, PropKey::GridRowGap).unwrap_or(gap))?;
+    let (main_gap, cross_gap) = match axis {
+        Axis::Horizontal => (column_gap, row_gap),
+        Axis::Vertical => (row_gap, column_gap),
+    };
+    let mut flow_children = node_children
+        .iter()
+        .copied()
+        .filter(|child| visible(child) && child.kind != NodeKind::Modal && !out_of_flow(child))
+        .collect::<Vec<_>>();
+    let absolute_children = node_children
+        .iter()
+        .copied()
+        .filter(|child| visible(child) && child.kind != NodeKind::Modal && out_of_flow(child))
+        .collect::<Vec<_>>();
+    sort_by_order(&mut flow_children);
+    let mut ordered_children = if matches!(direction, 3 | 4) {
+        flow_children.iter().rev().copied().collect::<Vec<_>>()
+    } else {
+        flow_children.clone()
+    };
+    let available_main = match axis {
+        Axis::Vertical => inner.height,
+        Axis::Horizontal => inner.width,
+    };
+    let available_cross = match axis {
+        Axis::Vertical => inner.width,
+        Axis::Horizontal => inner.height,
+    };
+    if matches!(integer(node, PropKey::FlexWrap), Some(2 | 3)) {
+        layout_wrapped_children(
+            context,
+            node,
+            &ordered_children,
+            inner,
+            axis,
+            available_main,
+            available_cross,
+            main_gap,
+            cross_gap,
+            depth,
+            output,
+        )?;
+        flow_children.clear();
+        ordered_children.clear();
+    }
+    let total_gap = main_gap * flow_children.len().saturating_sub(1) as f32;
+    let resolved_main = resolved_child_main_sizes(
+        context.children,
+        node,
+        &flow_children,
+        axis,
+        available_main,
+        available_cross,
+        main_gap,
+        context.text_scale,
+        context.text_metrics,
+        depth + 1,
+    )?;
+    let consumed = total_gap
+        + flow_children
+            .iter()
+            .map(|child| {
+                let (before, after) = margin_main(child, axis);
+                resolved_main[&child.id] + before + after
+            })
+            .sum::<f32>();
+    let free = (available_main - consumed).max(0.0);
+    let auto_margin_count = flow_children
+        .iter()
+        .map(|child| {
+            let (before, after) = auto_margins(child, axis);
+            usize::from(before) + usize::from(after)
+        })
+        .sum::<usize>();
+    let auto_margin = if auto_margin_count > 0 {
+        free / auto_margin_count as f32
+    } else {
+        0.0
+    };
+    let justify = integer(node, PropKey::JustifyContent).unwrap_or(1);
+    let (mut cursor, distributed_gap) = justify_offsets(
+        justify,
+        if auto_margin_count > 0 { 0.0 } else { free },
+        flow_children.len(),
+        main_gap,
+    );
+    let parent_alignment = cross_alignment(integer(node, PropKey::AlignItems).unwrap_or(4));
+
+    let has_baseline_alignment = parent_alignment == CrossAlignment::Baseline
+        || flow_children.iter().any(|child| {
+            integer(child, PropKey::AlignSelf).map(cross_alignment)
+                == Some(CrossAlignment::Baseline)
+        });
+    let baseline_target = if axis == Axis::Horizontal && has_baseline_alignment {
+        flow_children
+            .iter()
+            .map(|child| {
+                let main = resolved_main[&child.id];
+                let cross = child_cross(child, axis, available_cross, main)
+                    .ok()
+                    .flatten()
+                    .or_else(|| {
+                        intrinsic_cross(
+                            context.children,
+                            child,
+                            axis,
+                            available_main,
+                            available_cross,
+                            context.text_scale,
+                            context.text_metrics,
+                            depth + 1,
+                        )
+                        .ok()
+                    })
+                    .unwrap_or(0.0);
+                baseline_from_top(context.children, child, cross, context.text_scale)
+            })
+            .fold(0.0_f32, f32::max)
+    } else {
+        0.0
+    };
+
+    for child in ordered_children {
+        let main = resolved_main[&child.id];
+        let (mut main_before, mut main_after) = margin_main(child, axis);
+        let (auto_before, auto_after) = auto_margins(child, axis);
+        if auto_before {
+            main_before += auto_margin;
+        }
+        if auto_after {
+            main_after += auto_margin;
+        }
+        let (cross_before, cross_after) = margin_cross(child, axis);
+        let alignment = auto_cross_alignment(child, axis).unwrap_or_else(|| {
+            integer(child, PropKey::AlignSelf)
+                .map(cross_alignment)
+                .unwrap_or(parent_alignment)
+        });
+        let explicit_cross = child_cross(child, axis, available_cross, main)?;
+        let cross = explicit_cross.unwrap_or_else(|| {
+            if alignment == CrossAlignment::Stretch {
+                stretched_cross(
+                    child,
+                    axis,
+                    (available_cross - cross_before - cross_after).max(0.0),
+                    available_cross,
+                )
+            } else {
+                intrinsic_cross(
+                    context.children,
+                    child,
+                    axis,
+                    if axis == Axis::Horizontal {
+                        main
+                    } else {
+                        available_main
+                    },
+                    available_cross,
+                    context.text_scale,
+                    context.text_metrics,
+                    depth + 1,
+                )
+                .unwrap_or(0.0)
+                .min((available_cross - cross_before - cross_after).max(0.0))
+            }
+        });
+        // A start-aligned child sits at its own cross margin, negative ones
+        // included (Yoga: `margin: 0 -16px` bleeds out of the parent padding);
+        // only offsets computed from the free space are kept inside the box.
+        let cross_offset = match alignment {
+            CrossAlignment::Start | CrossAlignment::Stretch => cross_before,
+            CrossAlignment::Center => {
+                ((available_cross - cross + cross_before - cross_after) / 2.0).max(0.0)
+            }
+            CrossAlignment::End => (available_cross - cross - cross_after).max(0.0),
+            CrossAlignment::Baseline if axis == Axis::Horizontal => (baseline_target
+                - baseline_from_top(context.children, child, cross, context.text_scale)
+                + cross_before)
+                .max(0.0),
+            CrossAlignment::Baseline => cross_before,
+        };
+        cursor += main_before;
+        let child_frame = match axis {
+            Axis::Vertical => Layout {
+                x: inner.x + cross_offset,
+                y: inner.y + cursor,
+                width: cross,
+                height: main,
+            },
+            Axis::Horizontal => Layout {
+                x: inner.x + cursor,
+                y: inner.y + cross_offset,
+                width: main,
+                height: cross,
+            },
+        };
+        layout_node(
+            context,
+            child.id,
+            relative_offset(child, child_frame, inner),
+            false,
+            depth + 1,
+            output,
+        )?;
+        cursor += main + main_after + distributed_gap;
+    }
+
+    for child in absolute_children {
+        let fixed = integer(child, PropKey::PositionType) == Some(3);
+        let containing = if fixed {
+            context.viewport.get()
+        } else {
+            padding_box
+        };
+        // Static position (no inset on an axis) stays in the content box.
+        let content = if fixed { containing } else { inner };
+        let left = dimension(child, PropKey::Left, PropKey::LeftPercent, containing.width);
+        let top = dimension(child, PropKey::Top, PropKey::TopPercent, containing.height);
+        let right = dimension(
+            child,
+            PropKey::Right,
+            PropKey::RightPercent,
+            containing.width,
+        );
+        let bottom = dimension(
+            child,
+            PropKey::Bottom,
+            PropKey::BottomPercent,
+            containing.height,
+        );
+        let explicit_width = dimension(
+            child,
+            PropKey::Width,
+            PropKey::WidthPercent,
+            containing.width,
+        );
+        let explicit_height = dimension(
+            child,
+            PropKey::Height,
+            PropKey::HeightPercent,
+            containing.height,
+        );
+        let mut width = explicit_width.unwrap_or_else(|| {
+            if let (Some(left), Some(right)) = (left, right) {
+                (containing.width - left - right).max(0.0)
+            } else {
+                intrinsic_extent(
+                    context.children,
+                    child,
+                    Axis::Horizontal,
+                    containing.width,
+                    containing.height,
+                    context.text_scale,
+                    context.text_metrics,
+                    depth + 1,
+                )
+                .unwrap_or(0.0)
+            }
+        });
+        let mut height = explicit_height.unwrap_or_else(|| {
+            if let (Some(top), Some(bottom)) = (top, bottom) {
+                (containing.height - top - bottom).max(0.0)
+            } else {
+                intrinsic_extent(
+                    context.children,
+                    child,
+                    Axis::Vertical,
+                    width,
+                    containing.height,
+                    context.text_scale,
+                    context.text_metrics,
+                    depth + 1,
+                )
+                .unwrap_or(0.0)
+            }
+        });
+        // Yoga `layoutAbsoluteChild`: a size set by both insets counts as
+        // definite, and exactly one definite size drives the other through
+        // the aspect ratio.
+        if let Some(ratio) = aspect_ratio(child) {
+            let width_definite = explicit_width.is_some() || (left.is_some() && right.is_some());
+            let height_definite = explicit_height.is_some() || (top.is_some() && bottom.is_some());
+            if width_definite && !height_definite {
+                height = width / ratio;
+            } else if height_definite && !width_definite {
+                width = height * ratio;
+            }
+        }
+        width = constrained(
+            width,
+            dimension(
+                child,
+                PropKey::MinWidth,
+                PropKey::MinWidthPercent,
+                containing.width,
+            ),
+            dimension(
+                child,
+                PropKey::MaxWidth,
+                PropKey::MaxWidthPercent,
+                containing.width,
+            ),
+        )?;
+        height = constrained(
+            height,
+            dimension(
+                child,
+                PropKey::MinHeight,
+                PropKey::MinHeightPercent,
+                containing.height,
+            ),
+            dimension(
+                child,
+                PropKey::MaxHeight,
+                PropKey::MaxHeightPercent,
+                containing.height,
+            ),
+        )?;
+        let static_x =
+            absolute_static_offset(child, node, axis, Axis::Horizontal, content.width, width);
+        let static_y =
+            absolute_static_offset(child, node, axis, Axis::Vertical, content.height, height);
+        let child_frame = Layout {
+            x: match (left, right) {
+                (Some(left), _) => containing.x + left,
+                (None, Some(right)) => containing.x + containing.width - right - width,
+                (None, None) => content.x + static_x,
+            },
+            y: match (top, bottom) {
+                (Some(top), _) => containing.y + top,
+                (None, Some(bottom)) => containing.y + containing.height - bottom - height,
+                (None, None) => content.y + static_y,
+            },
+            width,
+            height,
+        };
+        let child_frame = absolute_safe_frame(
+            context,
+            child,
+            child_frame,
+            containing,
+            [
+                left.is_some(),
+                top.is_some(),
+                right.is_some(),
+                bottom.is_some(),
+            ],
+        );
+        layout_node(context, child.id, child_frame, false, depth + 1, output)?;
+    }
+    Ok(())
+}
+
+/// Absolutely positioned content anchored to one edge (a FAB, a toast, a
+/// close button) stays out of the window insets: it moves by the part of
+/// the inset it would cover, so an authored offset that already clears the
+/// bar is kept (`max(inset, offset)`). Stretched or decorative overlays
+/// (scrims, gradients, media) and nodes inside scrolling content keep their
+/// frames.
+fn absolute_safe_frame(
+    context: &LayoutContext<'_>,
+    child: &Node,
+    frame: Layout,
+    containing: Layout,
+    anchored: [bool; 4],
+) -> Layout {
+    let Some(insets) = crate::text_measure::safe_area() else {
+        return frame;
+    };
+    if insets.iter().all(|inset| *inset <= 0.0) || !crate::auto_safe_area::enabled() {
+        return frame;
+    }
+    let vertical = anchored[1] != anchored[3];
+    let horizontal = anchored[0] != anchored[2];
+    if !vertical && !horizontal {
+        return frame;
+    }
+    if !crate::auto_safe_area::absolute_holds_content(context.children, child)
+        || crate::auto_safe_area::exempt_from_absolute_insets(context.tree, child)
+    {
+        return frame;
+    }
+    let viewport = context.viewport.get();
+    // Only a containing block that itself reaches into an inset positions
+    // its children there (a badge offset over an avatar keeps its place).
+    let reaches = [
+        containing.x - viewport.x < insets[0],
+        containing.y - viewport.y < insets[1],
+        viewport.x + viewport.width - (containing.x + containing.width) < insets[2],
+        viewport.y + viewport.height - (containing.y + containing.height) < insets[3],
+    ];
+    let vertical = vertical && (if anchored[3] { reaches[3] } else { reaches[1] });
+    let horizontal = horizontal && (if anchored[2] { reaches[2] } else { reaches[0] });
+    let mut result = frame;
+    if vertical {
+        if anchored[3] {
+            let distance = viewport.y + viewport.height - (frame.y + frame.height);
+            if distance < insets[3] {
+                result.y -= insets[3] - distance;
+            }
+        } else {
+            let distance = frame.y - viewport.y;
+            if distance < insets[1] {
+                result.y += insets[1] - distance;
+            }
+        }
+    }
+    if horizontal {
+        if anchored[2] {
+            let distance = viewport.x + viewport.width - (frame.x + frame.width);
+            if distance < insets[2] {
+                result.x -= insets[2] - distance;
+            }
+        } else {
+            let distance = frame.x - viewport.x;
+            if distance < insets[0] {
+                result.x += insets[0] - distance;
+            }
+        }
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_wrapped_children(
+    context: &LayoutContext<'_>,
+    node: &Node,
+    children: &[&Node],
+    inner: Layout,
+    axis: Axis,
+    available_main: f32,
+    available_cross: f32,
+    main_gap: f32,
+    cross_gap: f32,
+    depth: usize,
+    output: &mut BTreeMap<u64, Layout>,
+) -> Result<(), LayoutError> {
+    if children.is_empty() {
+        return Ok(());
+    }
+
+    let mut items = BTreeMap::new();
+    let mut lines = Vec::<Vec<&Node>>::new();
+    let mut line = Vec::<&Node>::new();
+    let mut consumed = 0.0_f32;
+    for child in children {
+        let item = flex_item(
+            context.children,
+            node,
+            child,
+            axis,
+            available_main,
+            available_cross,
+            false,
+            context.text_scale,
+            context.text_metrics,
+            depth + 1,
+        )?;
+        let outer = item.hypothetical + item.margins;
+        items.insert(child.id, item);
+        let candidate = if line.is_empty() {
+            outer
+        } else {
+            consumed + main_gap + outer
+        };
+        if !line.is_empty() && candidate > available_main {
+            lines.push(std::mem::take(&mut line));
+            consumed = outer;
+        } else {
+            consumed = candidate;
+        }
+        line.push(child);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+
+    let parent_alignment = cross_alignment(integer(node, PropKey::AlignItems).unwrap_or(4));
+    let justify = integer(node, PropKey::JustifyContent).unwrap_or(1);
+
+    // Pass 1: resolve every line's main sizes and cross extent.
+    let mut resolved_lines = Vec::with_capacity(lines.len());
+    for line in lines {
+        let line_gaps = main_gap * line.len().saturating_sub(1) as f32;
+        let line_items = line
+            .iter()
+            .map(|child| &items[&child.id])
+            .map(|item| FlexItem {
+                id: item.id,
+                base: item.base,
+                hypothetical: item.hypothetical,
+                minimum: item.minimum,
+                maximum: item.maximum,
+                grow: item.grow,
+                shrink: item.shrink,
+                margins: item.margins,
+            })
+            .collect::<Vec<_>>();
+        let mains = resolve_flexible_lengths(&line_items, available_main - line_gaps);
+
+        let mut resolved_cross = BTreeMap::new();
+        let mut line_cross = 0.0_f32;
+        for child in &line {
+            let main = mains[&child.id];
+            let explicit = child_cross(child, axis, available_cross, main)?;
+            let intrinsic = intrinsic_cross(
+                context.children,
+                child,
+                axis,
+                if axis == Axis::Horizontal {
+                    main
+                } else {
+                    available_main
+                },
+                available_cross,
+                context.text_scale,
+                context.text_metrics,
+                depth + 1,
+            )?;
+            let cross = explicit.unwrap_or(intrinsic);
+            let (before, after) = margin_cross(child, axis);
+            line_cross = line_cross.max(cross + before + after);
+            resolved_cross.insert(child.id, (main, explicit, intrinsic));
+        }
+        let consumed_main = line_gaps
+            + line
+                .iter()
+                .map(|child| mains[&child.id] + items[&child.id].margins)
+                .sum::<f32>();
+        resolved_lines.push((line, resolved_cross, line_cross, consumed_main));
+    }
+
+    // Pass 2: distribute the cross axis between lines (align-content).
+    let line_count = resolved_lines.len();
+    let total_lines_cross = resolved_lines
+        .iter()
+        .map(|(_, _, cross, _)| *cross)
+        .sum::<f32>()
+        + cross_gap * line_count.saturating_sub(1) as f32;
+    let free_cross = (available_cross - total_lines_cross).max(0.0);
+    let align_content = integer(node, PropKey::AlignContent).unwrap_or(1);
+    let (mut cross_cursor, extra_line_gap, stretch_extra) = match align_content {
+        2 => (free_cross / 2.0, 0.0, 0.0),
+        3 => (free_cross, 0.0, 0.0),
+        4 if line_count > 0 => (0.0, 0.0, free_cross / line_count as f32),
+        5 if line_count > 1 => (0.0, free_cross / (line_count - 1) as f32, 0.0),
+        6 if line_count > 0 => {
+            let space = free_cross / line_count as f32;
+            (space / 2.0, space, 0.0)
+        }
+        7 if line_count > 0 => {
+            let space = free_cross / (line_count + 1) as f32;
+            (space, space, 0.0)
+        }
+        _ => (0.0, 0.0, 0.0),
+    };
+    let reverse_lines = integer(node, PropKey::FlexWrap) == Some(3);
+
+    for (line, resolved_cross, measured_cross, consumed_main) in resolved_lines {
+        let line_cross =
+            (measured_cross + stretch_extra).min((available_cross - cross_cursor).max(0.0));
+        let line_start = if reverse_lines {
+            (available_cross - cross_cursor - line_cross).max(0.0)
+        } else {
+            cross_cursor
+        };
+        let free = (available_main - consumed_main).max(0.0);
+        let auto_margin_count = line
+            .iter()
+            .map(|child| {
+                let (before, after) = auto_margins(child, axis);
+                usize::from(before) + usize::from(after)
+            })
+            .sum::<usize>();
+        let auto_margin = if auto_margin_count > 0 {
+            free / auto_margin_count as f32
+        } else {
+            0.0
+        };
+        let (mut main_cursor, distributed_gap) = justify_offsets(
+            justify,
+            if auto_margin_count > 0 { 0.0 } else { free },
+            line.len(),
+            main_gap,
+        );
+
+        let has_line_baseline = parent_alignment == CrossAlignment::Baseline
+            || line.iter().any(|child| {
+                integer(child, PropKey::AlignSelf).map(cross_alignment)
+                    == Some(CrossAlignment::Baseline)
+            });
+        let line_baseline = if axis == Axis::Horizontal && has_line_baseline {
+            line.iter()
+                .map(|child| {
+                    let (_, explicit, intrinsic) = resolved_cross[&child.id];
+                    baseline_from_top(
+                        context.children,
+                        child,
+                        explicit.unwrap_or(intrinsic),
+                        context.text_scale,
+                    )
+                })
+                .fold(0.0_f32, f32::max)
+        } else {
+            0.0
+        };
+
+        for child in line {
+            let (main, explicit_cross, intrinsic_cross) = resolved_cross[&child.id];
+            let (mut main_before, mut main_after) = margin_main(child, axis);
+            let (auto_before, auto_after) = auto_margins(child, axis);
+            if auto_before {
+                main_before += auto_margin;
+            }
+            if auto_after {
+                main_after += auto_margin;
+            }
+            let (cross_before, cross_after) = margin_cross(child, axis);
+            let alignment = auto_cross_alignment(child, axis).unwrap_or_else(|| {
+                integer(child, PropKey::AlignSelf)
+                    .map(cross_alignment)
+                    .unwrap_or(parent_alignment)
+            });
+            let cross = explicit_cross.unwrap_or_else(|| {
+                if alignment == CrossAlignment::Stretch {
+                    // Yoga bounds a stretched item by its min/max cross size
+                    // (a maxWidth 300 column child wraps its text at 300).
+                    stretched_cross(
+                        child,
+                        axis,
+                        (line_cross - cross_before - cross_after).max(0.0),
+                        available_cross,
+                    )
+                } else {
+                    intrinsic_cross.min((line_cross - cross_before - cross_after).max(0.0))
+                }
+            });
+            let cross_offset = match alignment {
+                CrossAlignment::Start | CrossAlignment::Stretch => cross_before,
+                CrossAlignment::Center => {
+                    ((line_cross - cross + cross_before - cross_after) / 2.0).max(0.0)
+                }
+                CrossAlignment::End => (line_cross - cross - cross_after).max(0.0),
+                CrossAlignment::Baseline if axis == Axis::Horizontal => (line_baseline
+                    - baseline_from_top(context.children, child, cross, context.text_scale)
+                    + cross_before)
+                    .max(0.0),
+                CrossAlignment::Baseline => cross_before,
+            };
+            main_cursor += main_before;
+            let child_frame = match axis {
+                Axis::Vertical => Layout {
+                    x: inner.x + line_start + cross_offset,
+                    y: inner.y + main_cursor,
+                    width: cross,
+                    height: main,
+                },
+                Axis::Horizontal => Layout {
+                    x: inner.x + main_cursor,
+                    y: inner.y + line_start + cross_offset,
+                    width: main,
+                    height: cross,
+                },
+            };
+            layout_node(
+                context,
+                child.id,
+                relative_offset(child, child_frame, inner),
+                false,
+                depth + 1,
+                output,
+            )?;
+            main_cursor += main + main_after + distributed_gap;
+        }
+        cross_cursor += line_cross + cross_gap + extra_line_gap;
+    }
+
+    Ok(())
+}
+
+fn is_grid(node: &Node) -> bool {
+    integer(node, PropKey::GridColumns).unwrap_or(0) > 0
+        || node.properties.contains_key(&PropKey::GridTemplate)
+        || node.properties.contains_key(&PropKey::GridTracks)
+}
+
+fn resolved_grid_plan(
+    node: &Node,
+    width: f32,
+    fallback_gap: f32,
+) -> Result<(usize, f32, f32, Option<usize>), LayoutError> {
+    let (maximum, gap, row_gap, level) = match node.properties.get(&PropKey::GridTemplate) {
+        Some(pam_desktop_wire::PropValue::String(wire)) => {
+            let template = crate::grid_template::GridTemplate::parse(wire)
+                .map_err(|_| LayoutError::InvalidGridTemplate)?;
+            let (level, plan) = template
+                .resolve(width)
+                .map_err(|_| LayoutError::InvalidGridTemplate)?;
+            (plan.columns, plan.column_gap, plan.row_gap, Some(level))
+        }
+        Some(_) => return Err(LayoutError::InvalidGridTemplate),
+        None => (
+            match node.properties.get(&PropKey::GridTracks) {
+                Some(pam_desktop_wire::PropValue::String(wire)) => {
+                    crate::grid_tracks::GridTracks::parse(wire)
+                        .map_err(|_| LayoutError::InvalidGridTemplate)?
+                        .len()
+                }
+                Some(_) => return Err(LayoutError::InvalidGridTemplate),
+                None => integer(node, PropKey::GridColumns)
+                    .unwrap_or(12)
+                    .clamp(1, 64) as usize,
+            },
+            finite_non_negative(number(node, PropKey::GridColumnGap).unwrap_or(fallback_gap))?,
+            finite_non_negative(number(node, PropKey::GridRowGap).unwrap_or(fallback_gap))?,
+            None,
+        ),
+    };
+    let minimum = finite_non_negative(number(node, PropKey::GridMinColumnWidth).unwrap_or(0.0))?;
+    if minimum == 0.0 {
+        return Ok((maximum, gap, row_gap, level));
+    }
+    // A narrower container still gets one column; never force horizontal overflow.
+    let fitting = ((width.max(0.0) + gap) / (minimum + gap)).floor() as usize;
+    Ok((fitting.clamp(1, maximum), gap, row_gap, level))
+}
+
+fn resolved_grid_widths(
+    node: &Node,
+    columns: usize,
+    available: f32,
+    responsive: bool,
+) -> Result<Vec<f32>, LayoutError> {
+    if !responsive && let Some(value) = node.properties.get(&PropKey::GridTracks) {
+        let pam_desktop_wire::PropValue::String(wire) = value else {
+            return Err(LayoutError::InvalidGridTemplate);
+        };
+        let tracks = crate::grid_tracks::GridTracks::parse(wire)
+            .map_err(|_| LayoutError::InvalidGridTemplate)?;
+        if tracks.len() == columns {
+            return Ok(tracks.widths(available));
+        }
+        // GridMinColumnWidth may reduce the original count at a smaller viewport.
+        if number(node, PropKey::GridMinColumnWidth).unwrap_or(0.0) <= 0.0 {
+            return Err(LayoutError::InvalidGridTemplate);
+        }
+    }
+    Ok(vec![available.max(0.0) / columns as f32; columns])
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_grid(
+    context: &LayoutContext<'_>,
+    node: &Node,
+    node_children: &[&Node],
+    inner: Layout,
+    padding_box: Layout,
+    fallback_gap: f32,
+    depth: usize,
+    output: &mut BTreeMap<u64, Layout>,
+) -> Result<(), LayoutError> {
+    let (columns, column_gap, row_gap, level) =
+        resolved_grid_plan(node, inner.width, fallback_gap)?;
+    let track_widths = resolved_grid_widths(
+        node,
+        columns,
+        inner.width - column_gap * columns.saturating_sub(1) as f32,
+        level.is_some(),
+    )?;
+    let mut children = node_children
+        .iter()
+        .copied()
+        .filter(|child| visible(child) && child.kind != NodeKind::Modal && !out_of_flow(child))
+        .collect::<Vec<_>>();
+    children.sort_by_key(|child| {
+        (
+            responsive_grid_value(child, inner.width, GridValue::Order, 0, level),
+            child.index,
+        )
+    });
+
+    let mut placements = Vec::with_capacity(children.len());
+    let mut row = 0_usize;
+    let mut cursor = 0_usize;
+    let mut row_heights = Vec::<f32>::new();
+    for child in children {
+        let span = responsive_grid_value(child, inner.width, GridValue::Span, columns as i64, level)
+            .clamp(1, columns as i64) as usize;
+        let offset = responsive_grid_value(child, inner.width, GridValue::Offset, 0, level)
+            .clamp(0, columns.saturating_sub(1) as i64) as usize;
+        if cursor > 0 && cursor + offset + span > columns {
+            row += 1;
+            cursor = 0;
+        }
+        let column = (cursor + offset).min(columns.saturating_sub(span));
+        let width = track_widths[column..column + span].iter().sum::<f32>()
+            + column_gap * span.saturating_sub(1) as f32;
+        let (margin_top, margin_bottom) = margin_main(child, Axis::Vertical);
+        let (margin_left, margin_right) = margin_cross(child, Axis::Vertical);
+        let content_width = (width - margin_left - margin_right).max(0.0);
+        let height = child_main(
+            context.children,
+            child,
+            Axis::Vertical,
+            inner.height,
+            content_width,
+            context.text_scale,
+            context.text_metrics,
+            depth + 1,
+        )?;
+        if row_heights.len() <= row {
+            row_heights.push(0.0);
+        }
+        row_heights[row] = row_heights[row].max(height + margin_top + margin_bottom);
+        placements.push(GridPlacement {
+            child,
+            row,
+            column,
+            width,
+            height,
+        });
+        cursor = column + span;
+        if cursor >= columns {
+            row += 1;
+            cursor = 0;
+        }
+    }
+    let mut row_offsets = Vec::with_capacity(row_heights.len());
+    let mut y = 0.0;
+    for height in &row_heights {
+        row_offsets.push(y);
+        y += *height + row_gap;
+    }
+    for placement in placements {
+        let (margin_top, margin_bottom) = margin_main(placement.child, Axis::Vertical);
+        let (margin_left, margin_right) = margin_cross(placement.child, Axis::Vertical);
+        let alignment = integer(placement.child, PropKey::AlignSelf)
+            .map(cross_alignment)
+            .unwrap_or_else(|| cross_alignment(integer(node, PropKey::AlignItems).unwrap_or(4)));
+        let row_height = row_heights[placement.row];
+        let height = if alignment == CrossAlignment::Stretch
+            && dimension(
+                placement.child,
+                PropKey::Height,
+                PropKey::HeightPercent,
+                inner.height,
+            )
+            .is_none()
+        {
+            constrained(
+                (row_height - margin_top - margin_bottom).max(0.0),
+                dimension(
+                    placement.child,
+                    PropKey::MinHeight,
+                    PropKey::MinHeightPercent,
+                    inner.height,
+                ),
+                dimension(
+                    placement.child,
+                    PropKey::MaxHeight,
+                    PropKey::MaxHeightPercent,
+                    inner.height,
+                ),
+            )?
+        } else {
+            placement.height
+        };
+        let offset = match alignment {
+            CrossAlignment::Center => (row_height - height + margin_top - margin_bottom) / 2.0,
+            CrossAlignment::End => row_height - height - margin_bottom,
+            _ => margin_top,
+        }
+        .max(0.0);
+        let x = inner.x
+            + track_widths[..placement.column].iter().sum::<f32>()
+            + placement.column as f32 * column_gap
+            + margin_left;
+        let frame = Layout {
+            x,
+            y: inner.y + row_offsets[placement.row] + offset,
+            width: (placement.width - margin_left - margin_right).max(0.0),
+            height,
+        };
+        layout_node(context, placement.child.id, frame, false, depth + 1, output)?;
+    }
+    // Absolute children are placed in the grid's padding box (Yoga/CSS).
+    for child in node_children
+        .iter()
+        .copied()
+        .filter(|child| visible(child) && child.kind != NodeKind::Modal && out_of_flow(child))
+    {
+        let left = dimension(
+            child,
+            PropKey::Left,
+            PropKey::LeftPercent,
+            padding_box.width,
+        )
+        .unwrap_or(0.0);
+        let top =
+            dimension(child, PropKey::Top, PropKey::TopPercent, padding_box.height).unwrap_or(0.0);
+        let width = dimension(
+            child,
+            PropKey::Width,
+            PropKey::WidthPercent,
+            padding_box.width,
+        )
+        .unwrap_or(padding_box.width);
+        let height = child_main(
+            context.children,
+            child,
+            Axis::Vertical,
+            padding_box.height,
+            width,
+            context.text_scale,
+            context.text_metrics,
+            depth + 1,
+        )?;
+        layout_node(
+            context,
+            child.id,
+            Layout {
+                x: padding_box.x + left,
+                y: padding_box.y + top,
+                width,
+                height,
+            },
+            false,
+            depth + 1,
+            output,
+        )?;
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum GridValue {
+    Span,
+    Offset,
+    Order,
+}
+
+fn responsive_grid_value(
+    node: &Node,
+    width: f32,
+    value: GridValue,
+    default: i64,
+    template_level: Option<usize>,
+) -> i64 {
+    let keys = match value {
+        GridValue::Span => [
+            PropKey::GridSpan,
+            PropKey::GridSpanSm,
+            PropKey::GridSpanMd,
+            PropKey::GridSpanLg,
+            PropKey::GridSpanXl,
+            PropKey::GridSpan2xl,
+        ],
+        GridValue::Offset => [
+            PropKey::GridOffset,
+            PropKey::GridOffsetSm,
+            PropKey::GridOffsetMd,
+            PropKey::GridOffsetLg,
+            PropKey::GridOffsetXl,
+            PropKey::GridOffset2xl,
+        ],
+        GridValue::Order => [
+            PropKey::GridOrder,
+            PropKey::GridOrderSm,
+            PropKey::GridOrderMd,
+            PropKey::GridOrderLg,
+            PropKey::GridOrderXl,
+            PropKey::GridOrder2xl,
+        ],
+    };
+    let level = template_level.unwrap_or(if width >= 1600.0 {
+        4
+    } else if width >= 1200.0 {
+        3
+    } else if width >= 840.0 {
+        2
+    } else if width >= 600.0 {
+        1
+    } else {
+        0
+    });
+    (0..=level)
+        .rev()
+        .find_map(|index| integer(node, keys[index]))
+        .unwrap_or(default)
+}
+
+fn child_index(tree: &Tree) -> BTreeMap<u64, Vec<&Node>> {
+    let mut children = BTreeMap::<u64, Vec<&Node>>::new();
+    for node in tree.nodes.values() {
+        children.entry(node.parent).or_default().push(node);
+    }
+    for siblings in children.values_mut() {
+        siblings.sort_by_key(|node| node.index);
+    }
+    children
+}
+
+/// Natural extent of scroll content along the scrolling axis, honoring each
+/// node's min/max on that axis like layout does: a row with `minHeight: 52`
+/// whose content is 44 is 52 tall, so the scroll content measured 8 per row
+/// short and its trailing padding fell outside the scrollable extent.
+#[allow(clippy::too_many_arguments)]
+fn natural_scroll_extent(
+    children: &BTreeMap<u64, Vec<&Node>>,
+    node: &Node,
+    axis: Axis,
+    available_main: f32,
+    available_cross: f32,
+    text_scale: f32,
+    text_metrics: &TextMetrics,
+    depth: usize,
+) -> Result<f32, LayoutError> {
+    let extent = unconstrained_natural_scroll_extent(
+        children,
+        node,
+        axis,
+        available_main,
+        available_cross,
+        text_scale,
+        text_metrics,
+        depth,
+    )?;
+    let (minimum, maximum) = match axis {
+        Axis::Vertical => (
+            number(node, PropKey::MinHeight),
+            number(node, PropKey::MaxHeight),
+        ),
+        Axis::Horizontal => (
+            number(node, PropKey::MinWidth),
+            number(node, PropKey::MaxWidth),
+        ),
+    };
+    constrained(extent, minimum, maximum)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn unconstrained_natural_scroll_extent(
+    children: &BTreeMap<u64, Vec<&Node>>,
+    node: &Node,
+    axis: Axis,
+    available_main: f32,
+    available_cross: f32,
+    text_scale: f32,
+    text_metrics: &TextMetrics,
+    depth: usize,
+) -> Result<f32, LayoutError> {
+    if depth > MAX_LAYOUT_DEPTH {
+        return Err(LayoutError::DepthExceeded);
+    }
+    let explicit = match axis {
+        Axis::Vertical => number(node, PropKey::Height),
+        Axis::Horizontal => number(node, PropKey::Width),
+    };
+    if let Some(explicit) = explicit {
+        return finite_non_negative(explicit);
+    }
+    if is_grid(node) {
+        return intrinsic_extent(
+            children,
+            node,
+            axis,
+            if axis == Axis::Vertical {
+                available_cross
+            } else {
+                available_main
+            },
+            if axis == Axis::Vertical {
+                available_main
+            } else {
+                available_cross
+            },
+            text_scale,
+            text_metrics,
+            depth + 1,
+        );
+    }
+    let visible_children = children
+        .get(&node.id)
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .copied()
+        .filter(|child| visible(child) && child.kind != NodeKind::Modal && !out_of_flow(child))
+        .collect::<Vec<_>>();
+    if visible_children.is_empty() {
+        return intrinsic_extent(
+            children,
+            node,
+            axis,
+            if axis == Axis::Vertical {
+                available_cross
+            } else {
+                // The scrolling axis is unconstrained. Measuring a text leaf
+                // at viewport width would wrap it before computing overflow.
+                f32::INFINITY
+            },
+            if axis == Axis::Vertical {
+                available_main
+            } else {
+                available_cross
+            },
+            text_scale,
+            text_metrics,
+            depth + 1,
+        );
+    }
+    let direction = integer(node, PropKey::FlexDirection)
+        .unwrap_or_else(|| if node.kind == NodeKind::Row { 2 } else { 1 });
+    let node_axis = if matches!(direction, 2 | 4) {
+        Axis::Horizontal
+    } else {
+        Axis::Vertical
+    };
+    let all_padding = finite_non_negative(number(node, PropKey::Padding).unwrap_or(0.0))?;
+    let horizontal_padding =
+        finite_non_negative(number(node, PropKey::PaddingHorizontal).unwrap_or(all_padding))?;
+    let vertical_padding =
+        finite_non_negative(number(node, PropKey::PaddingVertical).unwrap_or(all_padding))?;
+    let padding_before = match axis {
+        Axis::Vertical => {
+            finite_non_negative(number(node, PropKey::PaddingTop).unwrap_or(vertical_padding))?
+        }
+        Axis::Horizontal => {
+            finite_non_negative(number(node, PropKey::PaddingLeft).unwrap_or(horizontal_padding))?
+        }
+    };
+    let padding_after = match axis {
+        Axis::Vertical => {
+            finite_non_negative(number(node, PropKey::PaddingBottom).unwrap_or(vertical_padding))?
+        }
+        Axis::Horizontal => {
+            finite_non_negative(number(node, PropKey::PaddingRight).unwrap_or(horizontal_padding))?
+        }
+    };
+    let (border_left, border_top, border_right, border_bottom) = border_edges(node);
+    let (padding_before, padding_after) = match axis {
+        Axis::Vertical => (padding_before + border_top, padding_after + border_bottom),
+        Axis::Horizontal => (padding_before + border_left, padding_after + border_right),
+    };
+    // The cross axis is definite (the viewport, or this node's own size):
+    // children are measured inside its padding box, like layout places them.
+    let cross_padding = match axis {
+        Axis::Vertical => {
+            finite_non_negative(number(node, PropKey::PaddingLeft).unwrap_or(horizontal_padding))?
+                + finite_non_negative(
+                    number(node, PropKey::PaddingRight).unwrap_or(horizontal_padding),
+                )?
+                + border_left
+                + border_right
+        }
+        Axis::Horizontal => {
+            finite_non_negative(number(node, PropKey::PaddingTop).unwrap_or(vertical_padding))?
+                + finite_non_negative(
+                    number(node, PropKey::PaddingBottom).unwrap_or(vertical_padding),
+                )?
+                + border_top
+                + border_bottom
+        }
+    };
+    let own_cross = match axis {
+        Axis::Vertical => number(node, PropKey::Width),
+        Axis::Horizontal => number(node, PropKey::Height),
+    }
+    .filter(|value| value.is_finite() && *value >= 0.0)
+    .unwrap_or(available_cross);
+    let inner_cross = (own_cross - cross_padding).max(0.0);
+    if matches!(integer(node, PropKey::FlexWrap), Some(2 | 3)) && node_axis != axis {
+        // A wrapping row in a vertical scroller (chips, tags) is as tall as
+        // its lines at the available width, not one line (the tallest item).
+        let gap = finite_non_negative(number(node, PropKey::Gap).unwrap_or(0.0))?;
+        let column_gap = finite_non_negative(number(node, PropKey::GridColumnGap).unwrap_or(gap))?;
+        let row_gap = finite_non_negative(number(node, PropKey::GridRowGap).unwrap_or(gap))?;
+        let (main_gap, cross_gap) = match node_axis {
+            Axis::Horizontal => (column_gap, row_gap),
+            Axis::Vertical => (row_gap, column_gap),
+        };
+        let (width, height) = match axis {
+            Axis::Vertical => (inner_cross, f32::INFINITY),
+            Axis::Horizontal => (f32::INFINITY, inner_cross),
+        };
+        let content = wrapped_intrinsic_cross(
+            children,
+            &visible_children,
+            node,
+            node_axis,
+            inner_cross,
+            width,
+            height,
+            main_gap,
+            cross_gap,
+            text_scale,
+            text_metrics,
+            depth + 1,
+        )?;
+        return finite_non_negative(padding_before + content + padding_after);
+    }
+    let mut extents = Vec::with_capacity(visible_children.len());
+    let mut grow_total = 0.0_f32;
+    let mut grow_unit = 0.0_f32;
+    let mut fixed_extent = 0.0_f32;
+    for child in visible_children {
+        let extent = natural_scroll_extent(
+            children,
+            child,
+            axis,
+            available_main,
+            inner_cross,
+            text_scale,
+            text_metrics,
+            depth + 1,
+        )?;
+        let (before, after) = margin_main(child, axis);
+        extents.push(extent + before + after);
+        let grow = number(child, PropKey::FlexGrow).unwrap_or(0.0).max(0.0);
+        if grow > 0.0 {
+            grow_total += grow;
+            grow_unit = grow_unit.max((extent + before + after) / grow);
+        } else {
+            fixed_extent += extent + before + after;
+        }
+    }
+    let content = if node_axis == axis {
+        let gap = finite(number(node, PropKey::Gap).unwrap_or(0.0))?;
+        // Zero-basis grow items share the content width by weight. A sum of
+        // their different intrinsic widths would give the widest item too
+        // little space, even inside an unconstrained horizontal scroller.
+        let main = if axis == Axis::Horizontal && grow_total > 0.0 {
+            fixed_extent + grow_unit * grow_total
+        } else {
+            extents.iter().sum::<f32>()
+        };
+        main + gap * extents.len().saturating_sub(1) as f32
+    } else {
+        extents.into_iter().fold(0.0, f32::max)
+    };
+    finite_non_negative(padding_before + content + padding_after)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn intrinsic_extent(
+    children: &BTreeMap<u64, Vec<&Node>>,
+    node: &Node,
+    requested_axis: Axis,
+    available_width: f32,
+    available_height: f32,
+    text_scale: f32,
+    text_metrics: &TextMetrics,
+    depth: usize,
+) -> Result<f32, LayoutError> {
+    if depth > MAX_LAYOUT_DEPTH {
+        return Err(LayoutError::DepthExceeded);
+    }
+    // A percentage on an auto-sized axis is indefinite in flexbox. Resolving it
+    // against the provisional intrinsic extent feeds the result back into its
+    // own parent and can grow a finite tree without bound. Point dimensions are
+    // definite here; percentages are resolved later by `layout_node`, once the
+    // containing block has a final frame.
+    let explicit = match requested_axis {
+        Axis::Vertical => number(node, PropKey::Height),
+        Axis::Horizontal => number(node, PropKey::Width),
+    };
+    if let Some(explicit) = explicit {
+        return finite_non_negative(explicit);
+    }
+    // Yoga: an aspect-ratio box with a definite cross dimension takes the
+    // ratio's extent on this axis, as its final layout will. Callers pass a
+    // child's resolved width (point or percentage of the containing block) as
+    // `available_width`. Counting it as an unsized leaf (48) measured a
+    // `width: 100%; aspectRatio` map card at the map alone and clipped the
+    // siblings below it.
+    if let Some(ratio) = aspect_ratio(node) {
+        let derived = match requested_axis {
+            Axis::Vertical => number(node, PropKey::Width)
+                .or_else(|| {
+                    number(node, PropKey::WidthPercent)
+                        .filter(|percent| percent.is_finite())
+                        .map(|_| available_width)
+                })
+                .map(|width| width / ratio),
+            Axis::Horizontal => number(node, PropKey::Height).map(|height| height * ratio),
+        };
+        if let Some(derived) = derived.filter(|value| value.is_finite()) {
+            return finite_non_negative(derived);
+        }
+    }
+
+    // Inputs contribute their text line box plus authored insets, just like
+    // Text. Single-line clipping and multiline wrapping are measured below;
+    // explicit dimensions were resolved above and min/max apply at the caller.
+    if node.kind == NodeKind::Text
+        || (node.kind == NodeKind::Input && requested_axis == Axis::Vertical)
+    {
+        let padding = finite_non_negative(number(node, PropKey::Padding).unwrap_or(0.0))?;
+        let padding_horizontal =
+            finite_non_negative(number(node, PropKey::PaddingHorizontal).unwrap_or(padding))?;
+        let padding_vertical =
+            finite_non_negative(number(node, PropKey::PaddingVertical).unwrap_or(padding))?;
+        let padding_left =
+            finite_non_negative(number(node, PropKey::PaddingLeft).unwrap_or(padding_horizontal))?;
+        let padding_top =
+            finite_non_negative(number(node, PropKey::PaddingTop).unwrap_or(padding_vertical))?;
+        let padding_right =
+            finite_non_negative(number(node, PropKey::PaddingRight).unwrap_or(padding_horizontal))?;
+        let padding_bottom =
+            finite_non_negative(number(node, PropKey::PaddingBottom).unwrap_or(padding_vertical))?;
+        let (border_left, border_top, border_right, border_bottom) = border_edges(node);
+        let padding_left = padding_left + border_left;
+        let padding_top = padding_top + border_top;
+        let padding_right = padding_right + border_right;
+        let padding_bottom = padding_bottom + border_bottom;
+        let inner_width = (available_width - padding_left - padding_right).max(0.0);
+        let text = text_extent(
+            node,
+            requested_axis,
+            inner_width,
+            text_scale,
+            text_metrics.get(&node.id).map(AsRef::as_ref),
+        );
+        let padding_extent = match requested_axis {
+            Axis::Vertical => padding_top + padding_bottom,
+            Axis::Horizontal => padding_left + padding_right,
+        };
+
+        return finite_non_negative(text + padding_extent);
+    }
+
+    let node_children = children
+        .get(&node.id)
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .copied()
+        .filter(|child| visible(child) && child.kind != NodeKind::Modal && !out_of_flow(child))
+        .collect::<Vec<_>>();
+    let horizontal_scroll_height = node.kind == NodeKind::Scroll
+        && boolean(node, PropKey::ScrollHorizontal)
+        && requested_axis == Axis::Vertical;
+    if node_children.is_empty() && percent_sized_placeholder(node, requested_axis) {
+        // Yoga: a percentage of an indefinite (content-measured) parent
+        // resolves to auto, and an image or empty view has no measure
+        // function, so it contributes nothing to the parent's content size.
+        // The placeholder extent would otherwise become the flex base of a
+        // tile that only fills its parent (e.g. a wrapped grid of cards with
+        // min/max-width), breaking the line after too few items.
+        return Ok(0.0);
+    }
+    if node_children.is_empty()
+        && (empty_container_is_box(node) || content_sized_list(node, requested_axis))
+    {
+        // Yoga: a View without children has no measure function, so its
+        // content size is its padding and border alone (0 when it has none).
+        // The 48/100 control placeholder made an empty row (every child
+        // behind a false condition) push its siblings down by 48 dp.
+        let padding = finite_non_negative(number(node, PropKey::Padding).unwrap_or(0.0))?;
+        let (border_left, border_top, border_right, border_bottom) = border_edges(node);
+        let extent = match requested_axis {
+            Axis::Vertical => {
+                let vertical = number(node, PropKey::PaddingVertical).unwrap_or(padding);
+                number(node, PropKey::PaddingTop).unwrap_or(vertical)
+                    + number(node, PropKey::PaddingBottom).unwrap_or(vertical)
+                    + border_top
+                    + border_bottom
+            }
+            Axis::Horizontal => {
+                let horizontal = number(node, PropKey::PaddingHorizontal).unwrap_or(padding);
+                number(node, PropKey::PaddingLeft).unwrap_or(horizontal)
+                    + number(node, PropKey::PaddingRight).unwrap_or(horizontal)
+                    + border_left
+                    + border_right
+            }
+        };
+        return finite_non_negative(extent);
+    }
+    // CSS `max-height` on a vertical scroller (ScrollView, VirtualizedList):
+    // the box follows its content and only scrolls past the maximum.
+    let window_capped_list =
+        content_sized_list(node, requested_axis) && number(node, PropKey::MaxHeight).is_none();
+    let max_height_scroller = window_capped_list
+        || (requested_axis == Axis::Vertical
+            && number(node, PropKey::MaxHeight).is_some()
+            && match node.kind {
+                NodeKind::Scroll => !boolean(node, PropKey::ScrollHorizontal),
+                NodeKind::VirtualList => !boolean(node, PropKey::ListHorizontal),
+                _ => false,
+            });
+    if node_children.is_empty()
+        || (!content_sized(node) && !horizontal_scroll_height && !max_height_scroller)
+    {
+        return finite_non_negative(leaf_intrinsic(
+            node,
+            requested_axis,
+            text_scale,
+            text_metrics.get(&node.id).map(AsRef::as_ref),
+        ));
+    }
+
+    let padding = finite_non_negative(number(node, PropKey::Padding).unwrap_or(0.0))?;
+    let padding_horizontal =
+        finite_non_negative(number(node, PropKey::PaddingHorizontal).unwrap_or(padding))?;
+    let padding_vertical =
+        finite_non_negative(number(node, PropKey::PaddingVertical).unwrap_or(padding))?;
+    let padding_left =
+        finite_non_negative(number(node, PropKey::PaddingLeft).unwrap_or(padding_horizontal))?;
+    let padding_top =
+        finite_non_negative(number(node, PropKey::PaddingTop).unwrap_or(padding_vertical))?;
+    let padding_right =
+        finite_non_negative(number(node, PropKey::PaddingRight).unwrap_or(padding_horizontal))?;
+    let padding_bottom =
+        finite_non_negative(number(node, PropKey::PaddingBottom).unwrap_or(padding_vertical))?;
+    // Yoga: the border is part of the padding box and insets content.
+    let (border_left, border_top, border_right, border_bottom) = border_edges(node);
+    let padding_left = padding_left + border_left;
+    let padding_top = padding_top + border_top;
+    let padding_right = padding_right + border_right;
+    let padding_bottom = padding_bottom + border_bottom;
+    // A content-sized SafeAreaView grows by the insets of the edges it may
+    // touch; layout_node later applies the exact overlap of its frame.
+    let (padding_left, padding_top, padding_right, padding_bottom) = match safe_area_edges(node) {
+        Some((window, enabled)) => (
+            padding_left + if enabled[0] { window[0] } else { 0.0 },
+            padding_top + if enabled[1] { window[1] } else { 0.0 },
+            padding_right + if enabled[2] { window[2] } else { 0.0 },
+            padding_bottom + if enabled[3] { window[3] } else { 0.0 },
+        ),
+        None => (padding_left, padding_top, padding_right, padding_bottom),
+    };
+    let [auto_left, auto_top, auto_right, auto_bottom] = crate::auto_safe_area::padding(node.id);
+    let (padding_left, padding_top, padding_right, padding_bottom) = (
+        padding_left + auto_left,
+        padding_top + auto_top,
+        padding_right + auto_right,
+        padding_bottom + auto_bottom,
+    );
+    let inner_width = (available_width - padding_left - padding_right).max(0.0);
+    let inner_height = (available_height - padding_top - padding_bottom).max(0.0);
+    if horizontal_scroll_height {
+        // Measure at the same natural content width used by layout_node, not
+        // the viewport width: scrolling content must not wrap to fit the view.
+        let fill_viewport = !matches!(
+            node.properties.get(&PropKey::ScrollFillViewport),
+            Some(pam_desktop_wire::PropValue::Boolean(false))
+        );
+        let mut height = 0.0_f32;
+        for child in node_children {
+            let natural_width = natural_scroll_extent(
+                children,
+                child,
+                Axis::Horizontal,
+                inner_width,
+                inner_height,
+                text_scale,
+                text_metrics,
+                depth + 1,
+            )?;
+            let width = if fill_viewport {
+                natural_width.max(inner_width)
+            } else {
+                natural_width
+            };
+            height = height.max(constrained_intrinsic_extent(
+                children,
+                child,
+                Axis::Vertical,
+                width,
+                inner_height,
+                text_scale,
+                text_metrics,
+                depth + 1,
+            )?);
+        }
+        return finite_non_negative(height + padding_top + padding_bottom);
+    }
+    if max_height_scroller {
+        let columns = if node.kind == NodeKind::VirtualList {
+            integer(node, PropKey::ListNumColumns)
+                .unwrap_or(1)
+                .clamp(1, 64) as usize
+        } else {
+            1
+        };
+        let estimate = number(node, PropKey::ListRowHeight).unwrap_or(DEFAULT_CONTROL_HEIGHT);
+        let row_gap = if node.kind == NodeKind::VirtualList {
+            number(node, PropKey::GridRowGap).unwrap_or(0.0).max(0.0)
+        } else {
+            0.0
+        };
+        let (gutter_start, gutter_end) = scrollbar_gutter(node);
+        let width = ((inner_width - gutter_start - gutter_end) / columns as f32).max(0.0);
+        let visible = node_children
+            .iter()
+            .copied()
+            .filter(|child| visible(child))
+            .collect::<Vec<_>>();
+        let mut content = 0.0_f32;
+        for (index, row) in visible.chunks(columns).enumerate() {
+            let mut tallest = 0.0_f32;
+            for child in row {
+                let extent = if node.kind == NodeKind::VirtualList
+                    && children.get(&child.id).is_none_or(|cells| cells.is_empty())
+                    && number(child, PropKey::Height).is_none()
+                {
+                    estimate
+                } else {
+                    constrained_intrinsic_extent(
+                        children,
+                        child,
+                        Axis::Vertical,
+                        width,
+                        f32::INFINITY,
+                        text_scale,
+                        text_metrics,
+                        depth + 1,
+                    )?
+                };
+                tallest = tallest.max(extent);
+            }
+            content += tallest + if index > 0 { row_gap } else { 0.0 };
+            if window_capped_list && content >= WINDOW_HEIGHT.with(Cell::get) {
+                // Rows past the window cannot change the height.
+                break;
+            }
+        }
+        let extent = content + padding_top + padding_bottom;
+        let extent = if window_capped_list {
+            extent.min(WINDOW_HEIGHT.with(Cell::get))
+        } else {
+            extent
+        };
+        return finite_non_negative(extent);
+    }
+    if is_grid(node) {
+        let content = match requested_axis {
+            Axis::Horizontal => inner_width,
+            Axis::Vertical => grid_intrinsic_height(
+                children,
+                node,
+                &node_children,
+                inner_width,
+                inner_height,
+                text_scale,
+                text_metrics,
+                depth + 1,
+            )?,
+        };
+        let padding_extent = match requested_axis {
+            Axis::Vertical => padding_top + padding_bottom,
+            Axis::Horizontal => padding_left + padding_right,
+        };
+        return finite_non_negative(content + padding_extent);
+    }
+    let direction = integer(node, PropKey::FlexDirection)
+        .unwrap_or_else(|| if node.kind == NodeKind::Row { 2 } else { 1 });
+    let flow_axis = if matches!(direction, 2 | 4) {
+        Axis::Horizontal
+    } else {
+        Axis::Vertical
+    };
+    let gap = finite_non_negative(number(node, PropKey::Gap).unwrap_or(0.0))?;
+    let column_gap = finite_non_negative(number(node, PropKey::GridColumnGap).unwrap_or(gap))?;
+    let row_gap = finite_non_negative(number(node, PropKey::GridRowGap).unwrap_or(gap))?;
+    let (main_gap, cross_gap) = match flow_axis {
+        Axis::Horizontal => (column_gap, row_gap),
+        Axis::Vertical => (row_gap, column_gap),
+    };
+    if matches!(integer(node, PropKey::FlexWrap), Some(2 | 3)) && requested_axis != flow_axis {
+        let available_main = match flow_axis {
+            Axis::Horizontal => inner_width,
+            Axis::Vertical => inner_height,
+        };
+        let content = wrapped_intrinsic_cross(
+            children,
+            &node_children,
+            node,
+            flow_axis,
+            available_main,
+            inner_width,
+            inner_height,
+            main_gap,
+            cross_gap,
+            text_scale,
+            text_metrics,
+            depth + 1,
+        )?;
+        let padding_extent = match requested_axis {
+            Axis::Vertical => padding_top + padding_bottom,
+            Axis::Horizontal => padding_left + padding_right,
+        };
+        return finite_non_negative(content + padding_extent);
+    }
+    // Height measurement must use the same allocated widths as final layout.
+    // Measuring every flex child against the whole row misses wrapped lines.
+    let allocated_widths = if flow_axis == Axis::Horizontal && requested_axis == Axis::Vertical {
+        Some(resolved_child_main_sizes(
+            children,
+            node,
+            &node_children,
+            flow_axis,
+            inner_width,
+            inner_height,
+            main_gap,
+            text_scale,
+            text_metrics,
+            depth + 1,
+        )?)
+    } else {
+        None
+    };
+    let mut child_extents = Vec::with_capacity(node_children.len());
+    for child in &node_children {
+        // Resolve a child's width against its containing block before
+        // measuring wrapped height. Final-layout callers already pass the
+        // allocated width, so this must not live in the shared measurement
+        // helper (which would apply percentages a second time).
+        let child_available_width = if let Some(widths) = &allocated_widths {
+            widths[&child.id]
+        } else if requested_axis == Axis::Vertical {
+            // A column child wraps inside its own cross size: the containing
+            // width minus its horizontal margins, clamped by min/max-width.
+            // Ignoring max-width measured capped bubbles with too few lines,
+            // so content-sized parents clipped their wrapped text.
+            let (margin_start, margin_end) = margin_cross(child, Axis::Vertical);
+            let width = dimension(child, PropKey::Width, PropKey::WidthPercent, inner_width)
+                .unwrap_or((inner_width - margin_start - margin_end).max(0.0));
+            let maximum = dimension(
+                child,
+                PropKey::MaxWidth,
+                PropKey::MaxWidthPercent,
+                inner_width,
+            );
+            constrained(width, number(child, PropKey::MinWidth), maximum)?
+        } else {
+            inner_width
+        };
+        let child_extent = constrained_intrinsic_extent(
+            children,
+            child,
+            requested_axis,
+            child_available_width,
+            inner_height,
+            text_scale,
+            text_metrics,
+            depth + 1,
+        )?;
+        let child_extent = if requested_axis == flow_axis {
+            match number(child, PropKey::FlexBasis).filter(|value| value.is_finite()) {
+                Some(basis) => {
+                    let (minimum, maximum) = flex_main_bounds(
+                        child,
+                        flow_axis,
+                        match flow_axis {
+                            Axis::Horizontal => inner_width,
+                            Axis::Vertical => inner_height,
+                        },
+                    )?;
+                    basis.max(0.0).min(maximum).max(minimum)
+                }
+                None => child_extent,
+            }
+        } else {
+            child_extent
+        };
+        let (before, after) = if requested_axis == flow_axis {
+            margin_main(child, flow_axis)
+        } else {
+            margin_cross(child, flow_axis)
+        };
+        child_extents.push((child_extent, before, after));
+    }
+    let content = if requested_axis == flow_axis {
+        child_extents
+            .iter()
+            .map(|(extent, before, after)| extent + before + after)
+            .sum::<f32>()
+            + main_gap * child_extents.len().saturating_sub(1) as f32
+    } else if flow_axis == Axis::Horizontal
+        && (cross_alignment(integer(node, PropKey::AlignItems).unwrap_or(4))
+            == CrossAlignment::Baseline
+            || node_children.iter().any(|child| {
+                integer(child, PropKey::AlignSelf).map(cross_alignment)
+                    == Some(CrossAlignment::Baseline)
+            }))
+    {
+        let (ascent, descent) = node_children.iter().zip(&child_extents).fold(
+            (0.0_f32, 0.0_f32),
+            |(ascent, descent), (child, (extent, before, after))| {
+                let baseline = baseline_from_top(children, child, *extent, text_scale);
+                (
+                    ascent.max(before + baseline),
+                    descent.max(after + extent - baseline),
+                )
+            },
+        );
+        ascent + descent
+    } else {
+        child_extents
+            .into_iter()
+            .map(|(extent, before, after)| extent + before + after)
+            .fold(0.0, f32::max)
+    };
+    let padding_extent = match requested_axis {
+        Axis::Vertical => padding_top + padding_bottom,
+        Axis::Horizontal => padding_left + padding_right,
+    };
+
+    finite_non_negative(content + padding_extent)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn wrapped_intrinsic_cross(
+    children_index: &BTreeMap<u64, Vec<&Node>>,
+    children: &[&Node],
+    parent: &Node,
+    flow_axis: Axis,
+    available_main: f32,
+    available_width: f32,
+    available_height: f32,
+    main_gap: f32,
+    cross_gap: f32,
+    text_scale: f32,
+    text_metrics: &TextMetrics,
+    depth: usize,
+) -> Result<f32, LayoutError> {
+    let cross_axis = match flow_axis {
+        Axis::Horizontal => Axis::Vertical,
+        Axis::Vertical => Axis::Horizontal,
+    };
+    let mut total_cross = 0.0_f32;
+    let mut line_main = 0.0_f32;
+    let mut line_cross = 0.0_f32;
+    let mut line_ascent = 0.0_f32;
+    let mut line_descent = 0.0_f32;
+    let mut line_count = 0_usize;
+    let mut line_total = 0_usize;
+
+    let parent_alignment = cross_alignment(integer(parent, PropKey::AlignItems).unwrap_or(4));
+    for child in children {
+        let basis = match explicit_flex_basis(child, available_main) {
+            Some(FlexBasisValue::Points(points)) => {
+                let (minimum, maximum) = flex_main_bounds(child, flow_axis, available_main)?;
+                Some(points.min(maximum).max(minimum))
+            }
+            _ => None,
+        };
+        let main = match basis {
+            Some(basis) => basis,
+            None => constrained_intrinsic_extent(
+                children_index,
+                child,
+                flow_axis,
+                available_width,
+                available_height,
+                text_scale,
+                text_metrics,
+                depth + 1,
+            )?,
+        };
+        // Measure the cross extent at the item's resolved main size, as the
+        // final line layout does: a fixed-width cell measured against the
+        // whole row kept its labels on one line, so a scroller holding the
+        // wrap ended one label short of its last line.
+        let resolved_main = basis.unwrap_or(main);
+        let (measure_width, measure_height) = match flow_axis {
+            Axis::Horizontal => (resolved_main, available_height),
+            Axis::Vertical => (available_width, resolved_main),
+        };
+        let cross = constrained_intrinsic_extent(
+            children_index,
+            child,
+            cross_axis,
+            measure_width,
+            measure_height,
+            text_scale,
+            text_metrics,
+            depth + 1,
+        )?;
+        let (main_before, main_after) = margin_main(child, flow_axis);
+        let (cross_before, cross_after) = margin_cross(child, flow_axis);
+        let baseline_aligned = flow_axis == Axis::Horizontal
+            && integer(child, PropKey::AlignSelf)
+                .map(cross_alignment)
+                .unwrap_or(parent_alignment)
+                == CrossAlignment::Baseline;
+        let baseline = baseline_from_top(children_index, child, cross, text_scale);
+        let outer_main = main + main_before + main_after;
+        let candidate = if line_count == 0 {
+            outer_main
+        } else {
+            line_main + main_gap + outer_main
+        };
+        if line_count > 0 && candidate > available_main {
+            total_cross += if line_total == 0 { 0.0 } else { cross_gap } + line_cross;
+            line_total += 1;
+            line_main = outer_main;
+            line_cross = cross + cross_before + cross_after;
+            line_ascent = if baseline_aligned {
+                cross_before + baseline
+            } else {
+                0.0
+            };
+            line_descent = if baseline_aligned {
+                cross_after + cross - baseline
+            } else {
+                0.0
+            };
+            line_count = 1;
+        } else {
+            line_main = candidate;
+            line_cross = line_cross.max(cross + cross_before + cross_after);
+            if baseline_aligned {
+                line_ascent = line_ascent.max(cross_before + baseline);
+                line_descent = line_descent.max(cross_after + cross - baseline);
+                line_cross = line_cross.max(line_ascent + line_descent);
+            }
+            line_count += 1;
+        }
+    }
+    if line_count > 0 {
+        total_cross += if line_total == 0 { 0.0 } else { cross_gap } + line_cross;
+    }
+
+    finite_non_negative(total_cross)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn grid_intrinsic_height(
+    children_index: &BTreeMap<u64, Vec<&Node>>,
+    node: &Node,
+    node_children: &[&Node],
+    width: f32,
+    available_height: f32,
+    text_scale: f32,
+    text_metrics: &TextMetrics,
+    depth: usize,
+) -> Result<f32, LayoutError> {
+    let fallback_gap = finite(number(node, PropKey::Gap).unwrap_or(0.0))?;
+    let (columns, column_gap, row_gap, level) = resolved_grid_plan(node, width, fallback_gap)?;
+    let track_widths = resolved_grid_widths(
+        node,
+        columns,
+        width - column_gap * columns.saturating_sub(1) as f32,
+        level.is_some(),
+    )?;
+    let mut flow = node_children
+        .iter()
+        .copied()
+        .filter(|child| visible(child) && child.kind != NodeKind::Modal && !out_of_flow(child))
+        .collect::<Vec<_>>();
+    flow.sort_by_key(|child| {
+        (
+            responsive_grid_value(child, width, GridValue::Order, 0, level),
+            child.index,
+        )
+    });
+    let mut row_heights = Vec::<f32>::new();
+    let mut row = 0_usize;
+    let mut cursor = 0_usize;
+    for child in flow {
+        let span = responsive_grid_value(child, width, GridValue::Span, columns as i64, level)
+            .clamp(1, columns as i64) as usize;
+        let offset = responsive_grid_value(child, width, GridValue::Offset, 0, level)
+            .clamp(0, columns.saturating_sub(1) as i64) as usize;
+        if cursor > 0 && cursor + offset + span > columns {
+            row += 1;
+            cursor = 0;
+        }
+        let column = (cursor + offset).min(columns.saturating_sub(span));
+        let cell_width = track_widths[column..column + span].iter().sum::<f32>()
+            + column_gap * span.saturating_sub(1) as f32;
+        let (margin_left, margin_right) = margin_cross(child, Axis::Vertical);
+        let (margin_top, margin_bottom) = margin_main(child, Axis::Vertical);
+        let child_height = child_main(
+            children_index,
+            child,
+            Axis::Vertical,
+            available_height,
+            (cell_width - margin_left - margin_right).max(0.0),
+            text_scale,
+            text_metrics,
+            depth + 1,
+        )?;
+        if row_heights.len() <= row {
+            row_heights.push(0.0);
+        }
+        row_heights[row] = row_heights[row].max(child_height + margin_top + margin_bottom);
+        cursor = column + span;
+        if cursor >= columns {
+            row += 1;
+            cursor = 0;
+        }
+    }
+    Ok(row_heights.iter().sum::<f32>() + row_gap * row_heights.len().saturating_sub(1) as f32)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn constrained_intrinsic_extent(
+    children: &BTreeMap<u64, Vec<&Node>>,
+    node: &Node,
+    axis: Axis,
+    available_width: f32,
+    available_height: f32,
+    text_scale: f32,
+    text_metrics: &TextMetrics,
+    depth: usize,
+) -> Result<f32, LayoutError> {
+    let extent = intrinsic_extent(
+        children,
+        node,
+        axis,
+        available_width,
+        available_height,
+        text_scale,
+        text_metrics,
+        depth,
+    )?;
+    let (minimum, maximum) = match axis {
+        Axis::Vertical => (
+            number(node, PropKey::MinHeight),
+            number(node, PropKey::MaxHeight),
+        ),
+        Axis::Horizontal => (
+            number(node, PropKey::MinWidth),
+            number(node, PropKey::MaxWidth),
+        ),
+    };
+    constrained(extent, minimum, maximum)
+}
+
+/// Plain layout containers that Yoga sizes by their content: with no
+/// children they collapse to padding + border instead of a control placeholder.
+fn empty_container_is_box(node: &Node) -> bool {
+    matches!(
+        node.kind,
+        NodeKind::Column
+            | NodeKind::Row
+            | NodeKind::View
+            | NodeKind::Pressable
+            | NodeKind::SafeAreaView
+            | NodeKind::KeyboardAvoidingView
+    )
+}
+
+fn content_sized(node: &Node) -> bool {
+    match node.kind {
+        NodeKind::Screen
+        | NodeKind::Column
+        | NodeKind::Row
+        | NodeKind::View
+        | NodeKind::Pressable
+        | NodeKind::ImageBackground
+        | NodeKind::KeyboardAvoidingView
+        | NodeKind::SafeAreaView
+        | NodeKind::InputAccessoryView
+        | NodeKind::NavigationHost
+        | NodeKind::TabHost => true,
+        // Authored native components are frequently compound controls (forms,
+        // calendars, tables, conversations, etc.). Their host participates in
+        // intrinsic measurement so descendants cannot escape and overlap the
+        // next sibling. Grid is the exception: its Android view owns the
+        // responsive row/column plan, while its engine children retain a
+        // simple fallback layout. Counting that fallback would reserve both
+        // arrangements and leave a large blank tail below the actual grid.
+        NodeKind::CustomView => !matches!(
+            node.properties.get(&PropKey::HostName),
+            Some(pam_desktop_wire::PropValue::String(name))
+                if name == "pam.mobile_ui.grid"
+        ),
+        _ => false,
+    }
+}
+
+/// An unmeasured leaf (image or empty container) sized by a percentage on
+/// `axis`. Its placeholder extent applies only when the author gave no size.
+fn percent_sized_placeholder(node: &Node, axis: Axis) -> bool {
+    let percent = match axis {
+        Axis::Vertical => number(node, PropKey::HeightPercent),
+        Axis::Horizontal => number(node, PropKey::WidthPercent),
+    };
+    percent.is_some_and(f32::is_finite)
+        && matches!(
+            node.kind,
+            NodeKind::Image
+                | NodeKind::ImageBackground
+                | NodeKind::View
+                | NodeKind::Column
+                | NodeKind::Row
+                | NodeKind::Pressable
+        )
+}
+
+fn leaf_intrinsic(
+    node: &Node,
+    axis: Axis,
+    text_scale: f32,
+    glyph_advances: Option<&BTreeMap<char, f32>>,
+) -> f32 {
+    match (axis, node.kind) {
+        (Axis::Horizontal, NodeKind::Text) => {
+            text_extent(node, axis, f32::INFINITY, text_scale, glyph_advances)
+        }
+        (Axis::Horizontal, NodeKind::Button) => {
+            let padding = number(node, PropKey::PaddingHorizontal)
+                .or_else(|| number(node, PropKey::Padding))
+                .unwrap_or(0.0);
+            let left = number(node, PropKey::PaddingLeft)
+                .unwrap_or(padding)
+                .max(0.0);
+            let right = number(node, PropKey::PaddingRight)
+                .unwrap_or(padding)
+                .max(0.0);
+            let (border_left, _, border_right, _) = border_edges(node);
+            (text_extent(node, axis, f32::INFINITY, text_scale, glyph_advances)
+                + left
+                + right
+                + border_left
+                + border_right)
+                .max(100.0)
+        }
+        (Axis::Horizontal, NodeKind::Switch) => switch_extent(Axis::Horizontal),
+        (Axis::Horizontal, NodeKind::ActivityIndicator) => DEFAULT_CONTROL_HEIGHT,
+        (Axis::Horizontal, NodeKind::Image | NodeKind::ImageBackground) => DEFAULT_IMAGE_HEIGHT,
+        (Axis::Horizontal, NodeKind::Spacer) => 8.0,
+        (Axis::Horizontal, NodeKind::StatusBar) => 0.0,
+        (Axis::Horizontal, _) => 100.0,
+        (Axis::Vertical, NodeKind::Button | NodeKind::Pressable | NodeKind::ActivityIndicator) => {
+            DEFAULT_CONTROL_HEIGHT
+        }
+        (Axis::Vertical, NodeKind::Switch) => switch_extent(Axis::Vertical),
+        (Axis::Vertical, NodeKind::Image | NodeKind::ImageBackground) => DEFAULT_IMAGE_HEIGHT,
+        (
+            Axis::Vertical,
+            NodeKind::List
+            | NodeKind::SectionList
+            | NodeKind::VirtualList
+            | NodeKind::Scroll
+            | NodeKind::RefreshControl,
+        ) => DEFAULT_LIST_HEIGHT,
+        (Axis::Vertical, NodeKind::Spacer) => 8.0,
+        (Axis::Vertical, NodeKind::StatusBar) => 0.0,
+        (Axis::Vertical, _) => DEFAULT_CONTROL_HEIGHT,
+    }
+}
+
+fn text_extent(
+    node: &Node,
+    axis: Axis,
+    available_width: f32,
+    device_text_scale: f32,
+    glyph_advances: Option<&BTreeMap<char, f32>>,
+) -> f32 {
+    let allow_scaling = !matches!(
+        node.properties.get(&PropKey::TextAllowFontScaling),
+        Some(pam_desktop_wire::PropValue::Boolean(false))
+    );
+    let maximum_scale = number(node, PropKey::TextMaxFontSizeMultiplier).unwrap_or(0.0);
+    let text_scale = if !allow_scaling {
+        1.0
+    } else if maximum_scale > 0.0 {
+        device_text_scale.min(maximum_scale.max(1.0))
+    } else {
+        device_text_scale
+    };
+    if let Some(measured) = crate::text_measure::measure(node, available_width, text_scale) {
+        return match axis {
+            Axis::Vertical => measured.height,
+            Axis::Horizontal => measured.width.min(available_width.max(0.0)),
+        };
+    }
+    let base_font_size = number(node, PropKey::FontSize).unwrap_or(14.0).max(1.0);
+    let font_size = base_font_size * text_scale;
+    let line_height = number(node, PropKey::LineHeight)
+        .unwrap_or((base_font_size * 1.4).max(DEFAULT_TEXT_HEIGHT / 2.0))
+        * text_scale;
+    // PAM authors letter spacing in logical points. Android receives the
+    // equivalent `em` value, so the rendered glyph gap scales once with the
+    // configured accessibility text scale, not again with the font size.
+    let letter_spacing = number(node, PropKey::LetterSpacing).unwrap_or(0.0) * text_scale;
+    let source_text = match node.properties.get(&PropKey::Text) {
+        Some(pam_desktop_wire::PropValue::String(value)) => value.as_str(),
+        _ => "",
+    };
+    let text = transformed_text_for_measurement(
+        source_text,
+        integer(node, PropKey::TextTransform).unwrap_or(1),
+    );
+    let single_line_input = node.kind == NodeKind::Input && !boolean(node, PropKey::Multiline);
+    let lines = wrapped_text_lines_with_metrics(
+        &text,
+        font_size,
+        letter_spacing,
+        if single_line_input {
+            f32::INFINITY
+        } else {
+            available_width
+        },
+        glyph_advances,
+    );
+    match axis {
+        Axis::Vertical => {
+            let maximum_lines = if single_line_input {
+                1
+            } else {
+                integer(node, PropKey::NumberOfLines)
+                    .filter(|value| *value > 0)
+                    .map_or(lines.len(), |value| value as usize)
+            };
+            line_height * lines.len().min(maximum_lines).max(1) as f32
+        }
+        Axis::Horizontal => lines
+            .iter()
+            .map(|line| measured_text_width(line, font_size, letter_spacing, glyph_advances))
+            .fold(0.0, f32::max)
+            .min(available_width.max(0.0)),
+    }
+}
+
+fn transformed_text_for_measurement(text: &str, transform: i64) -> String {
+    match transform {
+        2 => text.to_uppercase(),
+        3 => text.to_lowercase(),
+        4 => {
+            let mut capitalize_next = true;
+            text.chars()
+                .flat_map(|character| {
+                    if character.is_whitespace() {
+                        capitalize_next = true;
+                        character.to_string().chars().collect::<Vec<_>>()
+                    } else if capitalize_next && character.is_alphabetic() {
+                        capitalize_next = false;
+                        character.to_uppercase().collect::<Vec<_>>()
+                    } else {
+                        capitalize_next = false;
+                        character.to_string().chars().collect::<Vec<_>>()
+                    }
+                })
+                .collect()
+        }
+        _ => text.to_owned(),
+    }
+}
+
+#[cfg(test)]
+fn wrapped_text_lines(
+    text: &str,
+    font_size: f32,
+    letter_spacing: f32,
+    available_width: f32,
+) -> Vec<&str> {
+    wrapped_text_lines_with_metrics(text, font_size, letter_spacing, available_width, None)
+}
+
+fn wrapped_text_lines_with_metrics<'a>(
+    text: &'a str,
+    font_size: f32,
+    letter_spacing: f32,
+    available_width: f32,
+    glyph_advances: Option<&BTreeMap<char, f32>>,
+) -> Vec<&'a str> {
+    let hard_lines = text.split('\n').collect::<Vec<_>>();
+    if !available_width.is_finite() || available_width <= 0.0 {
+        return hard_lines;
+    }
+    let mut result = Vec::new();
+    for hard_line in hard_lines {
+        if hard_line.is_empty() {
+            result.push(hard_line);
+            continue;
+        }
+        let mut start = 0;
+        let mut last_break = None;
+        let mut width = 0.0;
+        for (offset, character) in hard_line.char_indices() {
+            let glyph_width = measured_character_width(character, font_size, glyph_advances);
+            let advance = glyph_width + if offset > start { letter_spacing } else { 0.0 };
+            if character.is_whitespace() {
+                last_break = Some(offset);
+            }
+            // Intrinsic parents are often exactly the sum of their text and
+            // padding. Allow a small floating-point tolerance so measuring
+            // that child again does not wrap its last word onto a phantom
+            // second line.
+            let fit_tolerance = 0.5_f32.max(font_size * 0.02);
+            if platform_text_width(width + advance, glyph_advances.is_some())
+                > available_width + fit_tolerance
+                && offset > start
+            {
+                let end = last_break
+                    .filter(|position| *position > start)
+                    .unwrap_or(offset);
+                result.push(hard_line[start..end].trim_end());
+                start = if end < offset {
+                    hard_line[end..]
+                        .char_indices()
+                        .find(|(_, character)| !character.is_whitespace())
+                        .map_or(offset, |(position, _)| end + position)
+                } else {
+                    offset
+                };
+                last_break = None;
+                width = raw_text_width(
+                    &hard_line[start..offset],
+                    font_size,
+                    letter_spacing,
+                    glyph_advances,
+                );
+            }
+            width += glyph_width + if offset > start { letter_spacing } else { 0.0 };
+        }
+        result.push(hard_line[start..].trim_end());
+    }
+    result
+}
+
+#[cfg(test)]
+fn estimated_text_width(text: &str, font_size: f32, letter_spacing: f32) -> f32 {
+    measured_text_width(text, font_size, letter_spacing, None)
+}
+
+fn measured_text_width(
+    text: &str,
+    font_size: f32,
+    letter_spacing: f32,
+    glyph_advances: Option<&BTreeMap<char, f32>>,
+) -> f32 {
+    platform_text_width(
+        raw_text_width(text, font_size, letter_spacing, glyph_advances),
+        glyph_advances.is_some(),
+    )
+}
+
+fn raw_text_width(
+    text: &str,
+    font_size: f32,
+    letter_spacing: f32,
+    glyph_advances: Option<&BTreeMap<char, f32>>,
+) -> f32 {
+    let mut characters = text.chars().peekable();
+    let mut width = 0.0;
+    while let Some(character) = characters.next() {
+        width += measured_character_width(character, font_size, glyph_advances);
+        if characters.peek().is_some() {
+            width += letter_spacing;
+        }
+    }
+    width
+}
+
+fn platform_text_width(width: f32, has_glyph_metrics: bool) -> f32 {
+    if has_glyph_metrics {
+        // TTF advances describe the ideal unhinted run. Android's TextView can
+        // shape and hint the same run slightly wider when it builds its
+        // StaticLayout. A fixed half-pixel guard was insufficient for longer
+        // multi-word labels: the last word wrapped while numberOfLines kept
+        // only the first line, clipping it completely. Keep a small relative
+        // platform guard plus the sub-pixel rounding allowance.
+        return if width > 0.0 { width * 1.02 + 0.5 } else { 0.0 };
+    }
+    // Bounding-box based em classes need a small conversion to platform glyph
+    // advances. The old broad classes plus a 6% safety margin substantially
+    // over-allocated short labels, so centered icon/label rows looked shifted
+    // even though their frames were centered. These classes track Android's
+    // modern sans metrics closely; keep only a sub-pixel wrapping tolerance.
+    if width > 0.0 { width * 1.09 + 0.5 } else { 0.0 }
+}
+
+fn measured_character_width(
+    character: char,
+    font_size: f32,
+    glyph_advances: Option<&BTreeMap<char, f32>>,
+) -> f32 {
+    glyph_advances
+        .and_then(|advances| advances.get(&character))
+        .filter(|advance| **advance > 0.0)
+        .map_or_else(
+            || estimated_character_width(character, font_size),
+            |advance| *advance * font_size,
+        )
+}
+
+fn estimated_character_width(character: char, font_size: f32) -> f32 {
+    let em = match character {
+        ' ' | '\t' => 0.25,
+        'i' | '!' | '.' | ',' | ':' | ';' | '\'' => 0.23,
+        'l' | '|' => 0.21,
+        'r' => 0.32,
+        'f' | 't' => 0.42,
+        'm' => 0.78,
+        'w' => 0.74,
+        // Rounded regular Roboto advances, before the platform guard. A
+        // single 0.59-em uppercase class under-measured labels such as PHP
+        // and HTTP, even with the guard, clipping intrinsic-width chips.
+        // Packaged fonts still use their actual per-weight TTF metrics.
+        'A' | 'C' | 'U' => 0.653,
+        'B' | 'K' | 'X' => 0.628,
+        'D' => 0.657,
+        'E' => 0.569,
+        'F' | 'J' => 0.553,
+        'G' => 0.682,
+        'H' | 'N' => 0.714,
+        'I' => 0.272,
+        'L' => 0.539,
+        'M' => 0.874,
+        'O' | 'Q' => 0.688,
+        'P' => 0.631,
+        'R' => 0.617,
+        'S' => 0.594,
+        'T' | 'Y' | 'Z' => 0.601,
+        'V' => 0.637,
+        'W' => 0.888,
+        '@' => 0.95,
+        '%' => 0.74,
+        '&' => 0.56,
+        character if character.is_ascii_digit() => 0.56,
+        character if character.is_ascii() => 0.54,
+        _ => 1.0,
+    };
+    font_size * em
+}
+
+#[allow(clippy::too_many_arguments)]
+fn intrinsic_cross(
+    children: &BTreeMap<u64, Vec<&Node>>,
+    node: &Node,
+    parent_axis: Axis,
+    available_main: f32,
+    available_cross: f32,
+    text_scale: f32,
+    text_metrics: &TextMetrics,
+    depth: usize,
+) -> Result<f32, LayoutError> {
+    let (requested_axis, available_width, available_height) = match parent_axis {
+        Axis::Vertical => (Axis::Horizontal, available_cross, available_main),
+        Axis::Horizontal => (Axis::Vertical, available_main, available_cross),
+    };
+    constrained_intrinsic_extent(
+        children,
+        node,
+        requested_axis,
+        available_width,
+        available_height,
+        text_scale,
+        text_metrics,
+        depth,
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum FlexBasisValue {
+    Points(f32),
+    Content,
+}
+
+/// Explicit `flex-basis`. `None` keeps PAM's React Native-compatible default:
+/// a growing item without a basis starts from zero (`flex: N` == `N 1 0`),
+/// every other item starts from its explicit or content size.
+fn explicit_flex_basis(node: &Node, available_main: f32) -> Option<FlexBasisValue> {
+    if let Some(points) = number(node, PropKey::FlexBasis).filter(|value| value.is_finite()) {
+        return Some(FlexBasisValue::Points(points.max(0.0)));
+    }
+    if let Some(percent) = number(node, PropKey::FlexBasisPercent).filter(|value| value.is_finite())
+    {
+        if available_main.is_finite() {
+            return Some(FlexBasisValue::Points(
+                (available_main * percent / 100.0).max(0.0),
+            ));
+        }
+        return Some(FlexBasisValue::Content);
+    }
+    boolean(node, PropKey::FlexBasisContent).then_some(FlexBasisValue::Content)
+}
+
+fn flex_grow(node: &Node) -> f32 {
+    number(node, PropKey::FlexGrow)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0)
+        .max(0.0)
+}
+
+fn flex_shrink(node: &Node) -> f32 {
+    // A VirtualizedList shrinks by default (React Native ScrollView and
+    // FlatList, CSS scroll containers): its content-sized height gives way
+    // to the space its parent has.
+    let default = if node.kind == NodeKind::VirtualList {
+        1.0
+    } else {
+        0.0
+    };
+    number(node, PropKey::FlexShrink)
+        .filter(|value| value.is_finite())
+        .unwrap_or(default)
+        .max(0.0)
+}
+
+fn sort_by_order(children: &mut [&Node]) {
+    if children.iter().any(|child| node_order(child) != 0) {
+        children.sort_by_key(|child| node_order(child));
+    }
+}
+
+fn node_order(node: &Node) -> i64 {
+    number(node, PropKey::GridOrder)
+        .filter(|value| value.is_finite())
+        .map_or(0, |value| value as i64)
+}
+
+/// Main-axis `margin: auto` flags as (before, after) for the given flow axis.
+fn auto_margins(node: &Node, axis: Axis) -> (bool, bool) {
+    match axis {
+        Axis::Horizontal => (
+            boolean(node, PropKey::MarginLeftAuto),
+            boolean(node, PropKey::MarginRightAuto),
+        ),
+        Axis::Vertical => (
+            boolean(node, PropKey::MarginTopAuto),
+            boolean(node, PropKey::MarginBottomAuto),
+        ),
+    }
+}
+
+/// Cross-axis auto margins override align-self as in CSS Flexbox §8.1.
+fn auto_cross_alignment(node: &Node, axis: Axis) -> Option<CrossAlignment> {
+    let cross_axis = match axis {
+        Axis::Horizontal => Axis::Vertical,
+        Axis::Vertical => Axis::Horizontal,
+    };
+    match auto_margins(node, cross_axis) {
+        (true, true) => Some(CrossAlignment::Center),
+        (true, false) => Some(CrossAlignment::End),
+        (false, true) => Some(CrossAlignment::Start),
+        (false, false) => None,
+    }
+}
+
+/// `position: relative` (the default) shifts the laid-out box by its insets
+/// without affecting siblings.
+fn relative_offset(node: &Node, frame: Layout, containing: Layout) -> Layout {
+    if integer(node, PropKey::PositionType).unwrap_or(1) != 1 {
+        return frame;
+    }
+    let horizontal = dimension(node, PropKey::Left, PropKey::LeftPercent, containing.width)
+        .or_else(|| {
+            dimension(
+                node,
+                PropKey::Right,
+                PropKey::RightPercent,
+                containing.width,
+            )
+            .map(|right| -right)
+        })
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0);
+    let vertical = dimension(node, PropKey::Top, PropKey::TopPercent, containing.height)
+        .or_else(|| {
+            dimension(
+                node,
+                PropKey::Bottom,
+                PropKey::BottomPercent,
+                containing.height,
+            )
+            .map(|bottom| -bottom)
+        })
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0);
+    Layout {
+        x: frame.x + horizontal,
+        y: frame.y + vertical,
+        ..frame
+    }
+}
+
+struct FlexItem {
+    id: u64,
+    base: f32,
+    hypothetical: f32,
+    minimum: f32,
+    maximum: f32,
+    grow: f32,
+    shrink: f32,
+    margins: f32,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn flex_item(
+    children_index: &BTreeMap<u64, Vec<&Node>>,
+    parent: &Node,
+    child: &Node,
+    axis: Axis,
+    available_main: f32,
+    available_cross: f32,
+    growing_starts_at_zero: bool,
+    text_scale: f32,
+    text_metrics: &TextMetrics,
+    depth: usize,
+) -> Result<FlexItem, LayoutError> {
+    let (minimum, maximum) = flex_main_bounds(child, axis, available_main)?;
+    let grow = flex_grow(child);
+    let base = match explicit_flex_basis(child, available_main) {
+        Some(FlexBasisValue::Points(points)) => points,
+        None if growing_starts_at_zero && grow > 0.0 => 0.0,
+        Some(FlexBasisValue::Content) | None => {
+            match stretched_aspect_main(parent, child, axis, available_main, available_cross) {
+                Some(main) => main,
+                None => child_main(
+                    children_index,
+                    child,
+                    axis,
+                    available_main,
+                    available_cross,
+                    text_scale,
+                    text_metrics,
+                    depth,
+                )?,
+            }
+        }
+    };
+    let (before, after) = margin_main(child, axis);
+    Ok(FlexItem {
+        id: child.id,
+        base,
+        hypothetical: base.max(minimum).min(maximum),
+        minimum,
+        maximum,
+        grow,
+        shrink: flex_shrink(child),
+        margins: before + after,
+    })
+}
+
+/// CSS Flexbox §9.7 "Resolving Flexible Lengths" for one line. `space` is the
+/// line's main size minus gaps.
+fn resolve_flexible_lengths(items: &[FlexItem], space: f32) -> BTreeMap<u64, f32> {
+    let count = items.len();
+    let margins = items.iter().map(|item| item.margins).sum::<f32>();
+    let outer_hypothetical = items.iter().map(|item| item.hypothetical).sum::<f32>() + margins;
+    let growing = outer_hypothetical < space;
+    let mut target = items
+        .iter()
+        .map(|item| item.hypothetical)
+        .collect::<Vec<_>>();
+    let mut frozen = items
+        .iter()
+        .map(|item| {
+            let factor = if growing { item.grow } else { item.shrink };
+            factor <= 0.0
+                || (growing && item.base > item.hypothetical)
+                || (!growing && item.base < item.hypothetical)
+        })
+        .collect::<Vec<_>>();
+    let used = |frozen: &[bool], target: &[f32]| {
+        items
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                if frozen[index] {
+                    target[index]
+                } else {
+                    item.base
+                }
+            })
+            .sum::<f32>()
+            + margins
+    };
+    let initial_free = space - used(&frozen, &target);
+    for _ in 0..=count {
+        if frozen.iter().all(|value| *value) {
+            break;
+        }
+        let mut free = space - used(&frozen, &target);
+        let factors = items
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !frozen[*index])
+            .map(|(_, item)| if growing { item.grow } else { item.shrink })
+            .sum::<f32>();
+        if factors < 1.0 {
+            let scaled = initial_free * factors;
+            if scaled.abs() < free.abs() {
+                free = scaled;
+            }
+        }
+        let scaled_shrink = items
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !frozen[*index])
+            .map(|(_, item)| item.shrink * item.base)
+            .sum::<f32>();
+        let mut violation = 0.0_f32;
+        let mut clamped = target.clone();
+        for (index, item) in items.iter().enumerate() {
+            if frozen[index] {
+                continue;
+            }
+            let candidate = if growing {
+                if factors > 0.0 {
+                    item.base + free * item.grow / factors
+                } else {
+                    item.base
+                }
+            } else if scaled_shrink > 0.0 {
+                item.base + free * (item.shrink * item.base) / scaled_shrink
+            } else {
+                item.base
+            };
+            let bounded = candidate.min(item.maximum).max(item.minimum).max(0.0);
+            violation += bounded - candidate;
+            target[index] = candidate;
+            clamped[index] = bounded;
+        }
+        let epsilon = 0.001;
+        for index in 0..count {
+            if frozen[index] {
+                continue;
+            }
+            let freeze = if violation.abs() <= epsilon {
+                true
+            } else if violation > 0.0 {
+                clamped[index] > target[index]
+            } else {
+                clamped[index] < target[index]
+            };
+            if freeze {
+                frozen[index] = true;
+            }
+            target[index] = clamped[index];
+        }
+    }
+    items
+        .iter()
+        .zip(target)
+        .map(|(item, size)| (item.id, size.max(0.0)))
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolved_child_main_sizes(
+    children_index: &BTreeMap<u64, Vec<&Node>>,
+    parent: &Node,
+    children: &[&Node],
+    axis: Axis,
+    available_main: f32,
+    available_cross: f32,
+    main_gap: f32,
+    text_scale: f32,
+    text_metrics: &TextMetrics,
+    depth: usize,
+) -> Result<BTreeMap<u64, f32>, LayoutError> {
+    let total_gap = main_gap * children.len().saturating_sub(1) as f32;
+    let items = children
+        .iter()
+        .map(|child| {
+            flex_item(
+                children_index,
+                parent,
+                child,
+                axis,
+                available_main,
+                available_cross,
+                true,
+                text_scale,
+                text_metrics,
+                depth,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(resolve_flexible_lengths(&items, available_main - total_gap))
+}
+
+/// A positive `aspectRatio`, if any.
+fn aspect_ratio(node: &Node) -> Option<f32> {
+    number(node, PropKey::AspectRatio).filter(|value| value.is_finite() && *value > 0.0)
+}
+
+/// Yoga `computeFlexBasisForChild`: an item with an aspect ratio and no
+/// definite main or cross size that stretches on the cross axis takes the
+/// parent's inner cross size (minus its cross margins) and derives its flex
+/// basis from it. The main-axis min/max then bound that basis like any
+/// other, and the cross size is re-derived from the bounded main size.
+fn stretched_aspect_main(
+    parent: &Node,
+    child: &Node,
+    axis: Axis,
+    available_main: f32,
+    available_cross: f32,
+) -> Option<f32> {
+    let ratio = aspect_ratio(child)?;
+    let (explicit_main, explicit_cross) = match axis {
+        Axis::Vertical => (
+            dimension(
+                child,
+                PropKey::Height,
+                PropKey::HeightPercent,
+                available_main,
+            ),
+            dimension(
+                child,
+                PropKey::Width,
+                PropKey::WidthPercent,
+                available_cross,
+            ),
+        ),
+        Axis::Horizontal => (
+            dimension(child, PropKey::Width, PropKey::WidthPercent, available_main),
+            dimension(
+                child,
+                PropKey::Height,
+                PropKey::HeightPercent,
+                available_cross,
+            ),
+        ),
+    };
+    if explicit_main.is_some() || explicit_cross.is_some() || !available_cross.is_finite() {
+        return None;
+    }
+    let alignment = auto_cross_alignment(child, axis).unwrap_or_else(|| {
+        integer(child, PropKey::AlignSelf)
+            .map(cross_alignment)
+            .unwrap_or_else(|| cross_alignment(integer(parent, PropKey::AlignItems).unwrap_or(4)))
+    });
+    if alignment != CrossAlignment::Stretch {
+        return None;
+    }
+    let (before, after) = margin_cross(child, axis);
+    let cross = (available_cross - before - after).max(0.0);
+    Some(match axis {
+        Axis::Vertical => cross / ratio,
+        Axis::Horizontal => cross * ratio,
+    })
+}
+
+fn flex_main_bounds(
+    node: &Node,
+    axis: Axis,
+    available_main: f32,
+) -> Result<(f32, f32), LayoutError> {
+    let (raw_minimum, raw_maximum) = match axis {
+        Axis::Vertical => (
+            dimension(
+                node,
+                PropKey::MinHeight,
+                PropKey::MinHeightPercent,
+                available_main,
+            ),
+            dimension(
+                node,
+                PropKey::MaxHeight,
+                PropKey::MaxHeightPercent,
+                available_main,
+            ),
+        ),
+        Axis::Horizontal => (
+            dimension(
+                node,
+                PropKey::MinWidth,
+                PropKey::MinWidthPercent,
+                available_main,
+            ),
+            dimension(
+                node,
+                PropKey::MaxWidth,
+                PropKey::MaxWidthPercent,
+                available_main,
+            ),
+        ),
+    };
+    let minimum = raw_minimum
+        .map(finite_non_negative)
+        .transpose()?
+        .unwrap_or(0.0);
+    let maximum = raw_maximum
+        .map(finite_non_negative)
+        .transpose()?
+        .unwrap_or(f32::INFINITY);
+
+    Ok((minimum, maximum.max(minimum)))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn child_main(
+    children: &BTreeMap<u64, Vec<&Node>>,
+    node: &Node,
+    axis: Axis,
+    available_main: f32,
+    available_cross: f32,
+    text_scale: f32,
+    text_metrics: &TextMetrics,
+    depth: usize,
+) -> Result<f32, LayoutError> {
+    let explicit_main = match axis {
+        Axis::Vertical => dimension(
+            node,
+            PropKey::Height,
+            PropKey::HeightPercent,
+            available_main,
+        ),
+        Axis::Horizontal => dimension(node, PropKey::Width, PropKey::WidthPercent, available_main),
+    };
+    let explicit_cross = match axis {
+        Axis::Vertical => dimension(node, PropKey::Width, PropKey::WidthPercent, available_cross),
+        Axis::Horizontal => dimension(
+            node,
+            PropKey::Height,
+            PropKey::HeightPercent,
+            available_cross,
+        ),
+    };
+    let ratio = aspect_ratio(node);
+    let main = explicit_main.unwrap_or_else(|| match (axis, explicit_cross, ratio) {
+        (Axis::Vertical, Some(width), Some(ratio)) => width / ratio,
+        (Axis::Horizontal, Some(height), Some(ratio)) => height * ratio,
+        _ => {
+            let (available_width, available_height) = match axis {
+                Axis::Vertical => {
+                    // Wrap at the item's own cross size (see intrinsic_extent).
+                    let (margin_start, margin_end) = margin_cross(node, Axis::Vertical);
+                    let width = explicit_cross
+                        .unwrap_or((available_cross - margin_start - margin_end).max(0.0));
+                    let maximum = dimension(
+                        node,
+                        PropKey::MaxWidth,
+                        PropKey::MaxWidthPercent,
+                        available_cross,
+                    );
+                    let width = constrained(width, number(node, PropKey::MinWidth), maximum)
+                        .unwrap_or(width);
+                    (width, available_main)
+                }
+                Axis::Horizontal => (available_main, explicit_cross.unwrap_or(available_cross)),
+            };
+            intrinsic_extent(
+                children,
+                node,
+                axis,
+                available_width,
+                available_height,
+                text_scale,
+                text_metrics,
+                depth,
+            )
+            .unwrap_or(0.0)
+        }
+    });
+    let (minimum, maximum) = match axis {
+        Axis::Vertical => (
+            dimension(
+                node,
+                PropKey::MinHeight,
+                PropKey::MinHeightPercent,
+                available_main,
+            ),
+            dimension(
+                node,
+                PropKey::MaxHeight,
+                PropKey::MaxHeightPercent,
+                available_main,
+            ),
+        ),
+        Axis::Horizontal => (
+            dimension(
+                node,
+                PropKey::MinWidth,
+                PropKey::MinWidthPercent,
+                available_main,
+            ),
+            dimension(
+                node,
+                PropKey::MaxWidth,
+                PropKey::MaxWidthPercent,
+                available_main,
+            ),
+        ),
+    };
+
+    constrained(main, minimum, maximum)
+}
+
+fn child_cross(
+    node: &Node,
+    axis: Axis,
+    available_cross: f32,
+    resolved_main: f32,
+) -> Result<Option<f32>, LayoutError> {
+    let explicit = match axis {
+        Axis::Vertical => dimension(node, PropKey::Width, PropKey::WidthPercent, available_cross),
+        Axis::Horizontal => dimension(
+            node,
+            PropKey::Height,
+            PropKey::HeightPercent,
+            available_cross,
+        ),
+    };
+    // Yoga derives an aspect-ratio item's cross size from its resolved
+    // (min/max-bounded) main size, even over an authored cross size: a
+    // `width: 100%; aspectRatio` box whose height hits `maxHeight` narrows
+    // to keep its ratio.
+    let resolved = aspect_ratio(node)
+        .map(|ratio| match axis {
+            Axis::Vertical => resolved_main * ratio,
+            Axis::Horizontal => resolved_main / ratio,
+        })
+        .or(explicit);
+    let Some(resolved) = resolved else {
+        return Ok(None);
+    };
+    let (minimum, maximum) = match axis {
+        Axis::Vertical => (
+            dimension(
+                node,
+                PropKey::MinWidth,
+                PropKey::MinWidthPercent,
+                available_cross,
+            ),
+            dimension(
+                node,
+                PropKey::MaxWidth,
+                PropKey::MaxWidthPercent,
+                available_cross,
+            ),
+        ),
+        Axis::Horizontal => (
+            dimension(
+                node,
+                PropKey::MinHeight,
+                PropKey::MinHeightPercent,
+                available_cross,
+            ),
+            dimension(
+                node,
+                PropKey::MaxHeight,
+                PropKey::MaxHeightPercent,
+                available_cross,
+            ),
+        ),
+    };
+
+    Ok(Some(constrained(resolved, minimum, maximum)?))
+}
+
+fn margin_main(node: &Node, axis: Axis) -> (f32, f32) {
+    let all = number(node, PropKey::Margin).unwrap_or(0.0);
+    let horizontal = number(node, PropKey::MarginHorizontal).unwrap_or(all);
+    let vertical = number(node, PropKey::MarginVertical).unwrap_or(all);
+
+    match axis {
+        Axis::Vertical => (
+            number(node, PropKey::MarginTop).unwrap_or(vertical),
+            number(node, PropKey::MarginBottom).unwrap_or(vertical),
+        ),
+        Axis::Horizontal => (
+            number(node, PropKey::MarginLeft).unwrap_or(horizontal),
+            number(node, PropKey::MarginRight).unwrap_or(horizontal),
+        ),
+    }
+}
+
+/// Physical margins of a virtualized cell root. Auto margins resolve to zero
+/// (a cell slot has no free space to distribute).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct CellMargins {
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+}
+
+fn cell_margins(node: &Node) -> CellMargins {
+    let finite = |value: f32| if value.is_finite() { value } else { 0.0 };
+    let (top, bottom) = margin_main(node, Axis::Vertical);
+    let (left, right) = margin_cross(node, Axis::Vertical);
+    CellMargins {
+        left: finite(left),
+        top: finite(top),
+        right: finite(right),
+        bottom: finite(bottom),
+    }
+}
+
+fn margin_cross(node: &Node, axis: Axis) -> (f32, f32) {
+    let all = number(node, PropKey::Margin).unwrap_or(0.0);
+    let horizontal = number(node, PropKey::MarginHorizontal).unwrap_or(all);
+    let vertical = number(node, PropKey::MarginVertical).unwrap_or(all);
+
+    match axis {
+        Axis::Vertical => (
+            number(node, PropKey::MarginLeft).unwrap_or(horizontal),
+            number(node, PropKey::MarginRight).unwrap_or(horizontal),
+        ),
+        Axis::Horizontal => (
+            number(node, PropKey::MarginTop).unwrap_or(vertical),
+            number(node, PropKey::MarginBottom).unwrap_or(vertical),
+        ),
+    }
+}
+
+fn cross_alignment(value: i64) -> CrossAlignment {
+    match value {
+        1 => CrossAlignment::Start,
+        2 => CrossAlignment::Center,
+        3 => CrossAlignment::End,
+        5 => CrossAlignment::Baseline,
+        _ => CrossAlignment::Stretch,
+    }
+}
+
+/// Yoga `YGBaseline`: text reports its first baseline; a container reports
+/// the baseline of its first in-flow child (or the first child that itself
+/// aligns to baseline), offset by the container's top inset and the child's
+/// top margin; a leaf without text falls back to its bottom edge.
+fn baseline_from_top(
+    children: &BTreeMap<u64, Vec<&Node>>,
+    node: &Node,
+    height: f32,
+    text_scale: f32,
+) -> f32 {
+    baseline_at_depth(children, node, height, text_scale, 0)
+}
+
+fn baseline_at_depth(
+    children: &BTreeMap<u64, Vec<&Node>>,
+    node: &Node,
+    height: f32,
+    text_scale: f32,
+    depth: usize,
+) -> f32 {
+    if !matches!(
+        node.kind,
+        NodeKind::Text | NodeKind::Input | NodeKind::Button
+    ) && depth < 32
+    {
+        let in_flow = children
+            .get(&node.id)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .copied()
+            .filter(|child| visible(child) && child.kind != NodeKind::Modal && !out_of_flow(child));
+        let mut first = None;
+        for child in in_flow {
+            if integer(child, PropKey::AlignSelf).map(cross_alignment)
+                == Some(CrossAlignment::Baseline)
+            {
+                first = Some(child);
+                break;
+            }
+            first = first.or(Some(child));
+        }
+        if let Some(child) = first {
+            let padding = number(node, PropKey::Padding).unwrap_or(0.0);
+            let top = number(node, PropKey::PaddingTop)
+                .or_else(|| number(node, PropKey::PaddingVertical))
+                .unwrap_or(padding)
+                .max(0.0)
+                + border_edges(node).1;
+            let margin = number(child, PropKey::Margin).unwrap_or(0.0);
+            let margin_top = number(child, PropKey::MarginTop)
+                .or_else(|| number(child, PropKey::MarginVertical))
+                .unwrap_or(margin);
+            let child_height = number(child, PropKey::Height).unwrap_or(f32::INFINITY);
+            let baseline = top
+                + margin_top
+                + baseline_at_depth(children, child, child_height, text_scale, depth + 1);
+            return baseline.min(height.max(0.0));
+        }
+        return height.max(0.0);
+    }
+    text_baseline(node, height, text_scale)
+}
+
+fn text_baseline(node: &Node, height: f32, text_scale: f32) -> f32 {
+    if matches!(
+        node.kind,
+        NodeKind::Text | NodeKind::Input | NodeKind::Button
+    ) {
+        let allow_scaling = !matches!(
+            node.properties.get(&PropKey::TextAllowFontScaling),
+            Some(pam_desktop_wire::PropValue::Boolean(false))
+        );
+        let scale = if allow_scaling { text_scale } else { 1.0 };
+        if node.kind == NodeKind::Text {
+            let maximum_scale = number(node, PropKey::TextMaxFontSizeMultiplier).unwrap_or(0.0);
+            let effective = if allow_scaling && maximum_scale > 0.0 {
+                text_scale.min(maximum_scale.max(1.0))
+            } else {
+                scale
+            };
+            if let Some(measured) = crate::text_measure::measure(node, f32::INFINITY, effective) {
+                return measured.first_baseline.min(height.max(0.0));
+            }
+        }
+        let font_size = number(node, PropKey::FontSize).unwrap_or(14.0).max(1.0) * scale;
+        let base_font_size = number(node, PropKey::FontSize).unwrap_or(14.0).max(1.0);
+        let line_height = number(node, PropKey::LineHeight)
+            .unwrap_or((base_font_size * 1.4).max(DEFAULT_TEXT_HEIGHT / 2.0))
+            * scale;
+        let content_baseline = ((line_height - font_size).max(0.0) / 2.0) + font_size * 0.8;
+        return content_baseline.min(height.max(0.0));
+    }
+    height.max(0.0)
+}
+
+fn absolute_static_offset(
+    child: &Node,
+    parent: &Node,
+    parent_axis: Axis,
+    target_axis: Axis,
+    available: f32,
+    child_size: f32,
+) -> f32 {
+    let free = (available - child_size).max(0.0);
+    if parent_axis == target_axis {
+        return justify_offsets(
+            integer(parent, PropKey::JustifyContent).unwrap_or(1),
+            free,
+            1,
+            0.0,
+        )
+        .0;
+    }
+
+    let alignment = integer(child, PropKey::AlignSelf)
+        .map(cross_alignment)
+        .unwrap_or_else(|| cross_alignment(integer(parent, PropKey::AlignItems).unwrap_or(4)));
+    match alignment {
+        CrossAlignment::Center => free / 2.0,
+        CrossAlignment::End => free,
+        CrossAlignment::Start | CrossAlignment::Stretch | CrossAlignment::Baseline => 0.0,
+    }
+}
+
+fn justify_offsets(value: i64, free: f32, count: usize, gap: f32) -> (f32, f32) {
+    match value {
+        2 => (free / 2.0, gap),
+        3 => (free, gap),
+        4 if count > 1 => (0.0, gap + free / (count - 1) as f32),
+        5 if count > 0 => {
+            let space = free / count as f32;
+            (space / 2.0, gap + space)
+        }
+        6 if count > 0 => {
+            let space = free / (count + 1) as f32;
+            (space, gap + space)
+        }
+        _ => (0.0, gap),
+    }
+}
+
+fn safe_area_edges(node: &Node) -> Option<([f32; 4], [bool; 4])> {
+    if node.kind != NodeKind::SafeAreaView {
+        return None;
+    }
+    let window = crate::text_measure::safe_area()?;
+    let enabled = |key| {
+        !matches!(
+            node.properties.get(&key),
+            Some(pam_desktop_wire::PropValue::Boolean(false))
+        )
+    };
+    Some((
+        window,
+        [
+            enabled(PropKey::SafeAreaLeft),
+            enabled(PropKey::SafeAreaTop),
+            enabled(PropKey::SafeAreaRight),
+            enabled(PropKey::SafeAreaBottomEdge),
+        ],
+    ))
+}
+
+/// `SafeAreaView` padding for the window edges its absolute frame overlaps
+/// (react-native-safe-area-context semantics at any nesting level).
+fn safe_area_padding(node: &Node, frame: Layout, viewport: Layout) -> (f32, f32, f32, f32) {
+    let Some((window, enabled)) = safe_area_edges(node) else {
+        return (0.0, 0.0, 0.0, 0.0);
+    };
+    let overlap = |inset: f32, distance: f32| (inset - distance.max(0.0)).clamp(0.0, inset);
+    let left = overlap(window[0], frame.x - viewport.x);
+    let top = overlap(window[1], frame.y - viewport.y);
+    let right = overlap(
+        window[2],
+        viewport.x + viewport.width - (frame.x + frame.width),
+    );
+    let bottom = overlap(
+        window[3],
+        viewport.y + viewport.height - (frame.y + frame.height),
+    );
+    (
+        if enabled[0] { left } else { 0.0 },
+        if enabled[1] { top } else { 0.0 },
+        if enabled[2] { right } else { 0.0 },
+        if enabled[3] { bottom } else { 0.0 },
+    )
+}
+
+/// Border widths per edge (left, top, right, bottom), Yoga semantics.
+fn border_edges(node: &Node) -> (f32, f32, f32, f32) {
+    let valid = |value: f32| value.is_finite() && value > 0.0;
+    let all = number(node, PropKey::BorderWidth)
+        .filter(|value| valid(*value))
+        .unwrap_or(0.0);
+    let side = |key| {
+        number(node, key)
+            .map(|value| if valid(value) { value } else { 0.0 })
+            .unwrap_or(all)
+    };
+    (
+        side(PropKey::BorderLeftWidth),
+        side(PropKey::BorderTopWidth),
+        side(PropKey::BorderRightWidth),
+        side(PropKey::BorderBottomWidth),
+    )
+}
+
+fn number(node: &Node, key: PropKey) -> Option<f32> {
+    node.properties
+        .get(&key)
+        .and_then(|value| value.as_number())
+}
+
+fn integer(node: &Node, key: PropKey) -> Option<i64> {
+    match node.properties.get(&key) {
+        Some(pam_desktop_wire::PropValue::Integer(value)) => Some(*value),
+        _ => None,
+    }
+}
+
+fn restore_previous_subtree(
+    context: &LayoutContext<'_>,
+    id: u64,
+    output: &mut BTreeMap<u64, Layout>,
+) {
+    let Some(previous) = context.previous else {
+        return;
+    };
+    let mut pending = vec![id];
+    while let Some(current) = pending.pop() {
+        let Some(frame) = previous.get(&current) else {
+            continue;
+        };
+        output.insert(current, *frame);
+        if let Some(children) = context.children.get(&current) {
+            pending.extend(children.iter().map(|child| child.id));
+        }
+    }
+}
+
+fn section_key(node: &Node, key: PropKey) -> Option<&str> {
+    match node.properties.get(&key) {
+        Some(pam_desktop_wire::PropValue::String(value)) if !value.is_empty() => {
+            Some(value.as_str())
+        }
+        _ => None,
+    }
+}
+
+/// Main-axis flow of a list with keyed sections. Consecutive sectioned rows
+/// form a block; each section of the block flows from the block's origin.
+/// The first row after the block continues after the active section (or at
+/// the origin when the active section has no rows in the block).
+#[derive(Default)]
+struct SectionFlow<'a> {
+    origin: Option<f32>,
+    ends: Vec<(&'a str, f32)>,
+}
+
+impl<'a> SectionFlow<'a> {
+    /// Main-axis start of the next row of `section` (`None`: an unsectioned
+    /// row) given the flow `cursor` of unsectioned rows.
+    fn start(&mut self, section: Option<&'a str>, cursor: f32, active: &str) -> f32 {
+        match (section, self.origin) {
+            (Some(section), Some(origin)) => self
+                .ends
+                .iter()
+                .find(|(key, _)| *key == section)
+                .map_or(origin, |(_, end)| *end),
+            (Some(_), None) => {
+                self.origin = Some(cursor);
+                cursor
+            }
+            (None, Some(origin)) => {
+                let end = self
+                    .ends
+                    .iter()
+                    .find(|(key, _)| *key == active)
+                    .map_or(origin, |(_, end)| *end);
+                self.origin = None;
+                self.ends.clear();
+                end
+            }
+            (None, None) => cursor,
+        }
+    }
+
+    fn advance(&mut self, section: &'a str, end: f32) {
+        if let Some(entry) = self.ends.iter_mut().find(|(key, _)| *key == section) {
+            entry.1 = end;
+        } else {
+            self.ends.push((section, end));
+        }
+    }
+}
+
+/// Slot extent of a vertical list row whose cells are all clean (off the
+/// dirty path) and keep their previous cross-axis placement: the previous
+/// measurement still holds, so the row is not measured again.
+fn retained_row_extent(
+    context: &LayoutContext<'_>,
+    row: &[&Node],
+    origin_x: f32,
+    cell_width: f32,
+) -> Option<f32> {
+    let previous = context.previous?;
+    let dirty_path = context.dirty_path?;
+    let mut extent = 0.0_f32;
+    for (column, child) in row.iter().enumerate() {
+        if dirty_path.contains(&child.id) {
+            return None;
+        }
+        let frame = previous.get(&child.id)?;
+        let margins = cell_margins(child);
+        let x = origin_x + column as f32 * cell_width + margins.left;
+        let width = (cell_width - margins.left - margins.right).max(0.0);
+        if (frame.x - x).abs() > f32::EPSILON || (frame.width - width).abs() > f32::EPSILON {
+            return None;
+        }
+        extent = extent.max(frame.height + margins.top + margins.bottom);
+    }
+    Some(extent)
+}
+
+fn boolean(node: &Node, key: PropKey) -> bool {
+    matches!(
+        node.properties.get(&key),
+        Some(pam_desktop_wire::PropValue::Boolean(true))
+    )
+}
+
+/// A panning `KeyboardAvoidingView` that ends a column stays directly above
+/// the IME in layout (Android `adjustResize`, react-native-keyboard-controller
+/// `KeyboardStickyView` + an inset list): the column reserves the part of the
+/// keyboard that still overlaps its content box, so flexible siblings such as
+/// a chat timeline shrink and the composer is laid out right above the
+/// keyboard. Native views and engine frames therefore agree; hosts only
+/// translate whatever overlap layout could not absorb. Modal content is
+/// excluded: a modal has its own keyboard inset (see
+/// [`surface_keyboard_avoidance`]) and hosts pan modal views natively.
+fn reserve_keyboard_space(
+    context: &LayoutContext<'_>,
+    node: &Node,
+    node_children: &[&Node],
+    inner: Layout,
+) -> Layout {
+    let keyboard = crate::text_measure::keyboard_inset();
+    if keyboard <= 0.0 {
+        return inner;
+    }
+    let Some(trailing) = node_children
+        .iter()
+        .copied()
+        .rfind(|child| visible(child) && !out_of_flow(child))
+    else {
+        return inner;
+    };
+    if trailing.kind != NodeKind::KeyboardAvoidingView
+        || integer(trailing, PropKey::KeyboardBehavior) != Some(2)
+        || matches!(
+            trailing.properties.get(&PropKey::KeyboardAvoidingEnabled),
+            Some(pam_desktop_wire::PropValue::Boolean(false))
+        )
+        || inside_modal(context.tree, node)
+    {
+        return inner;
+    }
+    let offset = number(trailing, PropKey::KeyboardVerticalOffset)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0);
+    let viewport = context.viewport.get();
+    let below_content = (viewport.y + viewport.height) - (inner.y + inner.height);
+    let reserve = (keyboard + offset - below_content.max(0.0)).clamp(0.0, inner.height);
+    Layout {
+        height: inner.height - reserve,
+        ..inner
+    }
+}
+
+/// How a `KeyboardAvoidingView` inside a modal surface avoids that
+/// surface's keyboard (React Native `behavior="height"` / `"padding"`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SurfaceKeyboardAvoidance {
+    /// The view itself loses the overlapping height.
+    Resize(f32),
+    /// The view keeps its frame; its content box loses the overlap.
+    Padding(f32),
+    /// The whole view moves up by the overlap (React Native `position`).
+    /// Only where modals are views of the host window (iOS): Android
+    /// translates a panning view of a modal's Dialog window natively.
+    Position(f32),
+}
+
+const KEYBOARD_RESIZE: i64 = 1;
+const KEYBOARD_PAN: i64 = 2;
+const KEYBOARD_PADDING: i64 = 3;
+
+fn avoids_surface_keyboard(node: &Node, policy: crate::surface::SurfacePolicy) -> bool {
+    let behavior = integer(node, PropKey::KeyboardBehavior).unwrap_or(KEYBOARD_RESIZE);
+    node.kind == NodeKind::KeyboardAvoidingView
+        && (matches!(behavior, KEYBOARD_RESIZE | KEYBOARD_PADDING)
+            || (behavior == KEYBOARD_PAN && policy == crate::surface::SurfacePolicy::InWindow))
+        && !matches!(
+            node.properties.get(&PropKey::KeyboardAvoidingEnabled),
+            Some(pam_desktop_wire::PropValue::Boolean(false))
+        )
+}
+
+/// The part of the modal surface's keyboard that overlaps `frame` (root
+/// coordinates), like React Native's `relativeKeyboardHeight`: the view's
+/// bottom plus `keyboardVerticalOffset` below the keyboard's top edge.
+fn surface_keyboard_avoidance(node: &Node, frame: Layout) -> Option<SurfaceKeyboardAvoidance> {
+    if !avoids_surface_keyboard(node, crate::text_measure::surface_policy()) {
+        return None;
+    }
+    let keyboard_top = crate::text_measure::surface_keyboard_top()?;
+    let offset = number(node, PropKey::KeyboardVerticalOffset)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0);
+    let overlap = (frame.y + frame.height + offset - keyboard_top).clamp(0.0, frame.height);
+    if overlap <= 0.0 {
+        return None;
+    }
+    Some(match integer(node, PropKey::KeyboardBehavior) {
+        Some(KEYBOARD_PADDING) => SurfaceKeyboardAvoidance::Padding(overlap),
+        Some(KEYBOARD_PAN) => SurfaceKeyboardAvoidance::Position(overlap),
+        _ => SurfaceKeyboardAvoidance::Resize(overlap),
+    })
+}
+
+/// A resize/padding `KeyboardAvoidingView` outside any modal: the root
+/// keyboard inset avoids it like React Native's `behavior="height"` /
+/// `"padding"`, on iOS and on Android (the window keeps `adjustNothing` and
+/// the host feeds the IME every frame), so absolutely positioned children
+/// dock on the keyboard and layout events report the avoided frame. A
+/// trailing panning view is kept above the IME by [`reserve_keyboard_space`].
+fn root_keyboard_avoidance(
+    context: &LayoutContext<'_>,
+    node: &Node,
+    frame: Layout,
+) -> Option<SurfaceKeyboardAvoidance> {
+    if node.kind != NodeKind::KeyboardAvoidingView
+        || crate::text_measure::surface_keyboard_top().is_some()
+    {
+        return None;
+    }
+    let behavior = integer(node, PropKey::KeyboardBehavior).unwrap_or(KEYBOARD_RESIZE);
+    if !matches!(behavior, KEYBOARD_RESIZE | KEYBOARD_PADDING)
+        || matches!(
+            node.properties.get(&PropKey::KeyboardAvoidingEnabled),
+            Some(pam_desktop_wire::PropValue::Boolean(false))
+        )
+    {
+        return None;
+    }
+    let keyboard = crate::text_measure::keyboard_inset();
+    if keyboard <= 0.0 || inside_modal(context.tree, node) {
+        return None;
+    }
+    let viewport = context.viewport.get();
+    let keyboard_top = viewport.y + viewport.height - keyboard;
+    let offset = number(node, PropKey::KeyboardVerticalOffset)
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0);
+    let overlap = (frame.y + frame.height + offset - keyboard_top).clamp(0.0, frame.height);
+    if overlap <= 0.0 {
+        return None;
+    }
+    Some(if behavior == KEYBOARD_PADDING {
+        SurfaceKeyboardAvoidance::Padding(overlap)
+    } else {
+        SurfaceKeyboardAvoidance::Resize(overlap)
+    })
+}
+
+/// Whether the `Modal` `surface` holds a `KeyboardAvoidingView` that lays
+/// its content out above that surface's keyboard.
+pub(crate) fn surface_avoids_keyboard(
+    tree: &Tree,
+    surface: u64,
+    policy: crate::surface::SurfacePolicy,
+) -> bool {
+    tree.nodes.values().any(|node| {
+        avoids_surface_keyboard(node, policy) && enclosing_modal(tree, node) == Some(surface)
+    })
+}
+
+fn enclosing_modal(tree: &Tree, node: &Node) -> Option<u64> {
+    let mut current = tree.nodes.get(&node.parent);
+    let mut steps = 0;
+    while let Some(candidate) = current {
+        if candidate.kind == NodeKind::Modal {
+            return Some(candidate.id);
+        }
+        if candidate.id == tree.root || steps > MAX_LAYOUT_DEPTH {
+            return None;
+        }
+        steps += 1;
+        current = tree.nodes.get(&candidate.parent);
+    }
+    None
+}
+
+fn inside_modal(tree: &Tree, node: &Node) -> bool {
+    let mut current = Some(node);
+    let mut steps = 0;
+    while let Some(candidate) = current {
+        if candidate.kind == NodeKind::Modal {
+            return true;
+        }
+        if candidate.id == tree.root || steps > MAX_LAYOUT_DEPTH {
+            return false;
+        }
+        steps += 1;
+        current = tree.nodes.get(&candidate.parent);
+    }
+    false
+}
+
+/// `position: absolute` (2) and `position: fixed` (3) leave the flex flow.
+fn out_of_flow(node: &Node) -> bool {
+    matches!(integer(node, PropKey::PositionType), Some(2 | 3))
+}
+
+fn visible(node: &Node) -> bool {
+    !matches!(
+        node.properties.get(&PropKey::Visible),
+        Some(pam_desktop_wire::PropValue::Boolean(false))
+    )
+}
+
+fn dimension(node: &Node, points: PropKey, percent: PropKey, available: f32) -> Option<f32> {
+    number(node, points).or_else(|| {
+        number(node, percent)
+            .filter(|value| value.is_finite())
+            .map(|value| available * value.clamp(0.0, 100.0) / 100.0)
+    })
+}
+
+/// A stretched flex item's cross size clamped by its own min/max cross
+/// dimension (Yoga `boundAxis` on the stretched size).
+fn stretched_cross(child: &Node, axis: Axis, stretched: f32, available_cross: f32) -> f32 {
+    let (minimum, maximum) = match axis {
+        Axis::Vertical => (
+            dimension(
+                child,
+                PropKey::MinWidth,
+                PropKey::MinWidthPercent,
+                available_cross,
+            ),
+            dimension(
+                child,
+                PropKey::MaxWidth,
+                PropKey::MaxWidthPercent,
+                available_cross,
+            ),
+        ),
+        Axis::Horizontal => (
+            dimension(
+                child,
+                PropKey::MinHeight,
+                PropKey::MinHeightPercent,
+                available_cross,
+            ),
+            dimension(
+                child,
+                PropKey::MaxHeight,
+                PropKey::MaxHeightPercent,
+                available_cross,
+            ),
+        ),
+    };
+    let mut cross = stretched;
+    if let Some(maximum) = maximum.filter(|value| value.is_finite() && *value >= 0.0) {
+        cross = cross.min(maximum);
+    }
+    if let Some(minimum) = minimum.filter(|value| value.is_finite() && *value >= 0.0) {
+        cross = cross.max(minimum);
+    }
+    cross
+}
+
+fn constrained(value: f32, minimum: Option<f32>, maximum: Option<f32>) -> Result<f32, LayoutError> {
+    let mut result = finite_non_negative(value)?;
+
+    if let Some(minimum) = minimum {
+        result = result.max(finite_non_negative(minimum)?);
+    }
+
+    if let Some(maximum) = maximum {
+        result = result.min(finite_non_negative(maximum)?);
+    }
+
+    Ok(result)
+}
+
+fn finite_non_negative(value: f32) -> Result<f32, LayoutError> {
+    if value.is_finite() && value >= 0.0 {
+        Ok(value)
+    } else {
+        Err(LayoutError::InvalidDimension)
+    }
+}
+
+fn finite(value: f32) -> Result<f32, LayoutError> {
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(LayoutError::InvalidDimension)
+    }
+}
+
+#[derive(Debug)]
+pub enum LayoutError {
+    InvalidGridTemplate,
+    InvalidDimension,
+    DepthExceeded,
+    MissingNode(u64),
+}
+
+impl std::fmt::Display for LayoutError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidGridTemplate => formatter.write_str("invalid responsive grid template"),
+            Self::InvalidDimension => {
+                formatter.write_str("layout dimensions must be finite and non-negative")
+            }
+            Self::DepthExceeded => formatter.write_str("layout tree exceeds maximum depth"),
+            Self::MissingNode(id) => write!(formatter, "layout node {id} does not exist"),
+        }
+    }
+}
+
+impl std::error::Error for LayoutError {}
+
+#[cfg(test)]
+mod tests {
+    use pam_desktop_wire::PropValue;
+
+    use super::*;
+
+    fn node(
+        id: u64,
+        parent: u64,
+        index: u32,
+        kind: NodeKind,
+        properties: impl IntoIterator<Item = (PropKey, PropValue)>,
+    ) -> Node {
+        Node {
+            id,
+            parent,
+            index,
+            kind,
+            properties: properties.into_iter().collect(),
+        }
+    }
+
+    #[test]
+    fn resolves_absolute_percentage_aspect_and_individual_padding_once() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Screen,
+                        [
+                            (PropKey::PaddingLeft, PropValue::Float(10.0)),
+                            (PropKey::PaddingTop, PropValue::Float(20.0)),
+                            (PropKey::PaddingRight, PropValue::Float(30.0)),
+                            (PropKey::PaddingBottom, PropValue::Float(40.0)),
+                        ],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::PositionType, PropValue::Integer(2)),
+                            (PropKey::WidthPercent, PropValue::Float(60.0)),
+                            (PropKey::AspectRatio, PropValue::Float(1.0)),
+                            (PropKey::Right, PropValue::Float(0.0)),
+                            (PropKey::Bottom, PropValue::Float(4.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 300.0,
+                height: 400.0,
+            },
+        )
+        .expect("layout");
+        let child = layouts[&2];
+
+        // Yoga 3 (RN 0.74+): percentages and insets of an absolute child
+        // resolve against the padding box, not the content box.
+        assert_eq!(child.width, 180.0);
+        assert_eq!(child.height, 180.0);
+        assert_eq!(child.x, 120.0);
+        assert_eq!(child.y, 216.0);
+    }
+
+    /// Lays out one child under a root of `viewport` and returns its frame.
+    fn aspect_child(
+        viewport: (f32, f32),
+        root: &[(PropKey, PropValue)],
+        child: &[(PropKey, PropValue)],
+    ) -> Layout {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::View, root.to_vec())),
+                (2, node(2, 1, 0, NodeKind::View, child.to_vec())),
+            ]),
+        };
+        calculate(
+            &tree,
+            Size {
+                width: viewport.0,
+                height: viewport.1,
+            },
+        )
+        .expect("layout")[&2]
+    }
+
+    fn f(key: PropKey, value: f64) -> (PropKey, PropValue) {
+        (key, PropValue::Float(value))
+    }
+
+    fn i(key: PropKey, value: i64) -> (PropKey, PropValue) {
+        (key, PropValue::Integer(value))
+    }
+
+    fn size_of(frame: Layout) -> (f32, f32) {
+        (frame.width, frame.height)
+    }
+
+    /// Yoga: a container without children (e.g. a row whose children are all
+    /// behind false conditions) is as big as its padding and border, never
+    /// a 48 dp control placeholder that pushes its siblings down.
+    #[test]
+    fn empty_containers_measure_padding_and_border_only() {
+        for kind in [
+            NodeKind::View,
+            NodeKind::Row,
+            NodeKind::Column,
+            NodeKind::Pressable,
+        ] {
+            let tree = Tree {
+                root: 1,
+                nodes: BTreeMap::from([
+                    (
+                        1,
+                        node(1, 0, 0, NodeKind::View, vec![i(PropKey::AlignItems, 1)]),
+                    ),
+                    (2, node(2, 1, 0, kind, vec![f(PropKey::MarginTop, 8.0)])),
+                    (
+                        3,
+                        node(
+                            3,
+                            1,
+                            1,
+                            kind,
+                            vec![f(PropKey::Padding, 6.0), f(PropKey::BorderWidth, 1.0)],
+                        ),
+                    ),
+                    (
+                        4,
+                        node(
+                            4,
+                            1,
+                            2,
+                            NodeKind::View,
+                            vec![f(PropKey::Height, 20.0), f(PropKey::Width, 20.0)],
+                        ),
+                    ),
+                ]),
+            };
+            let layouts = calculate(
+                &tree,
+                Size {
+                    width: 411.0,
+                    height: 800.0,
+                },
+            )
+            .expect("layout");
+            assert_eq!(size_of(layouts[&2]), (0.0, 0.0), "{kind:?}: empty");
+            assert_eq!(layouts[&3].y, 8.0, "{kind:?}: below the empty one's margin");
+            assert_eq!(
+                size_of(layouts[&3]),
+                (14.0, 14.0),
+                "{kind:?}: padding + border"
+            );
+            assert_eq!(layouts[&4].y, 22.0, "{kind:?}: sibling right after");
+        }
+    }
+
+    /// A fixed-width card (column) holding a `width: 100%; aspectRatio`
+    /// map and a fixed footer, under parents of every sizing mode. Yoga
+    /// sizes the card as map + footer; the footer is never clipped.
+    #[test]
+    fn aspect_ratio_percent_child_counts_with_its_siblings_in_a_content_sized_parent() {
+        let card = vec![f(PropKey::Width, 248.0), i(PropKey::Overflow, 1)];
+        let map = vec![
+            f(PropKey::WidthPercent, 100.0),
+            f(PropKey::AspectRatio, 248.0 / 140.0),
+        ];
+        let footer = vec![f(PropKey::Height, 56.0)];
+        type Props = Vec<(PropKey, PropValue)>;
+        let parents: Vec<(&str, Props, Props)> = vec![
+            ("stretch column", vec![], vec![]),
+            ("start column", vec![i(PropKey::AlignItems, 1)], vec![]),
+            ("row", vec![i(PropKey::FlexDirection, 2)], vec![]),
+            (
+                "start column > padded bubble",
+                vec![i(PropKey::AlignItems, 1)],
+                vec![
+                    f(PropKey::PaddingTop, 4.0),
+                    f(PropKey::PaddingBottom, 4.0),
+                    f(PropKey::PaddingLeft, 4.0),
+                    f(PropKey::PaddingRight, 4.0),
+                    f(PropKey::MaxWidthPercent, 80.0),
+                ],
+            ),
+            (
+                "row > padded bubble",
+                vec![i(PropKey::FlexDirection, 2)],
+                vec![
+                    f(PropKey::PaddingTop, 4.0),
+                    f(PropKey::PaddingBottom, 4.0),
+                    f(PropKey::PaddingLeft, 4.0),
+                    f(PropKey::PaddingRight, 4.0),
+                    f(PropKey::MaxWidthPercent, 80.0),
+                ],
+            ),
+            (
+                "row > shrinking bubble",
+                vec![i(PropKey::FlexDirection, 2)],
+                vec![
+                    f(PropKey::FlexShrink, 1.0),
+                    f(PropKey::MaxWidthPercent, 80.0),
+                ],
+            ),
+        ];
+        for (label, root, bubble) in parents {
+            let tree = Tree {
+                root: 1,
+                nodes: BTreeMap::from([
+                    (1, node(1, 0, 0, NodeKind::View, root.clone())),
+                    (2, node(2, 1, 0, NodeKind::View, bubble.clone())),
+                    (3, node(3, 2, 0, NodeKind::View, card.clone())),
+                    (4, node(4, 3, 0, NodeKind::View, map.clone())),
+                    (5, node(5, 3, 1, NodeKind::View, footer.clone())),
+                ]),
+            };
+            let layouts = calculate(
+                &tree,
+                Size {
+                    width: 411.0,
+                    height: 800.0,
+                },
+            )
+            .expect("layout");
+            assert_eq!(size_of(layouts[&4]), (248.0, 140.0), "{label}: map");
+            assert_eq!(
+                layouts[&5].y - layouts[&3].y,
+                140.0,
+                "{label}: footer below the map"
+            );
+            assert_eq!(
+                size_of(layouts[&3]),
+                (248.0, 196.0),
+                "{label}: card = map + footer"
+            );
+        }
+    }
+
+    /// Yoga `YGAspectRatioTest` reference cases (100x100 root).
+    #[test]
+    #[allow(clippy::type_complexity)]
+    fn aspect_ratio_matches_yoga_reference_cases() {
+        let start = [i(PropKey::AlignItems, 1)];
+        let row_start = [i(PropKey::FlexDirection, 2), i(PropKey::AlignItems, 1)];
+        let row = [i(PropKey::FlexDirection, 2)];
+        let ratio = |value| f(PropKey::AspectRatio, value);
+        let cases: Vec<(
+            &str,
+            &[(PropKey, PropValue)],
+            Vec<(PropKey, PropValue)>,
+            (f32, f32),
+        )> = vec![
+            (
+                "cross_defined",
+                &start,
+                vec![f(PropKey::Width, 50.0), ratio(1.0)],
+                (50.0, 50.0),
+            ),
+            (
+                "main_defined",
+                &start,
+                vec![f(PropKey::Height, 50.0), ratio(1.0)],
+                (50.0, 50.0),
+            ),
+            (
+                "both_dimensions_defined_row",
+                &row_start,
+                vec![
+                    f(PropKey::Width, 100.0),
+                    f(PropKey::Height, 50.0),
+                    ratio(1.0),
+                ],
+                (100.0, 100.0),
+            ),
+            (
+                "both_dimensions_defined_column",
+                &start,
+                vec![
+                    f(PropKey::Width, 50.0),
+                    f(PropKey::Height, 100.0),
+                    ratio(1.0),
+                ],
+                (100.0, 100.0),
+            ),
+            ("align_stretch", &[], vec![ratio(1.0)], (100.0, 100.0)),
+            (
+                "flex_grow",
+                &start,
+                vec![
+                    f(PropKey::Height, 50.0),
+                    f(PropKey::FlexGrow, 1.0),
+                    ratio(1.0),
+                ],
+                (100.0, 100.0),
+            ),
+            (
+                "flex_shrink",
+                &start,
+                vec![
+                    f(PropKey::Height, 150.0),
+                    f(PropKey::FlexShrink, 1.0),
+                    ratio(1.0),
+                ],
+                (100.0, 100.0),
+            ),
+            (
+                "basis",
+                &start,
+                vec![f(PropKey::FlexBasis, 50.0), ratio(1.0)],
+                (50.0, 50.0),
+            ),
+            (
+                "with_max_cross_defined",
+                &start,
+                vec![
+                    f(PropKey::Height, 50.0),
+                    f(PropKey::MaxWidth, 40.0),
+                    ratio(1.0),
+                ],
+                (40.0, 50.0),
+            ),
+            (
+                "with_max_main_defined",
+                &start,
+                vec![
+                    f(PropKey::Width, 50.0),
+                    f(PropKey::MaxHeight, 40.0),
+                    ratio(1.0),
+                ],
+                (40.0, 40.0),
+            ),
+            (
+                "with_min_cross_defined",
+                &start,
+                vec![
+                    f(PropKey::Height, 30.0),
+                    f(PropKey::MinWidth, 40.0),
+                    ratio(1.0),
+                ],
+                (40.0, 30.0),
+            ),
+            (
+                "with_min_main_defined",
+                &start,
+                vec![
+                    f(PropKey::Width, 30.0),
+                    f(PropKey::MinHeight, 40.0),
+                    ratio(1.0),
+                ],
+                (40.0, 40.0),
+            ),
+            (
+                "double_cross",
+                &start,
+                vec![f(PropKey::Height, 50.0), ratio(2.0)],
+                (100.0, 50.0),
+            ),
+            (
+                "half_cross",
+                &start,
+                vec![f(PropKey::Height, 100.0), ratio(0.5)],
+                (50.0, 100.0),
+            ),
+            (
+                "double_main",
+                &start,
+                vec![f(PropKey::Width, 50.0), ratio(0.5)],
+                (50.0, 100.0),
+            ),
+            (
+                "half_main",
+                &start,
+                vec![f(PropKey::Width, 100.0), ratio(2.0)],
+                (100.0, 50.0),
+            ),
+            (
+                "row_with_max_main_defined",
+                &row_start,
+                vec![
+                    f(PropKey::Height, 50.0),
+                    f(PropKey::MaxWidth, 40.0),
+                    ratio(1.0),
+                ],
+                (40.0, 40.0),
+            ),
+            (
+                "row_with_min_main_defined",
+                &row_start,
+                vec![
+                    f(PropKey::Height, 30.0),
+                    f(PropKey::MinWidth, 40.0),
+                    ratio(1.0),
+                ],
+                (40.0, 40.0),
+            ),
+            (
+                "stretch_with_max_main",
+                &[],
+                vec![f(PropKey::MaxHeight, 40.0), ratio(1.0)],
+                (40.0, 40.0),
+            ),
+            (
+                "row_stretch_with_max_main",
+                &row,
+                vec![f(PropKey::MaxWidth, 50.0), ratio(2.0)],
+                (50.0, 25.0),
+            ),
+            (
+                "absolute_layout_width_defined",
+                &[],
+                vec![
+                    i(PropKey::PositionType, 2),
+                    f(PropKey::Left, 0.0),
+                    f(PropKey::Top, 0.0),
+                    f(PropKey::Width, 50.0),
+                    ratio(1.0),
+                ],
+                (50.0, 50.0),
+            ),
+            (
+                "absolute_layout_width_from_insets",
+                &[],
+                vec![
+                    i(PropKey::PositionType, 2),
+                    f(PropKey::Left, 10.0),
+                    f(PropKey::Right, 10.0),
+                    f(PropKey::Top, 0.0),
+                    ratio(2.0),
+                ],
+                (80.0, 40.0),
+            ),
+        ];
+        for (name, root, child, expected) in cases {
+            assert_eq!(
+                size_of(aspect_child((100.0, 100.0), root, &child)),
+                expected,
+                "{name}"
+            );
+        }
+    }
+
+    /// RN `MediaLayerComposerModal` stage: `width: 100%`, `aspectRatio`,
+    /// `maxHeight/maxWidth: 100%` in a centred column. When the column
+    /// shrinks (keyboard open) the stage keeps its ratio and narrows.
+    #[test]
+    fn aspect_ratio_stage_narrows_when_max_height_binds() {
+        let root = [i(PropKey::AlignItems, 2), i(PropKey::JustifyContent, 2)];
+        let stage = [
+            f(PropKey::WidthPercent, 100.0),
+            f(PropKey::MaxWidthPercent, 100.0),
+            f(PropKey::MaxHeightPercent, 100.0),
+            f(PropKey::AspectRatio, 0.5625),
+        ];
+        let open = aspect_child((360.0, 800.0), &root, &stage);
+        assert_eq!(size_of(open), (360.0, 640.0));
+        assert_eq!((open.x, open.y), (0.0, 80.0));
+
+        let keyboard = aspect_child((360.0, 400.0), &root, &stage);
+        assert_eq!(size_of(keyboard), (225.0, 400.0));
+        assert_eq!((keyboard.x, keyboard.y), (67.5, 0.0));
+    }
+
+    #[test]
+    fn wrapping_uses_the_same_platform_width_as_intrinsic_measurement() {
+        let label = "Currency Field";
+        let width = 303.0;
+        assert!(measured_text_width(label, 48.0, 0.0, None) > width);
+        assert_eq!(wrapped_text_lines(label, 48.0, 0.0, width).len(), 2);
+    }
+
+    #[test]
+    fn fallback_uppercase_labels_fit_platform_glyph_advances() {
+        // Roboto variable font measured at weight 600 on the API 36 device.
+        // At 200% text scale the old PHP estimate was 46.8032 dp, less than
+        // the actual 47.789063 dp; Android wrapped its final P out of view.
+        for scale in [1.0, 1.3, 2.0] {
+            let width = measured_text_width("PHP", 12.0 * scale, 0.0, None);
+            assert!(
+                width >= 23.894531 * scale,
+                "PHP width at scale {scale}: {width}"
+            );
+            assert_eq!(wrapped_text_lines("PHP", 12.0 * scale, 0.0, width).len(), 1);
+        }
+        // Preserve a genuinely narrow capital I instead of widening every
+        // uppercase letter to compensate for H, N and M.
+        assert!(estimated_character_width('I', 24.0) < estimated_character_width('H', 24.0));
+    }
+
+    #[test]
+    fn auto_row_height_respects_nested_text_column_width() {
+        for (width_key, width_value) in [(PropKey::Width, 180.0), (PropKey::WidthPercent, 45.0)] {
+            let mut tree = Tree {
+                root: 1,
+                nodes: BTreeMap::from([
+                    (1, node(1, 0, 0, NodeKind::Screen, [])),
+                    (2, node(2, 1, 0, NodeKind::Row, [])),
+                    (
+                        3,
+                        node(
+                            3,
+                            2,
+                            0,
+                            NodeKind::Column,
+                            [(width_key, PropValue::Float(width_value))],
+                        ),
+                    ),
+                    (
+                        4,
+                        node(
+                            4,
+                            3,
+                            0,
+                            NodeKind::Text,
+                            [
+                                (PropKey::Text, PropValue::String("Currency Field".into())),
+                                (PropKey::FontSize, PropValue::Float(24.0)),
+                                (PropKey::LineHeight, PropValue::Float(30.0)),
+                            ],
+                        ),
+                    ),
+                    (
+                        5,
+                        node(
+                            5,
+                            2,
+                            1,
+                            NodeKind::View,
+                            [
+                                (PropKey::Width, PropValue::Float(48.0)),
+                                (PropKey::Height, PropValue::Float(48.0)),
+                            ],
+                        ),
+                    ),
+                ]),
+            };
+            let layouts = calculate_with_text_scale(
+                &tree,
+                Size {
+                    width: 400.0,
+                    height: 800.0,
+                },
+                2.0,
+            )
+            .expect("scaled header layout");
+            assert!(layouts[&4].height >= 120.0);
+            assert!(layouts[&2].height >= layouts[&4].height);
+            let row = tree.nodes.get_mut(&2).expect("header row");
+            row.properties
+                .insert(PropKey::Height, PropValue::Float(400.0));
+            row.properties
+                .insert(PropKey::AlignItems, PropValue::Integer(1));
+            let layouts = calculate_with_text_scale(
+                &tree,
+                Size {
+                    width: 400.0,
+                    height: 800.0,
+                },
+                2.0,
+            )
+            .expect("fixed header layout");
+            assert_eq!(
+                layouts[&3].height, layouts[&4].height,
+                "final child width must not apply its percentage twice"
+            );
+        }
+    }
+
+    #[test]
+    fn row_baseline_aligns_text_with_different_font_sizes() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Screen,
+                        [
+                            (PropKey::FlexDirection, PropValue::Integer(2)),
+                            (PropKey::AlignItems, PropValue::Integer(5)),
+                        ],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Text,
+                        [
+                            (PropKey::Text, PropValue::String("small".to_owned())),
+                            (PropKey::FontSize, PropValue::Float(10.0)),
+                            (PropKey::LineHeight, PropValue::Float(14.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        1,
+                        1,
+                        NodeKind::Text,
+                        [
+                            (PropKey::Text, PropValue::String("large".to_owned())),
+                            (PropKey::FontSize, PropValue::Float(20.0)),
+                            (PropKey::LineHeight, PropValue::Float(28.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 240.0,
+                height: 80.0,
+            },
+        )
+        .expect("baseline layout");
+        let small_baseline = layouts[&2].y
+            + baseline_from_top(
+                &child_index(&tree),
+                &tree.nodes[&2],
+                layouts[&2].height,
+                1.0,
+            );
+        let large_baseline = layouts[&3].y
+            + baseline_from_top(
+                &child_index(&tree),
+                &tree.nodes[&3],
+                layouts[&3].height,
+                1.0,
+            );
+
+        assert!((small_baseline - large_baseline).abs() < 0.01);
+        assert!(layouts[&2].y > layouts[&3].y);
+    }
+
+    #[test]
+    fn resolves_percentage_position_offsets_against_the_padding_box() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Screen,
+                        [(PropKey::Padding, PropValue::Float(10.0))],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::PositionType, PropValue::Integer(2)),
+                            (PropKey::LeftPercent, PropValue::Float(10.0)),
+                            (PropKey::TopPercent, PropValue::Float(20.0)),
+                            (PropKey::Width, PropValue::Float(20.0)),
+                            (PropKey::Height, PropValue::Float(20.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 300.0,
+                height: 400.0,
+            },
+        )
+        .expect("percentage offsets");
+        let child = layouts[&2];
+
+        // Padding does not move the containing block of an absolute child.
+        assert_eq!(child.x, 30.0);
+        assert_eq!(child.y, 80.0);
+    }
+
+    #[test]
+    fn negative_cross_margins_bleed_out_of_the_parent_padding() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Screen, [])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Column,
+                        [
+                            (PropKey::PaddingLeft, PropValue::Float(16.0)),
+                            (PropKey::PaddingRight, PropValue::Float(16.0)),
+                            (PropKey::PaddingTop, PropValue::Float(8.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(360.0)),
+                            (PropKey::Height, PropValue::Float(100.0)),
+                            (PropKey::MarginLeft, PropValue::Float(-16.0)),
+                            (PropKey::MarginRight, PropValue::Float(-16.0)),
+                            (PropKey::MarginTop, PropValue::Float(12.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+        // A full-bleed media frame inside a padded post box (margin: 12px -16px 0).
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("negative cross margins");
+        assert_eq!(layouts[&3].x, 0.0, "{:?}", layouts[&3]);
+        assert_eq!(layouts[&3].width, 360.0);
+    }
+
+    #[test]
+    fn negative_offsets_and_margins_keep_negative_origins() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Screen, [])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::PositionType, PropValue::Integer(2)),
+                            (PropKey::Top, PropValue::Float(-200.0)),
+                            (PropKey::Left, PropValue::Float(-34.0)),
+                            (PropKey::Width, PropValue::Float(390.0)),
+                            (PropKey::Height, PropValue::Float(200.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        1,
+                        1,
+                        NodeKind::View,
+                        [
+                            (PropKey::MarginTop, PropValue::Float(-14.0)),
+                            (PropKey::Height, PropValue::Float(20.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("negative origins");
+
+        assert_eq!(
+            layouts[&2],
+            Layout {
+                x: -34.0,
+                y: -200.0,
+                width: 390.0,
+                height: 200.0,
+            }
+        );
+        assert_eq!(layouts[&3].y, -14.0);
+        assert!(layouts.values().all(Layout::is_valid));
+        let mutations = layouts
+            .iter()
+            .map(|(id, frame)| pam_desktop_wire::Mutation::Layout {
+                id: *id,
+                frame: *frame,
+            })
+            .collect::<Vec<_>>();
+        let encoded = pam_desktop_wire::encode_batch(&mutations).expect("encodable");
+        assert_eq!(pam_desktop_wire::decode_batch(&encoded), Ok(mutations));
+    }
+
+    #[test]
+    fn absolute_child_without_horizontal_insets_uses_flex_static_alignment() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Column,
+                        [(PropKey::AlignItems, PropValue::Integer(2))],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::PositionType, PropValue::Integer(2)),
+                            (PropKey::Bottom, PropValue::Float(0.0)),
+                            (PropKey::Width, PropValue::Float(26.0)),
+                            (PropKey::Height, PropValue::Float(3.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 48.0,
+            },
+        )
+        .expect("absolute static alignment");
+        let child = layouts[&2];
+
+        assert_eq!(child.x, 167.0);
+        assert_eq!(child.y, 45.0);
+    }
+
+    #[test]
+    fn flex_shrink_is_calculated_in_rust_without_runtime_callbacks() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Row,
+                        [(PropKey::FlexDirection, PropValue::Integer(2))],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(80.0)),
+                            (PropKey::FlexShrink, PropValue::Float(1.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        1,
+                        1,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(80.0)),
+                            (PropKey::FlexShrink, PropValue::Float(1.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 100.0,
+                height: 40.0,
+            },
+        )
+        .expect("layout");
+
+        assert_eq!(layouts[&2].width, 50.0);
+        assert_eq!(layouts[&3].width, 50.0);
+        assert_eq!(layouts[&3].x, 50.0);
+    }
+
+    #[test]
+    fn auto_row_measures_text_height_at_allocated_flex_width() {
+        let mut nodes = BTreeMap::from([
+            (1, node(1, 0, 0, NodeKind::Column, [])),
+            (
+                2,
+                node(
+                    2,
+                    1,
+                    0,
+                    NodeKind::Row,
+                    [
+                        (PropKey::WidthPercent, PropValue::Float(100.0)),
+                        (PropKey::AlignItems, PropValue::Integer(2)),
+                    ],
+                ),
+            ),
+        ]);
+        for index in 0..3_u32 {
+            let button_id = 3 + u64::from(index);
+            let text_id = 6 + u64::from(index);
+            nodes.insert(
+                button_id,
+                node(
+                    button_id,
+                    2,
+                    index,
+                    NodeKind::Pressable,
+                    [
+                        (PropKey::FlexGrow, PropValue::Float(1.0)),
+                        (PropKey::MinWidth, PropValue::Float(0.0)),
+                        (PropKey::MinHeight, PropValue::Float(40.0)),
+                        (PropKey::PaddingHorizontal, PropValue::Float(16.0)),
+                        (PropKey::PaddingVertical, PropValue::Float(8.0)),
+                        (PropKey::FlexDirection, PropValue::Integer(2)),
+                    ],
+                ),
+            );
+            nodes.insert(
+                text_id,
+                node(
+                    text_id,
+                    button_id,
+                    0,
+                    NodeKind::Text,
+                    [
+                        (PropKey::Text, PropValue::String("7 days".into())),
+                        (PropKey::FontSize, PropValue::Float(14.0)),
+                        (PropKey::LineHeight, PropValue::Float(20.0)),
+                        (PropKey::FlexShrink, PropValue::Float(1.0)),
+                    ],
+                ),
+            );
+        }
+        let layouts = calculate_with_text_scale(
+            &Tree { root: 1, nodes },
+            Size {
+                width: 300.0,
+                height: 500.0,
+            },
+            2.0,
+        )
+        .expect("layout");
+        assert_eq!(layouts[&3].width, 100.0);
+        assert!(layouts[&2].height >= 96.0, "row height: {:?}", layouts[&2]);
+        assert!(
+            layouts[&3].height >= 96.0,
+            "button height: {:?}",
+            layouts[&3]
+        );
+        assert!(
+            layouts[&6].height >= 80.0,
+            "wrapped text: {:?}",
+            layouts[&6]
+        );
+    }
+
+    #[test]
+    fn flex_wrap_breaks_rows_and_reports_intrinsic_cross_extent() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Column,
+                        [(PropKey::AlignItems, PropValue::Integer(1))],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Row,
+                        [
+                            (PropKey::Width, PropValue::Float(100.0)),
+                            (PropKey::FlexWrap, PropValue::Integer(2)),
+                            (PropKey::GridColumnGap, PropValue::Float(8.0)),
+                            (PropKey::GridRowGap, PropValue::Float(6.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(44.0)),
+                            (PropKey::Height, PropValue::Float(20.0)),
+                        ],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        2,
+                        1,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(44.0)),
+                            (PropKey::Height, PropValue::Float(20.0)),
+                        ],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        2,
+                        2,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(44.0)),
+                            (PropKey::Height, PropValue::Float(20.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+        )
+        .expect("wrapped layout");
+
+        assert_eq!(layouts[&2].height, 46.0);
+        assert_eq!((layouts[&3].x, layouts[&3].y), (0.0, 0.0));
+        assert_eq!((layouts[&4].x, layouts[&4].y), (52.0, 0.0));
+        assert_eq!((layouts[&5].x, layouts[&5].y), (0.0, 26.0));
+    }
+
+    #[test]
+    fn permanent_drawer_reserves_layout_width_for_content_on_both_edges() {
+        let layout_for = |position: i64, drawer_type: i64, breakpoint: Option<f64>| {
+            let mut drawer_properties = vec![
+                (PropKey::DrawerType, PropValue::Integer(drawer_type)),
+                (PropKey::DrawerPosition, PropValue::Integer(position)),
+                (PropKey::DrawerWidth, PropValue::Float(256.0)),
+            ];
+            if let Some(value) = breakpoint {
+                drawer_properties
+                    .push((PropKey::DrawerPermanentBreakpoint, PropValue::Float(value)));
+            }
+            let tree = Tree {
+                root: 1,
+                nodes: BTreeMap::from([
+                    (1, node(1, 0, 0, NodeKind::DrawerLayout, drawer_properties)),
+                    (
+                        2,
+                        node(
+                            2,
+                            1,
+                            0,
+                            NodeKind::View,
+                            [(PropKey::WidthPercent, PropValue::Float(100.0))],
+                        ),
+                    ),
+                    (
+                        3,
+                        node(
+                            3,
+                            1,
+                            1,
+                            NodeKind::View,
+                            [(PropKey::Width, PropValue::Float(256.0))],
+                        ),
+                    ),
+                ]),
+            };
+
+            calculate(
+                &tree,
+                Size {
+                    width: 1_000.0,
+                    height: 700.0,
+                },
+            )
+            .expect("permanent drawer layout")
+        };
+
+        let left = layout_for(2, 4, None);
+        assert_eq!(
+            left[&2],
+            Layout {
+                x: 256.0,
+                y: 0.0,
+                width: 744.0,
+                height: 700.0
+            }
+        );
+        assert_eq!(
+            left[&3],
+            Layout {
+                x: 0.0,
+                y: 0.0,
+                width: 256.0,
+                height: 700.0
+            }
+        );
+
+        let right = layout_for(3, 4, None);
+        assert_eq!(
+            right[&2],
+            Layout {
+                x: 0.0,
+                y: 0.0,
+                width: 744.0,
+                height: 700.0
+            }
+        );
+        assert_eq!(
+            right[&3],
+            Layout {
+                x: 744.0,
+                y: 0.0,
+                width: 256.0,
+                height: 700.0
+            }
+        );
+
+        let responsive = layout_for(1, 1, Some(840.0));
+        assert_eq!(responsive[&2], left[&2]);
+        assert_eq!(responsive[&3], left[&3]);
+    }
+
+    #[test]
+    fn flex_wrap_respects_intrinsic_cross_axis_minimums() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Column,
+                        [(PropKey::AlignItems, PropValue::Integer(1))],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Row,
+                        [
+                            (PropKey::Width, PropValue::Float(100.0)),
+                            (PropKey::FlexWrap, PropValue::Integer(2)),
+                            (PropKey::GridRowGap, PropValue::Float(6.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(44.0)),
+                            (PropKey::MinHeight, PropValue::Float(52.0)),
+                        ],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        2,
+                        1,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(60.0)),
+                            (PropKey::MinHeight, PropValue::Float(52.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 100.0,
+                height: 140.0,
+            },
+        )
+        .expect("wrapped minimum layout");
+
+        assert_eq!(layouts[&2].height, 110.0);
+        assert_eq!(layouts[&3].height, 52.0);
+        assert_eq!(layouts[&4].height, 52.0);
+        assert_eq!(layouts[&4].y, 58.0);
+    }
+
+    #[test]
+    fn flex_growth_redistributes_space_after_minimum_and_maximum_constraints() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Row,
+                        [(PropKey::FlexDirection, PropValue::Integer(2))],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::FlexGrow, PropValue::Float(1.0)),
+                            (PropKey::MinWidth, PropValue::Float(80.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        1,
+                        1,
+                        NodeKind::View,
+                        [(PropKey::FlexGrow, PropValue::Float(1.0))],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        1,
+                        2,
+                        NodeKind::View,
+                        [
+                            (PropKey::FlexGrow, PropValue::Float(1.0)),
+                            (PropKey::MaxWidth, PropValue::Float(40.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 180.0,
+                height: 40.0,
+            },
+        )
+        .expect("layout");
+
+        assert_eq!(layouts[&2].width, 80.0);
+        assert_eq!(layouts[&3].width, 60.0);
+        assert_eq!(layouts[&4].width, 40.0);
+        assert_eq!(layouts[&3].x, 80.0);
+        assert_eq!(layouts[&4].x, 140.0);
+    }
+
+    #[test]
+    fn flex_constraints_reject_non_finite_dimensions() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Row,
+                        [(PropKey::FlexDirection, PropValue::Integer(2))],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::FlexGrow, PropValue::Float(1.0)),
+                            (PropKey::MinWidth, PropValue::Float(f64::NAN)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        assert!(matches!(
+            calculate(
+                &tree,
+                Size {
+                    width: 180.0,
+                    height: 40.0,
+                },
+            ),
+            Err(LayoutError::InvalidDimension),
+        ));
+    }
+
+    #[test]
+    fn horizontal_auto_margin_consumes_remaining_space_in_rust() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Row,
+                        [(PropKey::FlexDirection, PropValue::Integer(2))],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::View,
+                        [(PropKey::Width, PropValue::Float(40.0))],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        1,
+                        1,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(30.0)),
+                            (PropKey::MarginLeftAuto, PropValue::Boolean(true)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 300.0,
+                height: 40.0,
+            },
+        )
+        .expect("layout");
+
+        assert_eq!(layouts[&2].x, 0.0);
+        assert_eq!(layouts[&3].x, 270.0);
+    }
+
+    #[test]
+    fn hidden_children_do_not_consume_space_or_gaps() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Row,
+                        [
+                            (PropKey::FlexDirection, PropValue::Integer(2)),
+                            (PropKey::Gap, PropValue::Float(12.0)),
+                        ],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(100.0)),
+                            (PropKey::Visible, PropValue::Boolean(false)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        1,
+                        1,
+                        NodeKind::View,
+                        [(PropKey::Width, PropValue::Float(50.0))],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 300.0,
+                height: 40.0,
+            },
+        )
+        .expect("layout");
+
+        assert!(!layouts.contains_key(&2));
+        assert_eq!(layouts[&3].x, 0.0);
+    }
+
+    #[test]
+    fn horizontal_scroll_auto_height_follows_content_and_padding() {
+        let mut tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Column, [])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Scroll,
+                        [
+                            (PropKey::ScrollHorizontal, PropValue::Boolean(true)),
+                            (PropKey::PaddingVertical, PropValue::Float(8.0)),
+                        ],
+                    ),
+                ),
+                (3, node(3, 2, 0, NodeKind::Row, [])),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(400.0)),
+                            (PropKey::Height, PropValue::Float(56.0)),
+                        ],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        1,
+                        1,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(24.0))],
+                    ),
+                ),
+            ]),
+        };
+        let viewport = Size {
+            width: 300.0,
+            height: 500.0,
+        };
+        let layouts = calculate(&tree, viewport).expect("auto horizontal scroll");
+        assert_eq!(layouts[&2].height, 72.0);
+        assert_eq!(layouts[&3].width, 400.0);
+        assert_eq!(layouts[&3].height, 56.0);
+        assert_eq!(layouts[&5].y, 72.0);
+        tree.nodes
+            .get_mut(&2)
+            .unwrap()
+            .properties
+            .insert(PropKey::Height, PropValue::Float(100.0));
+        let layouts = calculate(&tree, viewport).expect("explicit horizontal scroll");
+        assert_eq!(layouts[&2].height, 100.0);
+        assert_eq!(layouts[&5].y, 100.0);
+        tree.nodes
+            .get_mut(&2)
+            .unwrap()
+            .properties
+            .remove(&PropKey::Height);
+        tree.nodes.insert(
+            4,
+            node(
+                4,
+                3,
+                0,
+                NodeKind::Text,
+                [
+                    (
+                        PropKey::Text,
+                        PropValue::String(
+                            "A long scrolling label that must not wrap to the viewport width"
+                                .to_owned(),
+                        ),
+                    ),
+                    (PropKey::FontSize, PropValue::Float(14.0)),
+                    (PropKey::LineHeight, PropValue::Float(20.0)),
+                ],
+            ),
+        );
+        let layouts = calculate(&tree, viewport).expect("natural text width in horizontal scroll");
+        assert!(layouts[&3].width > viewport.width);
+        assert_eq!(layouts[&4].height, 20.0);
+        assert_eq!(layouts[&2].height, 36.0);
+    }
+
+    #[test]
+    fn horizontal_scroll_reserves_widest_grow_share() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Scroll,
+                        [(PropKey::ScrollHorizontal, PropValue::Boolean(true))],
+                    ),
+                ),
+                (2, node(2, 1, 0, NodeKind::Row, [])),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(120.0)),
+                            (PropKey::FlexGrow, PropValue::Float(1.0)),
+                        ],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        2,
+                        1,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(180.0)),
+                            (PropKey::FlexGrow, PropValue::Float(1.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 200.0,
+                height: 56.0,
+            },
+        )
+        .expect("equal grow content remains readable");
+        assert_eq!(layouts[&2].width, 360.0);
+        assert_eq!(layouts[&3].width, 180.0);
+        assert_eq!(layouts[&4].width, 180.0);
+    }
+
+    #[test]
+    fn edit_profile_scroll_content_wrapper_measures_its_padded_column() {
+        // Zé Chat Editar perfil, dumped from the S10 (ids, parents, kinds and
+        // every property): ScrollView > content Column > Column(paddingBottom 68).
+        let mut nodes = BTreeMap::from([
+            (1, node(1, 0, 0, NodeKind::Screen, [])),
+            (
+                2,
+                node(
+                    2,
+                    1,
+                    0,
+                    NodeKind::Scroll,
+                    [(PropKey::Height, PropValue::Float(725.9))],
+                ),
+            ),
+        ]);
+        let mut wrapper = 0;
+        for line in include_str!("fixtures/edit_profile_scroll.txt").lines() {
+            let fields: Vec<&str> = line.split('|').collect();
+            if fields.len() < 7 {
+                continue;
+            }
+            let id: u64 = fields[0].parse().unwrap();
+            let mut parent: u64 = fields[1].parse().unwrap();
+            if wrapper == 0 {
+                wrapper = id;
+                parent = 2;
+            }
+            let kind = NodeKind::try_from(fields[3].parse::<u8>().unwrap()).unwrap();
+            let mut properties = Vec::new();
+            for entry in fields[6].split(';').filter(|entry| !entry.is_empty()) {
+                let (key, value) = entry.split_once('=').unwrap();
+                let Ok(key) = PropKey::try_from(key.parse::<u16>().unwrap()) else {
+                    continue;
+                };
+                let (kind, raw) = value.split_once(':').unwrap();
+                let value = match kind {
+                    "s" => PropValue::String(raw.to_string()),
+                    "i" => PropValue::Integer(raw.parse().unwrap()),
+                    "f" => PropValue::Float(raw.parse().unwrap()),
+                    "b" => PropValue::Boolean(raw == "true"),
+                    _ => continue,
+                };
+                properties.push((key, value));
+            }
+            nodes.insert(
+                id,
+                node(id, parent, fields[2].parse().unwrap(), kind, properties),
+            );
+        }
+        let padded = *nodes
+            .values()
+            .find(|node| {
+                node.properties.contains_key(&PropKey::PaddingBottom) && node.parent == wrapper
+            })
+            .map(|node| &node.id)
+            .unwrap();
+        let tree = Tree { root: 1, nodes };
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 411.42856,
+                height: 868.5714,
+            },
+        )
+        .expect("edit profile layout");
+        assert!(
+            (layouts[&wrapper].height - layouts[&padded].height).abs() < 0.5,
+            "wrapper {:?} padded {:?}",
+            layouts[&wrapper],
+            layouts[&padded]
+        );
+    }
+
+    #[test]
+    fn scroll_wrapper_measures_contact_rows_like_their_layout() {
+        let f = |v: f64| PropValue::Float(v);
+        let mut nodes = vec![
+            node(1, 0, 0, NodeKind::Screen, []),
+            node(2, 1, 0, NodeKind::Scroll, []),
+            node(3, 2, 0, NodeKind::Column, []),
+            node(
+                4,
+                3,
+                0,
+                NodeKind::Column,
+                [(PropKey::PaddingBottom, f(68.0))],
+            ),
+            node(
+                5,
+                4,
+                0,
+                NodeKind::Column,
+                [
+                    (PropKey::PaddingTop, f(16.0)),
+                    (PropKey::PaddingLeft, f(16.0)),
+                    (PropKey::PaddingRight, f(16.0)),
+                ],
+            ),
+            node(
+                6,
+                5,
+                0,
+                NodeKind::View,
+                [(PropKey::Height, f(18.0)), (PropKey::MarginBottom, f(8.0))],
+            ),
+        ];
+        for row in 0..4u64 {
+            let id = 10 + row * 10;
+            nodes.push(node(
+                id,
+                5,
+                1 + row as u32,
+                NodeKind::Pressable,
+                [
+                    (PropKey::FlexDirection, PropValue::Integer(2)),
+                    (PropKey::Gap, f(10.0)),
+                    (PropKey::MinHeight, f(52.0)),
+                    (PropKey::PaddingTop, f(10.0)),
+                    (PropKey::PaddingBottom, f(10.0)),
+                    (PropKey::AlignItems, PropValue::Integer(2)),
+                ],
+            ));
+            nodes.push(node(
+                id + 1,
+                id,
+                0,
+                NodeKind::View,
+                [(PropKey::Height, f(36.0)), (PropKey::Width, f(36.0))],
+            ));
+            nodes.push(node(
+                id + 2,
+                id,
+                1,
+                NodeKind::Column,
+                [(PropKey::FlexGrow, f(1.0))],
+            ));
+            nodes.push(node(
+                id + 3,
+                id + 2,
+                0,
+                NodeKind::Text,
+                [
+                    (
+                        PropKey::Text,
+                        PropValue::String("Data de nascimento".into()),
+                    ),
+                    (PropKey::FontSize, f(15.0)),
+                ],
+            ));
+            nodes.push(node(
+                id + 4,
+                id + 2,
+                1,
+                NodeKind::Text,
+                [
+                    (PropKey::Text, PropValue::String("28/11/1994".into())),
+                    (PropKey::FontSize, f(13.0)),
+                    (PropKey::MarginTop, f(3.0)),
+                ],
+            ));
+            nodes.push(node(
+                id + 5,
+                id,
+                2,
+                NodeKind::View,
+                [
+                    (PropKey::MinHeight, f(28.0)),
+                    (PropKey::PaddingLeft, f(10.0)),
+                    (PropKey::PaddingRight, f(10.0)),
+                ],
+            ));
+            nodes.push(node(
+                id + 6,
+                id + 5,
+                0,
+                NodeKind::Text,
+                [
+                    (PropKey::Text, PropValue::String("Só você vê".into())),
+                    (PropKey::FontSize, f(11.0)),
+                ],
+            ));
+        }
+        let tree = Tree {
+            root: 1,
+            nodes: nodes.into_iter().map(|node| (node.id, node)).collect(),
+        };
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 411.0,
+                height: 800.0,
+            },
+        )
+        .expect("scroll layout");
+        let rows_bottom = layouts[&40].y + layouts[&40].height;
+        assert_eq!(
+            layouts[&4].y + layouts[&4].height,
+            rows_bottom + 68.0,
+            "inner column pads below the rows"
+        );
+        assert_eq!(
+            layouts[&3].height, layouts[&4].height,
+            "the wrapper measures its child like its layout"
+        );
+    }
+
+    #[test]
+    fn nested_scroll_content_column_measures_its_child_padding() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Screen, [])),
+                (2, node(2, 1, 0, NodeKind::Scroll, [])),
+                (3, node(3, 2, 0, NodeKind::Column, [])),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::Column,
+                        [(PropKey::PaddingBottom, PropValue::Float(68.0))],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        4,
+                        0,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(900.0))],
+                    ),
+                ),
+                (
+                    6,
+                    node(
+                        6,
+                        4,
+                        1,
+                        NodeKind::Pressable,
+                        [
+                            (PropKey::FlexDirection, PropValue::Integer(2)),
+                            (PropKey::MinHeight, PropValue::Float(52.0)),
+                            (PropKey::PaddingTop, PropValue::Float(10.0)),
+                            (PropKey::PaddingBottom, PropValue::Float(10.0)),
+                        ],
+                    ),
+                ),
+                (7, node(7, 6, 0, NodeKind::Column, [])),
+                (
+                    8,
+                    node(
+                        8,
+                        7,
+                        0,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(45.0))],
+                    ),
+                ),
+            ]),
+        };
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("scroll layout");
+        assert_eq!(layouts[&6].height, 65.0);
+        assert_eq!(layouts[&4].height, 1033.0);
+        assert_eq!(
+            layouts[&3].height, 1033.0,
+            "the wrapper keeps its child's padding"
+        );
+    }
+
+    #[test]
+    fn wrapping_row_in_a_vertical_scroll_measures_every_line() {
+        // Six 100x40 chips with a 10 gap in a 360 wide scroller padded by 20:
+        // 320 of width holds three per line, so two lines (40 + 10 + 40).
+        let chip = |id: u64, index: u32| {
+            (
+                id,
+                node(
+                    id,
+                    4,
+                    index,
+                    NodeKind::View,
+                    [
+                        (PropKey::Width, PropValue::Float(100.0)),
+                        (PropKey::Height, PropValue::Float(40.0)),
+                    ],
+                ),
+            )
+        };
+        let mut nodes = BTreeMap::from([
+            (1, node(1, 0, 0, NodeKind::Screen, [])),
+            (
+                2,
+                node(
+                    2,
+                    1,
+                    0,
+                    NodeKind::Scroll,
+                    [(PropKey::FlexGrow, PropValue::Float(1.0))],
+                ),
+            ),
+            (
+                3,
+                node(
+                    3,
+                    2,
+                    0,
+                    NodeKind::Column,
+                    [
+                        (PropKey::PaddingHorizontal, PropValue::Float(20.0)),
+                        (PropKey::PaddingBottom, PropValue::Float(16.0)),
+                    ],
+                ),
+            ),
+            (
+                4,
+                node(
+                    4,
+                    3,
+                    0,
+                    NodeKind::Row,
+                    [
+                        (PropKey::FlexWrap, PropValue::Integer(2)),
+                        (PropKey::Gap, PropValue::Float(10.0)),
+                    ],
+                ),
+            ),
+        ]);
+        for index in 0..6 {
+            let (id, chip) = chip(10 + u64::from(index), index);
+            nodes.insert(id, chip);
+        }
+        let layouts = calculate(
+            &Tree { root: 1, nodes },
+            Size {
+                width: 360.0,
+                height: 64.0,
+            },
+        )
+        .expect("scroll layout");
+        assert_eq!(layouts[&4].height, 90.0);
+        assert_eq!(layouts[&15].y, 50.0);
+        assert_eq!(layouts[&3].height, 106.0, "the content covers both lines");
+    }
+
+    #[test]
+    fn scroll_content_covers_wrapped_cells_with_two_line_labels() {
+        use PropValue::{Float as F, Integer as I};
+        let mut nodes = BTreeMap::from([
+            (1, node(1, 0, 0, NodeKind::Screen, [])),
+            (
+                2,
+                node(2, 1, 0, NodeKind::Scroll, [(PropKey::Height, F(100.0))]),
+            ),
+            (
+                3,
+                node(
+                    3,
+                    2,
+                    0,
+                    NodeKind::Column,
+                    [
+                        (PropKey::PaddingTop, F(14.0)),
+                        (PropKey::PaddingHorizontal, F(16.0)),
+                        (PropKey::PaddingBottom, F(12.0)),
+                    ],
+                ),
+            ),
+            (4, node(4, 3, 0, NodeKind::Row, [(PropKey::FlexWrap, I(2))])),
+        ]);
+        for index in 0..8_u64 {
+            let cell = 10 + index * 3;
+            nodes.insert(
+                cell,
+                node(
+                    cell,
+                    4,
+                    index as u32,
+                    NodeKind::Pressable,
+                    [
+                        (PropKey::Width, F(82.0)),
+                        (PropKey::AlignItems, I(2)),
+                        (PropKey::Gap, F(6.0)),
+                        (PropKey::MarginBottom, F(14.0)),
+                        (PropKey::PaddingHorizontal, F(3.0)),
+                    ],
+                ),
+            );
+            nodes.insert(
+                cell + 1,
+                node(
+                    cell + 1,
+                    cell,
+                    0,
+                    NodeKind::View,
+                    [(PropKey::Width, F(66.0)), (PropKey::Height, F(66.0))],
+                ),
+            );
+            nodes.insert(
+                cell + 2,
+                node(
+                    cell + 2,
+                    cell,
+                    1,
+                    NodeKind::Text,
+                    [
+                        (
+                            PropKey::Text,
+                            PropValue::String("Sofie Lollipop VIP".into()),
+                        ),
+                        (PropKey::FontSize, F(12.0)),
+                        (PropKey::LineHeight, F(16.0)),
+                        (PropKey::NumberOfLines, I(2)),
+                    ],
+                ),
+            );
+        }
+        let layouts = calculate(
+            &Tree { root: 1, nodes },
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("layout");
+        let label = layouts[&(10 + 7 * 3 + 2)];
+        let last = layouts[&(10 + 7 * 3)];
+        // Both lines are 66 + 6 + two 16 dp label lines tall (+14 margin).
+        assert_eq!(layouts[&10].height, 104.0);
+        assert_eq!(last.height, 104.0);
+        assert_eq!(label.y + label.height, last.y + last.height);
+        assert_eq!(layouts[&4].height, 236.0);
+        assert_eq!(
+            layouts[&3].height,
+            14.0 + 236.0 + 12.0,
+            "the content ends below the last labels"
+        );
+    }
+
+    #[test]
+    fn scroll_content_extent_includes_the_content_padding_bottom() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Screen, [])),
+                (2, node(2, 1, 0, NodeKind::Scroll, [])),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::Column,
+                        [(PropKey::PaddingBottom, PropValue::Float(68.0))],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(900.0))],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        3,
+                        1,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(1.0))],
+                    ),
+                ),
+            ]),
+        };
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("scroll layout");
+        assert_eq!(layouts[&3].height, 969.0);
+        assert_eq!(layouts[&5].y, 900.0);
+    }
+
+    #[test]
+    fn scroll_content_keeps_its_natural_extent_on_both_axes() {
+        let horizontal = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Scroll,
+                        [
+                            (PropKey::ScrollHorizontal, PropValue::Boolean(true)),
+                            (PropKey::ScrollFillViewport, PropValue::Boolean(false)),
+                        ],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Row,
+                        [
+                            (PropKey::FlexDirection, PropValue::Integer(2)),
+                            (PropKey::Gap, PropValue::Float(8.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::View,
+                        [(PropKey::Width, PropValue::Float(120.0))],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        2,
+                        1,
+                        NodeKind::View,
+                        [(PropKey::Width, PropValue::Float(120.0))],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        2,
+                        2,
+                        NodeKind::View,
+                        [(PropKey::Width, PropValue::Float(120.0))],
+                    ),
+                ),
+            ]),
+        };
+        let horizontal_layouts = calculate(
+            &horizontal,
+            Size {
+                width: 300.0,
+                height: 80.0,
+            },
+        )
+        .expect("horizontal scroll layout");
+        assert_eq!(horizontal_layouts[&2].width, 376.0);
+        assert_eq!(horizontal_layouts[&5].x, 256.0);
+
+        let vertical = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Scroll,
+                        [(PropKey::ScrollFillViewport, PropValue::Boolean(false))],
+                    ),
+                ),
+                (2, node(2, 1, 0, NodeKind::Column, [])),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(150.0))],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        2,
+                        1,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(150.0))],
+                    ),
+                ),
+            ]),
+        };
+        let vertical_layouts = calculate(
+            &vertical,
+            Size {
+                width: 100.0,
+                height: 200.0,
+            },
+        )
+        .expect("vertical scroll layout");
+        assert_eq!(vertical_layouts[&2].height, 300.0);
+        assert_eq!(vertical_layouts[&4].y, 150.0);
+    }
+
+    #[test]
+    fn percentage_height_inside_auto_content_resolves_after_intrinsic_measurement() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Scroll, [])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Column,
+                        [(PropKey::FlexDirection, PropValue::Integer(1))],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::View,
+                        [(PropKey::Padding, PropValue::Float(16.0))],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::Pressable,
+                        [(PropKey::FlexDirection, PropValue::Integer(2))],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        4,
+                        0,
+                        NodeKind::Input,
+                        [(PropKey::HeightPercent, PropValue::Float(100.0))],
+                    ),
+                ),
+                (
+                    6,
+                    node(
+                        6,
+                        4,
+                        1,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(24.0)),
+                            (PropKey::Height, PropValue::Float(24.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("layout");
+
+        // The row is driven by its 24pt icon; the empty input is one text line.
+        assert_eq!(layouts[&3].height, 56.0);
+        assert_eq!(layouts[&4].height, 24.0);
+        assert_eq!(layouts[&5].height, 24.0);
+        assert!(layouts.values().all(|frame| frame.height <= 640.0));
+    }
+
+    #[test]
+    fn bottom_sheet_content_fills_the_snap_panel_not_the_window() {
+        let mut snap = 1_u16.to_le_bytes().to_vec();
+        snap.extend_from_slice(&0.82_f64.to_le_bytes());
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Column, [])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Modal,
+                        [
+                            (PropKey::ModalPresentation, PropValue::Integer(3)),
+                            (PropKey::BottomSheetSnapPoints, PropValue::Bytes(snap)),
+                            (PropKey::BottomSheetIndex, PropValue::Integer(0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::Column,
+                        [(PropKey::FlexGrow, PropValue::Float(1.0))],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::Column,
+                        [(PropKey::FlexGrow, PropValue::Float(1.0))],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        3,
+                        1,
+                        NodeKind::Column,
+                        [(PropKey::Height, PropValue::Float(48.0))],
+                    ),
+                ),
+            ]),
+        };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 402.0,
+                height: 874.0,
+            },
+        )
+        .expect("sheet layout");
+        let panel = 874.0 * 0.82;
+        assert!(
+            (layout[&3].height - panel).abs() < 0.01,
+            "panel {:?}",
+            layout[&3]
+        );
+        assert!((layout[&3].y + layout[&3].height - 874.0).abs() < 0.01);
+        // The composer ends at the panel bottom, inside the visible sheet.
+        assert!(
+            (layout[&5].y + layout[&5].height - 874.0).abs() < 0.01,
+            "composer {:?}",
+            layout[&5]
+        );
+        assert!((layout[&5].y - layout[&3].y - (panel - 48.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn modal_is_a_viewport_portal_and_does_not_consume_parent_flow() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Column,
+                        [(PropKey::Gap, PropValue::Float(10.0))],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(20.0))],
+                    ),
+                ),
+                (3, node(3, 1, 1, NodeKind::Modal, [])),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::PositionType, PropValue::Integer(2)),
+                            (PropKey::Left, PropValue::Float(0.0)),
+                            (PropKey::Top, PropValue::Float(0.0)),
+                            (PropKey::Right, PropValue::Float(0.0)),
+                            (PropKey::Bottom, PropValue::Float(0.0)),
+                        ],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        1,
+                        2,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(20.0))],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("modal portal layout");
+
+        assert_eq!(layouts[&3].width, 360.0);
+        assert_eq!(layouts[&3].height, 640.0);
+        assert_eq!(layouts[&4].width, 360.0);
+        assert_eq!(layouts[&4].height, 640.0);
+        assert_eq!(layouts[&5].y, 30.0);
+    }
+
+    #[test]
+    fn dialog_modal_growing_child_fills_the_window_like_react_native() {
+        // RN: `<Modal transparent><View style={{flex: 1}}>` spans the window;
+        // a card inside it is placed by that full-window view (flex-end here).
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Column, [])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Modal,
+                        [(PropKey::ModalPresentation, PropValue::Integer(2))],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::Column,
+                        [
+                            (PropKey::FlexGrow, PropValue::Float(1.0)),
+                            (PropKey::JustifyContent, PropValue::Integer(3)),
+                        ],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::Column,
+                        [(PropKey::Height, PropValue::Float(100.0))],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("dialog growing layout");
+        let scrim = layouts[&3];
+        assert_eq!(
+            (scrim.x, scrim.y, scrim.width, scrim.height),
+            (0.0, 0.0, 360.0, 640.0)
+        );
+        let card = layouts[&4];
+        assert_eq!(card.width, 360.0);
+        assert_eq!(card.height, 100.0);
+        assert_eq!(card.y, 540.0);
+    }
+
+    #[test]
+    fn dialog_modal_centers_percent_width_card_at_intrinsic_height() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Column, [])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Modal,
+                        [(PropKey::ModalPresentation, PropValue::Integer(2))],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::Column,
+                        [
+                            (PropKey::WidthPercent, PropValue::Float(88.0)),
+                            (PropKey::Padding, PropValue::Float(20.0)),
+                            (PropKey::Gap, PropValue::Float(8.0)),
+                        ],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::Text,
+                        [(PropKey::Height, PropValue::Float(40.0))],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        3,
+                        1,
+                        NodeKind::Text,
+                        [(PropKey::Height, PropValue::Float(20.0))],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("dialog intrinsic layout");
+        let card = layouts[&3];
+
+        assert!((card.width - 316.8).abs() < 0.001);
+        assert!((card.x - 21.6).abs() < 0.001);
+        assert_eq!(card.height, 108.0);
+        assert_eq!(card.y, 266.0);
+    }
+
+    #[test]
+    fn nested_auto_sized_containers_expand_to_fit_wrapped_text_and_controls() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Screen,
+                        [
+                            (PropKey::AlignItems, PropValue::Integer(2)),
+                            (PropKey::JustifyContent, PropValue::Integer(2)),
+                        ],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(300.0)),
+                            (PropKey::Padding, PropValue::Float(24.0)),
+                            (PropKey::Gap, PropValue::Float(24.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::Column,
+                        [(PropKey::Gap, PropValue::Float(8.0))],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::Text,
+                        [
+                            (
+                                PropKey::Text,
+                                PropValue::String("Build native apps with PHP".into()),
+                            ),
+                            (PropKey::FontSize, PropValue::Float(36.0)),
+                            (PropKey::LineHeight, PropValue::Float(50.4)),
+                        ],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        3,
+                        1,
+                        NodeKind::Text,
+                        [
+                            (
+                                PropKey::Text,
+                                PropValue::String(
+                                    "Accessible official components on the PAM Desktop renderer."
+                                        .into(),
+                                ),
+                            ),
+                            (PropKey::FontSize, PropValue::Float(14.0)),
+                            (PropKey::LineHeight, PropValue::Float(19.6)),
+                        ],
+                    ),
+                ),
+                (
+                    6,
+                    node(
+                        6,
+                        2,
+                        1,
+                        NodeKind::Pressable,
+                        [
+                            (PropKey::MinHeight, PropValue::Float(52.0)),
+                            (PropKey::PaddingHorizontal, PropValue::Float(24.0)),
+                        ],
+                    ),
+                ),
+                (
+                    7,
+                    node(
+                        7,
+                        6,
+                        0,
+                        NodeKind::Text,
+                        [
+                            (PropKey::Text, PropValue::String("Native taps: 0".into())),
+                            (PropKey::FontSize, PropValue::Float(14.0)),
+                            (PropKey::LineHeight, PropValue::Float(19.6)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 800.0,
+            },
+        )
+        .expect("content-sized layout");
+        let card = layouts[&2];
+        let stack = layouts[&3];
+        let heading = layouts[&4];
+        let description = layouts[&5];
+        let button = layouts[&6];
+
+        assert!(card.height > DEFAULT_CONTROL_HEIGHT);
+        assert!(heading.height >= 100.0, "heading should wrap to two lines");
+        assert!(description.y >= heading.y + heading.height);
+        assert!(button.y >= stack.y + stack.height);
+        assert!(
+            button.y + button.height <= card.y + card.height,
+            "card={card:?} stack={stack:?} button={button:?}",
+        );
+    }
+
+    #[test]
+    fn compound_custom_view_expands_to_fit_its_children() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Column, [])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::CustomView,
+                        [
+                            (PropKey::PaddingVertical, PropValue::Float(2.0)),
+                            (PropKey::Gap, PropValue::Float(4.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::Text,
+                        [
+                            (PropKey::Text, PropValue::String("Email".into())),
+                            (PropKey::LineHeight, PropValue::Float(20.0)),
+                        ],
+                    ),
+                ),
+                (4, node(4, 2, 1, NodeKind::Input, [])),
+                (
+                    5,
+                    node(
+                        5,
+                        2,
+                        2,
+                        NodeKind::Text,
+                        [
+                            (
+                                PropKey::Text,
+                                PropValue::String("We never share your email.".into()),
+                            ),
+                            (PropKey::LineHeight, PropValue::Float(20.0)),
+                        ],
+                    ),
+                ),
+                (
+                    6,
+                    node(
+                        6,
+                        1,
+                        1,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(24.0))],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 320.0,
+                height: 640.0,
+            },
+        )
+        .expect("compound custom view layout");
+
+        // 4pt padding + 8pt gaps + two 20pt labels + 19.6pt input.
+        assert_eq!(layouts[&2].height, 71.6);
+        assert_eq!(layouts[&6].y, 71.6);
+        assert!(layouts[&5].y >= layouts[&4].y + layouts[&4].height);
+    }
+
+    #[test]
+    fn nested_row_keeps_explicit_cross_axis_height_for_stacked_controls() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Column, [])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::CustomView,
+                        [(PropKey::WidthPercent, PropValue::Float(100.0))],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::Height, PropValue::Float(112.0)),
+                            (PropKey::MinHeight, PropValue::Float(112.0)),
+                            (PropKey::PaddingHorizontal, PropValue::Float(16.0)),
+                        ],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::Text,
+                        [
+                            (PropKey::Text, PropValue::String("Number Input".into())),
+                            (PropKey::LineHeight, PropValue::Float(16.0)),
+                        ],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        3,
+                        1,
+                        NodeKind::Row,
+                        [
+                            (PropKey::WidthPercent, PropValue::Float(100.0)),
+                            (PropKey::Gap, PropValue::Float(4.0)),
+                        ],
+                    ),
+                ),
+                (
+                    6,
+                    node(
+                        6,
+                        5,
+                        0,
+                        NodeKind::Input,
+                        [
+                            (PropKey::Height, PropValue::Float(96.0)),
+                            (PropKey::FlexGrow, PropValue::Float(1.0)),
+                            (PropKey::MinWidth, PropValue::Float(64.0)),
+                        ],
+                    ),
+                ),
+                (
+                    7,
+                    node(
+                        7,
+                        5,
+                        1,
+                        NodeKind::Column,
+                        [
+                            (PropKey::Width, PropValue::Float(48.0)),
+                            (PropKey::Height, PropValue::Float(96.0)),
+                        ],
+                    ),
+                ),
+                (
+                    8,
+                    node(
+                        8,
+                        7,
+                        0,
+                        NodeKind::Pressable,
+                        [
+                            (PropKey::Width, PropValue::Float(48.0)),
+                            (PropKey::Height, PropValue::Float(48.0)),
+                        ],
+                    ),
+                ),
+                (
+                    9,
+                    node(
+                        9,
+                        7,
+                        1,
+                        NodeKind::Pressable,
+                        [
+                            (PropKey::Width, PropValue::Float(48.0)),
+                            (PropKey::Height, PropValue::Float(48.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("stacked number input layout");
+
+        assert_eq!(layouts[&3].height, 112.0);
+        assert_eq!(layouts[&5].height, 96.0);
+        assert_eq!(layouts[&6].height, 96.0);
+        assert_eq!(layouts[&7].height, 96.0);
+        assert_eq!(layouts[&8].height, 48.0);
+        assert_eq!(layouts[&9].height, 48.0);
+        assert_eq!(layouts[&9].y, layouts[&8].y + layouts[&8].height);
+    }
+
+    #[test]
+    fn native_grid_uses_its_authored_minimum_instead_of_fallback_child_flow() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Column, [])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::CustomView,
+                        [
+                            (
+                                PropKey::HostName,
+                                PropValue::String("pam.mobile_ui.grid".into()),
+                            ),
+                            (PropKey::MinHeight, PropValue::Float(108.0)),
+                            (PropKey::Gap, PropValue::Float(12.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(108.0))],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        2,
+                        1,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(108.0))],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        1,
+                        1,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(24.0))],
+                    ),
+                ),
+            ]),
+        };
+
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 320.0,
+                height: 640.0,
+            },
+        )
+        .expect("native grid layout");
+
+        assert_eq!(layouts[&2].height, 108.0);
+        assert_eq!(layouts[&5].y, 108.0);
+    }
+
+    fn input_height(properties: impl IntoIterator<Item = (PropKey, PropValue)>) -> f32 {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Column, [])),
+                (2, node(2, 1, 0, NodeKind::Input, properties)),
+            ]),
+        };
+        calculate(
+            &tree,
+            Size {
+                width: 100.0,
+                height: 640.0,
+            },
+        )
+        .expect("input layout")[&2]
+            .height
+    }
+
+    #[test]
+    fn input_intrinsic_height_is_one_line_plus_authored_padding_and_border() {
+        assert!((input_height([]) - 19.6).abs() < 0.001);
+        assert_eq!(
+            input_height([
+                (PropKey::LineHeight, PropValue::Float(22.0)),
+                (PropKey::Padding, PropValue::Float(12.0)),
+                (PropKey::PaddingVertical, PropValue::Float(7.0)),
+                (PropKey::PaddingBottom, PropValue::Float(3.0)),
+                (PropKey::BorderWidth, PropValue::Float(1.0)),
+                (
+                    PropKey::Text,
+                    PropValue::String("long input text that wraps\nand has a newline".into())
+                ),
+            ]),
+            34.0
+        );
+    }
+
+    #[test]
+    fn input_respects_explicit_height_and_minimum_height() {
+        assert_eq!(
+            input_height([
+                (PropKey::LineHeight, PropValue::Float(22.0)),
+                (PropKey::PaddingVertical, PropValue::Float(10.0)),
+                (PropKey::Height, PropValue::Float(30.0)),
+            ]),
+            30.0
+        );
+        assert_eq!(
+            input_height([
+                (PropKey::LineHeight, PropValue::Float(22.0)),
+                (PropKey::MinHeight, PropValue::Float(42.0)),
+            ]),
+            42.0
+        );
+    }
+
+    #[test]
+    fn multiline_input_grows_with_content_and_caps_at_maximum_height() {
+        let mut properties = vec![
+            (PropKey::Multiline, PropValue::Boolean(true)),
+            (PropKey::LineHeight, PropValue::Float(20.0)),
+            (PropKey::PaddingVertical, PropValue::Float(5.0)),
+            (PropKey::Text, PropValue::String("one\ntwo\nthree".into())),
+        ];
+        assert_eq!(input_height(properties.clone()), 70.0);
+        properties.push((PropKey::MaxHeight, PropValue::Float(50.0)));
+        assert_eq!(input_height(properties), 50.0);
+        assert!(
+            input_height([
+                (PropKey::Multiline, PropValue::Boolean(true)),
+                (PropKey::LineHeight, PropValue::Float(20.0)),
+                (PropKey::PaddingHorizontal, PropValue::Float(30.0)),
+                (
+                    PropKey::Text,
+                    PropValue::String("one two three four five six".into())
+                ),
+            ]) > 20.0
+        );
+    }
+
+    #[test]
+    fn text_measurement_honors_explicit_line_height_and_number_of_lines() {
+        let text = node(
+            1,
+            0,
+            0,
+            NodeKind::Text,
+            [
+                (
+                    PropKey::Text,
+                    PropValue::String("one two three four five six".into()),
+                ),
+                (PropKey::FontSize, PropValue::Float(20.0)),
+                (PropKey::LineHeight, PropValue::Float(30.0)),
+                (PropKey::NumberOfLines, PropValue::Integer(2)),
+            ],
+        );
+
+        assert_eq!(text_extent(&text, Axis::Vertical, 70.0, 1.0, None), 60.0);
+    }
+
+    #[test]
+    fn text_measurement_tracks_android_font_scale_and_respects_opt_out() {
+        let scalable = node(
+            1,
+            0,
+            0,
+            NodeKind::Text,
+            [
+                (PropKey::Text, PropValue::String("PamUI".into())),
+                (PropKey::FontSize, PropValue::Float(20.0)),
+                (PropKey::LineHeight, PropValue::Float(28.0)),
+            ],
+        );
+        let fixed = node(
+            2,
+            0,
+            0,
+            NodeKind::Text,
+            [
+                (PropKey::Text, PropValue::String("PamUI".into())),
+                (PropKey::FontSize, PropValue::Float(20.0)),
+                (PropKey::LineHeight, PropValue::Float(28.0)),
+                (PropKey::TextAllowFontScaling, PropValue::Boolean(false)),
+            ],
+        );
+
+        assert_eq!(
+            text_extent(&scalable, Axis::Vertical, 200.0, 1.5, None),
+            42.0,
+        );
+        assert_eq!(text_extent(&fixed, Axis::Vertical, 200.0, 1.5, None), 28.0);
+    }
+
+    #[test]
+    fn text_measurement_uses_the_rendered_case_transform() {
+        let plain = node(
+            1,
+            0,
+            0,
+            NodeKind::Text,
+            [
+                (
+                    PropKey::Text,
+                    PropValue::String("pushinbr/pam-desktop-ui".into()),
+                ),
+                (PropKey::FontSize, PropValue::Float(12.0)),
+            ],
+        );
+        let uppercase = node(
+            2,
+            0,
+            0,
+            NodeKind::Text,
+            [
+                (
+                    PropKey::Text,
+                    PropValue::String("pushinbr/pam-desktop-ui".into()),
+                ),
+                (PropKey::FontSize, PropValue::Float(12.0)),
+                (PropKey::TextTransform, PropValue::Integer(2)),
+            ],
+        );
+
+        assert!(
+            text_extent(&uppercase, Axis::Horizontal, 400.0, 1.0, None)
+                > text_extent(&plain, Axis::Horizontal, 400.0, 1.0, None),
+        );
+    }
+
+    #[test]
+    fn exact_intrinsic_text_width_does_not_create_a_phantom_line() {
+        let font_size = 15.4;
+        let letter_spacing = 0.0;
+        let label = "Open modal";
+        let intrinsic = estimated_text_width(label, font_size, letter_spacing);
+
+        assert_eq!(
+            wrapped_text_lines(label, font_size, letter_spacing, intrinsic),
+            vec![label],
+        );
+    }
+
+    #[test]
+    fn intrinsic_text_width_tracks_platform_advances_with_subpixel_tolerance() {
+        let font_size = 14.0;
+        let raw_glyph_width = "Paid"
+            .chars()
+            .map(|character| estimated_character_width(character, font_size))
+            .sum::<f32>();
+
+        assert!(estimated_text_width("Paid", font_size, 0.0) > raw_glyph_width);
+        assert_eq!(
+            estimated_text_width("Paid", font_size, 0.0) - raw_glyph_width * 1.09,
+            0.5,
+        );
+    }
+
+    #[test]
+    fn loaded_font_advances_replace_the_generic_width_estimator() {
+        let advances = BTreeMap::from([
+            ('S', 0.61),
+            ('e', 0.54),
+            ('g', 0.56),
+            ('u', 0.56),
+            ('i', 0.25),
+            ('d', 0.57),
+            ('o', 0.56),
+            ('r', 0.36),
+            ('s', 0.49),
+        ]);
+        let font_size = 15.0;
+        let expected = "Seguidores"
+            .chars()
+            .map(|character| advances[&character] * font_size)
+            .sum::<f32>();
+
+        assert_eq!(
+            measured_text_width("Seguidores", font_size, 0.0, Some(&advances)),
+            expected * 1.02 + 0.5,
+        );
+    }
+
+    #[test]
+    fn loaded_font_intrinsic_width_keeps_platform_subpixel_guard() {
+        let advances = BTreeMap::from([
+            (' ', 0.25),
+            ('?', 0.54),
+            ('Q', 0.61),
+            ('a', 0.54),
+            ('c', 0.49),
+            ('e', 0.54),
+            ('m', 0.78),
+            ('o', 0.56),
+            ('p', 0.56),
+            ('r', 0.32),
+            ('u', 0.56),
+        ]);
+        let label = "Quer comprar ?";
+        let raw = label
+            .chars()
+            .map(|character| advances[&character] * 16.0)
+            .sum::<f32>();
+        let intrinsic = measured_text_width(label, 16.0, 0.0, Some(&advances));
+
+        assert!((intrinsic - (raw * 1.02 + 0.5)).abs() < 0.01);
+        assert_eq!(
+            wrapped_text_lines_with_metrics(label, 16.0, 0.0, intrinsic, Some(&advances)),
+            vec![label],
+        );
+    }
+
+    #[test]
+    fn icon_and_packaged_font_label_stay_centered_as_one_group() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Row,
+                        [
+                            (PropKey::Height, PropValue::Float(56.0)),
+                            (PropKey::Gap, PropValue::Float(8.0)),
+                            (PropKey::AlignItems, PropValue::Integer(2)),
+                            (PropKey::JustifyContent, PropValue::Integer(2)),
+                        ],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Image,
+                        [
+                            (PropKey::Width, PropValue::Float(18.0)),
+                            (PropKey::Height, PropValue::Float(18.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        1,
+                        1,
+                        NodeKind::Text,
+                        [
+                            (PropKey::Text, PropValue::String("Zé Chat".into())),
+                            (PropKey::FontSize, PropValue::Float(18.0)),
+                            (PropKey::LineHeight, PropValue::Float(24.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+        let metrics = TextMetrics::from([(
+            3,
+            std::sync::Arc::new(BTreeMap::from([
+                ('Z', 0.62),
+                ('é', 0.54),
+                (' ', 0.25),
+                ('C', 0.64),
+                ('h', 0.56),
+                ('a', 0.53),
+                ('t', 0.34),
+            ])),
+        )]);
+
+        let layouts = calculate_with_text_metrics(
+            &tree,
+            Size {
+                width: 320.0,
+                height: 56.0,
+            },
+            1.1,
+            &metrics,
+        )
+        .expect("centered icon and text layout");
+        let icon = layouts[&2];
+        let label = layouts[&3];
+
+        assert!((label.x - (icon.x + icon.width) - 8.0).abs() < f32::EPSILON);
+        assert!(((icon.x + label.x + label.width) / 2.0 - 160.0).abs() < 0.001);
+        assert!(((icon.y + icon.height / 2.0) - 28.0).abs() < 0.001);
+        assert!(((label.y + label.height / 2.0) - 28.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn logical_letter_spacing_is_not_multiplied_by_font_size() {
+        let compact = node(
+            1,
+            0,
+            0,
+            NodeKind::Text,
+            [
+                (PropKey::Text, PropValue::String("ABC".into())),
+                (PropKey::FontSize, PropValue::Float(20.0)),
+                (PropKey::LetterSpacing, PropValue::Float(0.6)),
+            ],
+        );
+        let without_spacing = estimated_text_width("ABC", 20.0, 0.0);
+        let with_spacing = text_extent(&compact, Axis::Horizontal, 320.0, 1.0, None);
+
+        assert!((with_spacing - without_spacing - 1.308).abs() < 0.01);
+    }
+
+    #[test]
+    fn intrinsic_text_extent_includes_authored_padding() {
+        let padded = node(
+            1,
+            0,
+            0,
+            NodeKind::Text,
+            [
+                (PropKey::Text, PropValue::String("Cell".into())),
+                (PropKey::FontSize, PropValue::Float(16.0)),
+                (PropKey::LineHeight, PropValue::Float(22.0)),
+                (PropKey::PaddingHorizontal, PropValue::Float(24.0)),
+                (PropKey::PaddingVertical, PropValue::Float(14.0)),
+            ],
+        );
+
+        assert_eq!(
+            intrinsic_extent(
+                &BTreeMap::new(),
+                &padded,
+                Axis::Vertical,
+                320.0,
+                640.0,
+                1.0,
+                &TextMetrics::new(),
+                0,
+            )
+            .expect("padded text height"),
+            50.0,
+        );
+        assert!(
+            intrinsic_extent(
+                &BTreeMap::new(),
+                &padded,
+                Axis::Horizontal,
+                320.0,
+                640.0,
+                1.0,
+                &TextMetrics::new(),
+                0,
+            )
+            .expect("padded text width")
+                > 48.0,
+        );
+    }
+
+    #[test]
+    fn intrinsic_button_fits_its_label_and_horizontal_insets() {
+        let button = node(
+            1,
+            0,
+            0,
+            NodeKind::Button,
+            [
+                (
+                    PropKey::Text,
+                    PropValue::String("Try an interaction".into()),
+                ),
+                (PropKey::PaddingLeft, PropValue::Float(18.0)),
+                (PropKey::PaddingRight, PropValue::Float(18.0)),
+            ],
+        );
+        let text_width = text_extent(&button, Axis::Horizontal, f32::INFINITY, 1.0, None);
+        let width = leaf_intrinsic(&button, Axis::Horizontal, 1.0, None);
+        assert!(width >= text_width + 36.0);
+        assert!(width > 100.0);
+        assert!(leaf_intrinsic(&button, Axis::Horizontal, 2.0, None) > width);
+    }
+
+    #[test]
+    fn intrinsic_switch_matches_react_native_geometry() {
+        let switch = node(1, 0, 0, NodeKind::Switch, []);
+
+        assert_eq!(
+            leaf_intrinsic(&switch, Axis::Horizontal, 1.0, None),
+            DEFAULT_SWITCH_WIDTH,
+        );
+        assert_eq!(
+            leaf_intrinsic(&switch, Axis::Vertical, 1.0, None),
+            DEFAULT_SWITCH_HEIGHT,
+        );
+
+        // iOS: the host reports the UISwitch size; invalid values restore the default.
+        set_host_switch_size(63.0, 28.0);
+        assert_eq!(leaf_intrinsic(&switch, Axis::Horizontal, 1.0, None), 63.0);
+        assert_eq!(leaf_intrinsic(&switch, Axis::Vertical, 1.0, None), 28.0);
+        set_host_switch_size(f32::NAN, 28.0);
+        assert_eq!(
+            leaf_intrinsic(&switch, Axis::Horizontal, 1.0, None),
+            DEFAULT_SWITCH_WIDTH
+        );
+        assert_eq!(
+            leaf_intrinsic(&switch, Axis::Vertical, 1.0, None),
+            DEFAULT_SWITCH_HEIGHT
+        );
+    }
+
+    #[test]
+    fn responsive_grid_wraps_spans_and_reflows_at_breakpoints() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::Row,
+                [
+                    (PropKey::GridColumns, PropValue::Integer(12)),
+                    (PropKey::GridColumnGap, PropValue::Float(12.0)),
+                    (PropKey::GridRowGap, PropValue::Float(8.0)),
+                ],
+            ),
+        );
+        for (index, id) in [2_u64, 3, 4].into_iter().enumerate() {
+            nodes.insert(
+                id,
+                node(
+                    id,
+                    1,
+                    index as u32,
+                    NodeKind::View,
+                    [
+                        (PropKey::GridSpan, PropValue::Integer(6)),
+                        (PropKey::GridSpanMd, PropValue::Integer(4)),
+                        (PropKey::Height, PropValue::Float(40.0)),
+                    ],
+                ),
+            );
+        }
+        let tree = Tree { root: 1, nodes };
+
+        let phone = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 300.0,
+            },
+        )
+        .expect("phone grid");
+        assert_eq!(phone[&2].width, 174.0);
+        assert_eq!(phone[&3].x, 186.0);
+        assert_eq!(phone[&4].y, 48.0);
+
+        let tablet = calculate(
+            &tree,
+            Size {
+                width: 900.0,
+                height: 300.0,
+            },
+        )
+        .expect("tablet grid");
+        assert_eq!(tablet[&2].width, 292.0);
+        assert_eq!(tablet[&3].x, 304.0);
+        assert_eq!(tablet[&4].x, 608.0);
+        assert_eq!(tablet[&4].y, 0.0);
+    }
+
+    #[test]
+    fn grid_fractional_tracks_apply_to_frames_intrinsic_height_and_responsive_override() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(100, node(100, 0, 0, NodeKind::Column, []));
+        nodes.insert(
+            1,
+            node(
+                1,
+                100,
+                0,
+                NodeKind::Column,
+                [
+                    (PropKey::GridColumns, PropValue::Integer(2)),
+                    (PropKey::GridColumnGap, PropValue::Float(12.0)),
+                    (PropKey::GridRowGap, PropValue::Float(10.0)),
+                    (
+                        PropKey::GridTracks,
+                        PropValue::String("0,1.8;300,0.9".into()),
+                    ),
+                ],
+            ),
+        );
+        for id in 2..=4 {
+            nodes.insert(
+                id,
+                node(
+                    id,
+                    1,
+                    (id - 2) as u32,
+                    NodeKind::View,
+                    [
+                        (PropKey::GridSpan, PropValue::Integer(1)),
+                        (PropKey::Height, PropValue::Float(40.0)),
+                    ],
+                ),
+            );
+        }
+        let mut tree = Tree { root: 100, nodes };
+        let wide = calculate(
+            &tree,
+            Size {
+                width: 1212.0,
+                height: 500.0,
+            },
+        )
+        .unwrap();
+        assert!((wide[&2].width - 800.0).abs() < 0.01);
+        assert!((wide[&3].width - 400.0).abs() < 0.01);
+        assert!((wide[&3].x - 812.0).abs() < 0.01);
+        assert_eq!(wide[&1].height, 90.0);
+        assert_eq!(wide[&4].y, 50.0);
+        let narrow = calculate(
+            &tree,
+            Size {
+                width: 612.0,
+                height: 500.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(narrow[&2].width, 300.0);
+        assert_eq!(narrow[&3].width, 300.0);
+        tree.nodes.get_mut(&1).unwrap().properties.insert(
+            PropKey::GridTemplate,
+            PropValue::String("0,1,0,10;800,2,12,10".into()),
+        );
+        let responsive = calculate(
+            &tree,
+            Size {
+                width: 612.0,
+                height: 500.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(responsive[&2].width, 612.0);
+        assert_eq!(responsive[&1].height, 140.0);
+    }
+
+    #[test]
+    fn grid_template_reflows_columns_gutters_and_sixth_tier_spans() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(100, node(100, 0, 0, NodeKind::Column, []));
+        nodes.insert(
+            1,
+            node(
+                1,
+                100,
+                0,
+                NodeKind::Column,
+                [(
+                    PropKey::GridTemplate,
+                    PropValue::String(
+                        "0,2,10,8;640,3,12,8;768,3,12,8;1024,3,12,8;1280,3,12,8;1536,4,16,8".into(),
+                    ),
+                )],
+            ),
+        );
+        for id in 2..=4 {
+            nodes.insert(
+                id,
+                node(
+                    id,
+                    1,
+                    (id - 2) as u32,
+                    NodeKind::View,
+                    [
+                        (PropKey::GridSpan, PropValue::Integer(1)),
+                        (
+                            PropKey::GridSpan2xl,
+                            PropValue::Integer(if id == 2 { 2 } else { 1 }),
+                        ),
+                        (PropKey::Height, PropValue::Float(40.0)),
+                    ],
+                ),
+            );
+        }
+        let mut tree = Tree { root: 100, nodes };
+        let narrow = calculate(
+            &tree,
+            Size {
+                width: 639.0,
+                height: 500.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(narrow[&2].width, 314.5);
+        assert_eq!(narrow[&4].y, 48.0);
+        assert_eq!(narrow[&1].height, 88.0);
+        let wide = calculate(
+            &tree,
+            Size {
+                width: 640.0,
+                height: 500.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(wide[&4].y, 0.0);
+        assert_eq!(wide[&1].height, 40.0);
+        let sixth = calculate(
+            &tree,
+            Size {
+                width: 1536.0,
+                height: 500.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(sixth[&2].width, 760.0);
+        assert_eq!(sixth[&3].x, 776.0);
+        assert_eq!(sixth[&4].x, 1164.0);
+        tree.nodes
+            .get_mut(&1)
+            .unwrap()
+            .properties
+            .insert(PropKey::GridMinColumnWidth, PropValue::Float(500.0));
+        let fitted = calculate(
+            &tree,
+            Size {
+                width: 1536.0,
+                height: 500.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(fitted[&4].y, 48.0);
+        assert_eq!(fitted[&1].height, 88.0);
+        tree.nodes
+            .get_mut(&1)
+            .unwrap()
+            .properties
+            .insert(PropKey::GridTemplate, PropValue::String("broken".into()));
+        assert!(matches!(
+            calculate(
+                &tree,
+                Size {
+                    width: 640.0,
+                    height: 500.0
+                }
+            ),
+            Err(LayoutError::InvalidGridTemplate)
+        ));
+    }
+
+    #[test]
+    fn minimum_grid_column_width_reflows_columns_and_intrinsic_height_together() {
+        let mut nodes = BTreeMap::from([
+            (1, node(1, 0, 0, NodeKind::Column, [])),
+            (
+                2,
+                node(
+                    2,
+                    1,
+                    0,
+                    NodeKind::Column,
+                    [
+                        (PropKey::GridColumns, PropValue::Integer(4)),
+                        (PropKey::GridMinColumnWidth, PropValue::Float(120.0)),
+                        (PropKey::GridColumnGap, PropValue::Float(8.0)),
+                        (PropKey::GridRowGap, PropValue::Float(8.0)),
+                    ],
+                ),
+            ),
+        ]);
+        for index in 0..4 {
+            let id = index + 3;
+            nodes.insert(
+                id,
+                node(
+                    id,
+                    2,
+                    index as u32,
+                    NodeKind::View,
+                    [
+                        (PropKey::GridSpan, PropValue::Integer(1)),
+                        (PropKey::Height, PropValue::Float(40.0)),
+                    ],
+                ),
+            );
+        }
+        let tree = Tree { root: 1, nodes };
+        for (width, columns, height) in [
+            (100.0, 1, 184.0),
+            (247.0, 1, 184.0),
+            (248.0, 2, 88.0),
+            (360.0, 2, 88.0),
+            (600.0, 4, 40.0),
+            (2000.0, 4, 40.0),
+        ] {
+            let frames = calculate(
+                &tree,
+                Size {
+                    width,
+                    height: 800.0,
+                },
+            )
+            .expect("auto-fit grid");
+            let cell_width = (width - (columns - 1) as f32 * 8.0) / columns as f32;
+            assert_eq!(frames[&2].height, height);
+            assert_eq!(frames[&3].width, cell_width);
+            assert!(frames[&6].x + frames[&6].width <= width);
+            assert_eq!(frames[&6].y, ((4 - 1) / columns) as f32 * 48.0);
+        }
+    }
+
+    #[test]
+    fn grid_rows_stretch_auto_height_and_respect_explicit_alignment_and_limits() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::Column,
+                        [(PropKey::GridColumns, PropValue::Integer(5))],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::GridSpan, PropValue::Integer(1)),
+                            (PropKey::Height, PropValue::Float(80.0)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        1,
+                        1,
+                        NodeKind::View,
+                        [
+                            (PropKey::GridSpan, PropValue::Integer(1)),
+                            (PropKey::MinHeight, PropValue::Float(20.0)),
+                            (PropKey::MarginTop, PropValue::Float(4.0)),
+                            (PropKey::MarginBottom, PropValue::Float(8.0)),
+                        ],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        1,
+                        2,
+                        NodeKind::View,
+                        [
+                            (PropKey::GridSpan, PropValue::Integer(1)),
+                            (PropKey::Height, PropValue::Float(20.0)),
+                            (PropKey::AlignSelf, PropValue::Integer(2)),
+                        ],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        1,
+                        3,
+                        NodeKind::View,
+                        [
+                            (PropKey::GridSpan, PropValue::Integer(1)),
+                            (PropKey::MinHeight, PropValue::Float(20.0)),
+                            (PropKey::MaxHeight, PropValue::Float(40.0)),
+                        ],
+                    ),
+                ),
+                (
+                    6,
+                    node(
+                        6,
+                        1,
+                        4,
+                        NodeKind::View,
+                        [
+                            (PropKey::GridSpan, PropValue::Integer(1)),
+                            (PropKey::Height, PropValue::Float(20.0)),
+                            (PropKey::AlignSelf, PropValue::Integer(3)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+        let frames = calculate(
+            &tree,
+            Size {
+                width: 500.0,
+                height: 200.0,
+            },
+        )
+        .expect("grid alignment");
+        assert_eq!(frames[&2].height, 80.0);
+        assert_eq!(frames[&3].height, 68.0);
+        assert_eq!(frames[&3].y, 4.0);
+        assert_eq!(frames[&4].height, 20.0);
+        assert_eq!(frames[&4].y, 30.0);
+        assert_eq!(frames[&5].height, 40.0);
+        assert_eq!(frames[&6].y, 60.0);
+    }
+
+    #[test]
+    fn virtual_grid_cells_receive_real_column_bounds() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [
+                    (PropKey::ListNumColumns, PropValue::Integer(2)),
+                    (PropKey::ListRowHeight, PropValue::Float(160.0)),
+                ],
+            ),
+        );
+        for (index, id) in [2_u64, 3, 4].into_iter().enumerate() {
+            nodes.insert(id, node(id, 1, index as u32, NodeKind::Column, []));
+        }
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("virtual grid");
+
+        assert_eq!(layout[&2].width, 180.0);
+        assert_eq!(layout[&2].height, 160.0);
+        assert_eq!(layout[&3].x, 180.0);
+        assert_eq!(layout[&3].y, 0.0);
+        assert_eq!(layout[&4].x, 0.0);
+        assert_eq!(layout[&4].y, 160.0);
+    }
+
+    #[test]
+    fn stable_scrollbar_gutter_reserves_the_scrollbar_width() {
+        for (gutter, width, x, expected) in [
+            (2, 2, 0.0, 350.0),
+            (2, 1, 0.0, 345.0),
+            (3, 2, 10.0, 340.0),
+            (2, 3, 0.0, 360.0),
+            (1, 2, 0.0, 360.0),
+        ] {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                1,
+                node(
+                    1,
+                    0,
+                    0,
+                    NodeKind::Scroll,
+                    [
+                        (PropKey::ScrollbarGutter, PropValue::Integer(gutter)),
+                        (PropKey::ScrollbarWidth, PropValue::Integer(width)),
+                    ],
+                ),
+            );
+            nodes.insert(2, node(2, 1, 0, NodeKind::Column, []));
+            let tree = Tree { root: 1, nodes };
+            let layout = calculate(
+                &tree,
+                Size {
+                    width: 360.0,
+                    height: 640.0,
+                },
+            )
+            .expect("scroll with gutter");
+            assert_eq!(layout[&2].x, x, "gutter {gutter} width {width}");
+            assert_eq!(layout[&2].width, expected, "gutter {gutter} width {width}");
+        }
+    }
+
+    #[test]
+    fn max_height_scrollers_follow_their_content() {
+        for kind in [NodeKind::Scroll, NodeKind::VirtualList] {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(1, node(1, 0, 0, NodeKind::Column, []));
+            nodes.insert(
+                2,
+                node(
+                    2,
+                    1,
+                    0,
+                    kind,
+                    [(PropKey::MaxHeight, PropValue::Float(300.0))],
+                ),
+            );
+            for (index, id) in [3_u64, 4].into_iter().enumerate() {
+                nodes.insert(
+                    id,
+                    node(
+                        id,
+                        2,
+                        index as u32,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(50.0))],
+                    ),
+                );
+            }
+            let tree = Tree { root: 1, nodes };
+            let layout = calculate(
+                &tree,
+                Size {
+                    width: 360.0,
+                    height: 640.0,
+                },
+            )
+            .expect("max-height scroller");
+            assert_eq!(layout[&2].height, 100.0, "{kind:?} shrinks to its content");
+
+            let mut nodes = tree.nodes.clone();
+            for id in 5_u64..15 {
+                nodes.insert(
+                    id,
+                    node(
+                        id,
+                        2,
+                        id as u32,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(50.0))],
+                    ),
+                );
+            }
+            let tall = Tree { root: 1, nodes };
+            let layout = calculate(
+                &tall,
+                Size {
+                    width: 360.0,
+                    height: 640.0,
+                },
+            )
+            .expect("tall max-height scroller");
+            assert_eq!(layout[&2].height, 300.0, "{kind:?} stops at max-height");
+        }
+    }
+
+    #[test]
+    fn virtual_lists_without_a_numeric_max_height_follow_their_rows() {
+        let rows = |nodes: &mut BTreeMap<u64, Node>, parent: u64, count: u64| {
+            for index in 0..count {
+                let id = 100 + index;
+                nodes.insert(
+                    id,
+                    node(
+                        id,
+                        parent,
+                        index as u32,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(56.0))],
+                    ),
+                );
+            }
+        };
+        let window = Size {
+            width: 360.0,
+            height: 640.0,
+        };
+        // An auto-height card: the list takes its rows' height.
+        let mut nodes = BTreeMap::new();
+        nodes.insert(1, node(1, 0, 0, NodeKind::Column, []));
+        nodes.insert(2, node(2, 1, 0, NodeKind::Column, []));
+        nodes.insert(3, node(3, 2, 0, NodeKind::VirtualList, []));
+        rows(&mut nodes, 3, 3);
+        let layout = calculate(
+            &Tree {
+                root: 1,
+                nodes: nodes.clone(),
+            },
+            window,
+        )
+        .expect("short list");
+        assert_eq!(
+            layout[&3].height, 168.0,
+            "three rows, not the 240 placeholder"
+        );
+        assert_eq!(layout[&2].height, 168.0, "the card follows the list");
+
+        // Many rows and no limit: the window height caps the list.
+        let mut tall = nodes.clone();
+        rows(&mut tall, 3, 400);
+        let layout = calculate(
+            &Tree {
+                root: 1,
+                nodes: tall.clone(),
+            },
+            window,
+        )
+        .expect("tall list");
+        assert_eq!(
+            layout[&3].height, 640.0,
+            "the window caps an unbounded list"
+        );
+
+        // A bounded parent: the list shrinks to the space left (flexShrink 1).
+        let mut bounded = tall.clone();
+        bounded.insert(
+            2,
+            node(
+                2,
+                1,
+                0,
+                NodeKind::Column,
+                [(PropKey::Height, PropValue::Float(400.0))],
+            ),
+        );
+        bounded.insert(
+            4,
+            node(
+                4,
+                2,
+                0,
+                NodeKind::View,
+                [(PropKey::Height, PropValue::Float(40.0))],
+            ),
+        );
+        bounded.insert(3, node(3, 2, 1, NodeKind::VirtualList, []));
+        let layout = calculate(
+            &Tree {
+                root: 1,
+                nodes: bounded.clone(),
+            },
+            window,
+        )
+        .expect("bounded list");
+        assert_eq!(
+            layout[&3].height, 360.0,
+            "the list gives way to its sibling"
+        );
+
+        // max-height as a percentage of a definite parent.
+        let mut percent = bounded.clone();
+        percent.insert(
+            3,
+            node(
+                3,
+                2,
+                1,
+                NodeKind::VirtualList,
+                [(PropKey::MaxHeightPercent, PropValue::Float(50.0))],
+            ),
+        );
+        let layout = calculate(
+            &Tree {
+                root: 1,
+                nodes: percent,
+            },
+            window,
+        )
+        .expect("percent list");
+        assert_eq!(
+            layout[&3].height, 200.0,
+            "max-height: 50% of the 400 parent"
+        );
+
+        // Empty: no placeholder height.
+        let mut empty = BTreeMap::new();
+        empty.insert(1, node(1, 0, 0, NodeKind::Column, []));
+        empty.insert(2, node(2, 1, 0, NodeKind::Column, []));
+        empty.insert(3, node(3, 2, 0, NodeKind::VirtualList, []));
+        let layout = calculate(
+            &Tree {
+                root: 1,
+                nodes: empty,
+            },
+            window,
+        )
+        .expect("empty list");
+        assert_eq!(layout[&3].height, 0.0, "an empty list has no height");
+    }
+
+    #[test]
+    fn scrollbar_gutter_accepts_an_exact_thickness() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::Scroll,
+                [
+                    (PropKey::ScrollbarGutter, PropValue::Integer(2)),
+                    (PropKey::ScrollbarThickness, PropValue::Float(8.0)),
+                ],
+            ),
+        );
+        nodes.insert(2, node(2, 1, 0, NodeKind::Column, []));
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("scroll with 8px gutter");
+        assert_eq!(layout[&2].width, 352.0);
+    }
+
+    #[test]
+    fn virtual_grid_column_and_row_gaps_separate_cells() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [
+                    (PropKey::ListNumColumns, PropValue::Integer(2)),
+                    (PropKey::ListRowHeight, PropValue::Float(160.0)),
+                    (PropKey::GridColumnGap, PropValue::Float(12.0)),
+                    (PropKey::GridRowGap, PropValue::Float(12.0)),
+                ],
+            ),
+        );
+        for (index, id) in [2_u64, 3, 4].into_iter().enumerate() {
+            nodes.insert(id, node(id, 1, index as u32, NodeKind::Column, []));
+        }
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("virtual grid with gaps");
+
+        assert_eq!(layout[&2].width, 174.0);
+        assert_eq!(layout[&3].x, 186.0);
+        assert_eq!(layout[&3].width, 174.0);
+        assert_eq!(layout[&4].x, 0.0);
+        assert_eq!(layout[&4].y, 172.0);
+    }
+
+    #[test]
+    fn virtual_list_row_with_authored_zero_height_takes_no_space() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [(PropKey::ListRowHeight, PropValue::Float(120.0))],
+            ),
+        );
+        nodes.insert(
+            2,
+            node(
+                2,
+                1,
+                0,
+                NodeKind::Column,
+                [(PropKey::Height, PropValue::Float(40.0))],
+            ),
+        );
+        nodes.insert(
+            3,
+            node(
+                3,
+                1,
+                1,
+                NodeKind::Column,
+                [(PropKey::Height, PropValue::Float(0.0))],
+            ),
+        );
+        nodes.insert(
+            4,
+            node(
+                4,
+                1,
+                2,
+                NodeKind::Column,
+                [(PropKey::Height, PropValue::Float(60.0))],
+            ),
+        );
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("zero row");
+
+        assert_eq!(layout[&3].y, 40.0);
+        assert_eq!(layout[&3].height, 0.0);
+        assert_eq!(layout[&4].y, 40.0);
+    }
+
+    #[test]
+    fn virtual_list_uses_authored_cell_heights_and_keeps_row_height_as_estimate() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [(PropKey::ListRowHeight, PropValue::Float(120.0))],
+            ),
+        );
+        nodes.insert(
+            2,
+            node(
+                2,
+                1,
+                0,
+                NodeKind::Column,
+                [(PropKey::Height, PropValue::Float(240.0))],
+            ),
+        );
+        nodes.insert(3, node(3, 1, 1, NodeKind::Column, []));
+        nodes.insert(
+            4,
+            node(
+                4,
+                1,
+                2,
+                NodeKind::Column,
+                [(PropKey::Height, PropValue::Float(180.0))],
+            ),
+        );
+        nodes.insert(
+            5,
+            node(
+                5,
+                1,
+                3,
+                NodeKind::Column,
+                [(PropKey::Height, PropValue::Float(60.0))],
+            ),
+        );
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("adaptive virtual list");
+
+        assert_eq!(layout[&2].height, 240.0);
+        assert_eq!(layout[&3].y, 240.0);
+        assert_eq!(layout[&3].height, 120.0);
+        assert_eq!(layout[&4].y, 360.0);
+        assert_eq!(layout[&4].height, 180.0);
+        assert_eq!(layout[&5].y, 540.0);
+        assert_eq!(layout[&5].height, 60.0);
+    }
+
+    #[test]
+    fn max_width_text_in_a_padded_card_wraps_at_its_max_width() {
+        // Contatos sync hero: Column > Column(card, margin 16, padding 18) >
+        // Text(maxWidth 300, marginTop 6).
+        let long = "Veja quem já está aqui e convide o resto com um toque. Ninguém é avisado sem você mandar.";
+        let mut nodes = BTreeMap::new();
+        nodes.insert(1, node(1, 0, 0, NodeKind::Column, []));
+        nodes.insert(
+            2,
+            node(
+                2,
+                1,
+                0,
+                NodeKind::Column,
+                [
+                    (PropKey::Margin, PropValue::Float(16.0)),
+                    (PropKey::Padding, PropValue::Float(18.0)),
+                ],
+            ),
+        );
+        let mut start_aligned = nodes.clone();
+        start_aligned.insert(
+            2,
+            node(
+                2,
+                1,
+                0,
+                NodeKind::Column,
+                [
+                    (PropKey::Margin, PropValue::Float(16.0)),
+                    (PropKey::Padding, PropValue::Float(18.0)),
+                    (PropKey::AlignItems, PropValue::Integer(1)),
+                ],
+            ),
+        );
+        nodes.insert(
+            3,
+            node(
+                3,
+                2,
+                0,
+                NodeKind::Text,
+                [
+                    (PropKey::Text, PropValue::String(long.to_owned())),
+                    (PropKey::FontSize, PropValue::Float(13.5)),
+                    (PropKey::LineHeight, PropValue::Float(19.0)),
+                    (PropKey::MaxWidth, PropValue::Float(300.0)),
+                    (PropKey::MarginTop, PropValue::Float(6.0)),
+                ],
+            ),
+        );
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 411.0,
+                height: 800.0,
+            },
+        )
+        .expect("hero");
+        assert_eq!(layout[&3].width, 300.0, "text frame {:?}", layout[&3]);
+        // Same text, start-aligned card (not stretched): its intrinsic width
+        // is bounded by max-width too.
+        start_aligned.insert(3, tree.nodes[&3].clone());
+        let tree = Tree {
+            root: 1,
+            nodes: start_aligned,
+        };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 411.0,
+                height: 800.0,
+            },
+        )
+        .expect("hero start");
+        assert_eq!(
+            layout[&3].width, 300.0,
+            "start-aligned text frame {:?}",
+            layout[&3]
+        );
+    }
+
+    #[test]
+    fn stretched_column_child_wraps_text_inside_its_max_width() {
+        // RN ContactsScreen syncHeroBody: a stretched (default alignItems)
+        // child of a column with maxWidth 300 wraps its text at 300.
+        let mut nodes = BTreeMap::new();
+        nodes.insert(1, node(1, 0, 0, NodeKind::Column, []));
+        nodes.insert(
+            2,
+            node(
+                2,
+                1,
+                0,
+                NodeKind::View,
+                [(PropKey::MaxWidth, PropValue::Float(200.0))],
+            ),
+        );
+        nodes.insert(
+            3,
+            node(
+                3,
+                2,
+                0,
+                NodeKind::Text,
+                [
+                    (
+                        PropKey::Text,
+                        PropValue::String(
+                            "Painel de gerenciamento com um texto longo que precisa quebrar"
+                                .to_owned(),
+                        ),
+                    ),
+                    (PropKey::FontSize, PropValue::Float(16.0)),
+                    (PropKey::LineHeight, PropValue::Float(21.0)),
+                ],
+            ),
+        );
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 411.0,
+                height: 700.0,
+            },
+        )
+        .expect("stretched max-width");
+
+        assert_eq!(layout[&2].width, 200.0);
+        assert!(layout[&3].width <= 200.0, "text width {}", layout[&3].width);
+        assert!(
+            layout[&3].height > 21.0 * 2.0,
+            "text height {}",
+            layout[&3].height
+        );
+        assert_eq!(layout[&2].height, layout[&3].height);
+    }
+
+    #[test]
+    fn column_children_wrap_text_inside_their_max_width() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(1, node(1, 0, 0, NodeKind::Column, []));
+        nodes.insert(
+            2,
+            node(
+                2,
+                1,
+                0,
+                NodeKind::Pressable,
+                [
+                    (PropKey::MaxWidth, PropValue::Float(200.0)),
+                    (PropKey::MarginLeft, PropValue::Float(12.0)),
+                    (PropKey::Padding, PropValue::Float(10.0)),
+                    (PropKey::AlignSelf, PropValue::Integer(1)),
+                ],
+            ),
+        );
+        nodes.insert(
+            3,
+            node(
+                3,
+                2,
+                0,
+                NodeKind::Text,
+                [
+                    (
+                        PropKey::Text,
+                        PropValue::String(
+                            "Painel de gerenciamento com um texto longo que precisa quebrar"
+                                .to_owned(),
+                        ),
+                    ),
+                    (PropKey::FontSize, PropValue::Float(16.0)),
+                    (PropKey::LineHeight, PropValue::Float(21.0)),
+                ],
+            ),
+        );
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 411.0,
+                height: 700.0,
+            },
+        )
+        .expect("max-width wrapping");
+
+        assert_eq!(layout[&2].width, 200.0);
+        assert_eq!(layout[&3].width, 180.0);
+        assert!(layout[&3].height > 21.0 * 2.0);
+        assert_eq!(layout[&2].height, layout[&3].height + 20.0);
+    }
+
+    #[test]
+    fn virtual_list_content_sizes_cells_without_authored_height() {
+        let text = |id: u64, parent: u64, value: &str| {
+            node(
+                id,
+                parent,
+                0,
+                NodeKind::Text,
+                [
+                    (PropKey::Text, PropValue::String(value.to_owned())),
+                    (PropKey::FontSize, PropValue::Float(16.0)),
+                    (PropKey::LineHeight, PropValue::Float(20.0)),
+                ],
+            )
+        };
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [(PropKey::ListRowHeight, PropValue::Float(120.0))],
+            ),
+        );
+        nodes.insert(
+            2,
+            node(
+                2,
+                1,
+                0,
+                NodeKind::Column,
+                [(PropKey::PaddingVertical, PropValue::Float(4.0))],
+            ),
+        );
+        nodes.insert(3, text(3, 2, "short"));
+        nodes.insert(4, node(4, 1, 1, NodeKind::Column, []));
+        nodes.insert(
+            5,
+            node(
+                5,
+                1,
+                2,
+                NodeKind::Column,
+                [(PropKey::Padding, PropValue::Float(10.0))],
+            ),
+        );
+        nodes.insert(6, text(6, 5, "one"));
+        nodes.insert(
+            7,
+            node(
+                7,
+                5,
+                1,
+                NodeKind::View,
+                [(PropKey::Height, PropValue::Float(200.0))],
+            ),
+        );
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("content-sized virtual list");
+
+        assert_eq!(layout[&2].height, 28.0);
+        assert_eq!(layout[&4].y, 28.0);
+        assert_eq!(layout[&4].height, 120.0);
+        assert_eq!(layout[&5].y, 148.0);
+        assert_eq!(layout[&5].height, 240.0);
+        assert_eq!(layout[&7].y, 178.0);
+    }
+
+    #[test]
+    fn windowed_virtual_list_placeholders_use_authored_height_or_the_estimate() {
+        // Rows PHP has not materialized yet arrive as their childless root
+        // flagged ListPlaceholder: an authored height is kept, otherwise the
+        // list estimate sizes them, and the materialized rows after them are
+        // placed below.
+        let placeholder = |id: u64, index: u32, height: Option<f64>| {
+            let mut props = vec![(PropKey::ListPlaceholder, PropValue::Boolean(true))];
+            if let Some(height) = height {
+                props.push((PropKey::Height, PropValue::Float(height)));
+            }
+            node(id, 1, index, NodeKind::Column, props)
+        };
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [
+                    (PropKey::ListRowHeight, PropValue::Float(72.0)),
+                    (PropKey::ListWindowed, PropValue::Boolean(true)),
+                ],
+            ),
+        );
+        nodes.insert(2, placeholder(2, 0, Some(64.0)));
+        nodes.insert(3, placeholder(3, 1, None));
+        nodes.insert(4, node(4, 1, 2, NodeKind::Column, []));
+        nodes.insert(5, fixed_box(5, 4, 30.0));
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("windowed virtual list");
+
+        assert_eq!(layout[&2].height, 64.0);
+        assert_eq!(layout[&3].y, 64.0);
+        assert_eq!(layout[&3].height, 72.0);
+        assert_eq!(layout[&4].y, 136.0);
+        assert_eq!(layout[&4].height, 30.0);
+    }
+
+    #[test]
+    fn windowed_virtual_list_placeholder_runs_take_their_rows_of_the_estimate() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [
+                    (PropKey::ListRowHeight, PropValue::Float(72.0)),
+                    (PropKey::ListWindowed, PropValue::Boolean(true)),
+                ],
+            ),
+        );
+        nodes.insert(2, node(2, 1, 0, NodeKind::Column, []));
+        nodes.insert(3, fixed_box(3, 2, 30.0));
+        nodes.insert(
+            4,
+            node(
+                4,
+                1,
+                1,
+                NodeKind::View,
+                [
+                    (PropKey::ListPlaceholder, PropValue::Boolean(true)),
+                    (PropKey::ListPlaceholderRows, PropValue::Integer(9_999)),
+                ],
+            ),
+        );
+        nodes.insert(
+            5,
+            node(
+                5,
+                1,
+                10_000,
+                NodeKind::View,
+                [(PropKey::ListPlaceholder, PropValue::Boolean(true))],
+            ),
+        );
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("placeholder runs");
+
+        assert_eq!(layout[&4].y, 30.0);
+        assert_eq!(layout[&4].height, 72.0 * 9_999.0);
+        assert_eq!(layout[&5].y, 30.0 + 72.0 * 9_999.0);
+        assert_eq!(layout[&5].height, 72.0);
+    }
+
+    #[test]
+    fn horizontal_virtual_list_uses_authored_cell_widths() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [
+                    (PropKey::ListHorizontal, PropValue::Boolean(true)),
+                    (PropKey::ListRowHeight, PropValue::Float(80.0)),
+                ],
+            ),
+        );
+        nodes.insert(
+            2,
+            node(
+                2,
+                1,
+                0,
+                NodeKind::Column,
+                [(PropKey::Width, PropValue::Float(140.0))],
+            ),
+        );
+        nodes.insert(3, node(3, 1, 1, NodeKind::Column, []));
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 240.0,
+            },
+        )
+        .expect("adaptive horizontal virtual list");
+
+        assert_eq!(layout[&2].width, 140.0);
+        assert_eq!(layout[&3].x, 140.0);
+        assert_eq!(layout[&3].width, 80.0);
+    }
+
+    fn margin_cell(id: u64, parent: u64, index: u32, extra: &[(PropKey, PropValue)]) -> Node {
+        let mut props = vec![
+            (PropKey::MarginTop, PropValue::Float(6.0)),
+            (PropKey::MarginBottom, PropValue::Float(10.0)),
+            (PropKey::MarginHorizontal, PropValue::Float(12.0)),
+        ];
+        props.extend(extra.iter().cloned());
+        node(id, parent, index, NodeKind::Column, props)
+    }
+
+    fn fixed_box(id: u64, parent: u64, height: f64) -> Node {
+        node(
+            id,
+            parent,
+            0,
+            NodeKind::View,
+            [(PropKey::Height, PropValue::Float(height))],
+        )
+    }
+
+    #[test]
+    fn virtual_list_cell_extent_includes_root_margins() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(1, node(1, 0, 0, NodeKind::VirtualList, []));
+        nodes.insert(2, margin_cell(2, 1, 0, &[]));
+        nodes.insert(3, fixed_box(3, 2, 40.0));
+        nodes.insert(4, node(4, 1, 1, NodeKind::Column, []));
+        nodes.insert(5, fixed_box(5, 4, 30.0));
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("margin cells");
+
+        // Slot 0 is 6 + 40 + 10; the root is inset by its margins.
+        assert_eq!(layout[&2].x, 12.0);
+        assert_eq!(layout[&2].y, 6.0);
+        assert_eq!(layout[&2].width, 336.0);
+        assert_eq!(layout[&2].height, 40.0);
+        assert_eq!(layout[&3].y, 6.0);
+        assert_eq!(layout[&3].width, 336.0);
+        assert_eq!(layout[&4].y, 56.0);
+        assert_eq!(layout[&4].height, 30.0);
+    }
+
+    #[test]
+    fn virtual_list_explicit_cell_height_stays_authoritative_with_margins() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [(PropKey::ListRowHeight, PropValue::Float(120.0))],
+            ),
+        );
+        nodes.insert(
+            2,
+            margin_cell(2, 1, 0, &[(PropKey::Height, PropValue::Float(64.0))]),
+        );
+        nodes.insert(3, fixed_box(3, 2, 200.0));
+        nodes.insert(4, node(4, 1, 1, NodeKind::Column, []));
+        nodes.insert(5, fixed_box(5, 4, 30.0));
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("explicit margin cells");
+
+        assert_eq!(layout[&2].y, 6.0);
+        assert_eq!(layout[&2].height, 64.0);
+        assert_eq!(layout[&4].y, 80.0);
+    }
+
+    #[test]
+    fn virtual_grid_and_full_span_cells_include_root_margins() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [(PropKey::ListNumColumns, PropValue::Integer(2))],
+            ),
+        );
+        nodes.insert(
+            2,
+            margin_cell(
+                2,
+                1,
+                0,
+                &[(PropKey::ListFullSpan, PropValue::Boolean(true))],
+            ),
+        );
+        nodes.insert(3, fixed_box(3, 2, 20.0));
+        nodes.insert(4, margin_cell(4, 1, 1, &[]));
+        nodes.insert(5, fixed_box(5, 4, 50.0));
+        nodes.insert(6, node(6, 1, 2, NodeKind::Column, []));
+        nodes.insert(7, fixed_box(7, 6, 30.0));
+        nodes.insert(8, node(8, 1, 3, NodeKind::Column, []));
+        nodes.insert(9, fixed_box(9, 8, 10.0));
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("margin grid");
+
+        // Full-span header: slot 6 + 20 + 10.
+        assert_eq!(layout[&2].x, 12.0);
+        assert_eq!(layout[&2].y, 6.0);
+        assert_eq!(layout[&2].width, 336.0);
+        // Grid row: the tallest slot is 6 + 50 + 10.
+        assert_eq!(layout[&4].x, 12.0);
+        assert_eq!(layout[&4].y, 42.0);
+        assert_eq!(layout[&4].width, 156.0);
+        assert_eq!(layout[&4].height, 50.0);
+        assert_eq!(layout[&6].x, 180.0);
+        assert_eq!(layout[&6].y, 36.0);
+        assert_eq!(layout[&6].height, 66.0);
+        assert_eq!(layout[&8].y, 102.0);
+    }
+
+    #[test]
+    fn horizontal_virtual_list_cell_extent_includes_root_margins() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [(PropKey::ListHorizontal, PropValue::Boolean(true))],
+            ),
+        );
+        nodes.insert(
+            2,
+            margin_cell(2, 1, 0, &[(PropKey::Width, PropValue::Float(100.0))]),
+        );
+        nodes.insert(3, node(3, 1, 1, NodeKind::Column, []));
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 200.0,
+            },
+        )
+        .expect("horizontal margin cells");
+
+        assert_eq!(layout[&2].x, 12.0);
+        assert_eq!(layout[&2].y, 6.0);
+        assert_eq!(layout[&2].width, 100.0);
+        assert_eq!(layout[&2].height, 184.0);
+        assert_eq!(layout[&3].x, 124.0);
+    }
+
+    #[test]
+    fn incremental_layout_skips_clean_stable_subtrees() {
+        let mut nodes = BTreeMap::from([(1, node(1, 0, 0, NodeKind::Screen, []))]);
+        let mut next_id = 2_u64;
+        let mut dirty = 0_u64;
+        for branch_index in 0..2 {
+            let branch = next_id;
+            next_id += 1;
+            nodes.insert(
+                branch,
+                node(
+                    branch,
+                    1,
+                    branch_index,
+                    NodeKind::Column,
+                    [(PropKey::Height, PropValue::Float(300.0))],
+                ),
+            );
+            for row_index in 0..50 {
+                let row = next_id;
+                next_id += 1;
+                nodes.insert(
+                    row,
+                    node(
+                        row,
+                        branch,
+                        row_index,
+                        NodeKind::Row,
+                        [(PropKey::Height, PropValue::Float(6.0))],
+                    ),
+                );
+                for text_index in 0..5 {
+                    let text = next_id;
+                    next_id += 1;
+                    nodes.insert(
+                        text,
+                        node(
+                            text,
+                            row,
+                            text_index,
+                            NodeKind::Text,
+                            [(PropKey::Text, PropValue::String("value".to_owned()))],
+                        ),
+                    );
+                    if branch_index == 0 && row_index == 0 && text_index == 0 {
+                        dirty = text;
+                    }
+                }
+            }
+        }
+        let mut tree = Tree { root: 1, nodes };
+        let viewport = Size {
+            width: 390.0,
+            height: 844.0,
+        };
+        let metrics = TextMetrics::new();
+        let previous =
+            calculate_with_text_metrics(&tree, viewport, 1.0, &metrics).expect("initial layout");
+        tree.nodes
+            .get_mut(&dirty)
+            .expect("dirty text")
+            .properties
+            .insert(PropKey::FontSize, PropValue::Float(18.0));
+        let (incremental, visited) = calculate_incremental_with_text_metrics(
+            &tree,
+            viewport,
+            1.0,
+            &metrics,
+            &previous,
+            &BTreeSet::from([dirty]),
+        )
+        .expect("incremental layout");
+        let full =
+            calculate_with_text_metrics(&tree, viewport, 1.0, &metrics).expect("full layout");
+
+        assert_eq!(incremental, full);
+        assert!(visited < tree.nodes.len() / 4, "visited {visited} nodes");
+    }
+
+    #[test]
+    fn incremental_layout_removes_hidden_dirty_subtrees() {
+        let mut tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Screen, [])),
+                (2, node(2, 1, 0, NodeKind::Column, [])),
+                (3, node(3, 2, 0, NodeKind::Text, [])),
+                (4, node(4, 1, 1, NodeKind::Text, [])),
+            ]),
+        };
+        let viewport = Size {
+            width: 390.0,
+            height: 844.0,
+        };
+        let metrics = TextMetrics::new();
+        let previous =
+            calculate_with_text_metrics(&tree, viewport, 1.0, &metrics).expect("initial layout");
+        tree.nodes
+            .get_mut(&2)
+            .expect("container")
+            .properties
+            .insert(PropKey::Visible, PropValue::Boolean(false));
+
+        let (incremental, _) = calculate_incremental_with_text_metrics(
+            &tree,
+            viewport,
+            1.0,
+            &metrics,
+            &previous,
+            &BTreeSet::from([2]),
+        )
+        .expect("incremental layout");
+        let full =
+            calculate_with_text_metrics(&tree, viewport, 1.0, &metrics).expect("full layout");
+
+        assert_eq!(incremental, full);
+        assert!(!incremental.contains_key(&2));
+        assert!(!incremental.contains_key(&3));
+        assert!(incremental.contains_key(&4));
+    }
+
+    fn sectioned_list(active: &str) -> Tree {
+        let section = |value: &str| (PropKey::ListSection, PropValue::String(value.into()));
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [(PropKey::ListActiveSection, PropValue::String(active.into()))],
+            ),
+        );
+        // Header (40), rail (20), media rows (2 x 100), file rows (3 x 30), footer (10).
+        nodes.insert(2, fixed_box(2, 1, 40.0));
+        nodes.insert(3, fixed_box(3, 1, 20.0));
+        for (index, id) in [4_u64, 5].into_iter().enumerate() {
+            let mut row = fixed_box(id, 1, 100.0);
+            row.index = 2 + index as u32;
+            row.properties.extend([section("media")]);
+            nodes.insert(id, row);
+        }
+        for (index, id) in [6_u64, 7, 8].into_iter().enumerate() {
+            let mut row = fixed_box(id, 1, 30.0);
+            row.index = 4 + index as u32;
+            row.properties.extend([section("files")]);
+            nodes.insert(id, row);
+        }
+        let mut footer = fixed_box(9, 1, 10.0);
+        footer.index = 7;
+        nodes.insert(9, footer);
+        nodes.get_mut(&3).expect("rail").index = 1;
+        Tree { root: 1, nodes }
+    }
+
+    #[test]
+    fn list_sections_share_their_block_origin() {
+        let viewport = Size {
+            width: 360.0,
+            height: 640.0,
+        };
+        let media = calculate(&sectioned_list("media"), viewport).expect("media layout");
+        let files = calculate(&sectioned_list("files"), viewport).expect("files layout");
+
+        assert_eq!(media[&4].y, 60.0);
+        assert_eq!(media[&5].y, 160.0);
+        assert_eq!(media[&6].y, 60.0);
+        assert_eq!(media[&8].y, 120.0);
+        assert_eq!(media[&9].y, 260.0);
+        assert_eq!(files[&9].y, 150.0);
+        // Section rows never move when the active section changes.
+        for id in 2..=8 {
+            assert_eq!(media[&id], files[&id], "row {id}");
+        }
+        // Without an active section the block is skipped by the flow.
+        let none = calculate(&sectioned_list(""), viewport).expect("no active section");
+        assert_eq!(none[&9].y, 60.0);
+    }
+
+    #[test]
+    fn switching_list_sections_is_incremental_and_keeps_row_extents() {
+        let viewport = Size {
+            width: 360.0,
+            height: 640.0,
+        };
+        let metrics = TextMetrics::new();
+        let mut tree = sectioned_list("media");
+        let previous =
+            calculate_with_text_metrics(&tree, viewport, 1.0, &metrics).expect("initial layout");
+        tree.nodes.get_mut(&1).expect("list").properties.insert(
+            PropKey::ListActiveSection,
+            PropValue::String("files".into()),
+        );
+        let (incremental, _) = calculate_incremental_with_text_metrics(
+            &tree,
+            viewport,
+            1.0,
+            &metrics,
+            &previous,
+            &BTreeSet::from([1]),
+        )
+        .expect("incremental layout");
+        let full =
+            calculate_with_text_metrics(&tree, viewport, 1.0, &metrics).expect("full layout");
+
+        assert_eq!(incremental, full);
+        let moved = incremental
+            .iter()
+            .filter(|(id, frame)| previous.get(id) != Some(frame))
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
+        assert_eq!(moved, vec![9]);
+    }
+
+    #[test]
+    fn multi_column_rows_never_mix_list_sections() {
+        let section = |value: &str| (PropKey::ListSection, PropValue::String(value.into()));
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [
+                    (PropKey::ListNumColumns, PropValue::Integer(3)),
+                    (PropKey::ListActiveSection, PropValue::String("a".into())),
+                ],
+            ),
+        );
+        for (index, (id, key)) in [(2_u64, "a"), (3, "a"), (4, "b"), (5, "b")]
+            .into_iter()
+            .enumerate()
+        {
+            let mut cell = fixed_box(id, 1, 50.0);
+            cell.index = index as u32;
+            cell.properties.extend([section(key)]);
+            nodes.insert(id, cell);
+        }
+        let layout = calculate(
+            &Tree { root: 1, nodes },
+            Size {
+                width: 300.0,
+                height: 600.0,
+            },
+        )
+        .expect("multi-column sections");
+
+        assert_eq!((layout[&2].x, layout[&3].x), (0.0, 100.0));
+        assert_eq!((layout[&4].x, layout[&4].y), (0.0, 0.0));
+        assert_eq!(layout[&5].x, 100.0);
+    }
+}
+
+#[cfg(test)]
+mod css_flex_tests {
+    use pam_desktop_wire::PropValue;
+
+    use super::*;
+
+    type Props = Vec<(PropKey, PropValue)>;
+
+    fn f(value: f32) -> PropValue {
+        PropValue::Float(f64::from(value))
+    }
+
+    fn i(value: i64) -> PropValue {
+        PropValue::Integer(value)
+    }
+
+    fn row(extra: Props) -> Props {
+        let mut props = vec![(PropKey::FlexDirection, i(2))];
+        props.extend(extra);
+        props
+    }
+
+    /// Root container (id 1) with view children (ids 2..).
+    fn layout(root: Props, children: Vec<Props>, width: f32, height: f32) -> BTreeMap<u64, Layout> {
+        let mut nodes = BTreeMap::from([(
+            1,
+            Node {
+                id: 1,
+                parent: 0,
+                index: 0,
+                kind: NodeKind::View,
+                properties: root.into_iter().collect(),
+            },
+        )]);
+        for (index, props) in children.into_iter().enumerate() {
+            let id = index as u64 + 2;
+            nodes.insert(
+                id,
+                Node {
+                    id,
+                    parent: 1,
+                    index: index as u32,
+                    kind: NodeKind::View,
+                    properties: props.into_iter().collect(),
+                },
+            );
+        }
+        calculate(&Tree { root: 1, nodes }, Size { width, height }).expect("layout")
+    }
+
+    /// Yoga resolves `top/right/bottom/left` of an absolute child from the
+    /// parent's padding box (inside the border, ignoring padding); padding
+    /// only moves the static position of an absolute child without insets.
+    #[test]
+    fn absolute_insets_ignore_parent_padding_like_yoga() {
+        let layouts = layout(
+            vec![(PropKey::Padding, f(16.0)), (PropKey::BorderWidth, f(2.0))],
+            vec![
+                vec![
+                    (PropKey::PositionType, i(2)),
+                    (PropKey::Top, f(4.0)),
+                    (PropKey::Right, f(6.0)),
+                    (PropKey::Width, f(10.0)),
+                    (PropKey::Height, f(10.0)),
+                ],
+                vec![
+                    (PropKey::PositionType, i(2)),
+                    (PropKey::Left, f(0.0)),
+                    (PropKey::Bottom, f(0.0)),
+                    (PropKey::Width, f(10.0)),
+                    (PropKey::Height, f(10.0)),
+                ],
+                vec![
+                    (PropKey::PositionType, i(2)),
+                    (PropKey::Left, f(0.0)),
+                    (PropKey::Right, f(0.0)),
+                    (PropKey::TopPercent, f(50.0)),
+                    (PropKey::Height, f(10.0)),
+                ],
+                vec![
+                    (PropKey::PositionType, i(2)),
+                    (PropKey::Width, f(10.0)),
+                    (PropKey::Height, f(10.0)),
+                ],
+            ],
+            100.0,
+            80.0,
+        );
+        // top/right from the border edge: x = 100 - 2 - 6 - 10, y = 2 + 4.
+        assert_eq!((layouts[&2].x, layouts[&2].y), (82.0, 6.0));
+        assert_eq!((layouts[&3].x, layouts[&3].y), (2.0, 68.0));
+        // Both insets size against the padding box (100 - 2 * 2), percentages too.
+        assert_eq!((layouts[&4].x, layouts[&4].width), (2.0, 96.0));
+        assert_eq!(layouts[&4].y, 2.0 + 38.0);
+        // Without insets the static position still honors padding + border.
+        assert_eq!((layouts[&5].x, layouts[&5].y), (18.0, 18.0));
+    }
+
+    #[test]
+    fn borders_inset_children_like_yoga() {
+        let layouts = layout(
+            vec![
+                (PropKey::Padding, f(4.0)),
+                (PropKey::BorderWidth, f(2.0)),
+                (PropKey::BorderTopWidth, f(3.0)),
+                (PropKey::AlignItems, i(1)),
+            ],
+            vec![vec![(PropKey::Width, f(10.0)), (PropKey::Height, f(10.0))]],
+            100.0,
+            100.0,
+        );
+        assert_eq!((layouts[&2].x, layouts[&2].y), (6.0, 7.0));
+        // Content-sized box: 10 + 2 * padding + borders.
+        let mut tree_nodes = BTreeMap::new();
+        tree_nodes.insert(
+            1,
+            Node {
+                id: 1,
+                parent: 0,
+                index: 0,
+                kind: NodeKind::Column,
+                properties: BTreeMap::from([(PropKey::AlignItems, i(1))]),
+            },
+        );
+        tree_nodes.insert(
+            2,
+            Node {
+                id: 2,
+                parent: 1,
+                index: 0,
+                kind: NodeKind::View,
+                properties: BTreeMap::from([
+                    (PropKey::BorderWidth, f(1.5)),
+                    (PropKey::Padding, f(2.0)),
+                ]),
+            },
+        );
+        tree_nodes.insert(
+            3,
+            Node {
+                id: 3,
+                parent: 2,
+                index: 0,
+                kind: NodeKind::View,
+                properties: BTreeMap::from([(PropKey::Width, f(20.0)), (PropKey::Height, f(8.0))]),
+            },
+        );
+        let sized = calculate(
+            &Tree {
+                root: 1,
+                nodes: tree_nodes,
+            },
+            Size {
+                width: 200.0,
+                height: 200.0,
+            },
+        )
+        .unwrap();
+        assert_eq!((sized[&2].width, sized[&2].height), (27.0, 15.0));
+        assert_eq!((sized[&3].x, sized[&3].y), (3.5, 3.5));
+    }
+
+    #[test]
+    fn panning_composer_ending_a_column_sits_above_the_keyboard_and_the_list_shrinks() {
+        let node = |id, parent, index, kind, properties: Vec<(PropKey, PropValue)>| Node {
+            id,
+            parent,
+            index,
+            kind,
+            properties: properties.into_iter().collect(),
+        };
+        let off = PropValue::Boolean(false);
+        // Zé chat: root SafeAreaView without the bottom edge, header, flexible
+        // timeline (z-index 1) and a panning composer KeyboardAvoidingView.
+        let chat = |kav: Vec<(PropKey, PropValue)>| Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::SafeAreaView,
+                        vec![
+                            (PropKey::SafeAreaBottomEdge, off.clone()),
+                            (PropKey::HeightPercent, f(100.0)),
+                        ],
+                    ),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Column,
+                        vec![(PropKey::FlexGrow, f(1.0)), (PropKey::MinHeight, f(0.0))],
+                    ),
+                ),
+                (
+                    3,
+                    node(3, 2, 0, NodeKind::View, vec![(PropKey::Height, f(56.0))]),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        2,
+                        1,
+                        NodeKind::View,
+                        vec![
+                            (PropKey::FlexGrow, f(1.0)),
+                            (PropKey::FlexShrink, f(1.0)),
+                            (PropKey::MinHeight, f(0.0)),
+                            (PropKey::ZIndex, PropValue::Integer(1)),
+                        ],
+                    ),
+                ),
+                (5, node(5, 2, 2, NodeKind::KeyboardAvoidingView, kav)),
+                (
+                    6,
+                    node(6, 5, 0, NodeKind::View, vec![(PropKey::Height, f(60.0))]),
+                ),
+            ]),
+        };
+        let pan = vec![(PropKey::KeyboardBehavior, PropValue::Integer(2))];
+        let viewport = Size {
+            width: 400.0,
+            height: 800.0,
+        };
+        let _scope =
+            crate::text_measure::ActiveScope::enter_with(None, Some([0.0, 24.0, 0.0, 48.0]), 320.0);
+        let open = calculate(&chat(pan.clone()), viewport).unwrap();
+        assert_eq!(open[&5].y + open[&5].height, 800.0 - 320.0);
+        assert_eq!(open[&6].y, 800.0 - 320.0 - 60.0);
+        assert_eq!(open[&4].height, 800.0 - 24.0 - 56.0 - 60.0 - 320.0);
+        drop(_scope);
+
+        let _scope =
+            crate::text_measure::ActiveScope::enter_with(None, Some([0.0, 24.0, 0.0, 48.0]), 0.0);
+        let closed = calculate(&chat(pan.clone()), viewport).unwrap();
+        assert_eq!(closed[&5].y + closed[&5].height, 800.0);
+        assert_eq!(closed[&4].height, 800.0 - 24.0 - 56.0 - 60.0);
+        drop(_scope);
+
+        let _scope =
+            crate::text_measure::ActiveScope::enter_with(None, Some([0.0, 24.0, 0.0, 48.0]), 320.0);
+        let mut offset = pan.clone();
+        offset.push((PropKey::KeyboardVerticalOffset, f(-20.0)));
+        let offset = calculate(&chat(offset), viewport).unwrap();
+        assert_eq!(offset[&5].y + offset[&5].height, 800.0 - 300.0);
+        let resize = calculate(
+            &chat(vec![(PropKey::KeyboardBehavior, PropValue::Integer(1))]),
+            viewport,
+        )
+        .unwrap();
+        assert_eq!(
+            resize[&5].height, 0.0,
+            "in-window hosts (iOS): a resize view at the root loses the keyboard overlap (RN behavior=\"height\")"
+        );
+        drop(_scope);
+        let _scope =
+            crate::text_measure::ActiveScope::enter_with(None, Some([0.0, 24.0, 0.0, 48.0]), 320.0)
+                .with_surface_policy(crate::surface::SurfacePolicy::SystemWindows);
+        let resize = calculate(
+            &chat(vec![(PropKey::KeyboardBehavior, PropValue::Integer(1))]),
+            viewport,
+        )
+        .unwrap();
+        assert_eq!(
+            resize[&5].height, 0.0,
+            "Android (adjustNothing window) avoids a root resize view in layout like iOS"
+        );
+        let mut disabled = pan.clone();
+        disabled.push((PropKey::KeyboardAvoidingEnabled, off.clone()));
+        let disabled = calculate(&chat(disabled), viewport).unwrap();
+        assert_eq!(disabled[&5].y + disabled[&5].height, 800.0);
+    }
+
+    #[test]
+    fn panning_composer_inside_a_modal_is_left_to_the_resized_modal_window() {
+        let node = |id, parent, index, kind, properties: Vec<(PropKey, PropValue)>| Node {
+            id,
+            parent,
+            index,
+            kind,
+            properties: properties.into_iter().collect(),
+        };
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Screen, vec![])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Modal,
+                        vec![(PropKey::ModalPresentation, PropValue::Integer(1))],
+                    ),
+                ),
+                (
+                    3,
+                    node(3, 2, 0, NodeKind::Column, vec![(PropKey::FlexGrow, f(1.0))]),
+                ),
+                (
+                    4,
+                    node(4, 3, 0, NodeKind::View, vec![(PropKey::FlexGrow, f(1.0))]),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        3,
+                        1,
+                        NodeKind::KeyboardAvoidingView,
+                        vec![(PropKey::KeyboardBehavior, PropValue::Integer(2))],
+                    ),
+                ),
+                (
+                    6,
+                    node(6, 5, 0, NodeKind::View, vec![(PropKey::Height, f(60.0))]),
+                ),
+            ]),
+        };
+        let _scope = crate::text_measure::ActiveScope::enter_with(None, None, 320.0);
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 400.0,
+                height: 800.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(layouts[&5].y + layouts[&5].height, 800.0);
+    }
+
+    /// Zé Create text composer: a full-screen modal whose padding
+    /// `KeyboardAvoidingView` holds a flexible stage and an absolute overlay
+    /// with the colour palette at its bottom.
+    fn modal_composer(behavior: i64, offset: Option<f32>) -> Tree {
+        let node = |id, parent, index, kind, properties: Vec<(PropKey, PropValue)>| Node {
+            id,
+            parent,
+            index,
+            kind,
+            properties: properties.into_iter().collect(),
+        };
+        let mut kav = vec![
+            (PropKey::KeyboardBehavior, PropValue::Integer(behavior)),
+            (PropKey::FlexGrow, f(1.0)),
+        ];
+        if let Some(offset) = offset {
+            kav.push((PropKey::KeyboardVerticalOffset, f(offset)));
+        }
+        Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Screen, vec![])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Modal,
+                        vec![
+                            (PropKey::ModalPresentation, PropValue::Integer(1)),
+                            (PropKey::ModalStatusBarTranslucent, PropValue::Boolean(true)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(3, 2, 0, NodeKind::View, vec![(PropKey::FlexGrow, f(1.0))]),
+                ),
+                (4, node(4, 3, 0, NodeKind::KeyboardAvoidingView, kav)),
+                (
+                    5,
+                    node(5, 4, 0, NodeKind::View, vec![(PropKey::FlexGrow, f(1.0))]),
+                ),
+                (
+                    6,
+                    node(
+                        6,
+                        5,
+                        0,
+                        NodeKind::View,
+                        vec![
+                            (PropKey::PositionType, PropValue::Integer(2)),
+                            (PropKey::Top, f(0.0)),
+                            (PropKey::Bottom, f(0.0)),
+                            (PropKey::Left, f(0.0)),
+                            (PropKey::Right, f(0.0)),
+                            (PropKey::JustifyContent, PropValue::Integer(4)),
+                        ],
+                    ),
+                ),
+                (
+                    7,
+                    node(7, 6, 0, NodeKind::View, vec![(PropKey::Height, f(56.0))]),
+                ),
+                (
+                    8,
+                    node(8, 6, 1, NodeKind::View, vec![(PropKey::Height, f(100.0))]),
+                ),
+                // The screen below: a root-window input must not move.
+                (
+                    9,
+                    node(
+                        9,
+                        1,
+                        1,
+                        NodeKind::KeyboardAvoidingView,
+                        vec![
+                            (PropKey::KeyboardBehavior, PropValue::Integer(3)),
+                            (PropKey::Height, f(60.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        }
+    }
+
+    fn surface_keyboard_layout(tree: &Tree, insets: &[(u64, f32)]) -> BTreeMap<u64, Layout> {
+        let insets = insets.iter().copied().collect::<BTreeMap<_, _>>();
+        let _scope = crate::text_measure::ActiveScope::enter_with(None, None, 0.0)
+            .with_surface_policy(crate::surface::SurfacePolicy::EdgeToEdgeWindows)
+            .with_surface_keyboard_insets(&insets);
+        calculate(
+            tree,
+            Size {
+                width: 400.0,
+                height: 800.0,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn padding_keyboard_avoiding_view_in_a_modal_lays_its_content_above_the_surface_keyboard() {
+        let tree = modal_composer(3, None);
+        let closed = surface_keyboard_layout(&tree, &[]);
+        assert_eq!(closed[&8].y + closed[&8].height, 800.0);
+
+        let open = surface_keyboard_layout(&tree, &[(2, 300.0)]);
+        assert_eq!(open[&4], closed[&4], "padding keeps the view's own frame");
+        assert_eq!(open[&5].height, 500.0);
+        assert_eq!(
+            open[&8].y + open[&8].height,
+            500.0,
+            "palette above the keyboard"
+        );
+        assert_eq!(open[&7].y, closed[&7].y, "the top bar stays");
+        assert_eq!(
+            open[&9], closed[&9],
+            "the root window ignores a modal keyboard"
+        );
+
+        // Another surface's keyboard does not reach this modal.
+        let other = surface_keyboard_layout(&tree, &[(42, 300.0)]);
+        assert_eq!(other, closed);
+    }
+
+    #[test]
+    fn resize_keyboard_avoiding_view_in_a_modal_loses_the_overlap_and_honours_the_offset() {
+        let tree = modal_composer(1, Some(20.0));
+        let open = surface_keyboard_layout(&tree, &[(2, 300.0)]);
+        assert_eq!(open[&4].height, 800.0 - 320.0);
+        assert_eq!(open[&8].y + open[&8].height, 480.0);
+
+        let pan = surface_keyboard_layout(&modal_composer(2, None), &[(2, 300.0)]);
+        assert_eq!(
+            pan[&8].y + pan[&8].height,
+            800.0,
+            "Android translates a panning view of a modal window natively"
+        );
+        let insets = BTreeMap::from([(2, 300.0)]);
+        let _scope = crate::text_measure::ActiveScope::enter_with(None, None, 0.0)
+            .with_surface_policy(crate::surface::SurfacePolicy::InWindow)
+            .with_surface_keyboard_insets(&insets);
+        let position = calculate(
+            &modal_composer(2, None),
+            Size {
+                width: 400.0,
+                height: 800.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(position[&4].y, -300.0, "iOS: position moves the view up");
+        assert_eq!(position[&8].y + position[&8].height, 500.0);
+    }
+
+    /// A keyboard dock: a padding `KeyboardAvoidingView` measured from its own
+    /// laid-out frame. `keyboardVerticalOffset` is the gap above the keyboard;
+    /// the resting bottom (a safe-area padding around it, or a frame that
+    /// ends below the window inside scrolled content) needs no measuring.
+    fn modal_dock(container: Vec<(PropKey, PropValue)>) -> Tree {
+        let node = |id, parent, index, kind, properties: Vec<(PropKey, PropValue)>| Node {
+            id,
+            parent,
+            index,
+            kind,
+            properties: properties.into_iter().collect(),
+        };
+        Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Screen, vec![])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Modal,
+                        vec![
+                            (PropKey::ModalPresentation, PropValue::Integer(1)),
+                            (PropKey::ModalStatusBarTranslucent, PropValue::Boolean(true)),
+                        ],
+                    ),
+                ),
+                (3, node(3, 2, 0, NodeKind::View, container)),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::KeyboardAvoidingView,
+                        vec![
+                            (PropKey::KeyboardBehavior, PropValue::Integer(3)),
+                            (PropKey::KeyboardVerticalOffset, f(8.0)),
+                            (PropKey::FlexGrow, f(1.0)),
+                        ],
+                    ),
+                ),
+                (
+                    5,
+                    node(5, 4, 0, NodeKind::View, vec![(PropKey::FlexGrow, f(1.0))]),
+                ),
+                (
+                    6,
+                    node(6, 4, 1, NodeKind::View, vec![(PropKey::Height, f(100.0))]),
+                ),
+            ]),
+        }
+    }
+
+    #[test]
+    fn padding_keyboard_dock_rests_on_its_frame_and_sits_its_gap_above_the_keyboard() {
+        // Resting above a 34 dp safe-area bottom.
+        let safe = modal_dock(vec![
+            (PropKey::FlexGrow, f(1.0)),
+            (PropKey::PaddingBottom, f(34.0)),
+        ]);
+        let closed = surface_keyboard_layout(&safe, &[]);
+        assert_eq!(
+            closed[&6].y + closed[&6].height,
+            766.0,
+            "rests on the safe area"
+        );
+        let open = surface_keyboard_layout(&safe, &[(2, 300.0)]);
+        assert_eq!(
+            open[&6].y + open[&6].height,
+            492.0,
+            "8 dp above the keyboard"
+        );
+
+        // Inside scrolled content the dock may end below the window.
+        let below = modal_dock(vec![
+            (PropKey::Height, f(900.0)),
+            (PropKey::FlexShrink, f(0.0)),
+        ]);
+        let open = surface_keyboard_layout(&below, &[(2, 300.0)]);
+        assert_eq!(
+            open[&6].y + open[&6].height,
+            492.0,
+            "still 8 dp above the keyboard"
+        );
+    }
+
+    #[test]
+    fn surface_keyboard_changes_only_relayout_surfaces_that_avoid_it() {
+        let tree = modal_composer(3, None);
+        let android = crate::surface::SurfacePolicy::EdgeToEdgeWindows;
+        let ios = crate::surface::SurfacePolicy::InWindow;
+        assert!(super::surface_avoids_keyboard(&tree, 2, android));
+        assert!(!super::surface_avoids_keyboard(&tree, 1, android));
+        let pan = modal_composer(2, None);
+        assert!(
+            !super::surface_avoids_keyboard(&pan, 2, android),
+            "Android pans natively"
+        );
+        assert!(super::surface_avoids_keyboard(&pan, 2, ios));
+    }
+
+    #[test]
+    fn nested_safe_area_views_receive_the_insets_of_the_edges_they_touch() {
+        let node = |id, parent, index, kind, properties: Vec<(PropKey, PropValue)>| Node {
+            id,
+            parent,
+            index,
+            kind,
+            properties: properties.into_iter().collect(),
+        };
+        let off = PropValue::Boolean(false);
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                // Root SafeAreaView owns the top edge only.
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::SafeAreaView,
+                        vec![(PropKey::SafeAreaBottomEdge, off.clone())],
+                    ),
+                ),
+                (
+                    2,
+                    node(2, 1, 0, NodeKind::View, vec![(PropKey::FlexGrow, f(1.0))]),
+                ),
+                // Bottom bar: nested SafeAreaView with only the bottom edge.
+                (
+                    3,
+                    node(
+                        3,
+                        1,
+                        1,
+                        NodeKind::SafeAreaView,
+                        vec![
+                            (PropKey::SafeAreaTop, off.clone()),
+                            (PropKey::SafeAreaLeft, off.clone()),
+                            (PropKey::SafeAreaRight, off.clone()),
+                        ],
+                    ),
+                ),
+                (
+                    4,
+                    node(4, 3, 0, NodeKind::View, vec![(PropKey::Height, f(56.0))]),
+                ),
+            ]),
+        };
+        let _scope =
+            crate::text_measure::ActiveScope::enter_with(None, Some([0.0, 24.0, 0.0, 48.0]), 0.0);
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 400.0,
+                height: 800.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(layouts[&2].y, 24.0);
+        assert_eq!(layouts[&3].height, 104.0);
+        assert_eq!(layouts[&3].y + layouts[&3].height, 800.0);
+        assert_eq!(layouts[&4].y, 800.0 - 48.0 - 56.0);
+        drop(_scope);
+        let legacy = calculate(
+            &tree,
+            Size {
+                width: 400.0,
+                height: 800.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            legacy[&3].height, 56.0,
+            "without host insets the legacy renderer owns safe areas"
+        );
+    }
+
+    #[test]
+    fn virtual_list_cells_without_row_height_use_their_content_extent() {
+        let node = |id, parent, index, kind, properties: Vec<(PropKey, PropValue)>| Node {
+            id,
+            parent,
+            index,
+            kind,
+            properties: properties.into_iter().collect(),
+        };
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::VirtualList, vec![])),
+                (
+                    2,
+                    node(2, 1, 0, NodeKind::Column, vec![(PropKey::Padding, f(5.0))]),
+                ),
+                (
+                    3,
+                    node(3, 2, 0, NodeKind::View, vec![(PropKey::Height, f(30.0))]),
+                ),
+                (4, node(4, 1, 1, NodeKind::Column, vec![])),
+                (
+                    5,
+                    node(5, 4, 0, NodeKind::View, vec![(PropKey::Height, f(72.0))]),
+                ),
+            ]),
+        };
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 300.0,
+                height: 600.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(layouts[&2].height, 40.0);
+        assert_eq!(layouts[&4].y, 40.0);
+        assert_eq!(layouts[&4].height, 72.0);
+    }
+
+    #[test]
+    fn mounted_virtual_list_cells_without_visible_content_measure_zero() {
+        let node = |id, parent, index, kind, properties: Vec<(PropKey, PropValue)>| Node {
+            id,
+            parent,
+            index,
+            kind,
+            properties: properties.into_iter().collect(),
+        };
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::VirtualList,
+                        vec![(PropKey::ListRowHeight, f(604.0))],
+                    ),
+                ),
+                // Mounted cell whose component rendered a hidden root.
+                (2, node(2, 1, 0, NodeKind::Column, vec![])),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::View,
+                        vec![(PropKey::Visible, PropValue::Boolean(false))],
+                    ),
+                ),
+                // Mounted cell with content.
+                (4, node(4, 1, 1, NodeKind::Column, vec![])),
+                (
+                    5,
+                    node(5, 4, 0, NodeKind::View, vec![(PropKey::Height, f(72.0))]),
+                ),
+                // Cell not mounted yet keeps the estimate.
+                (6, node(6, 1, 2, NodeKind::Column, vec![])),
+            ]),
+        };
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 300.0,
+                height: 600.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(layouts[&2].height, 0.0);
+        assert_eq!(layouts[&4].y, 0.0);
+        assert_eq!(layouts[&4].height, 72.0);
+        assert_eq!(layouts[&6].y, 72.0);
+        assert_eq!(layouts[&6].height, 604.0);
+    }
+
+    #[test]
+    fn full_span_list_items_take_a_whole_row_in_multi_column_lists() {
+        let node = |id, index, properties: Vec<(PropKey, PropValue)>| Node {
+            id,
+            parent: 1,
+            index,
+            kind: NodeKind::View,
+            properties: properties.into_iter().collect(),
+        };
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    Node {
+                        id: 1,
+                        parent: 0,
+                        index: 0,
+                        kind: NodeKind::VirtualList,
+                        properties: BTreeMap::from([
+                            (PropKey::ListNumColumns, i(2)),
+                            (PropKey::ListRowHeight, f(50.0)),
+                        ]),
+                    },
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        0,
+                        vec![
+                            (PropKey::ListFullSpan, PropValue::Boolean(true)),
+                            (PropKey::Height, f(80.0)),
+                        ],
+                    ),
+                ),
+                (3, node(3, 1, vec![])),
+                (4, node(4, 2, vec![])),
+                (5, node(5, 3, vec![])),
+            ]),
+        };
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 300.0,
+                height: 600.0,
+            },
+        )
+        .unwrap();
+        assert_eq!((layouts[&2].width, layouts[&2].height), (300.0, 80.0));
+        assert_eq!(
+            (layouts[&3].x, layouts[&3].y, layouts[&3].width),
+            (0.0, 80.0, 150.0)
+        );
+        assert_eq!((layouts[&4].x, layouts[&4].y), (150.0, 80.0));
+        assert_eq!((layouts[&5].x, layouts[&5].y), (0.0, 130.0));
+    }
+
+    #[test]
+    fn chat_header_under_a_top_safe_area_root_keeps_its_children_in_place() {
+        let node = |id, parent, index, kind, properties: Vec<(PropKey, PropValue)>| Node {
+            id,
+            parent,
+            index,
+            kind,
+            properties: properties.into_iter().collect(),
+        };
+        let text = |id, parent, index, value: &str, size: f32| {
+            node(
+                id,
+                parent,
+                index,
+                NodeKind::Text,
+                vec![
+                    (PropKey::Text, PropValue::String(value.into())),
+                    (PropKey::FontSize, f(size)),
+                    (PropKey::NumberOfLines, i(1)),
+                ],
+            )
+        };
+        let off = PropValue::Boolean(false);
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::SafeAreaView,
+                        vec![
+                            (PropKey::SafeAreaBottomEdge, off.clone()),
+                            (PropKey::HeightPercent, f(100.0)),
+                        ],
+                    ),
+                ),
+                (2, node(2, 1, 0, NodeKind::StatusBar, vec![])),
+                (
+                    3,
+                    node(
+                        3,
+                        1,
+                        1,
+                        NodeKind::Column,
+                        vec![
+                            (PropKey::FlexGrow, f(1.0)),
+                            (PropKey::MinHeight, f(0.0)),
+                            (PropKey::Overflow, i(2)),
+                        ],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::Row,
+                        vec![
+                            (PropKey::AlignItems, i(2)),
+                            (PropKey::MinHeight, f(52.0)),
+                            (PropKey::PaddingLeft, f(2.0)),
+                            (PropKey::PaddingRight, f(2.0)),
+                        ],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        4,
+                        0,
+                        NodeKind::Pressable,
+                        vec![
+                            (PropKey::AlignItems, i(2)),
+                            (PropKey::JustifyContent, i(2)),
+                            (PropKey::Width, f(36.0)),
+                            (PropKey::Height, f(48.0)),
+                        ],
+                    ),
+                ),
+                (
+                    6,
+                    node(
+                        6,
+                        4,
+                        1,
+                        NodeKind::Pressable,
+                        vec![
+                            (PropKey::FlexDirection, i(2)),
+                            (PropKey::AlignItems, i(2)),
+                            (PropKey::FlexGrow, f(1.0)),
+                            (PropKey::MinWidth, f(0.0)),
+                            (PropKey::MinHeight, f(48.0)),
+                        ],
+                    ),
+                ),
+                (
+                    7,
+                    node(
+                        7,
+                        6,
+                        0,
+                        NodeKind::View,
+                        vec![
+                            (PropKey::Width, f(36.0)),
+                            (PropKey::Height, f(36.0)),
+                            (PropKey::BorderWidth, f(1.5)),
+                            (PropKey::BorderRadius, f(18.0)),
+                        ],
+                    ),
+                ),
+                (
+                    8,
+                    node(
+                        8,
+                        6,
+                        1,
+                        NodeKind::Column,
+                        vec![
+                            (PropKey::FlexGrow, f(1.0)),
+                            (PropKey::MinWidth, f(0.0)),
+                            (PropKey::PaddingLeft, f(10.0)),
+                            (PropKey::PaddingRight, f(10.0)),
+                        ],
+                    ),
+                ),
+                (9, text(9, 8, 0, "Ana Souza", 19.0)),
+                (10, text(10, 8, 1, "online", 12.0)),
+                (
+                    11,
+                    node(
+                        11,
+                        3,
+                        1,
+                        NodeKind::Column,
+                        vec![(PropKey::FlexGrow, f(1.0))],
+                    ),
+                ),
+            ]),
+        };
+        let _scope =
+            crate::text_measure::ActiveScope::enter_with(None, Some([0.0, 24.0, 0.0, 48.0]), 0.0);
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 411.0,
+                height: 868.0,
+            },
+        )
+        .unwrap();
+        // Only the root SafeAreaView is inset; its descendants keep their
+        // flex positions below the status bar (Zé chat header regression).
+        assert_eq!(layouts[&1].y, 0.0);
+        assert_eq!(layouts[&3].y, 24.0);
+        assert_eq!(
+            layouts[&4].y, 24.0,
+            "the header starts below the status bar"
+        );
+        assert_eq!(layouts[&6].y, 26.0);
+        assert!((layouts[&8].y - 28.3).abs() < 0.01 && (layouts[&8].height - 43.4).abs() < 0.01);
+        assert!(
+            layouts[&8].y >= layouts[&4].y
+                && layouts[&8].y + layouts[&8].height <= layouts[&4].y + layouts[&4].height + 0.01
+        );
+        assert!(layouts[&9].height > 15.0 && layouts[&9].y >= layouts[&8].y);
+    }
+
+    #[test]
+    fn baseline_of_a_container_uses_its_first_text_descendant() {
+        let text = |id, parent, size: f32| Node {
+            id,
+            parent,
+            index: 0,
+            kind: NodeKind::Text,
+            properties: BTreeMap::from([
+                (PropKey::Text, PropValue::String("Ag".into())),
+                (PropKey::FontSize, f(size)),
+            ]),
+        };
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    Node {
+                        id: 1,
+                        parent: 0,
+                        index: 0,
+                        kind: NodeKind::Row,
+                        properties: BTreeMap::from([(PropKey::AlignItems, i(5))]),
+                    },
+                ),
+                (2, text(2, 1, 24.0)),
+                (
+                    3,
+                    Node {
+                        id: 3,
+                        parent: 1,
+                        index: 1,
+                        kind: NodeKind::View,
+                        properties: BTreeMap::from([(PropKey::PaddingTop, f(10.0))]),
+                    },
+                ),
+                (4, text(4, 3, 12.0)),
+            ]),
+        };
+        let layouts = calculate(
+            &tree,
+            Size {
+                width: 300.0,
+                height: 300.0,
+            },
+        )
+        .unwrap();
+        let index = child_index(&tree);
+        let first =
+            layouts[&2].y + baseline_from_top(&index, &tree.nodes[&2], layouts[&2].height, 1.0);
+        let nested =
+            layouts[&4].y + baseline_from_top(&index, &tree.nodes[&4], layouts[&4].height, 1.0);
+        assert!(
+            (first - nested).abs() < 0.01,
+            "baselines {first} vs {nested}"
+        );
+    }
+
+    #[test]
+    fn flex_basis_points_grow_and_shrink_like_css() {
+        // flex: 1 1 100px + flex: 2 1 100px in 400px → free 200 split 1:2.
+        let layouts = layout(
+            row(vec![]),
+            vec![
+                vec![
+                    (PropKey::FlexGrow, f(1.0)),
+                    (PropKey::FlexShrink, f(1.0)),
+                    (PropKey::FlexBasis, f(100.0)),
+                ],
+                vec![
+                    (PropKey::FlexGrow, f(2.0)),
+                    (PropKey::FlexShrink, f(1.0)),
+                    (PropKey::FlexBasis, f(100.0)),
+                ],
+            ],
+            400.0,
+            100.0,
+        );
+        assert!((layouts[&2].width - 166.666).abs() < 0.01);
+        assert!((layouts[&3].width - 233.333).abs() < 0.01);
+        assert!((layouts[&3].x - 166.666).abs() < 0.01);
+
+        // flex: 0 1 300px twice in 400px → each shrinks by 100.
+        let shrunk = layout(
+            row(vec![]),
+            vec![
+                vec![
+                    (PropKey::FlexShrink, f(1.0)),
+                    (PropKey::FlexBasis, f(300.0)),
+                ],
+                vec![
+                    (PropKey::FlexShrink, f(1.0)),
+                    (PropKey::FlexBasis, f(300.0)),
+                ],
+            ],
+            400.0,
+            100.0,
+        );
+        assert_eq!(shrunk[&2].width, 200.0);
+        assert_eq!(shrunk[&3].width, 200.0);
+    }
+
+    #[test]
+    fn flex_basis_percent_and_zero_basis_with_gap() {
+        let layouts = layout(
+            row(vec![(PropKey::Gap, f(10.0))]),
+            vec![
+                vec![(PropKey::FlexBasisPercent, f(25.0))],
+                vec![
+                    (PropKey::FlexGrow, f(1.0)),
+                    (PropKey::FlexShrink, f(1.0)),
+                    (PropKey::FlexBasis, f(0.0)),
+                ],
+                vec![
+                    (PropKey::FlexGrow, f(1.0)),
+                    (PropKey::FlexShrink, f(1.0)),
+                    (PropKey::FlexBasis, f(0.0)),
+                ],
+            ],
+            420.0,
+            50.0,
+        );
+        assert_eq!(layouts[&2].width, 105.0);
+        assert_eq!(layouts[&3].width, 147.5);
+        assert_eq!(layouts[&4].width, 147.5);
+        assert_eq!(layouts[&4].x, 105.0 + 10.0 + 147.5 + 10.0);
+    }
+
+    #[test]
+    fn flex_basis_content_starts_from_explicit_size_and_grows() {
+        // flex: 1 1 auto with width 100 → basis 100, plus half the free space.
+        let layouts = layout(
+            row(vec![]),
+            vec![
+                vec![
+                    (PropKey::FlexGrow, f(1.0)),
+                    (PropKey::FlexBasisContent, PropValue::Boolean(true)),
+                    (PropKey::Width, f(100.0)),
+                ],
+                vec![
+                    (PropKey::FlexGrow, f(1.0)),
+                    (PropKey::FlexBasisContent, PropValue::Boolean(true)),
+                    (PropKey::Width, f(50.0)),
+                ],
+            ],
+            300.0,
+            50.0,
+        );
+        assert_eq!(layouts[&2].width, 175.0);
+        assert_eq!(layouts[&3].width, 125.0);
+    }
+
+    #[test]
+    fn growth_respects_max_and_min_percent() {
+        let layouts = layout(
+            row(vec![]),
+            vec![
+                vec![(PropKey::FlexGrow, f(1.0)), (PropKey::MaxWidth, f(50.0))],
+                vec![(PropKey::FlexGrow, f(1.0))],
+                vec![
+                    (PropKey::MinWidthPercent, f(10.0)),
+                    (PropKey::Width, f(5.0)),
+                ],
+            ],
+            400.0,
+            50.0,
+        );
+        assert_eq!(layouts[&2].width, 50.0);
+        assert_eq!(layouts[&4].width, 40.0);
+        assert_eq!(layouts[&3].width, 310.0);
+    }
+
+    #[test]
+    fn order_auto_margins_and_relative_offsets() {
+        let layouts = layout(
+            row(vec![(PropKey::AlignItems, i(1))]),
+            vec![
+                vec![
+                    (PropKey::Width, f(40.0)),
+                    (PropKey::Height, f(10.0)),
+                    (PropKey::GridOrder, i(2)),
+                ],
+                vec![
+                    (PropKey::Width, f(60.0)),
+                    (PropKey::Height, f(10.0)),
+                    (PropKey::MarginRightAuto, PropValue::Boolean(true)),
+                    (PropKey::MarginTopAuto, PropValue::Boolean(true)),
+                    (PropKey::MarginBottomAuto, PropValue::Boolean(true)),
+                ],
+                vec![
+                    (PropKey::Width, f(20.0)),
+                    (PropKey::Height, f(10.0)),
+                    (PropKey::Top, f(3.0)),
+                    (PropKey::Left, f(-2.0)),
+                ],
+            ],
+            300.0,
+            100.0,
+        );
+        // Visual order: 3 (order 0), 4 (order 0), 2 (order 2); auto margin right on 3.
+        assert_eq!(layouts[&3].x, 0.0);
+        assert_eq!(layouts[&3].y, 45.0);
+        assert_eq!(layouts[&4].x, 300.0 - 40.0 - 20.0 - 2.0);
+        assert_eq!(layouts[&4].y, 3.0);
+        assert_eq!(layouts[&2].x, 260.0);
+    }
+
+    #[test]
+    fn fixed_position_uses_the_viewport() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            Node {
+                id: 1,
+                parent: 0,
+                index: 0,
+                kind: NodeKind::View,
+                properties: BTreeMap::new(),
+            },
+        );
+        nodes.insert(
+            2,
+            Node {
+                id: 2,
+                parent: 1,
+                index: 0,
+                kind: NodeKind::View,
+                properties: [
+                    (PropKey::MarginTop, f(100.0)),
+                    (PropKey::Height, f(200.0)),
+                    (PropKey::Padding, f(20.0)),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        );
+        nodes.insert(
+            3,
+            Node {
+                id: 3,
+                parent: 2,
+                index: 0,
+                kind: NodeKind::View,
+                properties: [
+                    (PropKey::PositionType, i(3)),
+                    (PropKey::Right, f(0.0)),
+                    (PropKey::Bottom, f(0.0)),
+                    (PropKey::Width, f(50.0)),
+                    (PropKey::Height, f(30.0)),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        );
+        let layouts = calculate(
+            &Tree { root: 1, nodes },
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("layout");
+        assert_eq!(layouts[&3].x, 310.0);
+        assert_eq!(layouts[&3].y, 610.0);
+    }
+
+    /// Yoga: a tile `flex-grow:1; min-width:108; max-width:160` whose only
+    /// child is an image at 100% has a content basis of 0 (the percentage of
+    /// an indefinite parent is auto and an image has no measure function), so
+    /// lines break by the min-width clamp: 3 tiles fit in 346 pt and then grow.
+    #[test]
+    fn wrapped_tiles_filled_by_a_percent_image_break_lines_like_yoga() {
+        let mut nodes = BTreeMap::from([(
+            1,
+            Node {
+                id: 1,
+                parent: 0,
+                index: 0,
+                kind: NodeKind::Row,
+                properties: [
+                    (PropKey::FlexWrap, i(2)),
+                    (PropKey::AlignItems, i(1)),
+                    (PropKey::PaddingHorizontal, f(12.0)),
+                    (PropKey::Gap, f(4.0)),
+                ]
+                .into_iter()
+                .collect(),
+            },
+        )]);
+        for index in 0..4_u64 {
+            let tile = 2 + index * 2;
+            nodes.insert(
+                tile,
+                Node {
+                    id: tile,
+                    parent: 1,
+                    index: index as u32,
+                    kind: NodeKind::Pressable,
+                    properties: [
+                        (PropKey::FlexGrow, f(1.0)),
+                        (PropKey::MinWidth, f(108.0)),
+                        (PropKey::MaxWidth, f(160.0)),
+                        (PropKey::Height, f(122.0)),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            );
+            nodes.insert(
+                tile + 1,
+                Node {
+                    id: tile + 1,
+                    parent: tile,
+                    index: 0,
+                    kind: NodeKind::Image,
+                    properties: [
+                        (PropKey::WidthPercent, f(100.0)),
+                        (PropKey::HeightPercent, f(100.0)),
+                    ]
+                    .into_iter()
+                    .collect(),
+                },
+            );
+        }
+        let layouts = calculate(
+            &Tree { root: 1, nodes },
+            Size {
+                width: 370.0,
+                height: 800.0,
+            },
+        )
+        .expect("layout");
+        let width = (346.0 - 8.0) / 3.0;
+        for tile in [2, 4, 6] {
+            assert!(
+                (layouts[&tile].width - width).abs() < 0.01,
+                "{:?}",
+                layouts[&tile]
+            );
+            assert_eq!(layouts[&tile].y, 0.0);
+            assert!((layouts[&(tile + 1)].width - width).abs() < 0.01);
+        }
+        assert!((layouts[&6].x - (12.0 + 2.0 * (width + 4.0))).abs() < 0.01);
+        // The fourth tile wraps alone and grows only up to its max-width.
+        assert_eq!(layouts[&8].width, 160.0);
+        assert_eq!(layouts[&8].y, 126.0);
+    }
+
+    #[test]
+    fn wrap_uses_percent_basis_align_content_and_reverse() {
+        let card = || {
+            vec![
+                (PropKey::FlexGrow, f(1.0)),
+                (PropKey::FlexShrink, f(1.0)),
+                (PropKey::FlexBasisPercent, f(30.0)),
+                (PropKey::Height, f(20.0)),
+            ]
+        };
+        let layouts = layout(
+            row(vec![
+                (PropKey::FlexWrap, i(2)),
+                (PropKey::AlignContent, i(5)),
+                (PropKey::GridColumnGap, f(10.0)),
+                (PropKey::GridRowGap, f(10.0)),
+            ]),
+            vec![card(), card(), card(), card()],
+            300.0,
+            200.0,
+        );
+        // 3 cards per line: 90 + 10 + 90 + 10 + 90 = 290 → each grows by 10/3.
+        assert!((layouts[&2].width - 93.333).abs() < 0.01);
+        assert_eq!(layouts[&2].y, 0.0);
+        // Last card alone on line two grows to the full width; space-between pins it to the end.
+        assert_eq!(layouts[&5].width, 300.0);
+        assert_eq!(layouts[&5].y, 180.0);
+
+        let centered = layout(
+            row(vec![
+                (PropKey::FlexWrap, i(2)),
+                (PropKey::AlignContent, i(2)),
+            ]),
+            vec![
+                vec![(PropKey::Width, f(200.0)), (PropKey::Height, f(20.0))],
+                vec![(PropKey::Width, f(200.0)), (PropKey::Height, f(20.0))],
+            ],
+            300.0,
+            100.0,
+        );
+        assert_eq!(centered[&2].y, 30.0);
+        assert_eq!(centered[&3].y, 50.0);
+
+        let reversed = layout(
+            row(vec![(PropKey::FlexWrap, i(3))]),
+            vec![
+                vec![(PropKey::Width, f(200.0)), (PropKey::Height, f(20.0))],
+                vec![(PropKey::Width, f(200.0)), (PropKey::Height, f(20.0))],
+            ],
+            300.0,
+            100.0,
+        );
+        assert_eq!(reversed[&2].y, 80.0);
+        assert_eq!(reversed[&3].y, 60.0);
+    }
+
+    #[test]
+    fn intrinsic_row_width_uses_point_basis() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            Node {
+                id: 1,
+                parent: 0,
+                index: 0,
+                kind: NodeKind::View,
+                properties: [(PropKey::AlignItems, i(1))].into_iter().collect(),
+            },
+        );
+        nodes.insert(
+            2,
+            Node {
+                id: 2,
+                parent: 1,
+                index: 0,
+                kind: NodeKind::View,
+                properties: [(PropKey::FlexDirection, i(2))].into_iter().collect(),
+            },
+        );
+        for id in 3..=4 {
+            nodes.insert(
+                id,
+                Node {
+                    id,
+                    parent: 2,
+                    index: (id - 3) as u32,
+                    kind: NodeKind::View,
+                    properties: [(PropKey::FlexBasis, f(70.0)), (PropKey::Height, f(10.0))]
+                        .into_iter()
+                        .collect(),
+                },
+            );
+        }
+        let layouts = calculate(
+            &Tree { root: 1, nodes },
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("layout");
+        assert_eq!(layouts[&2].width, 140.0);
+        assert_eq!(layouts[&4].x, 70.0);
+    }
+
+    fn node(id: u64, parent: u64, index: u32, kind: NodeKind, properties: Props) -> Node {
+        Node {
+            id,
+            parent,
+            index,
+            kind,
+            properties: properties.into_iter().collect(),
+        }
+    }
+
+    /// Screen with a root SafeAreaView, plus a Modal (id 10) whose content is a
+    /// SafeAreaView (11) with a 56pt header (12), a flexible body (13) and a
+    /// 50pt footer (14).
+    fn modal_safe_area_tree(modal_props: Vec<(PropKey, PropValue)>) -> Tree {
+        Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Screen, vec![])),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::SafeAreaView,
+                        vec![(PropKey::FlexGrow, f(1.0))],
+                    ),
+                ),
+                (
+                    3,
+                    node(3, 2, 0, NodeKind::View, vec![(PropKey::Height, f(40.0))]),
+                ),
+                (10, node(10, 1, 1, NodeKind::Modal, modal_props)),
+                (
+                    11,
+                    node(
+                        11,
+                        10,
+                        0,
+                        NodeKind::SafeAreaView,
+                        vec![(PropKey::FlexGrow, f(1.0))],
+                    ),
+                ),
+                (
+                    12,
+                    node(12, 11, 0, NodeKind::View, vec![(PropKey::Height, f(56.0))]),
+                ),
+                (
+                    13,
+                    node(13, 11, 1, NodeKind::View, vec![(PropKey::FlexGrow, f(1.0))]),
+                ),
+                (
+                    14,
+                    node(14, 11, 2, NodeKind::View, vec![(PropKey::Height, f(50.0))]),
+                ),
+            ]),
+        }
+    }
+
+    const SURFACE_WINDOW: Size = Size {
+        width: 400.0,
+        height: 800.0,
+    };
+    const SURFACE_INSETS: [f32; 4] = [0.0, 24.0, 0.0, 48.0];
+
+    fn surface_layout(tree: &Tree, policy: crate::surface::SurfacePolicy) -> BTreeMap<u64, Layout> {
+        let _scope = crate::text_measure::ActiveScope::enter_with(None, Some(SURFACE_INSETS), 0.0)
+            .with_surface_policy(policy);
+        calculate(tree, SURFACE_WINDOW).expect("layout")
+    }
+
+    fn full_screen() -> Vec<(PropKey, PropValue)> {
+        vec![(PropKey::ModalPresentation, PropValue::Integer(1))]
+    }
+
+    #[test]
+    fn in_window_full_screen_modal_safe_area_uses_the_window_insets() {
+        let layouts = surface_layout(
+            &modal_safe_area_tree(full_screen()),
+            crate::surface::SurfacePolicy::InWindow,
+        );
+        assert_eq!(
+            layouts[&10],
+            Layout {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 800.0
+            }
+        );
+        assert_eq!(layouts[&12].y, 24.0);
+        assert_eq!(layouts[&14].y + layouts[&14].height, 800.0 - 48.0);
+        assert_eq!(layouts[&3].y, 24.0);
+    }
+
+    #[test]
+    fn fitted_system_window_modal_never_applies_the_status_bar_twice() {
+        let layouts = surface_layout(
+            &modal_safe_area_tree(full_screen()),
+            crate::surface::SurfacePolicy::SystemWindows,
+        );
+        // The dialog window is laid out between the system bars.
+        assert_eq!(
+            layouts[&10],
+            Layout {
+                x: 0.0,
+                y: 24.0,
+                width: 400.0,
+                height: 728.0
+            }
+        );
+        assert_eq!(layouts[&11], layouts[&10]);
+        // Header at the window content top (status bar applied once, by the
+        // window), footer at the window content bottom (navigation bar once).
+        assert_eq!(layouts[&12].y, 24.0);
+        assert_eq!(layouts[&14].y + layouts[&14].height, 752.0);
+        assert_eq!(layouts[&13].height, 728.0 - 56.0 - 50.0);
+        // Content outside the modal keeps the activity window insets.
+        assert_eq!(layouts[&3].y, 24.0);
+    }
+
+    #[test]
+    fn enforced_edge_to_edge_modal_pads_the_real_insets_without_translucency() {
+        let layouts = surface_layout(
+            &modal_safe_area_tree(full_screen()),
+            crate::surface::SurfacePolicy::EdgeToEdgeWindows,
+        );
+        assert_eq!(
+            layouts[&10],
+            Layout {
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 800.0
+            }
+        );
+        assert_eq!(layouts[&12].y, 24.0);
+        assert_eq!(layouts[&14].y + layouts[&14].height, 800.0 - 48.0);
+    }
+
+    #[test]
+    fn translucent_system_window_modal_safe_area_uses_the_real_insets() {
+        for key in [
+            PropKey::ModalStatusBarTranslucent,
+            PropKey::ModalNavigationBarTranslucent,
+        ] {
+            let mut props = full_screen();
+            props.push((key, PropValue::Boolean(true)));
+            let layouts = surface_layout(
+                &modal_safe_area_tree(props),
+                crate::surface::SurfacePolicy::SystemWindows,
+            );
+            assert_eq!(
+                layouts[&10],
+                Layout {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 400.0,
+                    height: 800.0
+                }
+            );
+            assert_eq!(layouts[&12].y, 24.0, "{key:?}");
+            assert_eq!(
+                layouts[&14].y + layouts[&14].height,
+                800.0 - 48.0,
+                "{key:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bottom_sheet_safe_area_keeps_the_bottom_inset_but_never_the_status_bar() {
+        let sheet = vec![(PropKey::ModalPresentation, PropValue::Integer(3))];
+        let layouts = surface_layout(
+            &modal_safe_area_tree(sheet.clone()),
+            crate::surface::SurfacePolicy::InWindow,
+        );
+        // The content occupies the first detent (0.5 of the window minus the
+        // status bar) at the bottom of the surface.
+        let sheet_top = 800.0 - (800.0 - 24.0) * 0.5;
+        assert_eq!(layouts[&11].y, sheet_top);
+        assert_eq!(layouts[&12].y, sheet_top);
+        assert_eq!(layouts[&14].y + layouts[&14].height, 800.0 - 48.0);
+
+        let fitted = surface_layout(
+            &modal_safe_area_tree(sheet.clone()),
+            crate::surface::SurfacePolicy::SystemWindows,
+        );
+        assert_eq!(fitted[&12].y, sheet_top);
+        assert_eq!(fitted[&14].y + fitted[&14].height, 752.0);
+
+        let mut edge_to_edge = sheet;
+        edge_to_edge.push((
+            PropKey::ModalNavigationBarTranslucent,
+            PropValue::Boolean(true),
+        ));
+        let layouts = surface_layout(
+            &modal_safe_area_tree(edge_to_edge),
+            crate::surface::SurfacePolicy::SystemWindows,
+        );
+        assert_eq!(layouts[&12].y, sheet_top);
+        assert_eq!(layouts[&14].y + layouts[&14].height, 800.0 - 48.0);
+    }
+
+    #[test]
+    fn content_sized_safe_area_in_a_fitted_dialog_does_not_grow_by_window_insets() {
+        let mut tree = modal_safe_area_tree(vec![]);
+        // Dialog content: a content-sized SafeAreaView holding a 100pt card.
+        tree.nodes
+            .insert(11, node(11, 10, 0, NodeKind::SafeAreaView, vec![]));
+        tree.nodes.retain(|id, _| !matches!(id, 13 | 14));
+        tree.nodes.insert(
+            12,
+            node(12, 11, 0, NodeKind::View, vec![(PropKey::Height, f(100.0))]),
+        );
+        let fitted = surface_layout(&tree, crate::surface::SurfacePolicy::SystemWindows);
+        assert_eq!(fitted[&11].height, 100.0);
+        let overlay = surface_layout(&tree, crate::surface::SurfacePolicy::InWindow);
+        assert_eq!(overlay[&11].height, 100.0 + 24.0 + 48.0);
+    }
+
+    #[test]
+    fn incremental_modal_relayout_keeps_the_surface_insets() {
+        let tree = modal_safe_area_tree(full_screen());
+        let metrics = TextMetrics::new();
+        let _scope = crate::text_measure::ActiveScope::enter_with(None, Some(SURFACE_INSETS), 0.0)
+            .with_surface_policy(crate::surface::SurfacePolicy::SystemWindows);
+        let full = calculate_with_text_metrics(&tree, SURFACE_WINDOW, 1.0, &metrics).expect("full");
+        let (incremental, _) = calculate_incremental_with_text_metrics(
+            &tree,
+            SURFACE_WINDOW,
+            1.0,
+            &metrics,
+            &full,
+            &BTreeSet::from([12]),
+        )
+        .expect("incremental");
+        assert_eq!(incremental, full);
+        assert_eq!(incremental[&12].y, 24.0);
+    }
+
+    #[test]
+    fn sheet_presented_routes_start_below_the_status_bar() {
+        let route_tree = |presentation| Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(
+                        1,
+                        0,
+                        0,
+                        NodeKind::NavigationHost,
+                        vec![(
+                            PropKey::NavigationPresentation,
+                            PropValue::Integer(presentation),
+                        )],
+                    ),
+                ),
+                // Previous route, still visible under the presented one.
+                (2, node(2, 1, 0, NodeKind::SafeAreaView, vec![])),
+                (
+                    3,
+                    node(3, 2, 0, NodeKind::View, vec![(PropKey::Height, f(10.0))]),
+                ),
+                // Active route.
+                (4, node(4, 1, 1, NodeKind::SafeAreaView, vec![])),
+                (
+                    5,
+                    node(5, 4, 0, NodeKind::View, vec![(PropKey::Height, f(10.0))]),
+                ),
+            ]),
+        };
+        use crate::surface::SurfacePolicy::{EdgeToEdgeWindows, InWindow, SystemWindows};
+        for (presentation, policy, active_top) in [
+            (7, InWindow, 0.0),
+            (2, InWindow, 0.0),
+            (4, InWindow, 24.0),
+            (1, InWindow, 24.0),
+            (7, SystemWindows, 0.0),
+            (2, SystemWindows, 24.0),
+            (7, EdgeToEdgeWindows, 0.0),
+            (2, EdgeToEdgeWindows, 24.0),
+        ] {
+            let layouts = surface_layout(&route_tree(presentation), policy);
+            assert_eq!(layouts[&5].y, active_top, "{presentation} {policy:?}");
+            assert_eq!(layouts[&3].y, 24.0, "{presentation} {policy:?}");
+            // The bottom inset still applies where the route reaches it.
+            assert_eq!(layouts[&4].height, 800.0, "{presentation} {policy:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod auto_safe_area_tests {
+    use pam_desktop_wire::PropValue;
+
+    use super::*;
+    use crate::surface::SurfacePolicy;
+
+    const WINDOW: Size = Size {
+        width: 360.0,
+        height: 800.0,
+    };
+    /// Status bar 24 dp and a three-button navigation bar 48 dp.
+    const BUTTONS: [f32; 4] = [0.0, 24.0, 0.0, 48.0];
+    /// Gesture navigation: a 24 dp handle.
+    const GESTURES: [f32; 4] = [0.0, 24.0, 0.0, 24.0];
+
+    fn f(value: f32) -> PropValue {
+        PropValue::Float(f64::from(value))
+    }
+
+    fn n(
+        id: u64,
+        parent: u64,
+        index: u32,
+        kind: NodeKind,
+        props: &[(PropKey, PropValue)],
+    ) -> (u64, Node) {
+        (
+            id,
+            Node {
+                id,
+                parent,
+                index,
+                kind,
+                properties: props.iter().cloned().collect(),
+            },
+        )
+    }
+
+    fn layout_with(tree: &Tree, insets: [f32; 4]) -> BTreeMap<u64, Layout> {
+        let _scope = crate::text_measure::ActiveScope::enter_with(None, Some(insets), 0.0)
+            .with_surface_policy(SurfacePolicy::EdgeToEdgeWindows);
+        let auto = crate::auto_safe_area::Scope::enter(BTreeMap::new());
+        let layouts = calculate(tree, WINDOW).expect("layout");
+        auto.finish();
+        layouts
+    }
+
+    fn violations(tree: &Tree, layouts: &BTreeMap<u64, Layout>, insets: [f32; 4]) -> Vec<u64> {
+        safe_area_violations(
+            tree,
+            layouts,
+            WINDOW,
+            insets,
+            SurfacePolicy::EdgeToEdgeWindows,
+        )
+        .into_iter()
+        .map(|violation| violation.id)
+        .collect()
+    }
+
+    fn bottom(layout: Layout) -> f32 {
+        layout.y + layout.height
+    }
+
+    /// Screen without SafeAreaView: background column, a 52 dp header with a
+    /// title, a flexible body and a composer button at the bottom.
+    fn plain_screen(header_padding: f32) -> Tree {
+        Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                n(1, 0, 0, NodeKind::Screen, &[]),
+                n(2, 1, 0, NodeKind::Column, &[(PropKey::FlexGrow, f(1.0))]),
+                n(
+                    3,
+                    2,
+                    0,
+                    NodeKind::View,
+                    &[
+                        (PropKey::Height, f(52.0 + header_padding)),
+                        (PropKey::PaddingTop, f(header_padding)),
+                    ],
+                ),
+                n(4, 3, 0, NodeKind::Text, &[(PropKey::Height, f(20.0))]),
+                n(5, 2, 1, NodeKind::View, &[(PropKey::FlexGrow, f(1.0))]),
+                n(6, 2, 2, NodeKind::Pressable, &[(PropKey::Height, f(56.0))]),
+            ]),
+        }
+    }
+
+    #[test]
+    fn screen_content_clears_the_status_and_navigation_bars_by_default() {
+        for insets in [BUTTONS, GESTURES] {
+            let tree = plain_screen(0.0);
+            let layouts = layout_with(&tree, insets);
+            // The background still covers the whole window.
+            assert_eq!(layouts[&2].y, 0.0);
+            assert_eq!(bottom(layouts[&2]), 800.0);
+            assert_eq!(layouts[&4].y, insets[1], "title below the status bar");
+            assert_eq!(
+                bottom(layouts[&6]),
+                800.0 - insets[3],
+                "button above the bar"
+            );
+            assert!(violations(&tree, &layouts, insets).is_empty());
+        }
+    }
+
+    #[test]
+    fn padding_the_application_already_authored_is_not_applied_twice() {
+        // The header pads 30 dp itself: max(24, 30) keeps it where it is.
+        let tree = plain_screen(30.0);
+        let layouts = layout_with(&tree, BUTTONS);
+        assert_eq!(layouts[&4].y, 30.0);
+        assert_eq!(bottom(layouts[&6]), 752.0);
+    }
+
+    #[test]
+    fn a_safe_area_view_in_the_wrapper_chain_keeps_explicit_control() {
+        // A root SafeAreaView with the bottom edge disabled (a tab bar owns
+        // it): nothing is added on top of the application's choice.
+        let mut tree = plain_screen(0.0);
+        tree.nodes.insert(
+            2,
+            Node {
+                kind: NodeKind::SafeAreaView,
+                properties: [
+                    (PropKey::FlexGrow, f(1.0)),
+                    (PropKey::SafeAreaBottomEdge, PropValue::Boolean(false)),
+                ]
+                .into_iter()
+                .collect(),
+                ..tree.nodes[&2].clone()
+            },
+        );
+        let layouts = layout_with(&tree, BUTTONS);
+        assert_eq!(layouts[&4].y, 24.0);
+        assert_eq!(bottom(layouts[&6]), 800.0);
+        // The lint still reports the button behind the navigation bar.
+        assert_eq!(violations(&tree, &layouts, BUTTONS), vec![6]);
+    }
+
+    /// RN-like "Anexar" sheet: content column without any bottom padding,
+    /// a strip, a grid and a last card, in a sheet sized to fit (or fixed).
+    fn sheet(snap: Option<f64>, content_padding_bottom: f32, extra_rows: usize) -> Tree {
+        let mut snap_bytes = Vec::new();
+        match snap {
+            Some(point) => {
+                snap_bytes.extend_from_slice(&1_u16.to_le_bytes());
+                snap_bytes.extend_from_slice(&point.to_le_bytes());
+            }
+            None => snap_bytes.extend_from_slice(&0_u16.to_le_bytes()),
+        }
+        let mut nodes = BTreeMap::from([
+            n(1, 0, 0, NodeKind::Screen, &[]),
+            n(2, 1, 0, NodeKind::View, &[(PropKey::FlexGrow, f(1.0))]),
+            n(
+                10,
+                1,
+                1,
+                NodeKind::Modal,
+                &[
+                    (PropKey::ModalPresentation, PropValue::Integer(3)),
+                    (PropKey::BottomSheetSnapPoints, PropValue::Bytes(snap_bytes)),
+                ],
+            ),
+            n(11, 10, 0, NodeKind::Column, &[(PropKey::FlexGrow, f(1.0))]),
+            n(
+                12,
+                11,
+                0,
+                NodeKind::Column,
+                &[
+                    (PropKey::FlexGrow, f(1.0)),
+                    (PropKey::PaddingTop, f(8.0)),
+                    (PropKey::PaddingBottom, f(content_padding_bottom)),
+                ],
+            ),
+            n(13, 12, 0, NodeKind::Text, &[(PropKey::Height, f(26.0))]),
+            n(
+                14,
+                12,
+                1,
+                NodeKind::Pressable,
+                &[(PropKey::Height, f(98.0))],
+            ),
+            n(
+                15,
+                12,
+                2,
+                NodeKind::Pressable,
+                &[(PropKey::Height, f(192.0))],
+            ),
+            n(
+                16,
+                12,
+                3,
+                NodeKind::Pressable,
+                &[(PropKey::Height, f(64.0))],
+            ),
+        ]);
+        for row in 0..extra_rows {
+            let id = 100 + row as u64;
+            nodes.insert(
+                id,
+                n(
+                    id,
+                    12,
+                    4 + row as u32,
+                    NodeKind::Pressable,
+                    &[(PropKey::Height, f(40.0))],
+                )
+                .1,
+            );
+        }
+        Tree { root: 1, nodes }
+    }
+
+    #[test]
+    fn dynamic_sheet_fits_its_content_and_ends_above_the_bar() {
+        for insets in [BUTTONS, GESTURES] {
+            let tree = sheet(None, 0.0, 0);
+            let layouts = layout_with(&tree, insets);
+            let content = 8.0 + 26.0 + 98.0 + 192.0 + 64.0;
+            assert_eq!(layouts[&11].height, content + insets[3]);
+            assert_eq!(
+                bottom(layouts[&11]),
+                800.0,
+                "the sheet reaches the screen bottom"
+            );
+            assert_eq!(
+                bottom(layouts[&16]),
+                800.0 - insets[3],
+                "last card above the bar"
+            );
+            assert!(violations(&tree, &layouts, insets).is_empty());
+        }
+    }
+
+    #[test]
+    fn sheet_padding_is_max_of_the_inset_and_the_application_padding() {
+        // The application already pads inset + 18: nothing is added.
+        let tree = sheet(None, 48.0 + 18.0, 0);
+        let layouts = layout_with(&tree, BUTTONS);
+        assert_eq!(bottom(layouts[&16]), 800.0 - 66.0);
+        // A smaller authored padding (12 dp) is topped up to the inset.
+        let tree = sheet(None, 12.0, 0);
+        let layouts = layout_with(&tree, BUTTONS);
+        assert_eq!(bottom(layouts[&16]), 800.0 - 48.0);
+    }
+
+    #[test]
+    fn fixed_detent_sheet_content_stays_above_the_bar() {
+        let tree = sheet(Some(0.6), 0.0, 0);
+        let layouts = layout_with(&tree, BUTTONS);
+        let height = (800.0 - 24.0) * 0.6;
+        assert!((layouts[&11].height - height).abs() < 0.01);
+        assert!(bottom(layouts[&16]) <= 752.0 + 0.01);
+        assert!(violations(&tree, &layouts, BUTTONS).is_empty());
+    }
+
+    #[test]
+    fn content_that_overflows_a_fixed_detent_is_reported() {
+        let tree = sheet(Some(0.3), 0.0, 4);
+        let layouts = layout_with(&tree, BUTTONS);
+        assert!(!violations(&tree, &layouts, BUTTONS).is_empty());
+    }
+
+    /// A full-screen vertical pager (RN pagingEnabled list, the real-world
+    /// app's video loops): pages are one viewport tall and snap to the list
+    /// frame, so the container is not padded and the list keeps the whole
+    /// window; a stretched chrome overlay keeps its frame too.
+    fn pager_screen(paging: bool) -> Tree {
+        let mut nodes = BTreeMap::from([
+            n(1, 0, 0, NodeKind::Screen, &[]),
+            n(2, 1, 0, NodeKind::View, &[(PropKey::FlexGrow, f(1.0))]),
+            n(
+                3,
+                2,
+                0,
+                NodeKind::VirtualList,
+                &[
+                    (PropKey::FlexGrow, f(1.0)),
+                    (PropKey::MinHeight, f(0.0)),
+                    (PropKey::ScrollPagingEnabled, PropValue::Boolean(paging)),
+                ],
+            ),
+            n(
+                4,
+                2,
+                1,
+                NodeKind::View,
+                &[
+                    (PropKey::PositionType, PropValue::Integer(2)),
+                    (PropKey::Top, f(0.0)),
+                    (PropKey::Bottom, f(0.0)),
+                    (PropKey::Left, f(0.0)),
+                    (PropKey::Right, f(0.0)),
+                ],
+            ),
+            n(5, 4, 0, NodeKind::Pressable, &[(PropKey::Height, f(44.0))]),
+        ]);
+        for page in 0..3_u64 {
+            nodes.insert(
+                100 + page,
+                n(
+                    100 + page,
+                    3,
+                    page as u32,
+                    NodeKind::View,
+                    &[(PropKey::Height, f(800.0))],
+                )
+                .1,
+            );
+            nodes.insert(
+                200 + page,
+                n(
+                    200 + page,
+                    100 + page,
+                    0,
+                    NodeKind::Text,
+                    &[(PropKey::Height, f(20.0))],
+                )
+                .1,
+            );
+        }
+        Tree { root: 1, nodes }
+    }
+
+    #[test]
+    fn a_full_screen_vertical_pager_keeps_the_whole_window() {
+        for insets in [BUTTONS, GESTURES] {
+            let layouts = layout_with(&pager_screen(true), insets);
+            assert_eq!(layouts[&3].y, 0.0, "pager starts at the window top");
+            assert_eq!(layouts[&3].height, 800.0, "a page is the window height");
+            assert_eq!(layouts[&4].y, 0.0);
+            assert_eq!(
+                bottom(layouts[&4]),
+                800.0,
+                "stretched overlay keeps its frame"
+            );
+            // A plain (non-paging) list still ends above the bars.
+            let layouts = layout_with(&pager_screen(false), insets);
+            assert_eq!(layouts[&3].y, insets[1]);
+            assert_eq!(bottom(layouts[&3]), 800.0 - insets[3]);
+        }
+    }
+
+    #[test]
+    fn scrolling_sheet_ends_its_last_row_above_the_bar() {
+        let mut snap = Vec::new();
+        snap.extend_from_slice(&1_u16.to_le_bytes());
+        snap.extend_from_slice(&0.5_f64.to_le_bytes());
+        let mut nodes = BTreeMap::from([
+            n(1, 0, 0, NodeKind::Screen, &[]),
+            n(
+                10,
+                1,
+                0,
+                NodeKind::Modal,
+                &[
+                    (PropKey::ModalPresentation, PropValue::Integer(3)),
+                    (PropKey::BottomSheetSnapPoints, PropValue::Bytes(snap)),
+                ],
+            ),
+            n(11, 10, 0, NodeKind::Column, &[(PropKey::FlexGrow, f(1.0))]),
+            n(12, 11, 0, NodeKind::Text, &[(PropKey::Height, f(40.0))]),
+            n(
+                13,
+                11,
+                1,
+                NodeKind::Scroll,
+                &[(PropKey::FlexGrow, f(1.0)), (PropKey::MinHeight, f(0.0))],
+            ),
+            n(14, 13, 0, NodeKind::Column, &[]),
+        ]);
+        for row in 0..30_u64 {
+            nodes.insert(
+                200 + row,
+                n(
+                    200 + row,
+                    14,
+                    row as u32,
+                    NodeKind::Pressable,
+                    &[(PropKey::Height, f(48.0))],
+                )
+                .1,
+            );
+        }
+        let tree = Tree { root: 1, nodes };
+        for insets in [BUTTONS, GESTURES] {
+            let layouts = layout_with(&tree, insets);
+            assert_eq!(
+                bottom(layouts[&13]),
+                800.0 - insets[3],
+                "the list ends above the bar"
+            );
+            assert!(violations(&tree, &layouts, insets).is_empty());
+        }
+    }
+
+    #[test]
+    fn floating_buttons_stay_out_of_the_navigation_bar() {
+        let mut tree = plain_screen(0.0);
+        tree.nodes.insert(
+            7,
+            n(
+                7,
+                2,
+                3,
+                NodeKind::Pressable,
+                &[
+                    (PropKey::PositionType, PropValue::Integer(2)),
+                    (PropKey::Right, f(16.0)),
+                    (PropKey::Bottom, f(16.0)),
+                    (PropKey::Width, f(56.0)),
+                    (PropKey::Height, f(56.0)),
+                ],
+            )
+            .1,
+        );
+        // A decorative scrim stretched over the screen keeps bleeding.
+        tree.nodes.insert(
+            8,
+            n(
+                8,
+                2,
+                4,
+                NodeKind::View,
+                &[
+                    (PropKey::PositionType, PropValue::Integer(2)),
+                    (PropKey::Left, f(0.0)),
+                    (PropKey::Right, f(0.0)),
+                    (PropKey::Bottom, f(0.0)),
+                    (PropKey::Height, f(120.0)),
+                ],
+            )
+            .1,
+        );
+        let layouts = layout_with(&tree, BUTTONS);
+        assert_eq!(bottom(layouts[&7]), 752.0, "max(inset, offset)");
+        assert_eq!(bottom(layouts[&8]), 800.0);
+        let layouts = layout_with(&tree, [0.0, 24.0, 0.0, 0.0]);
+        assert_eq!(
+            bottom(layouts[&7]),
+            784.0,
+            "authored offset kept without a bar"
+        );
+    }
+
+    #[test]
+    fn full_bleed_opt_out_keeps_the_layout_and_the_lint_still_reports_controls() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                n(1, 0, 0, NodeKind::Screen, &[]),
+                n(
+                    2,
+                    1,
+                    0,
+                    NodeKind::SafeAreaView,
+                    &[
+                        (PropKey::FlexGrow, f(1.0)),
+                        (PropKey::SafeAreaLeft, PropValue::Boolean(false)),
+                        (PropKey::SafeAreaTop, PropValue::Boolean(false)),
+                        (PropKey::SafeAreaRight, PropValue::Boolean(false)),
+                        (PropKey::SafeAreaBottomEdge, PropValue::Boolean(false)),
+                    ],
+                ),
+                n(3, 2, 0, NodeKind::Image, &[(PropKey::FlexGrow, f(1.0))]),
+                n(4, 2, 1, NodeKind::Pressable, &[(PropKey::Height, f(40.0))]),
+            ]),
+        };
+        let layouts = layout_with(&tree, BUTTONS);
+        assert_eq!(layouts[&3].y, 0.0);
+        assert_eq!(bottom(layouts[&4]), 800.0);
+        assert_eq!(violations(&tree, &layouts, BUTTONS), vec![4]);
+    }
+
+    #[test]
+    fn navigation_routes_are_surfaces_of_their_own() {
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                n(1, 0, 0, NodeKind::Screen, &[]),
+                n(2, 1, 0, NodeKind::Column, &[(PropKey::FlexGrow, f(1.0))]),
+                n(
+                    3,
+                    2,
+                    0,
+                    NodeKind::NavigationHost,
+                    &[(PropKey::FlexGrow, f(1.0))],
+                ),
+                n(4, 3, 0, NodeKind::Column, &[(PropKey::FlexGrow, f(1.0))]),
+                n(5, 4, 0, NodeKind::Text, &[(PropKey::Height, f(20.0))]),
+                n(6, 4, 1, NodeKind::View, &[(PropKey::FlexGrow, f(1.0))]),
+                // Tab bar below the navigator.
+                n(7, 2, 1, NodeKind::Row, &[(PropKey::Height, f(56.0))]),
+                n(8, 7, 0, NodeKind::Pressable, &[(PropKey::FlexGrow, f(1.0))]),
+            ]),
+        };
+        let layouts = layout_with(&tree, BUTTONS);
+        assert_eq!(layouts[&5].y, 24.0, "route title below the status bar");
+        assert_eq!(
+            bottom(layouts[&7]),
+            752.0,
+            "tab bar above the navigation bar"
+        );
+        assert_eq!(layouts[&3].y, 0.0, "the navigator itself is not shifted");
+        assert!(violations(&tree, &layouts, BUTTONS).is_empty());
+    }
+
+    #[test]
+    fn engine_keeps_the_padding_across_commits_and_follows_inset_changes() {
+        let tree = plain_screen(0.0);
+        let frame = tree.encode().expect("encode");
+        let mut engine = crate::Engine::new();
+        engine.set_viewport(360.0, 800.0).unwrap();
+        engine.set_surface_policy(SurfacePolicy::EdgeToEdgeWindows);
+        engine.set_safe_area_insets(0.0, 24.0, 0.0, 48.0).unwrap();
+        let frames = |batch: Vec<u8>| {
+            pam_desktop_wire::decode_batch(&batch)
+                .unwrap()
+                .into_iter()
+                .filter_map(|mutation| match mutation {
+                    pam_desktop_wire::Mutation::Layout { id, frame } => Some((id, frame)),
+                    _ => None,
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
+        let first = frames(engine.commit(&frame).unwrap());
+        assert_eq!(bottom(first[&6]), 752.0);
+        // Same tree again: settled, nothing moves.
+        let again = frames(engine.commit(&frame).unwrap());
+        assert!(!again.contains_key(&6));
+        assert!(engine.safe_area_violations().is_empty());
+        // Switching to gesture navigation at runtime.
+        engine.set_safe_area_insets(0.0, 24.0, 0.0, 24.0).unwrap();
+        let switched = frames(engine.relayout(360.0, 800.0).unwrap());
+        assert_eq!(bottom(switched[&6]), 776.0);
+        // Landscape with a side navigation bar and a cutout.
+        engine.set_safe_area_insets(32.0, 0.0, 48.0, 0.0).unwrap();
+        let landscape = frames(engine.relayout(800.0, 360.0).unwrap());
+        assert_eq!(landscape[&4].x, 32.0);
+        assert_eq!(landscape[&6].x + landscape[&6].width, 800.0 - 48.0);
+        assert!(engine.safe_area_violations().is_empty());
+    }
+}

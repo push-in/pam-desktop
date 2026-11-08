@@ -1,0 +1,8256 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\Internal;
+
+use Closure;
+use InvalidArgumentException;
+use JsonException;
+use Pam\Desktop\Align;
+use Pam\Desktop\AccessibilityAction;
+use Pam\Desktop\AccessibilityRole;
+use Pam\Desktop\AccessibilityCheckedState;
+use Pam\Desktop\AccessibilityImportance;
+use Pam\Desktop\AccessibilityLiveRegion;
+use Pam\Desktop\ActivityIndicatorSize;
+use Pam\Desktop\AnimationKind;
+use Pam\Desktop\AnimationEasing;
+use Pam\Desktop\AnimationFillMode;
+use Pam\Desktop\AnimationKeyframe;
+use Pam\Desktop\AnimationPlayState;
+use Pam\Desktop\AsyncResource;
+use Pam\Desktop\AsyncStatus;
+use Pam\Desktop\AsyncValue;
+use Pam\Desktop\BottomSheetKeyboardBehavior;
+use Pam\Desktop\Component;
+use Pam\Desktop\DrawingMode;
+use Pam\Desktop\Element;
+use Pam\Desktop\EventKind;
+use Pam\Desktop\FlexWrap;
+use Pam\Desktop\GestureComposition;
+use Pam\Desktop\GestureDirection;
+use Pam\Desktop\Animation\Animation;
+use Pam\Desktop\Animation\Drag;
+use Pam\Desktop\Animation\TapEffect;
+use Pam\Desktop\UI\Swipeable;
+use Pam\Desktop\GestureEvent;
+use Pam\Desktop\GestureType;
+use Pam\Desktop\ImageFit;
+use Pam\Desktop\ImageCachePolicy;
+use Pam\Desktop\ImageResizeMethod;
+use Pam\Desktop\InputAutoCapitalize;
+use Pam\Desktop\InputAutofillImportance;
+use Pam\Desktop\InputFormat;
+use Pam\Desktop\ScrollIndicatorStyle;
+use Pam\Desktop\InputMode;
+use Pam\Desktop\InputSubmitBehavior;
+use Pam\Desktop\InputSyncMode;
+use Pam\Desktop\InputTextAlignVertical;
+use Pam\Desktop\KeyboardAvoidingBehavior;
+use Pam\Desktop\KeyboardPersistTaps;
+use Pam\Desktop\KeyboardType;
+use Pam\Desktop\LayoutDirection;
+use Pam\Desktop\ModalAnimationType;
+use Pam\Desktop\ModalPresentation;
+use Pam\Desktop\NodeKind;
+use Pam\Desktop\PixelRatio;
+use Pam\Desktop\PropKey;
+use Pam\Desktop\RefreshIndicatorSize;
+use Pam\Desktop\Renderable;
+use Pam\Desktop\ReturnKeyType;
+use Pam\Desktop\SafeAreaMode;
+use Pam\Desktop\ScrollKeyboardDismissMode;
+use Pam\Desktop\ScrollTargetAlignment;
+use Pam\Desktop\ScrollOverScrollMode;
+use Pam\Desktop\ScrollPageTransform;
+use Pam\Desktop\Navigation\SharedTransitionStyle;
+use Pam\Desktop\StatusBarAppearance;
+use Pam\Desktop\TemplateRegistry;
+use Pam\Desktop\TemplateException;
+use Pam\Desktop\TextBreakStrategy;
+use Pam\Desktop\TextDataDetectorType;
+use Pam\Desktop\TextEllipsizeMode;
+use Pam\Desktop\TextHyphenationFrequency;
+use Pam\Desktop\TextAlignment;
+use Pam\Desktop\UI\ActivityIndicator;
+use Pam\Desktop\UI\Animated;
+use Pam\Desktop\UI\Button;
+use Pam\Desktop\UI\BottomSheet;
+use Pam\Desktop\UI\Column;
+use Pam\Desktop\UI\Contract\ContractValidator;
+use Pam\Desktop\UI\CustomView;
+use Pam\Desktop\UI\DrawingCanvas;
+use Pam\Desktop\UI\FlatList;
+use Pam\Desktop\UI\Grid;
+use Pam\Desktop\UI\GestureDetector;
+use Pam\Desktop\UI\Image;
+use Pam\Desktop\UI\ImageBackground;
+use Pam\Desktop\UI\Input;
+use Pam\Desktop\UI\InteractionRegion;
+use Pam\Desktop\UI\InputAccessoryView;
+use Pam\Desktop\UI\KeyboardAvoidingView;
+use Pam\Desktop\UI\Modal;
+use Pam\Desktop\UI\MediaPlayer;
+use Pam\Desktop\UI\Pressable;
+use Pam\Desktop\UI\RefreshControl;
+use Pam\Desktop\UI\Row;
+use Pam\Desktop\UI\SafeAreaView;
+use Pam\Desktop\UI\Screen;
+use Pam\Desktop\UI\Scroll;
+use Pam\Desktop\UI\SectionList;
+use Pam\Desktop\UI\Spacer;
+use Pam\Desktop\UI\StatusBar;
+use Pam\Desktop\UI\Text;
+use Pam\Desktop\UI\Toggle;
+use Pam\Desktop\UI\VirtualGrid;
+use Pam\Desktop\UI\VirtualizedList;
+use Pam\Desktop\UI\WebView;
+use Pam\Desktop\NativeMenuItem;
+use Pam\Desktop\MediaCachePolicy;
+use Pam\Desktop\MediaPriority;
+use Pam\Desktop\UI\View as NativeView;
+use Pam\Desktop\Style\StyleVariables;
+use Pam\Desktop\Style\StyleInteractionState;
+use ReflectionMethod;
+use ReflectionProperty;
+use RuntimeException;
+use Stringable;
+use Traversable;
+
+use function array_key_exists;
+use function count;
+use function in_array;
+use function is_array;
+use function is_bool;
+use function is_float;
+use function is_int;
+use function is_scalar;
+use function is_string;
+use function strlen;
+
+use function is_object;
+
+final class TemplateRenderer
+{
+    /** @var list<string> */
+    private const INHERITED_STYLE_ATTRIBUTES = [
+        'textColor',
+        'fontFamily',
+        'fontSize',
+        'fontWeight',
+        'fontStyle',
+        'letterSpacing',
+        'lineHeight',
+        'textAlign',
+        'textTransform',
+        'fontFeatureSettings',
+        'textShadowOffsetX',
+        'textShadowOffsetY',
+        'textShadowRadius',
+        'textShadowColor',
+    ];
+
+    /** @var array<string, true> */
+    private const INHERITED_STYLE_SET = [
+        'textColor' => true,
+        'fontFamily' => true,
+        'fontSize' => true,
+        'fontWeight' => true,
+        'fontStyle' => true,
+        'letterSpacing' => true,
+        'lineHeight' => true,
+        'textAlign' => true,
+        'textTransform' => true,
+        'fontFeatureSettings' => true,
+        'textShadowOffsetX' => true,
+        'textShadowOffsetY' => true,
+        'textShadowRadius' => true,
+        'textShadowColor' => true,
+    ];
+
+    private static int $planSequence = 0;
+    private static int $identitySequence = 0;
+
+    /** Last native element built by tag(); nodes() places it without copying. */
+    private static ?Element $freshElement = null;
+
+    /** @var array<string, true> style keys whose entries depend on the environment */
+    private static array $dynamicKeys = [];
+
+    /** @var array<string, bool> component event attributes that name a method */
+    private static array $methodNames = [];
+
+    /** @var array<string, bool> event attributes that are call expressions */
+    private static array $callExpressions = [];
+
+    /** Set when a style resolution read the window/container environment. */
+    private static bool $dynamicStyles = false;
+
+    /** @var array<string, array<string, mixed>> Resolved style/value entries. */
+    private static array $styleEntries = [];
+
+    /** @var array<string, int> */
+    private static array $descriptorIds = [];
+
+    /** @var array<string, int> */
+    private static array $styleChains = [];
+
+    /** @var array<string, list<string>> */
+    private static array $domClassTokens = [];
+
+    /** @var array<string, string> */
+    private static array $camelNames = [];
+
+    /** @var array<int, bool> Sheets whose selectors use ancestor combinators. */
+    private static array $sheetAncestors = [];
+
+    /** @var array<int, array<string, true>> Class strings made only of a sheet's local classes. */
+    private static array $localClassStrings = [];
+
+    /** @var array<string, array<string, mixed>> attributes() plans by element and value names. */
+    private static array $attributePlans = [];
+
+    /** @var array<int, array<array-key, string|int|float|bool|null>> */
+    private static array $propertyStrings = [];
+
+    /** @var array<int, array<int, string|int|float|bool|null>> */
+    private static array $propertyInts = [];
+
+    /** @var array<int, array<string, string|int|float|bool|null>> */
+    private static array $propertyFloats = [];
+
+    /** @var array<int, array<int, string|int|float|bool|null>> */
+    private static array $propertyBools = [];
+
+    private static int $propertyMemoSize = 0;
+
+    /** Bytes of the long strings held by the property memo. */
+    private static int $propertyMemoBytes = 0;
+
+    /** @var array<string, ReflectionMethod> validated public component event handlers */
+    private static array $componentMethods = [];
+
+    /** @var \WeakMap<Element, array<string, Element|true>>|null decorated component elements (true: unchanged) */
+    private static ?\WeakMap $decorations = null;
+
+    /** @var array<string, ReflectionMethod> */
+    private static array $methods = [];
+
+    /** @var array<string, ReflectionProperty> */
+    private static array $properties = [];
+
+    /** @var array<string,array<string,mixed>> */
+    private static array $reactiveStyleCache = [];
+
+    /** @var array<string, array<string, mixed>> Decoded and validated sheets by compiled source. */
+    private static array $styleSheets = [];
+    private static int $styleSheetSequence = 0;
+
+    /** @var array<string, array<string, mixed>> Prepared (indexed) effective sheets. */
+    private static array $preparedStyles = [];
+
+    /** @var array<int, array{0: int, 1: array<string, mixed>}> Prepared query-free sheets by id. */
+    private static array $plainPrepared = [];
+
+    /** @var array<int, array<string, array<string, string|int|bool>>> */
+    private static array $sheetClasses = [];
+
+    /** @var array<int, array<string, true>> */
+    private static array $sheetObserved = [];
+
+    /** @var array<int, array<string, list<array{source: string, weight: string, style: string}>>> */
+    private static array $sheetFonts = [];
+
+    /** @var array<string, array{attribute: string, value: string|int|float|bool}|false> */
+    private static array $styleUtilities = [];
+
+    /** @var array<string, array{0: int, 1: mixed}> Classified static attribute values. */
+    private static array $valueKinds = [];
+
+    /** @var array<string, list<string>> */
+    private static array $pathSegments = [];
+
+    /** @var array<string, string>|null Template "@event" aliases keyed to native event attributes. */
+    private static ?array $eventAliases = null;
+
+    /** @var array<int, array<int, bool>> */
+    private static array $appliesToKind = [];
+
+    /** @var array<string, PropKey> */
+    private const PROPERTIES = [
+        'width' => PropKey::Width,
+        'height' => PropKey::Height,
+        'flexGrow' => PropKey::FlexGrow,
+        'padding' => PropKey::Padding,
+        'paddingHorizontal' => PropKey::PaddingHorizontal,
+        'paddingVertical' => PropKey::PaddingVertical,
+        'gap' => PropKey::Gap,
+        'margin' => PropKey::Margin,
+        'marginHorizontal' => PropKey::MarginHorizontal,
+        'marginVertical' => PropKey::MarginVertical,
+        'minWidth' => PropKey::MinWidth,
+        'minHeight' => PropKey::MinHeight,
+        'maxWidth' => PropKey::MaxWidth,
+        'maxHeight' => PropKey::MaxHeight,
+        'backgroundColor' => PropKey::BackgroundColor,
+        'nativeBackgroundColorResource' => PropKey::NativeBackgroundColorResource,
+        'nativeTextColorResource' => PropKey::NativeTextColorResource,
+        'nativeBorderColorResource' => PropKey::NativeBorderColorResource,
+        'nativeStateStyles' => PropKey::NativeStateStyles,
+        'inputFormat' => PropKey::InputFormat,
+        'inputFormatPattern' => PropKey::InputFormatPattern,
+        'inputFormatPlaceholder' => PropKey::InputFormatPlaceholder,
+        'inputFormatPrefix' => PropKey::InputFormatPrefix,
+        'inputFormatSuffix' => PropKey::InputFormatSuffix,
+        'inputFormatDecimalDigits' => PropKey::InputFormatDecimalDigits,
+        'inputFormatDecimalMinDigits' => PropKey::InputFormatDecimalMinDigits,
+        'inputFormatLocale' => PropKey::InputFormatLocale,
+        'scrollbarGutter' => PropKey::ScrollbarGutter,
+        'scrollbarWidth' => PropKey::ScrollbarWidth,
+        'scrollbarThickness' => PropKey::ScrollbarThickness,
+        'scrollbarColor' => PropKey::ScrollbarColor,
+        'textColor' => PropKey::TextColor,
+        'fontSize' => PropKey::FontSize,
+        'borderRadius' => PropKey::BorderRadius,
+        'borderWidth' => PropKey::BorderWidth,
+        'borderColor' => PropKey::BorderColor,
+        'borderStyle' => PropKey::BorderStyle,
+        'opacity' => PropKey::Opacity,
+        'alignItems' => PropKey::AlignItems,
+        'alignSelf' => PropKey::AlignSelf,
+        'justifyContent' => PropKey::JustifyContent,
+        'textAlign' => PropKey::TextAlign,
+        'fontWeight' => PropKey::FontWeight,
+        'numberOfLines' => PropKey::NumberOfLines,
+        'multiline' => PropKey::Multiline,
+        'secure' => PropKey::Secure,
+        'secureTextEntry' => PropKey::Secure,
+        'keyboardType' => PropKey::KeyboardType,
+        'autoComplete' => PropKey::AutoComplete,
+        'editable' => PropKey::InputEditable,
+        'autoCorrect' => PropKey::InputAutoCorrect,
+        'autoCapitalize' => PropKey::InputAutoCapitalize,
+        'caretHidden' => PropKey::InputCaretHidden,
+        'contextMenuHidden' => PropKey::InputContextMenuHidden,
+        'cursorColor' => PropKey::InputCursorColor,
+        'disableFullscreenUI' => PropKey::InputDisableFullscreenUi,
+        'importantForAutofill' => PropKey::InputAutofillImportance,
+        'inputMode' => PropKey::InputMode,
+        'minLines' => PropKey::InputMinLines,
+        'rows' => PropKey::InputMinLines,
+        'selectTextOnFocus' => PropKey::InputSelectTextOnFocus,
+        'selectionStart' => PropKey::InputSelectionStart,
+        'selectionEnd' => PropKey::InputSelectionEnd,
+        'showSoftInputOnFocus' => PropKey::InputShowSoftInputOnFocus,
+        'submitBehavior' => PropKey::InputSubmitBehavior,
+        'textAlignVertical' => PropKey::InputTextAlignVertical,
+        'returnKeyLabel' => PropKey::InputReturnKeyLabel,
+        'underlineColorAndroid' => PropKey::InputUnderlineColor,
+        'debounce' => PropKey::InputDebounceMs,
+        'sync' => PropKey::InputSyncMode,
+        'checked' => PropKey::Checked,
+        'loading' => PropKey::Loading,
+        'progressColor' => PropKey::ProgressColor,
+        'fit' => PropKey::ImageFit,
+        'resizeMode' => PropKey::ImageFit,
+        'tintColor' => PropKey::TintColor,
+        'defaultSource' => PropKey::ImageDefaultSource,
+        'loadingIndicatorSource' => PropKey::ImageLoadingIndicatorSource,
+        'fadeDuration' => PropKey::ImageFadeDurationMs,
+        'resizeMethod' => PropKey::ImageResizeMethod,
+        'resizeMultiplier' => PropKey::ImageResizeMultiplier,
+        'progressiveRenderingEnabled' =>
+            PropKey::ImageProgressiveRenderingEnabled,
+        'cache' => PropKey::ImageCachePolicy,
+        'cachePolicy' => PropKey::ImageCachePolicy,
+        'overlayColor' => PropKey::ImageOverlayColor,
+        'srcSet' => PropKey::ImageSourceSet,
+        'elevation' => PropKey::Elevation,
+        'visible' => PropKey::Visible,
+        'presentation' => PropKey::ModalPresentation,
+        'animationType' => PropKey::ModalAnimationType,
+        'backdropColor' => PropKey::ModalBackdropColor,
+        'transparent' => PropKey::ModalTransparent,
+        'hardwareAccelerated' => PropKey::ModalHardwareAccelerated,
+        'navigationBarTranslucent' => PropKey::ModalNavigationBarTranslucent,
+        'navigationBarColor' => PropKey::ModalNavigationBarColor,
+        'allowSwipeDismissal' => PropKey::ModalAllowSwipeDismissal,
+        'javaScriptEnabled' => PropKey::WebViewJavaScriptEnabled,
+        'domStorageEnabled' => PropKey::WebViewDomStorageEnabled,
+        'userAgent' => PropKey::WebViewUserAgent,
+        'injectedJavaScript' => PropKey::WebViewInjectedJavaScript,
+        'allowsInlineMedia' => PropKey::WebViewAllowsInlineMedia,
+        'allowedHosts' => PropKey::WebViewAllowedHosts,
+        'autoPlay' => PropKey::MediaAutoPlay,
+        'controls' => PropKey::MediaControls,
+        'loop' => PropKey::MediaLoop,
+        'muted' => PropKey::MediaMuted,
+        'volume' => PropKey::MediaVolume,
+        'currentTime' => PropKey::MediaCurrentTime,
+        'playbackRate' => PropKey::MediaPlaybackRate,
+        'keepAliveWhenCovered' => PropKey::MediaKeepAliveWhenCovered,
+        'idleSurface' => PropKey::MediaIdleSurface,
+        'autoPlayVisible' => PropKey::MediaAutoPlayVisible,
+        'autoPlayGroup' => PropKey::MediaAutoPlayGroup,
+        'startBufferMs' => PropKey::MediaStartBufferMs,
+        'mediaClock' => PropKey::MediaClock,
+        'mediaClockFormat' => PropKey::MediaClockFormat,
+        'mediaProgress' => PropKey::MediaProgress,
+        'draggable' => PropKey::Draggable,
+        'dragData' => PropKey::DragData,
+        'dragType' => PropKey::DragType,
+        'dropType' => PropKey::DropType,
+        'dropEnabled' => PropKey::DropEnabled,
+        'statusBarColor' => PropKey::StatusBarColor,
+        'statusBarStyle' => PropKey::StatusBarStyle,
+        'statusBarHidden' => PropKey::StatusBarHidden,
+        'statusBarAnimated' => PropKey::StatusBarAnimated,
+        'statusBarTranslucent' => PropKey::StatusBarTranslucent,
+        'navigationBarHidden' => PropKey::NavigationBarHidden,
+        'keyboardBehavior' => PropKey::KeyboardBehavior,
+        'refreshing' => PropKey::Refreshing,
+        'refreshColors' => PropKey::RefreshColors,
+        'progressBackgroundColor' => PropKey::RefreshProgressBackgroundColor,
+        'progressViewOffset' => PropKey::RefreshProgressViewOffset,
+        'refreshIndicatorSize' => PropKey::RefreshIndicatorSize,
+        'refreshEnabled' => PropKey::RefreshEnabled,
+        'scrollEnabled' => PropKey::ScrollEnabled,
+        'showsScrollIndicator' => PropKey::ShowsScrollIndicator,
+        'scrollIndicatorStyle' => PropKey::ScrollIndicatorStyle,
+        'showsHorizontalScrollIndicator' => PropKey::ShowsScrollIndicator,
+        'showsVerticalScrollIndicator' => PropKey::ShowsScrollIndicator,
+        'contentOffsetX' => PropKey::ScrollContentOffsetX,
+        'contentOffsetY' => PropKey::ScrollContentOffsetY,
+        'anchorToEnd' => PropKey::ScrollAnchorToEnd,
+        'maintainVisibleContentPosition' => PropKey::ScrollMaintainVisibleContentPosition,
+        'autoScrollToEndThreshold' => PropKey::ScrollAutoScrollToEndThreshold,
+        'scrollTargetTestId' => PropKey::ScrollTargetTestId,
+        'scrollRequest' => PropKey::ScrollRequest,
+        'scrollTargetOffset' => PropKey::ScrollTargetOffset,
+        'scrollTargetAlignment' => PropKey::ScrollTargetAlignment,
+        'scrollAnimated' => PropKey::ScrollAnimated,
+        'brushColor' => PropKey::DrawingColor,
+        'drawingColor' => PropKey::DrawingColor,
+        'brushWidth' => PropKey::DrawingWidth,
+        'drawingWidth' => PropKey::DrawingWidth,
+        'drawingMode' => PropKey::DrawingMode,
+        'clearRequest' => PropKey::DrawingClearRequest,
+        'undoRequest' => PropKey::DrawingUndoRequest,
+        'fillViewport' => PropKey::ScrollFillViewport,
+        'overScrollMode' => PropKey::ScrollOverScrollMode,
+        'nestedScrollEnabled' => PropKey::ScrollNestedEnabled,
+        'fadingEdgeLength' => PropKey::ScrollFadingEdgeLength,
+        'persistentScrollbar' => PropKey::ScrollPersistentScrollbar,
+        'pagingEnabled' => PropKey::ScrollPagingEnabled,
+        'snapToInterval' => PropKey::ScrollSnapInterval,
+        'pageTransform' => PropKey::ScrollPageTransform,
+        'contentOffsetAnimationMs' => PropKey::ScrollOffsetAnimationMs,
+        'decelerationRate' => PropKey::ScrollDecelerationRate,
+        'keyboardDismissMode' => PropKey::ScrollKeyboardDismissMode,
+        'keyboardShouldPersistTaps' => PropKey::ScrollKeyboardPersistTaps,
+        'animating' => PropKey::ActivityAnimating,
+        'hidesWhenStopped' => PropKey::ActivityHidesWhenStopped,
+        'indicatorSize' => PropKey::ActivitySize,
+        'trackColorFalse' => PropKey::SwitchTrackColorFalse,
+        'trackColorTrue' => PropKey::SwitchTrackColorTrue,
+        'thumbColor' => PropKey::SwitchThumbColor,
+        'selected' => PropKey::Selected,
+        'rippleColor' => PropKey::RippleColor,
+        'pressedBackgroundColor' => PropKey::PressBackgroundColor,
+        'keyboardProgress' => PropKey::KeyboardProgress,
+        'pressedOpacity' => PropKey::PressOpacity,
+        'pressedScale' => PropKey::PressScale,
+        'collapsable' => PropKey::Collapsable,
+        'needsOffscreenAlphaCompositing' => PropKey::NeedsOffscreenAlphaCompositing,
+        'accessibilityRole' => PropKey::AccessibilityRole,
+        'accessibilityHint' => PropKey::AccessibilityHint,
+        'accessibilityActions' => PropKey::AccessibilityActions,
+        'translationX' => PropKey::TranslationX,
+        'translationY' => PropKey::TranslationY,
+        'scaleX' => PropKey::ScaleX,
+        'scaleY' => PropKey::ScaleY,
+        'rotation' => PropKey::Rotation,
+        'animationDuration' => PropKey::AnimationDurationMs,
+        'animationEasing' => PropKey::AnimationEasing,
+        'animate' => PropKey::AnimateChanges,
+        'transitionSpec' => PropKey::TransitionSpec,
+        'nativeRef' => PropKey::NativeRef,
+        // Shared element on any element: equal tags on the outgoing and
+        // incoming routes fly between them (Element::sharedTransition()).
+        'shared' => PropKey::SharedTransitionTag,
+        'sharedStyle' => PropKey::SharedTransitionConfig,
+        'animation' => PropKey::AnimationProgram,
+        'motionKey' => PropKey::AnimationRestartKey,
+        'animationKey' => PropKey::AnimationRestartKey,
+        'replayKey' => PropKey::AnimationRestartKey,
+        'doubleTapDelay' => PropKey::PressDoubleTapDelayMs,
+        'tapEffect' => PropKey::PressTapEffect,
+        'gestureDrag' => PropKey::GestureDrag,
+        'drag' => PropKey::GestureDrag,
+        'dragSnap' => PropKey::GestureDragSnapIndex,
+        'rowHeight' => PropKey::ListRowHeight,
+        'estimatedRowHeight' => PropKey::ListRowHeight,
+        'prefetch' => PropKey::ListPrefetch,
+        'numColumns' => PropKey::ListNumColumns,
+        'inverted' => PropKey::ListInverted,
+        'followEndOnResize' => PropKey::ListFollowEndOnResize,
+        'stackFromEnd' => PropKey::ListStackFromEnd,
+        'initialScrollIndex' => PropKey::ListInitialScrollIndex,
+        'removeClippedSubviews' => PropKey::ListRemoveClippedSubviews,
+        'endReachedThreshold' => PropKey::EndReachedThreshold,
+        'drawerOpen' => PropKey::DrawerOpen,
+        'drawerPosition' => PropKey::DrawerPosition,
+        'drawerType' => PropKey::DrawerType,
+        'drawerWidth' => PropKey::DrawerWidth,
+        'drawerOverlayColor' => PropKey::DrawerOverlayColor,
+        'drawerSwipeEnabled' => PropKey::DrawerSwipeEnabled,
+        'drawerSwipeEdgeWidth' => PropKey::DrawerSwipeEdgeWidth,
+        'drawerSwipeMinDistance' => PropKey::DrawerSwipeMinDistance,
+        'drawerKeyboardDismissMode' => PropKey::DrawerKeyboardDismissMode,
+        'drawerHideStatusBarOnOpen' => PropKey::DrawerHideStatusBarOnOpen,
+        'drawerStatusBarAnimation' => PropKey::DrawerStatusBarAnimation,
+        'drawerPermanentBreakpoint' => PropKey::DrawerPermanentBreakpoint,
+        'letterSpacing' => PropKey::LetterSpacing,
+        'lineHeight' => PropKey::LineHeight,
+        'placeholderColor' => PropKey::PlaceholderColor,
+        'selectionColor' => PropKey::SelectionColor,
+        'selectable' => PropKey::TextSelectable,
+        'ellipsizeMode' => PropKey::TextEllipsizeMode,
+        'allowFontScaling' => PropKey::TextAllowFontScaling,
+        'maxFontSizeMultiplier' => PropKey::TextMaxFontSizeMultiplier,
+        'adjustsFontSizeToFit' => PropKey::TextAdjustsFontSizeToFit,
+        'minimumFontScale' => PropKey::TextMinimumFontScale,
+        'textBreakStrategy' => PropKey::TextBreakStrategy,
+        'androidHyphenationFrequency' => PropKey::TextHyphenationFrequency,
+        'dataDetectorType' => PropKey::TextDataDetectorType,
+        'maxLength' => PropKey::MaxLength,
+        'autoFocus' => PropKey::AutoFocus,
+        'returnKeyType' => PropKey::ReturnKeyType,
+        'hitSlop' => PropKey::HitSlop,
+        'hitSlopLeft' => PropKey::HitSlopLeft,
+        'hitSlopTop' => PropKey::HitSlopTop,
+        'hitSlopRight' => PropKey::HitSlopRight,
+        'hitSlopBottom' => PropKey::HitSlopBottom,
+        'pressRetentionLeft' => PropKey::PressRetentionLeft,
+        'pressRetentionTop' => PropKey::PressRetentionTop,
+        'pressRetentionRight' => PropKey::PressRetentionRight,
+        'pressRetentionBottom' => PropKey::PressRetentionBottom,
+        'delayLongPress' => PropKey::PressDelayLongMs,
+        'delayPressIn' => PropKey::PressDelayInMs,
+        'delayPressOut' => PropKey::PressDelayOutMs,
+        'androidDisableSound' => PropKey::PressAndroidDisableSound,
+        'rippleBorderless' => PropKey::RippleBorderless,
+        'rippleRadius' => PropKey::RippleRadius,
+        'rippleForeground' => PropKey::RippleForeground,
+        'rippleAlpha' => PropKey::RippleAlpha,
+        'zIndex' => PropKey::ZIndex,
+        'overflow' => PropKey::Overflow,
+        'flexDirection' => PropKey::FlexDirection,
+        'flexWrap' => PropKey::FlexWrap,
+        'layoutDirection' => PropKey::LayoutDirection,
+        'gestureType' => PropKey::GestureType,
+        'gestureEnabled' => PropKey::GestureEnabled,
+        'gestureMinPointers' => PropKey::GestureMinPointers,
+        'gestureMaxPointers' => PropKey::GestureMaxPointers,
+        'gestureDirection' => PropKey::GestureDirection,
+        'gestureComposition' => PropKey::GestureComposition,
+        'gestureMinDistance' => PropKey::GestureMinDistance,
+        'gestureMinDuration' => PropKey::GestureMinDurationMs,
+        'gestureNativeTransform' => PropKey::GestureNativeTransform,
+        'gestureNativeMinScale' => PropKey::GestureNativeMinScale,
+        'gestureNativeMaxScale' => PropKey::GestureNativeMaxScale,
+        'gestureNativeResetKey' => PropKey::GestureNativeResetKey,
+        'gestureNativeTranslationLimitX' => PropKey::GestureNativeTranslationLimitX,
+        'gestureNativeResetOnEnd' => PropKey::GestureNativeResetOnEnd,
+        'gestureNativeFocalZoom' => PropKey::GestureNativeFocalZoom,
+        'gestureNativeBounds' => PropKey::GestureNativeBounds,
+        'gestureNativeContentAspect' => PropKey::GestureNativeContentAspect,
+        'flexShrink' => PropKey::FlexShrink,
+        'paddingLeft' => PropKey::PaddingLeft,
+        'paddingTop' => PropKey::PaddingTop,
+        'paddingRight' => PropKey::PaddingRight,
+        'paddingBottom' => PropKey::PaddingBottom,
+        'marginLeft' => PropKey::MarginLeft,
+        'marginTop' => PropKey::MarginTop,
+        'marginRight' => PropKey::MarginRight,
+        'marginBottom' => PropKey::MarginBottom,
+        'position' => PropKey::PositionType,
+        'left' => PropKey::Left,
+        'top' => PropKey::Top,
+        'right' => PropKey::Right,
+        'bottom' => PropKey::Bottom,
+        'leftPercent' => PropKey::LeftPercent,
+        'topPercent' => PropKey::TopPercent,
+        'rightPercent' => PropKey::RightPercent,
+        'bottomPercent' => PropKey::BottomPercent,
+        'shadowOffsetX' => PropKey::ShadowOffsetX,
+        'shadowOffsetY' => PropKey::ShadowOffsetY,
+        'shadowBlurRadius' => PropKey::ShadowBlurRadius,
+        'shadowSpreadRadius' => PropKey::ShadowSpreadRadius,
+        'shadowColor' => PropKey::ShadowColor,
+        'aspectRatio' => PropKey::AspectRatio,
+        'borderTopLeftRadius' => PropKey::BorderTopLeftRadius,
+        'borderTopRightRadius' => PropKey::BorderTopRightRadius,
+        'borderBottomRightRadius' => PropKey::BorderBottomRightRadius,
+        'borderBottomLeftRadius' => PropKey::BorderBottomLeftRadius,
+        'borderLeftWidth' => PropKey::BorderLeftWidth,
+        'borderTopWidth' => PropKey::BorderTopWidth,
+        'borderRightWidth' => PropKey::BorderRightWidth,
+        'borderBottomWidth' => PropKey::BorderBottomWidth,
+        'textDecoration' => PropKey::TextDecoration,
+        'includeFontPadding' => PropKey::IncludeFontPadding,
+        'stickyHeader' => PropKey::StickyHeader,
+        'keyboardInset' => PropKey::ScrollKeyboardInset,
+        'fullSpan' => PropKey::ListFullSpan,
+        'listSection' => PropKey::ListSection,
+        'activeSection' => PropKey::ListActiveSection,
+        'textTransform' => PropKey::TextTransform,
+        'fontStyle' => PropKey::FontStyle,
+        'widthPercent' => PropKey::WidthPercent,
+        'heightPercent' => PropKey::HeightPercent,
+        'maxWidthPercent' => PropKey::MaxWidthPercent,
+        'maxHeightPercent' => PropKey::MaxHeightPercent,
+        'pointerEvents' => PropKey::PointerEvents,
+        'captureKeys' => PropKey::CaptureKeys,
+        'cursor' => PropKey::Cursor,
+        'tooltip' => PropKey::Tooltip,
+        'windowDrag' => PropKey::WindowDrag,
+        'safeAreaBottom' => PropKey::SafeAreaBottom,
+        'blurRadius' => PropKey::BlurRadius,
+        'fontFamily' => PropKey::FontFamily,
+        'marginLeftAuto' => PropKey::MarginLeftAuto,
+        'translationXPercent' => PropKey::TranslationXPercent,
+        'animationKind' => PropKey::AnimationKind,
+        'accessible' => PropKey::Accessible,
+        'accessibilityLiveRegion' => PropKey::AccessibilityLiveRegion,
+        'importantForAccessibility' => PropKey::AccessibilityImportance,
+        'accessibilityExpanded' => PropKey::AccessibilityExpanded,
+        'accessibilityBusy' => PropKey::AccessibilityBusy,
+        'accessibilitySelected' => PropKey::AccessibilitySelected,
+        'accessibilityCheckedState' => PropKey::AccessibilityCheckedState,
+        'accessibilityValueMin' => PropKey::AccessibilityValueMin,
+        'accessibilityValueMax' => PropKey::AccessibilityValueMax,
+        'accessibilityValueNow' => PropKey::AccessibilityValueNow,
+        'accessibilityValueText' => PropKey::AccessibilityValueText,
+        'safeAreaEdgeTop' => PropKey::SafeAreaTop,
+        'safeAreaEdgeRight' => PropKey::SafeAreaRight,
+        'safeAreaEdgeBottom' => PropKey::SafeAreaBottomEdge,
+        'safeAreaEdgeLeft' => PropKey::SafeAreaLeft,
+        'safeAreaMode' => PropKey::SafeAreaMode,
+        'keyboardVerticalOffset' => PropKey::KeyboardVerticalOffset,
+        'keyboardAvoidingEnabled' => PropKey::KeyboardAvoidingEnabled,
+        'columns' => PropKey::GridColumns,
+        'gridTracks' => PropKey::GridTracks,
+        'gridMinColumnWidth' => PropKey::GridMinColumnWidth,
+        'gridTemplate' => PropKey::GridTemplate,
+        'span2xl' => PropKey::GridSpan2xl,
+        'offset2xl' => PropKey::GridOffset2xl,
+        'order2xl' => PropKey::GridOrder2xl,
+        'span' => PropKey::GridSpan,
+        'spanSm' => PropKey::GridSpanSm,
+        'spanMd' => PropKey::GridSpanMd,
+        'spanLg' => PropKey::GridSpanLg,
+        'spanXl' => PropKey::GridSpanXl,
+        'offset' => PropKey::GridOffset,
+        'offsetSm' => PropKey::GridOffsetSm,
+        'offsetMd' => PropKey::GridOffsetMd,
+        'offsetLg' => PropKey::GridOffsetLg,
+        'offsetXl' => PropKey::GridOffsetXl,
+        'order' => PropKey::GridOrder,
+        'orderSm' => PropKey::GridOrderSm,
+        'orderMd' => PropKey::GridOrderMd,
+        'orderLg' => PropKey::GridOrderLg,
+        'orderXl' => PropKey::GridOrderXl,
+        'gutterX' => PropKey::GridColumnGap,
+        'gutterY' => PropKey::GridRowGap,
+        'gridColumnGap' => PropKey::GridColumnGap,
+        'gridRowGap' => PropKey::GridRowGap,
+        'flexBasis' => PropKey::FlexBasis,
+        'flexBasisPercent' => PropKey::FlexBasisPercent,
+        'flexBasisContent' => PropKey::FlexBasisContent,
+        'alignContent' => PropKey::AlignContent,
+        'marginTopAuto' => PropKey::MarginTopAuto,
+        'marginRightAuto' => PropKey::MarginRightAuto,
+        'marginBottomAuto' => PropKey::MarginBottomAuto,
+        'minWidthPercent' => PropKey::MinWidthPercent,
+        'minHeightPercent' => PropKey::MinHeightPercent,
+        'borderTopColor' => PropKey::BorderTopColor,
+        'borderRightColor' => PropKey::BorderRightColor,
+        'borderBottomColor' => PropKey::BorderBottomColor,
+        'borderLeftColor' => PropKey::BorderLeftColor,
+        'textShadowOffsetX' => PropKey::TextShadowOffsetX,
+        'textShadowOffsetY' => PropKey::TextShadowOffsetY,
+        'textShadowRadius' => PropKey::TextShadowRadius,
+        'textShadowColor' => PropKey::TextShadowColor,
+        'fontFeatureSettings' => PropKey::FontFeatureSettings,
+        'backgroundGradient' => PropKey::BackgroundGradient,
+        'boxShadows' => PropKey::BoxShadows,
+        'filterColorMatrix' => PropKey::FilterColorMatrix,
+        'backdropBlurRadius' => PropKey::BackdropBlurRadius,
+        'backdropColorMatrix' => PropKey::BackdropColorMatrix,
+        'borderGradient' => PropKey::BorderGradient,
+        'shimmerGradientColor' => PropKey::ShimmerGradientColor,
+        'shimmerDurationMs' => PropKey::ShimmerDurationMs,
+        'shimmerEnabled' => PropKey::ShimmerEnabled,
+        'transformOriginX' => PropKey::TransformOriginX,
+        'transformOriginY' => PropKey::TransformOriginY,
+        'translationYPercent' => PropKey::TranslationYPercent,
+    ];
+
+    /** Attributes handled by specialAttributes() before native properties. */
+    private const SPECIAL_ATTRIBUTES = [
+        'id' => true,
+        'key' => true,
+        'accessibilityLabel' => true,
+        'accessibilityActions' => true,
+        'alt' => true,
+        'testId' => true,
+        'disabled' => true,
+        'enabled' => true,
+        'placeholder' => true,
+        'readOnly' => true,
+        'scrollEnabled' => true,
+        'pressRetentionOffset' => true,
+        'statusBarTranslucent' => true,
+        'horizontal' => true,
+        'contentOffset' => true,
+    ];
+
+    /** @var array<string, EventKind> */
+    private const EVENTS = [
+        'on:press' => EventKind::Press,
+        'on:longPress' => EventKind::LongPress,
+        'on:change' => EventKind::Change,
+        'on:focus' => EventKind::Focus,
+        'on:blur' => EventKind::Blur,
+        'on:submit' => EventKind::Submit,
+        'on:scroll' => EventKind::Scroll,
+        'on:refresh' => EventKind::Refresh,
+        'on:toggle' => EventKind::Toggle,
+        'on:endReached' => EventKind::EndReached,
+        'on:drawerOpen' => EventKind::DrawerOpen,
+        'on:drawerClose' => EventKind::DrawerClose,
+        'on:event' => EventKind::Native,
+        'on:close' => EventKind::Native,
+        'on:loadStart' => EventKind::ImageLoadStart,
+        'on:progress' => EventKind::ImageProgress,
+        'on:load' => EventKind::ImageLoad,
+        'on:error' => EventKind::ImageError,
+        'on:loadEnd' => EventKind::ImageLoadEnd,
+        'on:endEditing' => EventKind::InputEndEditing,
+        'on:selectionChange' => EventKind::InputSelectionChange,
+        'on:contentSizeChange' => EventKind::InputContentSizeChange,
+        'on:keyPress' => EventKind::InputKeyPress,
+        'on:pressIn' => EventKind::PressIn,
+        'on:pressOut' => EventKind::PressOut,
+        'on:pressMove' => EventKind::PressMove,
+        'on:requestClose' => EventKind::ModalRequestClose,
+        'on:show' => EventKind::ModalShow,
+        'on:dismiss' => EventKind::ModalDismiss,
+        'on:orientationChange' => EventKind::ModalOrientationChange,
+        'p-click-outside' => EventKind::ClickOutside,
+        'p-intersect' => EventKind::Intersect,
+        'p-mutate' => EventKind::Mutate,
+        'p-resize' => EventKind::Resize,
+        'p-scroll' => EventKind::Scroll,
+        'p-touch-start' => EventKind::TouchStart,
+        'p-touch-move' => EventKind::TouchMove,
+        'p-touch-end' => EventKind::TouchEnd,
+        'on:gestureBegin' => EventKind::GestureBegin,
+        'on:gestureUpdate' => EventKind::GestureUpdate,
+        'on:gestureEnd' => EventKind::GestureEnd,
+        'on:gestureCancel' => EventKind::GestureCancel,
+        'on:sheetChange' => EventKind::BottomSheetChange,
+        'on:sheetDismiss' => EventKind::BottomSheetDismiss,
+        'on:webLoad' => EventKind::WebViewLoad,
+        'on:webError' => EventKind::WebViewError,
+        'on:message' => EventKind::WebViewMessage,
+        'on:ready' => EventKind::MediaReady,
+        'on:mediaProgress' => EventKind::MediaProgress,
+        'on:end' => EventKind::MediaEnd,
+        'on:mediaError' => EventKind::MediaError,
+        'on:dragStart' => EventKind::DragStart,
+        'on:dragEnd' => EventKind::DragEnd,
+        'on:drop' => EventKind::Drop,
+        'on:menuAction' => EventKind::MenuAction,
+        'on:animationComplete' => EventKind::AnimationComplete,
+        'on:accessibilityAction' => EventKind::AccessibilityAction,
+        'on:doubleTap' => EventKind::DoubleTap,
+        'on:gestureSettle' => EventKind::GestureSettle,
+        'on:scrollBeginDrag' => EventKind::ScrollBeginDrag,
+        'on:scrollEndDrag' => EventKind::ScrollEndDrag,
+        'on:momentumScrollEnd' => EventKind::MomentumScrollEnd,
+        'on:pageChange' => EventKind::PageChange,
+        'on:routeCovered' => EventKind::RouteCovered,
+        'on:routeFocused' => EventKind::RouteFocused,
+        'on:hoverIn' => EventKind::HoverIn,
+        'on:hoverOut' => EventKind::HoverOut,
+        'on:keyDown' => EventKind::KeyDown,
+        'on:keyUp' => EventKind::KeyUp,
+        'on:filesDrop' => EventKind::FilesDrop,
+        'on:dragEnter' => EventKind::DragEnter,
+        'on:dragLeave' => EventKind::DragLeave,
+        'on:textLayout' => EventKind::TextLayout,
+        'on:cacheHit' => EventKind::MediaCacheHit,
+        'on:cacheMiss' => EventKind::MediaCacheMiss,
+        'on:cacheProgress' => EventKind::MediaCacheProgress,
+        'on:cacheReady' => EventKind::MediaCacheReady,
+        'on:layout' => EventKind::Layout,
+        'on:buffering' => EventKind::MediaBuffering,
+        'on:mediaLoadStart' => EventKind::MediaLoadStart,
+    ];
+
+    private function __construct()
+    {
+    }
+
+    /**
+     * @internal Drops the last element built in place, so it does not keep
+     * a finished frame's tree alive until the next render builds one.
+     */
+    public static function releaseFrame(): void
+    {
+        self::$freshElement = null;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    public static function render(
+        CompiledTemplateNode $tree,
+        ?object $scope,
+        array $data,
+    ): Element
+    {
+        $data['__pamStyles'] = self::styleSheet($tree);
+        $rendered = self::nodes($tree->children, $scope, self::handOver($data));
+
+        if ($rendered === []) {
+            return NativeView::make()->visible(false);
+        }
+        $root = $rendered[0] ?? null;
+        if (count($rendered) !== 1 || !$root instanceof Element) {
+            throw new RuntimeException('A Pam Desktop view must render exactly one root element.');
+        }
+
+        return $root;
+    }
+
+    /**
+     * @param list<CompiledTemplateNode> $nodes
+     * @param array<string, mixed> $data
+     * @param string $slotPrefix static slot of the enclosing control-flow
+     *        block; every element gets the static template position it was
+     *        declared at, so conditionals that render nothing leave a hole and
+     *        unkeyed siblings after them keep their native identity
+     * @return list<Element|string>
+     */
+    private static function nodes(array $nodes, ?object $scope, array $data, string $slotPrefix = ''): array
+    {
+        $output = [];
+
+        $branchMatched = false;
+        $parentPath = $data['__pamNodePath'] ?? 'root';
+        $parentPath = is_string($parentPath) || is_int($parentPath)
+            ? (string) $parentPath
+            : 'root';
+
+        foreach ($nodes as $index => $node) {
+            $slot = $slotPrefix.$index;
+            // Written in place: only copied when the previous sibling kept a
+            // reference to the data (an event closure, a child data array).
+            $data['__pamNodePath'] = $parentPath.'.'.$index;
+            if ($node->kind === 2) {
+                $output[] = self::interpolate($node->value, $scope, $data);
+                $branchMatched = false;
+                continue;
+            }
+
+            $plan = $node->pamPlan ??= self::nodePlan($node);
+
+            if ($plan['for'] !== null) {
+                $listLoop = $data['__pamListLoop'] ?? null;
+                if (is_array($listLoop) && $listLoop[0] === $parentPath) {
+                    // A row source of a VirtualizedList/VirtualGrid: its rows
+                    // are built when the list window reaches them.
+                    $rows = self::lazyLoop($plan['for'], $node, $scope, $data, $slot, $listLoop[1]);
+                    if ($rows !== null) {
+                        $output[] = $rows;
+                        $branchMatched = false;
+                        continue;
+                    }
+                }
+                self::eagerLoop($output, $plan['for'], $node, self::loopItems($plan['for'], $scope, $data), $scope, $data, $slot);
+                $branchMatched = false;
+                continue;
+            }
+
+            switch ($plan['condition']) {
+                case 1:
+                    $branchMatched = (bool) self::dynamicValue($plan['expression'], $scope, $data);
+                    if (!$branchMatched) {
+                        continue 2;
+                    }
+                    break;
+                case 2:
+                    if ($branchMatched) {
+                        continue 2;
+                    }
+                    $branchMatched = (bool) self::dynamicValue($plan['expression'], $scope, $data);
+                    if (!$branchMatched) {
+                        continue 2;
+                    }
+                    break;
+                case 3:
+                    if ($branchMatched) {
+                        $branchMatched = false;
+                        continue 2;
+                    }
+                    $branchMatched = true;
+                    break;
+                default:
+                    $branchMatched = false;
+            }
+
+            $node = $plan['node'];
+            $tag = $node->name;
+            $attributes = $node->attributes;
+            $children = $node->children;
+
+            if ($plan['control']) {
+                self::controlNode($output, $tag, $attributes, $children, $scope, $data, $slot);
+                continue;
+            }
+
+            try {
+                $element = $node->pamFast
+                    ? self::fastNode($node, $tag, $children, $scope, $data)
+                    : self::tag(
+                        $tag,
+                        $attributes,
+                        $children,
+                        $scope,
+                        $data,
+                        $node,
+                    );
+                if ($element->identitySlot === null && self::$freshElement === $element) {
+                    $output[] = $element->__pamPlaceAt($slot);
+                } else {
+                    // A component's element: the same object while the
+                    // component stays memoized, so the encoder keeps its
+                    // encoded subtree.
+                    $placed = $element->withIdentitySlot($slot);
+                    $placed->__pamMarkReusable();
+                    $output[] = $placed;
+                }
+            } catch (TemplateException $error) {
+                throw $error;
+            } catch (RuntimeException $error) {
+                throw new TemplateException(
+                    $error->getMessage(),
+                    $node->source,
+                    $node->line,
+                    $node->column,
+                    $error,
+                );
+            }
+        }
+
+        return $output;
+    }
+
+    /**
+     * The items of a p-for loop.
+     *
+     * @param array<int, mixed> $for the loop plan (nodePlan()['for'])
+     * @param array<string, mixed> $data
+     * @return array<array-key, mixed>
+     */
+    private static function loopItems(array $for, ?object $scope, array $data): array
+    {
+        $items = TemplateExpression::evaluate($for[1], $scope, $data);
+        if (is_int($items)) {
+            $items = $items > 0 ? range(1, $items) : [];
+        } elseif ($items instanceof Traversable) {
+            $items = iterator_to_array($items);
+        }
+        if (!is_array($items)) {
+            throw new RuntimeException(
+                'p-for source must resolve to an integer, array, or Traversable.',
+            );
+        }
+        if (!$for[5]) {
+            throw new RuntimeException('p-index must be a safe variable name.');
+        }
+
+        return $items;
+    }
+
+    /**
+     * The identity of each loop item: its p-key (unique), or its index.
+     *
+     * @param array<int, mixed> $for
+     * @param array<array-key, mixed> $items
+     * @param array<string, mixed> $data
+     * @return array<array-key, int|string> by item index
+     */
+    private static function loopIdentities(
+        array $for,
+        CompiledTemplateNode $node,
+        array $items,
+        ?object $scope,
+        array $data,
+    ): array {
+        [$variable, , $keyExpression, $staticKey, $indexName] = $for;
+        if ($keyExpression === null && $staticKey === null) {
+            if (count($items) > 1) {
+                DevWarnings::warn(
+                    'p-for children should declare p-key (or :key) so native identities follow items, not positions',
+                    $node->source.':'.$node->line.':'.$node->column,
+                );
+            }
+            $identities = [];
+            foreach ($items as $itemIndex => $_) {
+                $identities[$itemIndex] = $itemIndex;
+            }
+
+            return $identities;
+        }
+        $identities = [];
+        $seenKeys = [];
+        foreach ($items as $itemIndex => $item) {
+            $iterationData = $data;
+            $iterationData[$variable] = $item;
+            $iterationData[$indexName] = $itemIndex;
+            $identity = $keyExpression !== null
+                ? self::dynamicValue($keyExpression, $scope, $iterationData)
+                : self::value($staticKey, $scope, $iterationData);
+            if (!is_string($identity) && !is_int($identity)) {
+                throw new RuntimeException('p-key must resolve to a string or integer.');
+            }
+            $fingerprint = (is_int($identity) ? 'int:' : 'string:').$identity;
+            if (isset($seenKeys[$fingerprint])) {
+                throw new RuntimeException("Duplicate p-key {$identity} in loop.");
+            }
+            $seenKeys[$fingerprint] = true;
+            $identities[$itemIndex] = $identity;
+        }
+
+        return $identities;
+    }
+
+    /**
+     * Renders every item of a p-for loop into $output.
+     *
+     * @param list<Element|string> $output
+     * @param array<int, mixed> $for
+     * @param array<array-key, mixed> $items
+     * @param array<string, mixed> $data with __pamNodePath set to the loop's path
+     */
+    private static function eagerLoop(
+        array &$output,
+        array $for,
+        CompiledTemplateNode $node,
+        array $items,
+        ?object $scope,
+        array $data,
+        string $slot,
+    ): void {
+        [$variable, , , , $indexName, , $loopNode] = $for;
+        $identities = self::loopIdentities($for, $node, $items, $scope, $data);
+        $loopPath = $data['__pamNodePath'].'.';
+        foreach ($items as $itemIndex => $item) {
+            $iterationData = $data;
+            $iterationData[$variable] = $item;
+            $iterationData[$indexName] = $itemIndex;
+            $identity = $identities[$itemIndex];
+            $iterationData['__pamNodePath'] = $loopPath.$identity;
+            foreach (self::nodes([$loopNode], $scope, self::handOver($iterationData), $slot.'.'.$identity.'.') as $rendered) {
+                $output[] = $rendered;
+            }
+        }
+    }
+
+    /**
+     * The rows of a p-for loop that is a row source of a VirtualizedList /
+     * VirtualGrid, built only when the list window reaches them, each
+     * exactly as the eager loop renders it. Loops of a `windowSize` list are
+     * always deferred, other loops when they are long. Null renders the loop
+     * eagerly (short loop, nested loop or condition on the row, keys that
+     * are not usable as element keys).
+     *
+     * @param array<int, mixed> $for the loop plan (nodePlan()['for'])
+     * @param array<string, mixed> $data with __pamNodePath set to the loop's path
+     */
+    private static function lazyLoop(
+        array $for,
+        CompiledTemplateNode $node,
+        ?object $scope,
+        array $data,
+        string $slot,
+        bool $windowed,
+    ): ?LazyRows {
+        $loopNode = $for[6];
+        $rowPlan = $loopNode->pamPlan ??= self::nodePlan($loopNode);
+        // A control-flow row (`<If p-for>` choosing the row's component) is
+        // deferred in a `windowSize` list; it must render one element.
+        if ($rowPlan['for'] !== null || ($rowPlan['control'] && !$windowed)) {
+            return null;
+        }
+        $items = self::loopItems($for, $scope, $data);
+        if (!$windowed && count($items) <= TreeEncoder::WINDOW_MIN_ROWS) {
+            return null;
+        }
+        $identities = self::loopIdentities($for, $node, $items, $scope, $data);
+        $indexes = array_keys($items);
+        $keys = [];
+        foreach ($identities as $identity) {
+            $key = (string) $identity;
+            if ($key === '' || strlen($key) > 128) {
+                return null;
+            }
+            $keys[] = $key;
+        }
+        [$variable, , , , $indexName] = $for;
+        $loopPath = $data['__pamNodePath'].'.';
+        $render = static function (mixed $item, int $row) use (
+            $variable,
+            $indexName,
+            $loopNode,
+            $scope,
+            $data,
+            $slot,
+            $indexes,
+            $keys,
+            $loopPath,
+        ): ?Element {
+            $itemIndex = $indexes[$row];
+            $identity = $keys[$row];
+            $iterationData = $data;
+            $iterationData[$variable] = $item;
+            $iterationData[$indexName] = $itemIndex;
+            $iterationData['__pamNodePath'] = $loopPath.$identity;
+            $element = null;
+            foreach (self::nodes([$loopNode], $scope, self::handOver($iterationData), $slot.'.'.$identity.'.') as $rendered) {
+                if (is_string($rendered) && trim($rendered) === '') {
+                    continue;
+                }
+                if (!$rendered instanceof Element || $element !== null) {
+                    throw new RuntimeException('Each virtualized row must render exactly one element (rows of a long or windowSize list are built one by one).');
+                }
+                $element = $rendered;
+            }
+
+            return $element;
+        };
+
+        return new LazyRows(array_values($items), $keys, $render);
+    }
+
+    /**
+     * Resolves a node's directives once: legacy aliases, the p-for header and
+     * the conditional kind, plus the attribute-stripped node rendered for it.
+     *
+     * @return array<string, mixed>
+     */
+    /**
+     * Drops only the whitespace the template itself puts at the edges of a
+     * Text / Span leaf (its first and last static characters); spaces that
+     * come from interpolated values stay, like the string RN renders.
+     *
+     * @param list<CompiledTemplateNode> $nodes
+     */
+    private static function trimStaticEdges(array $nodes, string $text): string
+    {
+        if ($text === '') {
+            return $text;
+        }
+        $first = $nodes[0] ?? null;
+        $last = $nodes[count($nodes) - 1] ?? null;
+        $lead = $first instanceof CompiledTemplateNode && $first->kind === 2
+            ? strspn((string) $first->value, " \t\n\r\0\x0B")
+            : 0;
+        $trail = 0;
+        if ($last instanceof CompiledTemplateNode && $last->kind === 2) {
+            $value = (string) $last->value;
+            $trail = strlen($value) - strlen(rtrim($value));
+        }
+        if ($first === $last && $lead > 0 && $lead === strlen((string) $first->value)) {
+            return trim($text);
+        }
+        if ($lead + $trail >= strlen($text)) {
+            return trim($text);
+        }
+
+        return substr($text, $lead, strlen($text) - $lead - $trail);
+    }
+
+    private static function nodePlan(CompiledTemplateNode $node): array
+    {
+        $attributes = self::directiveAliases($node->attributes);
+        $node = self::withAttributes($node, $attributes);
+
+        if (isset($attributes['p-for'])) {
+            $directive = $attributes['p-for'];
+            if (
+                !is_string($directive)
+                || preg_match(
+                    '/^\s*\$?([A-Za-z_][A-Za-z0-9_]*)\s+in\s+(.+)\s*$/D',
+                    $directive,
+                    $match,
+                ) !== 1
+            ) {
+                throw new RuntimeException(
+                    'p-for must use "$item in $items" syntax.',
+                );
+            }
+            // `:key` / `key` on a loop child is the item identity exactly
+            // like `p-key` (component instance, slot and native id).
+            $keyExpression = $attributes['p-key'] ?? $attributes[':key'] ?? null;
+            $staticKey = $keyExpression === null ? ($attributes['key'] ?? null) : null;
+            $indexName = $attributes['p-index'] ?? $match[1].'Index';
+            $indexValid = is_string($indexName)
+                && preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/D', ltrim($indexName, '$')) === 1;
+
+            return [
+                'for' => [
+                    $match[1],
+                    $match[2],
+                    $keyExpression,
+                    $staticKey,
+                    $indexValid ? ltrim($indexName, '$') : '',
+                    $indexValid,
+                    self::withoutAttributes($node, ['p-for', 'p-key', 'p-index']),
+                ],
+            ];
+        }
+
+        $condition = 0;
+        $expression = null;
+        if (isset($attributes['p-if'])) {
+            $condition = 1;
+            $expression = $attributes['p-if'];
+        } elseif (isset($attributes['p-else-if'])) {
+            $condition = 2;
+            $expression = $attributes['p-else-if'];
+        } elseif (isset($attributes['p-else'])) {
+            $condition = 3;
+        }
+        $stripped = self::withoutAttributes($node, ['p-if', 'p-else-if', 'p-else']);
+
+        return [
+            'for' => null,
+            'condition' => $condition,
+            'expression' => $expression,
+            'node' => $stripped,
+            'control' => in_array($stripped->name, ['If', 'Show', 'Match', 'Await', 'Each', 'Slot'], true),
+        ];
+    }
+
+    /**
+     * Template control tags (If, Show, Match, Await, Each, Slot).
+     *
+     * @param list<Element|string> $output
+     * @param array<string, string|bool> $attributes
+     * @param list<CompiledTemplateNode> $children
+     * @param array<string, mixed> $nodeData
+     */
+    private static function controlNode(
+        array &$output,
+        string $tag,
+        array $attributes,
+        array $children,
+        ?object $scope,
+        array $nodeData,
+        string $slot,
+    ): void {
+        if ($tag === 'If') {
+            $condition = self::value(
+                $attributes['condition'] ?? false,
+                $scope,
+                $nodeData,
+            );
+
+            if ((bool) $condition) {
+                array_push($output, ...self::nodes($children, $scope, $nodeData, $slot.'.'));
+            }
+
+            return;
+        }
+
+        if ($tag === 'Show') {
+            $condition = self::value(
+                $attributes['when'] ?? $attributes['condition'] ?? false,
+                $scope,
+                $nodeData,
+            );
+            if ((bool) $condition) {
+                array_push($output, ...self::nodes($children, $scope, $nodeData, $slot.'.'));
+            }
+            return;
+        }
+
+        if ($tag === 'Match') {
+            $subject = self::value($attributes['value'] ?? null, $scope, $nodeData);
+            $fallback = null;
+            $fallbackIndex = 0;
+            foreach ($children as $candidateIndex => $candidate) {
+                if ($candidate->kind !== 1) {
+                    continue;
+                }
+                if ($candidate->name === 'Default') {
+                    $fallback = $candidate;
+                    $fallbackIndex = $candidateIndex;
+                    continue;
+                }
+                if ($candidate->name !== 'Case') {
+                    throw new RuntimeException('Match accepts only Case and Default children.');
+                }
+                $case = self::value($candidate->attributes['value'] ?? null, $scope, $nodeData);
+                if ($subject === $case) {
+                    array_push($output, ...self::nodes($candidate->children, $scope, $nodeData, $slot.'.'.$candidateIndex.'.'));
+                    return;
+                }
+            }
+            if ($fallback !== null) {
+                array_push($output, ...self::nodes($fallback->children, $scope, $nodeData, $slot.'.'.$fallbackIndex.'.'));
+            }
+            return;
+        }
+
+        if ($tag === 'Await') {
+            $resource = self::value($attributes['value'] ?? null, $scope, $nodeData);
+            $async = $resource instanceof AsyncResource ? $resource->value() : $resource;
+            if (!$async instanceof AsyncValue) {
+                throw new RuntimeException('Await value must resolve to AsyncResource or AsyncValue.');
+            }
+            $branch = match ($async->status) {
+                AsyncStatus::Loading => 'Pending',
+                AsyncStatus::Content => 'Content',
+                AsyncStatus::Empty => 'Empty',
+                AsyncStatus::Error => 'Error',
+                AsyncStatus::Offline => 'Offline',
+                AsyncStatus::Stale => 'Stale',
+            };
+            $fallback = null;
+            $fallbackIndex = 0;
+            foreach ($children as $candidateIndex => $candidate) {
+                if ($candidate->kind !== 1) {
+                    continue;
+                }
+                if ($candidate->name === 'Default') {
+                    $fallback = $candidate;
+                    $fallbackIndex = $candidateIndex;
+                }
+                if ($candidate->name !== $branch) {
+                    continue;
+                }
+                array_push($output, ...self::nodes($candidate->children, $scope, [
+                    ...$nodeData,
+                    'data' => $async->data,
+                    'message' => $async->message,
+                    'retryable' => $async->retryable,
+                ], $slot.'.'.$candidateIndex.'.'));
+                return;
+            }
+            if ($fallback !== null) {
+                array_push($output, ...self::nodes($fallback->children, $scope, $nodeData, $slot.'.'.$fallbackIndex.'.'));
+            }
+            return;
+        }
+
+        if ($tag === 'Each') {
+            $items = self::value($attributes['items'] ?? [], $scope, $nodeData);
+            $name = (string) ($attributes['as'] ?? 'item');
+
+            if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $name) !== 1) {
+                throw new RuntimeException('Each "as" value must be a safe variable name.');
+            }
+
+            if ($items instanceof Traversable) {
+                $items = iterator_to_array($items);
+            }
+
+            if (!is_array($items)) {
+                throw new RuntimeException('Each items must resolve to an array or Traversable.');
+            }
+
+            foreach ($items as $itemIndex => $item) {
+                array_push(
+                    $output,
+                    ...self::nodes($children, $scope, [
+                        ...$nodeData,
+                        $name => $item,
+                        $name.'Index' => $itemIndex,
+                    ], $slot.'.'.(string) $itemIndex.'.'),
+                );
+            }
+
+            return;
+        }
+
+        // Slot
+        $name = (string) ($attributes['name'] ?? 'slot');
+        $slotContent = array_key_exists(':content', $attributes)
+            ? TemplateExpression::evaluate((string) $attributes[':content'], $scope, $nodeData)
+            : ($nodeData[$name] ?? []);
+        $slotContent ??= [];
+        if ($slotContent instanceof Renderable) {
+            $slotContent = [$slotContent];
+        }
+        if (!is_array($slotContent)) {
+            throw new RuntimeException("Slot {$name} must resolve to renderable content.");
+        }
+        if ($slotContent === [] && $children !== []) {
+            array_push($output, ...self::nodes($children, $scope, $nodeData, $slot.'.'));
+            return;
+        }
+        foreach ($slotContent as $contentIndex => $content) {
+            if ($content === null || $content === false) {
+                continue;
+            }
+            if (!$content instanceof Renderable) {
+                throw new RuntimeException("Slot {$name} contains non-renderable content.");
+            }
+            $element = $content->toElement();
+            $output[] = $element->withIdentitySlot(
+                $slot.'.'.($element->identitySlot() ?? (string) $contentIndex),
+            );
+        }
+    }
+
+    /**
+     * @param list<string> $names
+     */
+    private static function withoutAttributes(
+        CompiledTemplateNode $node,
+        array $names,
+    ): CompiledTemplateNode {
+        $attributes = array_diff_key($node->attributes, array_flip($names));
+        $copy = new CompiledTemplateNode(
+            kind: $node->kind,
+            name: $node->name,
+            attributes: $attributes,
+            source: $node->source,
+            line: $node->line,
+            column: $node->column,
+            value: $node->value,
+        );
+        $copy->children = $node->children;
+
+        return $copy;
+    }
+
+    /** @param array<string, mixed> $data */
+    private static function nodePath(array $data, int $index): string
+    {
+        $parent = $data['__pamNodePath'] ?? 'root';
+
+        return (is_string($parent) || is_int($parent)
+            ? (string) $parent
+            : 'root').'.'.$index;
+    }
+
+    private static function pathValue(mixed $value): string
+    {
+        return is_string($value) || is_int($value)
+            ? (string) $value
+            : 'root';
+    }
+
+    /**
+     * @param array<string, string|int|bool> $attributes
+     * @param list<CompiledTemplateNode> $childNodes
+     * @param array<string, mixed> $data
+     */
+    private static function tag(
+        string $tag,
+        array $attributes,
+        array $childNodes,
+        ?object $scope,
+        array $data,
+        ?CompiledTemplateNode $planNode = null,
+        string|false|null $knownClass = false,
+    ): Element {
+        $authoredAttributes = $attributes;
+        $factory = TemplateRegistry::factory($tag);
+        $plan = null;
+        $variant = $factory === null ? 'n' : 'f';
+        if ($planNode !== null) {
+            $plan = $planNode->pamTagPlans[$variant]
+                ??= self::tagPlan($tag, $attributes, $factory !== null, $childNodes);
+            $attributes = $plan['attributes'];
+        } elseif ($factory === null) {
+            $attributes = self::nativeEventAliases($attributes);
+        }
+        $declaredAttributes = $attributes;
+        // $knownClass: already evaluated by fastNode() (never twice).
+        $resolvedClass = $knownClass !== false
+            ? $knownClass
+            : ($plan !== null && !$plan['dynamicClass'] && !$plan['interpolatedClass']
+                ? $plan['staticClass']
+                : self::classValue($attributes, $scope, $data));
+        $inheritedStyles = $data['__pamInheritedStyles'] ?? [];
+        if (!is_array($inheritedStyles)) {
+            $inheritedStyles = [];
+        }
+        $sheet = $data['__pamStyles'] ?? null;
+        $styleKey = null;
+        $entryKey = null;
+        $entry = null;
+        $prepared = null;
+        // The element's last resolved style entry: valid while the sheet,
+        // style variables, class, inherited styles and ancestor chain match.
+        if ($planNode !== null && is_array($sheet)) {
+            $inheritedKey = $inheritedStyles === []
+                ? ''
+                : (is_string($data['__pamInheritedKey'] ?? null) ? $data['__pamInheritedKey'] : null);
+            $last = self::recentEntry($planNode, $variant, $sheet, $resolvedClass, $inheritedKey, $data);
+            if ($last !== null) {
+                $prepared = $last[5];
+                $styleKey = $last[6];
+                $entryKey = self::entryKey($styleKey, $data);
+                $entry = self::$styleEntries[$entryKey] ?? null;
+            }
+        }
+        if ($entry === null) {
+            $prepared = is_array($sheet) ? self::preparedStyleSheet($sheet, $data) : null;
+            $styleKey = null;
+            $entryKey = null;
+            if ($plan !== null && $plan['cacheable']) {
+                $styleKey = self::styleEntryKey($planNode, $variant, $plan, $sheet, $prepared, $resolvedClass, $inheritedStyles, $data);
+                if ($styleKey !== null) {
+                    $entryKey = self::entryKey($styleKey, $data);
+                    $entry = self::$styleEntries[$entryKey] ?? null;
+                    if (
+                        $planNode !== null
+                        && is_array($sheet)
+                        && ($sheet['queries'] ?? null) === []
+                        && is_int($sheet['__pamSheetId'] ?? null)
+                    ) {
+                        $inheritedKey = $inheritedStyles === []
+                            ? ''
+                            : (is_string($data['__pamInheritedKey'] ?? null) ? $data['__pamInheritedKey'] : null);
+                        if ($inheritedKey !== null) {
+                            $record = [
+                                $sheet['__pamSheetId'],
+                                StyleVariables::revision(),
+                                $resolvedClass,
+                                $inheritedKey,
+                                $data['__pamStyleChain'] ?? 0,
+                                $prepared,
+                                $styleKey,
+                            ];
+                            $planNode->pamLastEntries[$variant] = $record;
+                            $recent = $planNode->pamRecentEntries[$variant] ?? [];
+                            if (count($recent) >= 16) {
+                                $recent = [];
+                            }
+                            $recent[($resolvedClass ?? '')."\0".$inheritedKey] = $record;
+                            $planNode->pamRecentEntries[$variant] = $recent;
+                        }
+                    }
+                }
+            }
+        }
+        if ($entry === null) {
+            self::$dynamicStyles = false;
+            $styleDescriptor = self::styleNodeDescriptor($tag, $resolvedClass, $attributes, $scope, $data);
+            $attributes = [
+                ...self::styleAttributes($inheritedStyles, 'inherited styles'),
+                ...self::scopedStyleAttributes(
+                    $tag,
+                    $resolvedClass,
+                    $data,
+                    $attributes,
+                    $scope,
+                    $styleDescriptor,
+                    $prepared,
+                ),
+                ...$attributes,
+            ];
+            $unresolvedStyleAttributes = $attributes;
+            $attributes = self::resolveScopedFont(
+                $attributes,
+                self::styleSheetFonts($data),
+            );
+            if ($styleKey !== null) {
+                if (self::$dynamicStyles) {
+                    // Styles resolved against the window, the container
+                    // size or the style environment: cached per environment.
+                    self::$dynamicKeys[$styleKey] = true;
+                    $entryKey = $styleKey."\0".self::styleEnvironmentKey($data);
+                } else {
+                    $entryKey = $styleKey;
+                }
+                $entry = self::styleEntry(
+                    $tag,
+                    $factory !== null,
+                    $styleDescriptor,
+                    $attributes,
+                    $unresolvedStyleAttributes,
+                );
+                if (count(self::$styleEntries) >= 8192) {
+                    self::$styleEntries = [];
+                }
+                self::$styleEntries[$entryKey] = $entry;
+            }
+        } else {
+            $styleDescriptor = $entry['descriptor'];
+            $attributes = $entry['attributes'];
+            $unresolvedStyleAttributes = $entry['unresolved'];
+        }
+        if ($plan === null || $plan['bindings']) {
+            [$attributes, $checkedBinding] = self::modelBindings($tag, $attributes);
+            $entry = null;
+        } else {
+            $checkedBinding = null;
+        }
+        if (
+            $entry !== null
+            && $factory !== null
+            && $plan !== null
+            && $planNode !== null
+            && $plan['componentFast']
+            && !$plan['bindings']
+            && TemplateRegistry::isCompiledComponent($tag)
+        ) {
+            if (($planNode->pamLastEntries['f'][6] ?? null) === $styleKey) {
+                $planNode->pamFast = true;
+            }
+
+            return self::componentTag(
+                $tag,
+                $factory,
+                $planNode,
+                $plan,
+                $entry,
+                $resolvedClass,
+                $attributes,
+                $childNodes,
+                $scope,
+                $data,
+                $prepared,
+                $sheet,
+                $entryKey,
+            );
+        }
+        if ($entry !== null && $factory === null && $plan !== null) {
+            if (!array_key_exists('fast', $entry)) {
+                $entry['fast'] = self::fastEntry($tag, $plan, $entry['values'], $resolvedClass, $data, $entry['inherited']);
+                if ($entryKey !== null && isset(self::$styleEntries[$entryKey])) {
+                    self::$styleEntries[$entryKey]['fast'] = $entry['fast'];
+                }
+            }
+            if ($entry['fast'] !== null) {
+                if (
+                    $planNode !== null
+                    && $variant === 'n'
+                    && ($planNode->pamLastEntries['n'][6] ?? null) === $styleKey
+                ) {
+                    // Later renders of this element go straight to fastTag()
+                    // while its cached style entry stays valid (fastNode()).
+                    $planNode->pamFast = true;
+                }
+
+                return self::fastTag(
+                    $tag,
+                    $plan,
+                    $entry,
+                    $entry['fast'],
+                    $resolvedClass,
+                    $attributes,
+                    $childNodes,
+                    $scope,
+                    $data,
+                    $prepared,
+                    $entryKey,
+                );
+            }
+        }
+        $values = [];
+        $evaluated = [];
+
+        if ($entry !== null) {
+            foreach ($entry['values'] as [$name, $valueName, $mode, $payload, $remember]) {
+                $value = $mode === 0
+                    ? $payload
+                    : ($mode === 1
+                        ? TemplateExpression::evaluate($payload, $scope, $data)
+                        : self::value($payload, $scope, $data));
+                $values[$valueName] = $value;
+                if ($remember) {
+                    $evaluated[$name] = $value;
+                }
+            }
+        } else {
+            foreach ($attributes as $name => $raw) {
+                if (
+                    isset(self::EVENTS[$name])
+                    || $name === 'class'
+                    || $name === ':class'
+                    || $name === 'recipe'
+                    || str_starts_with($name, 'variant:')
+                    || $name === 'p-ripple'
+                    || $name === ':p-ripple'
+                    || str_starts_with($name, '@')
+                ) {
+                    continue;
+                }
+
+                $valueName = ltrim($name, ':');
+                if ($factory === null && ($tag === 'Image' || $tag === 'MediaPlayer')) {
+                    $valueName = self::camelAttribute($valueName);
+                }
+                $value = str_starts_with($name, ':')
+                    ? self::dynamicValue($raw, $scope, $data)
+                    : self::value($raw, $scope, $data);
+                $values[$valueName] = $value;
+                $evaluated[$name] = $value;
+            }
+        }
+        $rippleAttribute = $attributes[':p-ripple'] ?? $attributes['p-ripple'] ?? null;
+        if ($rippleAttribute !== null) {
+            if (array_key_exists(':p-ripple', $attributes)) {
+                $rippleAttribute = self::dynamicValue($rippleAttribute, $scope, $data);
+            } elseif (array_key_exists('p-ripple', $attributes)) {
+                $rippleAttribute = self::value($rippleAttribute, $scope, $data);
+            }
+        }
+        if ($rippleAttribute !== null && $rippleAttribute !== false) {
+            $ripple = is_array($rippleAttribute) ? $rippleAttribute : [];
+            $values['rippleColor'] = $ripple['color']
+                ?? (is_int($rippleAttribute) ? $rippleAttribute : 0);
+            $values['rippleAlpha'] = $ripple['alpha'] ?? 0.12;
+            $values['rippleBorderless'] = $ripple['borderless'] ?? false;
+            $values['rippleForeground'] = $ripple['foreground'] ?? false;
+            if (isset($ripple['radius'])) {
+                $values['rippleRadius'] = $ripple['radius'];
+            }
+        }
+        if ($factory !== null && $resolvedClass !== null) {
+            $values['className'] = $resolvedClass;
+        }
+        if ($factory !== null) {
+            $values['__pamNodePath'] = $data['__pamNodePath'] ?? $tag;
+        }
+        $componentValues = $values;
+        if ($factory !== null) {
+            $declaredNames = $plan['declaredNames'] ?? null;
+            if ($declaredNames === null) {
+                $declaredNames = [];
+                foreach (array_keys($declaredAttributes) as $name) {
+                    $declaredNames[ltrim($name, ':')] = true;
+                }
+            }
+            $componentValues = array_filter(
+                $values,
+                static fn (string $name): bool =>
+                    isset($declaredNames[$name])
+                    || $name === 'className'
+                    || $name === '__pamNodePath',
+                ARRAY_FILTER_USE_KEY,
+            );
+        }
+
+        $inheritedVariants = $data['__pamParentVariants'] ?? null;
+        $ownHandlers = [];
+        foreach ($plan['events'] ?? self::EVENTS as $name => $event) {
+            if (isset($attributes[$name])) {
+                $eventRaw = $attributes[$name];
+                if (!is_string($eventRaw) && !is_bool($eventRaw)) {
+                    throw new RuntimeException("Invalid template event expression {$name}.");
+                }
+                $ownHandlers[$event->value] = self::handler(
+                    $eventRaw,
+                    $event,
+                    $scope,
+                    $data,
+                );
+            }
+        }
+        $componentEvents = [];
+        if ($factory !== null) {
+            foreach ($attributes as $name => $raw) {
+                if (!str_starts_with($name, '@')) {
+                    continue;
+                }
+                if (!is_string($raw) && !is_bool($raw)) {
+                    throw new RuntimeException("Invalid component event expression {$name}.");
+                }
+                $event = substr($name, 1);
+                if (
+                    $event === ''
+                    || preg_match('/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/D', $event)
+                        !== 1
+                ) {
+                    throw new RuntimeException(
+                        "Invalid component event {$name}.",
+                    );
+                }
+                $componentEvents[$event] = self::componentHandler(
+                    $raw,
+                    $scope,
+                    $data,
+                );
+            }
+        }
+        $inheritedEventContexts = $data['__pamEventContexts'] ?? [];
+        if (!is_array($inheritedEventContexts)) {
+            $inheritedEventContexts = [];
+        }
+        $contextFactory = $factory !== null && !TemplateRegistry::isCompiledComponent($tag);
+        $childEventContexts = $inheritedEventContexts;
+        if ($factory !== null && $ownHandlers !== []) {
+            $childEventContexts[$tag] = [
+                'props' => [...ParentVariants::resolve($inheritedVariants), ...$values],
+                'events' => $ownHandlers,
+            ];
+        }
+        $inheritedChildStyles = [];
+        foreach (self::INHERITED_STYLE_ATTRIBUTES as $attribute) {
+            $value = $values[$attribute] ?? null;
+            if (
+                is_string($value)
+                || is_int($value)
+                || is_float($value)
+                || is_bool($value)
+            ) {
+                $inheritedChildStyles[$attribute] = $value;
+            }
+        }
+        foreach ($entry['inherited'] ?? self::inheritedCandidates($unresolvedStyleAttributes) as [$name, $attribute, $mode, $payload]) {
+            if ($mode === 0) {
+                $value = $payload;
+            } elseif (array_key_exists($name, $evaluated) && ($attributes[$name] ?? null) === $payload) {
+                $value = $evaluated[$name];
+            } else {
+                $value = $mode === 1
+                    ? self::dynamicValue($payload, $scope, $data)
+                    : self::value($payload, $scope, $data);
+            }
+            if (
+                is_string($value)
+                || is_int($value)
+                || is_float($value)
+                || is_bool($value)
+            ) {
+                $inheritedChildStyles[$attribute] = $value;
+            }
+        }
+        $childData = $data;
+        if ($prepared === null || $prepared['usesAncestors']) {
+            $ancestors = is_array($data['__pamStyleAncestors'] ?? null) ? $data['__pamStyleAncestors'] : [];
+            $ancestors[] = $styleDescriptor;
+            $childData['__pamStyleAncestors'] = $ancestors;
+            $childData['__pamStyleChain'] = self::styleChain(
+                $data['__pamStyleChain'] ?? 0,
+                $entry['descriptorId'] ?? self::descriptorId($styleDescriptor),
+            );
+        } else {
+            $childData['__pamStyleAncestors'] = [];
+        }
+        $childData['__pamContainerWidth'] = is_numeric($values['width'] ?? null)
+            ? (float) $values['width']
+            : ($data['__pamContainerWidth'] ?? null);
+        $childData['__pamContainerHeight'] = is_numeric($values['height'] ?? null)
+            ? (float) $values['height']
+            : ($data['__pamContainerHeight'] ?? null);
+        $childData['__pamInheritedStyles'] = $inheritedChildStyles;
+        $childData['__pamInheritedKey'] = $inheritedChildStyles === [] ? '' : serialize($inheritedChildStyles);
+        $childData['__pamParentVariants'] = ParentVariants::extend(
+            $inheritedVariants,
+            $factory !== null ? $componentValues : $values,
+        );
+        $childData['__pamEventContexts'] = $childEventContexts;
+        if ($factory === null) {
+            $defaultNodes = $childNodes;
+            $slotNodes = [];
+        } elseif ($plan !== null && $planNode !== null) {
+            $slotPlan = $plan['slots'];
+            if ($slotPlan === null) {
+                $slotPlan = self::componentSlotNodes($childNodes);
+                $planNode->pamTagPlans[$variant]['slots'] = $slotPlan;
+            }
+            [$defaultNodes, $slotNodes] = $slotPlan;
+        } else {
+            [$defaultNodes, $slotNodes] = self::componentSlotNodes($childNodes);
+        }
+        $listWindow = null;
+        $listLoop = false;
+        if ($factory === null && $slotNodes === [] && ($tag === 'VirtualizedList' || $tag === 'VirtualGrid')) {
+            // `<VirtualizedList><Row p-for="...">` renders only the rows the
+            // list window materializes, like FlatList's renderItem: with
+            // `windowSize` (RN FlatList), or automatically for long loops.
+            $listPath = $data['__pamNodePath'] ?? $tag;
+            $listPath = is_string($listPath) || is_int($listPath) ? (string) $listPath : $tag;
+            if (isset($values['windowSize'])) {
+                $listWindow = ListWindow::for($scope instanceof Component ? $scope : null, $listPath);
+                $listWindow->configure(self::intValue($values['windowSize'], 'VirtualizedList windowSize'));
+                $listWindow->startAt(
+                    isset($values['initialScrollIndex'])
+                        ? self::intValue($values['initialScrollIndex'], 'VirtualizedList initialScrollIndex')
+                        : null,
+                );
+            }
+            $childData['__pamListLoop'] = [$listPath, $listWindow !== null];
+            $listLoop = true;
+        }
+        $renderedChildren = $defaultNodes === [] ? [] : self::nodes($defaultNodes, $scope, $childData);
+        $lazyRows = null;
+        if ($listLoop) {
+            $parts = [];
+            $deferred = false;
+            foreach ($renderedChildren as $rendered) {
+                if ($rendered instanceof LazyRows) {
+                    $deferred = true;
+                    $parts[] = $rendered;
+                } elseif ($rendered instanceof Element) {
+                    $parts[] = $rendered;
+                }
+            }
+            if ($deferred || $listWindow !== null) {
+                $lazyRows = LazyRows::compose($parts);
+                if ($lazyRows === null) {
+                    throw new RuntimeException("{$tag} rows need distinct keys.");
+                }
+                $renderedChildren = array_values(array_filter($renderedChildren, is_string(...)));
+            }
+        }
+        $children = [];
+        $text = '';
+        foreach ($renderedChildren as $rendered) {
+            if ($rendered instanceof Element) {
+                $children[] = $rendered;
+            } elseif (is_string($rendered)) {
+                $text .= $rendered;
+            }
+        }
+        $slots = ['slot' => $children];
+        foreach ($slotNodes as $slotName => $nodes) {
+            $renderedSlot = self::nodes($nodes, $scope, $childData);
+            $slotElements = array_values(array_filter(
+                $renderedSlot,
+                static fn (mixed $value): bool => $value instanceof Element,
+            ));
+            if (count($slotElements) !== count($renderedSlot)) {
+                throw new RuntimeException(
+                    "Named slot {$slotName} must contain renderable elements.",
+                );
+            }
+            $slots[$slotName] = $slotElements;
+        }
+
+        if ($factory === null && $text !== '' && $tag !== 'Text' && $tag !== 'Span' && $tag !== 'Button') {
+            throw new RuntimeException("Text content is not valid inside {$tag}; wrap it in Text.");
+        }
+
+        if ($factory === null && $children !== [] && $tag === 'Button') {
+            throw new RuntimeException("{$tag} cannot contain element children.");
+        }
+        $richParts = null;
+        $textTag = $tag === 'Text' || $tag === 'Span';
+        if ($factory === null && $children !== [] && $textTag) {
+            $richParts = [];
+            foreach ($renderedChildren as $part) {
+                if (is_string($part)) {
+                    $richParts[] = $part;
+                } elseif ($part instanceof Text) {
+                    $richParts[] = $part;
+                } else {
+                    throw new RuntimeException("{$tag} can only contain text and nested Text or Span elements.");
+                }
+            }
+        }
+        if ($richParts === null && $textTag) {
+            $text = self::trimStaticEdges($defaultNodes, $text);
+        }
+        if ($text !== '' && $richParts === null) {
+            $values['text'] ??= $text;
+        }
+        if ($tag === 'Animated' && ($values['animation'] ?? null) instanceof Animation) {
+            $values['animationProgram'] = $values['animation'];
+            unset($values['animation']);
+        }
+        if ($tag === 'Animated' && isset($values['animation'])) {
+            $animation = self::stringValue($values['animation'], 'Animated animation');
+            $animationSheet = $data['__pamStyles'] ?? null;
+            $knownKeyframes = is_array($animationSheet) ? ($animationSheet['keyframes'] ?? null) : null;
+            $keyframes = is_array($knownKeyframes) ? ($knownKeyframes[$animation] ?? null) : null;
+            if (!is_array($keyframes)) {
+                throw new RuntimeException("Unknown PAM keyframes {$animation}.");
+            }
+            $frames = [];
+            foreach ($keyframes as $frame) {
+                if (!is_array($frame)) throw new RuntimeException('Invalid PAM keyframe.');
+                $offset = $frame['offset'] ?? 0.0;
+                if ((!is_int($offset) && !is_float($offset)) || !is_finite((float) $offset)
+                    || $offset < 0.0 || $offset > 1.0) {
+                    throw new RuntimeException('Invalid PAM keyframe offset.');
+                }
+                $frames[] = [
+                    ...self::styleAttributes($frame['styles'] ?? [], 'keyframe styles'),
+                    'offset' => $offset,
+                ];
+            }
+            $values['keyframes'] = $frames;
+            unset($values['animation']);
+        }
+        $contract = $factory !== null ? TemplateRegistry::tagContract($tag) : null;
+        if ($contract !== null) {
+            ContractValidator::validate(
+                $contract,
+                array_filter(
+                    $componentValues,
+                    static fn (string $name): bool =>
+                        !str_starts_with($name, '__pam') && $name !== 'className',
+                    ARRAY_FILTER_USE_KEY,
+                ),
+                $slots,
+                $componentEvents,
+            );
+        }
+        if ($contextFactory) {
+            $resolvedVariants = ParentVariants::resolve($inheritedVariants);
+            if ($resolvedVariants !== []) {
+                $componentValues['__parentVariants'] = $resolvedVariants;
+            }
+            if ($inheritedEventContexts !== []) {
+                $componentValues['__pamEventContexts'] = $inheritedEventContexts;
+            }
+        }
+        if ($factory !== null) {
+            $componentValues['__pamSlots'] = $slots;
+            $componentValues['__pamComponentEvents'] = $componentEvents;
+            $componentValues['__pamInheritedStyles'] =
+                $childData['__pamInheritedStyles'];
+        }
+
+        if ($factory === null && $tag === 'LinearGradient') {
+            $values = self::linearGradientAttributes($values);
+        }
+        if ($factory === null && $tag === 'Shimmer') {
+            $values = self::shimmerAttributes($values);
+        }
+        $element = $factory !== null
+            ? $factory($componentValues, $children, $scope)->toElement()
+            : match ($tag) {
+            'Screen' => Screen::make(...$children),
+            'Column' => Column::make(...$children),
+            'Row' => Row::make(...$children),
+            'Grid' => Grid::make(...$children),
+            'View', 'LinearGradient', 'Shimmer' => NativeView::make(...$children),
+            'Text', 'Span' => $richParts !== null
+                ? Text::rich(...$richParts)
+                : Text::make(self::stringValue($values['text'] ?? $text, 'Text content')),
+            'Button' => Button::make(self::stringValue(
+                $values['label'] ?? $values['text'] ?? $text,
+                'Button label',
+            )),
+            'Input', 'TextInput' => Input::make(self::stringValue(
+                $values['value'] ?? self::modelValue($values, $scope),
+                'Input value',
+            )),
+            'Icon' => \Pam\Desktop\UI\Icon::make(
+                self::stringValue($values['name'] ?? '', 'Icon name'),
+                self::stringValue($values['font'] ?? 'Ionicons', 'Icon font'),
+                isset($values['size']) ? self::floatValue($values['size'], 'Icon size') : 12.0,
+                isset($values['color']) ? self::colorValue($values['color'], 'Icon color') : 0xFF000000,
+            ),
+            'Image' => Image::make(self::stringValue($values['source'] ?? '', 'Image source')),
+            'DrawingCanvas' => DrawingCanvas::make(
+                self::stringValue($values['source'] ?? '', 'DrawingCanvas source'),
+                self::stringValue($values['value'] ?? '', 'DrawingCanvas value'),
+            ),
+            'ImageBackground' => ImageBackground::make(
+                self::stringValue($values['source'] ?? '', 'Image source'),
+                ...$children,
+            ),
+            'Scroll' => Scroll::make(self::singleChild($children, $tag)),
+            'ScrollView' => Scroll::make(self::scrollViewContent(
+                $children,
+                self::boolValue(
+                    $values['horizontal'] ?? false,
+                    'ScrollView horizontal',
+                ),
+            )),
+            'FlatList', 'NativeList' => FlatList::make(
+                self::stringItems($values['items'] ?? []),
+            ),
+            'VirtualizedList' => $lazyRows !== null
+                ? VirtualizedList::__pamRows($lazyRows)
+                : ($children === []
+                    ? FlatList::make(self::stringItems($values['items'] ?? []))
+                    : VirtualizedList::make(...$children)),
+            'VirtualGrid' => $lazyRows !== null
+                ? VirtualizedList::__pamRows($lazyRows)->columns(max(1, self::intValue(
+                    $values['columns'] ?? $values['numColumns'] ?? 2,
+                    'VirtualGrid columns',
+                )))
+                : VirtualGrid::make(
+                    max(1, self::intValue(
+                        $values['columns'] ?? $values['numColumns'] ?? 2,
+                        'VirtualGrid columns',
+                    )),
+                    ...$children,
+                ),
+            'SectionList' => SectionList::make(self::sections($values['sections'] ?? [])),
+            'Spacer' => Spacer::make(self::floatValue($values['size'] ?? 8.0, 'Spacer size')),
+            'Link' => \Pam\Desktop\UI\Link::make(
+                self::linkRoute($values['route'] ?? $values['to'] ?? null),
+                self::linkParams($values['params'] ?? []),
+                \Pam\Desktop\UI\Link::mode($values['mode'] ?? null),
+                ...$children,
+            ),
+            'Swipeable' => self::swipeable($values, $children),
+            'GestureDetector' => GestureDetector::make(
+                self::gestureType($values['gestureType'] ?? 'tap'),
+                self::singleChild($children, $tag),
+            ),
+            'Pressable', 'TouchableNativeFeedback' => Pressable::make(...$children),
+            // The press feedback of the builder classes (TouchableOpacity::make()...).
+            'TouchableOpacity', 'TouchableHighlight', 'TouchableWithoutFeedback' => Pressable::make(...$children)
+                ->pressedOpacity(self::TOUCHABLE_OPACITY[$tag]),
+            'ActivityIndicator' => self::activityIndicator($values),
+            'Switch' => Toggle::make(self::boolValue($values['checked'] ?? false, 'Switch checked')),
+            'Modal' => Modal::make(
+                self::singleChild($children, $tag),
+                self::boolValue($values['visible'] ?? true, 'Modal visible'),
+                self::modalPresentation($values['presentation'] ?? 'dialog'),
+            ),
+            'BottomSheet' => BottomSheet::make(
+                self::singleChild($children, $tag),
+                self::bottomSheetSnapPoints($values['snapPoints'] ?? [0.5, 0.9]),
+                self::intValue($values['index'] ?? 0, 'BottomSheet index'),
+                self::boolValue($values['visible'] ?? true, 'BottomSheet visible'),
+            )
+                ->dismissible(self::boolValue(
+                    $values['dismissible'] ?? true,
+                    'BottomSheet dismissible',
+                ))
+                ->backdropDismiss(self::boolValue(
+                    $values['backdropDismiss'] ?? true,
+                    'BottomSheet backdropDismiss',
+                ))
+                ->handleVisible(self::boolValue(
+                    $values['handleVisible'] ?? true,
+                    'BottomSheet handleVisible',
+                ))
+                ->dragEnabled(self::boolValue(
+                    $values['dragEnabled'] ?? true,
+                    'BottomSheet dragEnabled',
+                ))
+                ->cornerRadius(self::floatValue(
+                    $values['cornerRadius'] ?? 20.0,
+                    'BottomSheet cornerRadius',
+                ))
+                ->keyboardBehavior(self::bottomSheetKeyboardBehavior(
+                    $values['keyboardBehavior'] ?? 'interactive',
+                )),
+            'WebView' => WebView::make(self::stringValue(
+                $values['source'] ?? $values['url'] ?? '',
+                'WebView source',
+            ))
+                ->javaScriptEnabled(self::boolValue(
+                    $values['javaScriptEnabled'] ?? true,
+                    'WebView javaScriptEnabled',
+                ))
+                ->domStorageEnabled(self::boolValue(
+                    $values['domStorageEnabled'] ?? true,
+                    'WebView domStorageEnabled',
+                ))
+                ->allowsInlineMedia(self::boolValue(
+                    $values['allowsInlineMedia'] ?? true,
+                    'WebView allowsInlineMedia',
+                )),
+            'Video', 'Audio', 'MediaPlayer' => MediaPlayer::make(
+                self::stringValue($values['source'] ?? '', 'Media source'),
+                $tag === 'Audio'
+                    ? \Pam\Desktop\MediaType::Audio
+                    : \Pam\Desktop\MediaType::Video,
+            )
+                ->autoPlay(self::boolValue($values['autoPlay'] ?? false, 'Media autoPlay'))
+                ->controls(self::boolValue($values['controls'] ?? true, 'Media controls'))
+                ->loop(self::boolValue($values['loop'] ?? false, 'Media loop'))
+                ->muted(self::boolValue($values['muted'] ?? false, 'Media muted'))
+                ->volume(self::floatValue($values['volume'] ?? 1.0, 'Media volume'))
+                ->currentTime(self::floatValue(
+                    $values['currentTime'] ?? 0.0,
+                    'Media currentTime',
+                ))
+                ->playbackRate(self::floatValue(
+                    $values['playbackRate'] ?? 1.0,
+                    'Media playbackRate',
+                )),
+            'DragSource' => \Pam\Desktop\UI\DragSource::make(...$children)->payload(self::intValue($values['dragType'] ?? 0, 'DragSource dragType'), self::stringValue($values['dragData'] ?? '', 'DragSource dragData')),
+            'DropTarget' => \Pam\Desktop\UI\DropTarget::make(...$children)->accepts(self::intValue($values['dropType'] ?? 0, 'DropTarget dropType')),
+            'InteractionRegion' => InteractionRegion::make(...$children)
+                ->draggable(
+                    self::stringValue($values['dragData'] ?? '', 'Interaction dragData'),
+                    self::boolValue($values['draggable'] ?? false, 'Interaction draggable'),
+                )
+                ->acceptsDrop(self::boolValue(
+                    $values['dropEnabled'] ?? false,
+                    'Interaction dropEnabled',
+                ))
+                ->menuItems(self::nativeMenuItems($values['menuItems'] ?? [])),
+            'Animated' => (($values['animationProgram'] ?? null) instanceof Animation
+                ? Animated::program(self::singleChild($children, $tag), $values['animationProgram'])
+                : Animated::make(
+                    self::singleChild($children, $tag),
+                    self::animationKeyframes($values['keyframes'] ?? []),
+                    self::intValue($values['durationMs'] ?? 300, 'Animated durationMs'),
+                    self::animationEasing($values['easing'] ?? 'easeInOut'),
+                ))
+                ->iterations(self::intValue(
+                    $values['iterations'] ?? 1,
+                    'Animated iterations',
+                ))
+                ->delay(self::intValue($values['delayMs'] ?? 0, 'Animated delayMs'))
+                ->fillMode(self::animationFillMode($values['fillMode'] ?? 'forwards'))
+                ->playState(self::animationPlayState($values['playState'] ?? 'running'))
+                ->autoReverse(self::boolValue(
+                    $values['autoReverse'] ?? false,
+                    'Animated autoReverse',
+                )),
+            'KeyboardAvoidingView' => KeyboardAvoidingView::make(
+                self::singleChild($children, $tag),
+                self::keyboardBehavior($values['behavior'] ?? $values['keyboardBehavior'] ?? 'resize'),
+            ),
+            'RefreshControl' => RefreshControl::make(
+                self::singleChild($children, $tag),
+                self::boolValue($values['refreshing'] ?? false, 'RefreshControl refreshing'),
+            ),
+            'StatusBar' => self::statusBar($values),
+            'SafeAreaView' => SafeAreaView::make(...$children),
+            'InputAccessoryView' => InputAccessoryView::make(...$children),
+            'Native', 'CustomView' => CustomView::make(
+                self::stringValue($values['name'] ?? '', 'Native view name'),
+                self::scalarMap($values['properties'] ?? []),
+                ...$children,
+            ),
+            default => self::custom($tag, $values, $children, $scope),
+            };
+
+        if ($factory !== null) {
+            $values = self::componentRootValues($tag, $values, $data, $authoredAttributes);
+        }
+        $decorationKey = null;
+        if (
+            $factory !== null
+            && $ownHandlers === []
+            && $checkedBinding === null
+            && !isset($values['model'])
+        ) {
+            // A memoized component returns the same element every render;
+            // decorating it the same way must return the same copy so the
+            // encoder reuses the subtree instead of re-encoding it.
+            $decorationKey = self::decorationKey($element, $resolvedClass, $values, $sheet);
+            if ($decorationKey !== null) {
+                $decorated = (self::$decorations[$element] ?? [])[$decorationKey] ?? null;
+                if ($decorated !== null) {
+                    self::$freshElement = null;
+
+                    return $decorated === true ? $element : $decorated;
+                }
+            }
+        }
+        $undecorated = $element;
+
+        if ($factory === null && ($element instanceof Image || $element instanceof MediaPlayer)) {
+            $element = self::mediaCacheAttributes($element, $values);
+        }
+
+        if ($factory === null && $tag === 'Icon') {
+            unset($values['name'], $values['font'], $values['size'], $values['color']);
+        }
+        if ($factory === null && $tag === 'Link') {
+            unset($values['route'], $values['to'], $values['params'], $values['mode']);
+        }
+
+        if ($resolvedClass !== null) {
+            $element = self::classes($element, $resolvedClass, $data);
+            $element = self::withDomClasses($element, $resolvedClass);
+        }
+
+        $element = self::attributes($element, $values);
+
+        foreach ($plan['events'] ?? self::EVENTS as $name => $event) {
+            if (isset($attributes[$name])) {
+                $handler = $ownHandlers[$event->value]
+                    ?? throw new RuntimeException(
+                        "Template event {$name} was not resolved.",
+                    );
+                if ($factory !== null) {
+                    $handler = TemplateRegistry::adaptEvent(
+                        $tag,
+                        $event,
+                        $handler,
+                        $values,
+                    );
+                }
+                if ($factory === null && $element instanceof Input) {
+                    $element = match ($event) {
+                        EventKind::InputEndEditing =>
+                            $element->onEndEditing($handler),
+                        EventKind::InputSelectionChange =>
+                            $element->onSelectionChange($handler),
+                        EventKind::InputContentSizeChange =>
+                            $element->onContentSizeChange($handler),
+                        EventKind::InputKeyPress =>
+                            $element->onKeyPress($handler),
+                        default => $element->on($event, $handler),
+                    };
+                } elseif ($factory === null && $element instanceof Pressable) {
+                    $element = match ($event) {
+                        EventKind::PressIn => $element->onPressIn($handler),
+                        EventKind::PressOut => $element->onPressOut($handler),
+                        EventKind::PressMove => $element->onPressMove($handler),
+                        EventKind::DoubleTap => $element->onDoubleTap($handler),
+                        default => $element->on($event, $handler),
+                    };
+                } elseif ($factory === null && $element instanceof Modal) {
+                    $element = match ($event) {
+                        EventKind::ModalRequestClose =>
+                            $element->onRequestClose($handler),
+                        EventKind::ModalShow => $element->onShow($handler),
+                        EventKind::ModalDismiss => $element->onDismiss($handler),
+                        EventKind::ModalOrientationChange =>
+                            $element->onOrientationChange($handler),
+                        default => $element->on($event, $handler),
+                    };
+                } elseif ($factory === null && $element instanceof BottomSheet) {
+                    $element = match ($event) {
+                        EventKind::BottomSheetChange => $element->onChange($handler),
+                        EventKind::BottomSheetDismiss => $element->onDismiss($handler),
+                        default => $element->on($event, $handler),
+                    };
+                } else {
+                    $element = $element->on($event, $handler);
+                }
+            }
+        }
+
+        if ($listWindow !== null && $element instanceof VirtualizedList) {
+            $element = $element->__pamWindow($listWindow, $listWindow->size());
+        }
+
+        if (isset($values['model'])) {
+            if (!$element instanceof Input) {
+                throw new RuntimeException('The model attribute is only valid on Input.');
+            }
+
+            $modelHandler = self::modelHandler(
+                self::stringValue($values['model'], 'Input model'),
+                $scope,
+            );
+            $explicitHandler = $ownHandlers[EventKind::Change->value] ?? null;
+            $element = $element->onChange(
+                $explicitHandler === null
+                    ? $modelHandler
+                    : static function (string $value) use (
+                        $modelHandler,
+                        $explicitHandler,
+                    ): void {
+                        $modelHandler($value);
+                        $explicitHandler($value);
+                    },
+            );
+        }
+        if ($checkedBinding !== null) {
+            if ($element->kind() !== NodeKind::Switch) {
+                throw new RuntimeException(
+                    'bind:checked is only valid on Switch or Toggle.',
+                );
+            }
+            $element = $element->on(
+                EventKind::Toggle,
+                self::checkedModelHandler($checkedBinding, $scope),
+            );
+        }
+
+        if (
+            $decorationKey !== null
+            && ($resolvedClass === null || self::localClasses($resolvedClass, $data))
+        ) {
+            self::$decorations ??= new \WeakMap();
+            $memo = self::$decorations[$undecorated] ?? [];
+            if (count($memo) >= 8) {
+                $memo = [];
+            }
+            // Never the key itself: a weak map value referencing its key
+            // would keep it alive until the cycle collector runs.
+            $memo[$decorationKey] = $element === $undecorated ? true : $element;
+            self::$decorations[$undecorated] = $memo;
+        }
+
+        self::$freshElement = $factory === null ? $element : null;
+
+        return $element;
+    }
+
+    /**
+     * Identity of the class/attribute decoration a component element gets
+     * from its tag, or null when it cannot be memoized.
+     *
+     * @param array<string, mixed> $values
+     */
+    private static function decorationKey(Element $element, ?string $resolvedClass, array $values, mixed $sheet): ?string
+    {
+        $relevant = [];
+        foreach (self::attributePlanFor($element, $values)['names'] as $name) {
+            $value = $values[$name] ?? null;
+            if ($value !== null && !is_scalar($value) && !is_array($value)) {
+                return null;
+            }
+            $relevant[$name] = $value;
+        }
+        try {
+            return (is_array($sheet) ? (string) ($sheet['__pamSheetId'] ?? '') : '')
+                ."\0".($resolvedClass ?? '')."\0".serialize($relevant);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** @param array<string, mixed> $data */
+    private static function localClasses(string $classes, array $data): bool
+    {
+        $sheet = $data['__pamStyles'] ?? null;
+        $sheetId = is_array($sheet) ? ($sheet['__pamSheetId'] ?? null) : null;
+
+        return is_int($sheetId) && isset(self::$localClassStrings[$sheetId][$classes]);
+    }
+
+    /** Native tags rendered by fastTag() when their entry allows it. */
+    /** Pressed opacity of TouchableOpacity/Highlight/WithoutFeedback (as their make()). */
+    private const TOUCHABLE_OPACITY = [
+        'TouchableOpacity' => 0.65,
+        'TouchableHighlight' => 0.82,
+        'TouchableWithoutFeedback' => 1.0,
+    ];
+
+    private const FAST_TAGS = [
+        'View' => true,
+        'Column' => true,
+        'Row' => true,
+        'Grid' => true,
+        'Screen' => true,
+        'SafeAreaView' => true,
+        'Text' => true,
+        'Span' => true,
+        'Image' => true,
+        'Pressable' => true,
+        'TouchableOpacity' => true,
+        'TouchableHighlight' => true,
+        'TouchableWithoutFeedback' => true,
+        'TouchableNativeFeedback' => true,
+    ];
+
+    /** @var array<string, class-string<Element>> */
+    private const FAST_CLASSES = [
+        'View' => NativeView::class,
+        'Column' => Column::class,
+        'Row' => Row::class,
+        'Grid' => Grid::class,
+        'Screen' => Screen::class,
+        'SafeAreaView' => SafeAreaView::class,
+        'Text' => Text::class,
+        'Span' => Text::class,
+        'Image' => Image::class,
+        'Pressable' => Pressable::class,
+        'TouchableOpacity' => Pressable::class,
+        'TouchableHighlight' => Pressable::class,
+        'TouchableWithoutFeedback' => Pressable::class,
+        'TouchableNativeFeedback' => Pressable::class,
+    ];
+
+    private const FAST_KINDS = [
+        'View' => NodeKind::View,
+        'Column' => NodeKind::Column,
+        'Row' => NodeKind::Row,
+        'Grid' => NodeKind::Row,
+        'Screen' => NodeKind::Screen,
+        'SafeAreaView' => NodeKind::SafeAreaView,
+        'Text' => NodeKind::Text,
+        'Span' => NodeKind::Text,
+        'Image' => NodeKind::Image,
+        'Pressable' => NodeKind::Pressable,
+        'TouchableOpacity' => NodeKind::Pressable,
+        'TouchableHighlight' => NodeKind::Pressable,
+        'TouchableWithoutFeedback' => NodeKind::Pressable,
+        'TouchableNativeFeedback' => NodeKind::Pressable,
+    ];
+
+    /** Events Pressable registers through its own methods. */
+    private const PRESSABLE_EVENTS = [
+        EventKind::PressIn->value => true,
+        EventKind::PressOut->value => true,
+        EventKind::PressMove->value => true,
+        EventKind::DoubleTap->value => true,
+    ];
+
+    private const MEDIA_CACHE_VALUES = [
+        'cache' => true,
+        'cacheKey' => true,
+        'cacheMaxAge' => true,
+        'cacheMaxBytes' => true,
+        'cacheTags' => true,
+        'checksum' => true,
+        'downloadWhilePlaying' => true,
+        'pinOffline' => true,
+        'preloadSeconds' => true,
+        'priority' => true,
+        'resizeHeight' => true,
+        'resizeWidth' => true,
+        'sharedTransition' => true,
+        'sharedTransitionStyle' => true,
+        'streamingCache' => true,
+        'thumbnail' => true,
+    ];
+
+    /** specialAttributes() handled inline by fastTag(). */
+    private const FAST_SPECIAL_ATTRIBUTES = [
+        'key' => true,
+        'accessibilityLabel' => true,
+        'testId' => true,
+        'disabled' => true,
+        'enabled' => true,
+    ];
+
+    private const RIPPLE_VALUES = [
+        'rippleColor' => true,
+        'rippleAlpha' => true,
+        'rippleBorderless' => true,
+        'rippleForeground' => true,
+        'rippleRadius' => true,
+    ];
+
+    /**
+     * Precomputes the value template, constant native properties and DOM
+     * class tokens of a common native element, or null when the element
+     * needs the general path.
+     *
+     * @param array<string, mixed> $plan
+     * @param list<array{0: string, 1: string, 2: int, 3: mixed, 4: bool}> $valueOps
+     * @return array<string, mixed>|null
+     */
+    private static function fastEntry(
+        string $tag,
+        array $plan,
+        array $valueOps,
+        ?string $resolvedClass,
+        array $data,
+        array $inheritedCandidates = [],
+    ): ?array {
+        if (!isset(self::FAST_TAGS[$tag]) || $plan['bindings']) {
+            return null;
+        }
+        // Final assignment of each value name: constants fill the template,
+        // the rest is evaluated (in attribute order) every render.
+        $last = [];
+        foreach ($valueOps as $position => [, $valueName]) {
+            $last[$valueName] = $position;
+        }
+        $template = [];
+        $ops = [];
+        foreach ($valueOps as $position => [$name, $valueName, $mode, $payload, $remember]) {
+            $final = $last[$valueName] === $position;
+            if (!array_key_exists($valueName, $template)) {
+                $template[$valueName] = null;
+            }
+            if ($mode === 0) {
+                if ($final) {
+                    $template[$valueName] = $payload;
+                }
+                continue;
+            }
+            $ops[] = [$name, $valueName, $mode, $payload, $final, $remember];
+        }
+        $ripple = $plan['attributes'][':p-ripple'] ?? $plan['attributes']['p-ripple'] ?? null;
+        if ($ripple !== null && array_intersect_key($template, self::RIPPLE_VALUES) !== []) {
+            return null;
+        }
+        $dynamicNames = [];
+        foreach ($ops as [, $valueName, , , $final]) {
+            if ($final) {
+                $dynamicNames[$valueName] = true;
+            }
+        }
+        $probe = match ($tag) {
+            'Text', 'Span' => Text::make(''),
+            'Image' => Image::make(''),
+            'Pressable', 'TouchableOpacity', 'TouchableHighlight',
+            'TouchableWithoutFeedback', 'TouchableNativeFeedback' => Pressable::make(),
+            'Column' => Column::make(),
+            'Row' => Row::make(),
+            'Grid' => Grid::make(),
+            'Screen' => Screen::make(),
+            'SafeAreaView' => SafeAreaView::make(),
+            default => NativeView::make(),
+        };
+        $names = $template;
+        if ($ripple !== null) {
+            $names += self::RIPPLE_VALUES;
+        }
+        $attributePlan = self::attributePlan($probe, $names);
+        $specials = false;
+        if ($attributePlan['special']) {
+            foreach ($names as $name => $_) {
+                if (isset(self::SPECIAL_ATTRIBUTES[$name]) || str_starts_with((string) $name, 'data-')) {
+                    if (!isset(self::FAST_SPECIAL_ATTRIBUTES[$name])) {
+                        return null;
+                    }
+                    $specials = true;
+                }
+            }
+        }
+        $constant = [];
+        $dynamic = [];
+        $seen = [];
+        foreach ($attributePlan['properties'] as [$name, $key]) {
+            // A bound dimension may switch units between renders. The
+            // general attribute path resolves its native property key too.
+            if (isset(self::PERCENT_DIMENSIONS[$name])
+                && (isset($dynamicNames[$name]) || (is_string($template[$name] ?? null) && str_ends_with(trim($template[$name]), '%')))) {
+                return null;
+            }
+            if (isset($seen[$key->value])) {
+                // Aliases of one native property keep the general path.
+                return null;
+            }
+            $seen[$key->value] = true;
+            if (isset($dynamicNames[$name]) || isset(self::RIPPLE_VALUES[$name])) {
+                $dynamic[] = [$name, $key];
+                // Placeholder keeps PROPERTIES order; null is never applied.
+                $constant[$key->value] = null;
+                continue;
+            }
+            try {
+                $converted = self::propertyValue($key, $template[$name]);
+            } catch (\Throwable) {
+                return null;
+            }
+            if ($converted !== null) {
+                if (is_string($converted) && strlen($converted) > 1_048_576) {
+                    return null;
+                }
+                $constant[$key->value] = $converted;
+            }
+        }
+        $inheritedNames = [];
+        foreach (self::INHERITED_STYLE_ATTRIBUTES as $attribute) {
+            if (array_key_exists($attribute, $template)) {
+                $inheritedNames[] = $attribute;
+            }
+        }
+        // Inherited text styles made only of constants are computed once.
+        $staticInherited = null;
+        $constantInherited = true;
+        foreach ($inheritedNames as $attribute) {
+            if (isset($dynamicNames[$attribute])) {
+                $constantInherited = false;
+            }
+        }
+        foreach ($inheritedCandidates as [, , $mode]) {
+            if ($mode !== 0) {
+                $constantInherited = false;
+            }
+        }
+        if ($constantInherited) {
+            $staticInherited = [];
+            foreach ($inheritedNames as $attribute) {
+                $value = $template[$attribute];
+                if (is_string($value) || is_int($value) || is_float($value) || is_bool($value)) {
+                    $staticInherited[$attribute] = $value;
+                }
+            }
+            foreach ($inheritedCandidates as [, $attribute, , $payload]) {
+                if (is_string($payload) || is_int($payload) || is_float($payload) || is_bool($payload)) {
+                    $staticInherited[$attribute] = $payload;
+                }
+            }
+            $staticInherited = [$staticInherited, $staticInherited === [] ? '' : serialize($staticInherited)];
+        }
+        $classTokens = null;
+        $localClasses = true;
+        if ($resolvedClass !== null) {
+            try {
+                $classTokens = $probe->class($resolvedClass)->domClasses();
+                self::classes($probe, $resolvedClass, $data);
+            } catch (\Throwable) {
+                return null;
+            }
+            $localClasses = self::localClasses($resolvedClass, $data);
+        }
+
+        return [
+            'values' => $template,
+            'ops' => $ops,
+            'ripple' => $ripple !== null,
+            'constant' => $constant,
+            'dynamic' => $dynamic,
+            'inherited' => $inheritedNames,
+            'staticInherited' => $staticInherited,
+            'classTokens' => $classTokens,
+            'localClasses' => $localClasses,
+            'specials' => $specials,
+            'media' => $tag === 'Image' && array_intersect_key($template, self::MEDIA_CACHE_VALUES) !== [],
+        ];
+    }
+
+    /**
+     * Common native elements: same semantics as tag(), with everything that
+     * only depends on the template node, its classes and style environment
+     * precomputed in the entry.
+     *
+     * @param array<string, mixed> $plan
+     * @param array<string, mixed> $entry
+     * @param array<string, mixed> $fast
+     * @param array<string, mixed> $attributes
+     * @param list<CompiledTemplateNode> $childNodes
+     * @param array<string, mixed> $data
+     * @param array<string, mixed>|null $prepared
+     */
+    private static function fastTag(
+        string $tag,
+        array $plan,
+        array $entry,
+        array $fast,
+        ?string $resolvedClass,
+        array $attributes,
+        array $childNodes,
+        ?object $scope,
+        array $data,
+        ?array $prepared,
+        ?string $styleKey = null,
+    ): Element {
+        $values = $fast['values'];
+        $evaluated = [];
+        foreach ($fast['ops'] as [$name, $valueName, $mode, $payload, $assign, $remember]) {
+            $value = $mode === 1
+                ? (TemplateExpression::$compiled[$payload] ?? TemplateExpression::closure($payload))($data, $scope)
+                : self::value($payload, $scope, $data);
+            if ($assign) {
+                $values[$valueName] = $value;
+            }
+            if ($remember) {
+                $evaluated[$name] = $value;
+            }
+        }
+        if ($fast['ripple']) {
+            $rippleAttribute = $attributes[':p-ripple'] ?? $attributes['p-ripple'];
+            $rippleAttribute = array_key_exists(':p-ripple', $attributes)
+                ? self::dynamicValue($rippleAttribute, $scope, $data)
+                : self::value($rippleAttribute, $scope, $data);
+            if ($rippleAttribute !== null && $rippleAttribute !== false) {
+                $ripple = is_array($rippleAttribute) ? $rippleAttribute : [];
+                $values['rippleColor'] = $ripple['color']
+                    ?? (is_int($rippleAttribute) ? $rippleAttribute : 0);
+                $values['rippleAlpha'] = $ripple['alpha'] ?? 0.12;
+                $values['rippleBorderless'] = $ripple['borderless'] ?? false;
+                $values['rippleForeground'] = $ripple['foreground'] ?? false;
+                if (isset($ripple['radius'])) {
+                    $values['rippleRadius'] = $ripple['radius'];
+                }
+            }
+        }
+
+        $ownHandlers = [];
+        foreach ($plan['events'] as $name => $event) {
+            $eventRaw = $attributes[$name];
+            if (!is_string($eventRaw) && !is_bool($eventRaw)) {
+                throw new RuntimeException("Invalid template event expression {$name}.");
+            }
+            $ownHandlers[$event->value] = self::handler($eventRaw, $event, $scope, $data);
+        }
+
+        $inheritedKey = null;
+        if ($fast['staticInherited'] !== null) {
+            [$inheritedChildStyles, $inheritedKey] = $fast['staticInherited'];
+        } else {
+        $inheritedChildStyles = [];
+        foreach ($fast['inherited'] as $attribute) {
+            $value = $values[$attribute];
+            if (
+                is_string($value)
+                || is_int($value)
+                || is_float($value)
+                || is_bool($value)
+            ) {
+                $inheritedChildStyles[$attribute] = $value;
+            }
+        }
+        foreach ($entry['inherited'] as [$name, $attribute, $mode, $payload]) {
+            if ($mode === 0) {
+                $value = $payload;
+            } elseif (array_key_exists($name, $evaluated) && ($attributes[$name] ?? null) === $payload) {
+                $value = $evaluated[$name];
+            } else {
+                $value = $mode === 1
+                    ? self::dynamicValue($payload, $scope, $data)
+                    : self::value($payload, $scope, $data);
+            }
+            if (
+                is_string($value)
+                || is_int($value)
+                || is_float($value)
+                || is_bool($value)
+            ) {
+                $inheritedChildStyles[$attribute] = $value;
+            }
+        }
+        }
+
+        $children = [];
+        $renderedChildren = [];
+        $text = '';
+        if ($childNodes !== [] && ($plan['textOnly'] ?? false)) {
+            foreach ($childNodes as $textNode) {
+                $rendered = TemplateExpression::interpolate($textNode->value, $scope, $data);
+                $renderedChildren[] = $rendered;
+                $text .= $rendered;
+            }
+        } elseif ($childNodes !== []) {
+            // The child data is handed over without another reference, so
+            // nodes() writes each child's path into it without copying it.
+            $renderedChildren = self::nodes(
+                $childNodes,
+                $scope,
+                self::fastChildData($data, $entry, $prepared, $values, $inheritedChildStyles, $inheritedKey),
+            );
+            foreach ($renderedChildren as $rendered) {
+                if ($rendered instanceof Element) {
+                    $children[] = $rendered;
+                } elseif (is_string($rendered)) {
+                    $text .= $rendered;
+                }
+            }
+        }
+
+        $textTag = $tag === 'Text' || $tag === 'Span';
+        if ($text !== '' && !$textTag) {
+            throw new RuntimeException("Text content is not valid inside {$tag}; wrap it in Text.");
+        }
+        $richParts = null;
+        if ($children !== [] && $textTag) {
+            $richParts = [];
+            foreach ($renderedChildren as $part) {
+                if (is_string($part) || $part instanceof Text) {
+                    $richParts[] = $part;
+                } else {
+                    throw new RuntimeException("{$tag} can only contain text and nested Text or Span elements.");
+                }
+            }
+        }
+        if ($richParts === null && $textTag) {
+            $text = self::trimStaticEdges($childNodes, $text);
+        }
+        if ($text !== '' && $richParts === null) {
+            $values['text'] ??= $text;
+        }
+
+        // Same inputs, checks and order as make() + mediaCacheAttributes() +
+        // classes() + class() + attributes() + on(), built with one object.
+        $base = [];
+        if ($textTag) {
+            if ($richParts === null) {
+                $content = self::stringValue($values['text'] ?? $text, 'Text content');
+                if (strlen($content) > 1_048_576) {
+                    throw new InvalidArgumentException('String properties cannot exceed one megabyte.');
+                }
+                $base[PropKey::Text->value] = $content;
+            }
+        } elseif ($tag === 'Image') {
+            $source = self::stringValue($values['source'] ?? '', 'Image source');
+            if (strlen($source) > 1_048_576) {
+                throw new InvalidArgumentException('String properties cannot exceed one megabyte.');
+            }
+            $base[PropKey::Source->value] = $source;
+        } elseif ($tag === 'Grid') {
+            $base[PropKey::GridColumns->value] = 12;
+        } elseif (isset(self::TOUCHABLE_OPACITY[$tag])) {
+            $base[PropKey::PressOpacity->value] = self::TOUCHABLE_OPACITY[$tag];
+        }
+        $prebuilt = null;
+        if ($richParts !== null) {
+            $prebuilt = Text::rich(...$richParts);
+        } elseif ($fast['media']) {
+            $prebuilt = self::mediaCacheAttributes(Image::__pamCreate(NodeKind::Image, [], $base), $values);
+        }
+        if ($resolvedClass !== null && !$fast['localClasses']) {
+            $prebuilt = self::classes(
+                $prebuilt ?? self::FAST_CLASSES[$tag]::__pamCreate(self::FAST_KINDS[$tag], $children, $base),
+                $resolvedClass,
+                $data,
+            );
+        }
+
+        $elementKey = null;
+        if ($fast['specials']) {
+            // specialAttributes() order: key, accessibilityLabel, testId, enabled.
+            $properties = [];
+            if (isset($values['key'])) {
+                $elementKey = self::stringValue($values['key'], 'Element key');
+                if ($elementKey === '' || strlen($elementKey) > 128) {
+                    throw new InvalidArgumentException('Element keys must contain between 1 and 128 bytes.');
+                }
+            }
+            if (isset($values['accessibilityLabel'])) {
+                $properties[PropKey::AccessibilityLabel->value] = self::boundedString(
+                    $values['accessibilityLabel'],
+                    'Accessibility label',
+                );
+            }
+            if (isset($values['testId'])) {
+                $properties[PropKey::TestId->value] = self::boundedString($values['testId'], 'Test ID');
+            }
+            if (isset($values['disabled'])) {
+                $properties[PropKey::Enabled->value] = !self::boolValue($values['disabled'], 'Disabled');
+            } elseif (isset($values['enabled'])) {
+                $properties[PropKey::Enabled->value] = self::boolValue($values['enabled'], 'Enabled');
+            }
+            $properties += $fast['constant'];
+        } else {
+            $properties = $fast['constant'];
+        }
+        $dropped = null;
+        foreach ($fast['dynamic'] as [$name, $key]) {
+            if (array_key_exists($name, $values)) {
+                // propertyValue() with its memo read inline.
+                $raw = $values[$name];
+                $id = $key->value;
+                $value = is_string($raw) && isset(self::$propertyStrings[$id][$raw])
+                    ? self::$propertyStrings[$id][$raw]
+                    : (is_int($raw) && isset(self::$propertyInts[$id][$raw])
+                        ? self::$propertyInts[$id][$raw]
+                        : self::propertyValue($key, $raw));
+            } else {
+                $value = null;
+            }
+            if ($value === null) {
+                $dropped[$key->value] = true;
+                continue;
+            }
+            if (is_string($value) && strlen($value) > 1_048_576) {
+                throw new InvalidArgumentException('String properties cannot exceed one megabyte.');
+            }
+            $properties[$key->value] = $value;
+        }
+        if ($dropped !== null) {
+            $properties = array_diff_key($properties, $dropped);
+        }
+        $events = [];
+        $pressEvents = null;
+        foreach ($plan['events'] as $event) {
+            $handler = $ownHandlers[$event->value];
+            if (isset(self::PRESSABLE_EVENTS[$event->value]) && self::FAST_KINDS[$tag] === NodeKind::Pressable) {
+                // Pressable-specific registration keeps its own semantics.
+                $pressEvents[] = [$event, $handler];
+                continue;
+            }
+            if ($pressEvents !== null) {
+                $pressEvents[] = [$event, $handler];
+                continue;
+            }
+            $events[$event->value] = $handler;
+        }
+        $element = $prebuilt === null
+            ? self::FAST_CLASSES[$tag]::__pamCreate(
+                self::FAST_KINDS[$tag],
+                $children,
+                $base === [] ? $properties : array_replace($base, $properties),
+                $fast['classTokens'],
+                $elementKey,
+                $events,
+            )
+            : ($prebuilt->domClasses() === []
+                ? $prebuilt->__pamDecorate($fast['classTokens'], $properties, $elementKey, $events)
+                : self::attributes(self::withDomClasses($prebuilt, (string) $resolvedClass), $values));
+        if ($prebuilt !== null && $prebuilt->domClasses() !== []) {
+            foreach ($events as $kind => $handler) {
+                $element = $element->on(EventKind::from($kind), $handler);
+            }
+        }
+        foreach ($pressEvents ?? [] as [$event, $handler]) {
+            $element = match ($event) {
+                EventKind::PressIn => $element->onPressIn($handler),
+                EventKind::PressOut => $element->onPressOut($handler),
+                EventKind::PressMove => $element->onPressMove($handler),
+                EventKind::DoubleTap => $element->onDoubleTap($handler),
+                default => $element->on($event, $handler),
+            };
+        }
+        if (isset($values['model'])) {
+            throw new RuntimeException('The model attribute is only valid on Input.');
+        }
+
+        if ($prebuilt === null && $pressEvents === null && $styleKey !== null) {
+            // Wire-encode the properties from the element's template: its
+            // constants were encoded once, only the variable ones encode now.
+            $template = $fast['encodedTemplate'] ?? null;
+            if ($template === null) {
+                $template = self::encodedTemplate($tag, $plan, $fast);
+                if (isset(self::$styleEntries[$styleKey]['fast'])) {
+                    self::$styleEntries[$styleKey]['fast']['encodedTemplate'] = $template;
+                }
+            }
+            if ($template !== false) {
+                $final = $element->properties;
+                $encoded = $template[0];
+                try {
+                    foreach ($template[1] as $key) {
+                        if (array_key_exists($key, $final)) {
+                            $value = $final[$key];
+                            $encoded[$key] = (is_string($value) ? (TreeEncoder::$encodedStrings[$value] ?? null) : null)
+                                ?? TreeEncoder::encodeProperty($value);
+                        } else {
+                            unset($encoded[$key]);
+                        }
+                    }
+                    if (count($encoded) === count($final)) {
+                        $element->__pamEncoded($encoded, $template[1] === [] ? $template[2] : null);
+                    }
+                } catch (\Throwable) {
+                    // Invalid values fail where they always did: when encoded.
+                }
+            }
+        }
+
+        self::$freshElement = $element;
+
+        return $element;
+    }
+
+    /**
+     * The element's style entry record for this class, inherited styles and
+     * sheet when one of its recent ones still applies (sheet, style variables
+     * and ancestor chain unchanged); it becomes the last one.
+     *
+     * @param array<string, mixed> $sheet
+     * @param array<string, mixed> $data
+     * @return array{0: int, 1: int, 2: ?string, 3: string, 4: mixed, 5: array<string, mixed>, 6: string}|null
+     */
+    private static function recentEntry(
+        CompiledTemplateNode $node,
+        string $variant,
+        array $sheet,
+        ?string $resolvedClass,
+        ?string $inheritedKey,
+        array $data,
+    ): ?array {
+        if ($inheritedKey === null) {
+            return null;
+        }
+        $last = $node->pamLastEntries[$variant] ?? null;
+        if ($last === null || $last[2] !== $resolvedClass || $last[3] !== $inheritedKey) {
+            $last = $node->pamRecentEntries[$variant][($resolvedClass ?? '')."\0".$inheritedKey] ?? null;
+            if ($last === null) {
+                return null;
+            }
+        }
+        if (
+            $last[0] !== ($sheet['__pamSheetId'] ?? null)
+            || $last[1] !== StyleVariables::revision()
+            || ($last[5]['usesAncestors'] && $last[4] !== ($data['__pamStyleChain'] ?? 0))
+        ) {
+            return null;
+        }
+        $node->pamLastEntries[$variant] = $last;
+
+        return $last;
+    }
+
+    /** Cache key of a style entry: dynamic ones also key the environment. */
+    private static function entryKey(string $styleKey, array $data): string
+    {
+        return isset(self::$dynamicKeys[$styleKey])
+            ? $styleKey."\0".self::styleEnvironmentKey($data)
+            : $styleKey;
+    }
+
+    /**
+     * Everything resolveDynamicStyles() reads besides the style attributes:
+     * window metrics, pixel ratio, container size and style environment.
+     *
+     * @param array<string, mixed> $data
+     */
+    private static function styleEnvironmentKey(array $data): string
+    {
+        $metrics = Runtime::windowMetrics();
+
+        return serialize([
+            $metrics->width,
+            $metrics->height,
+            $metrics->fontScale,
+            $metrics->safeAreaTop,
+            $metrics->safeAreaRight,
+            $metrics->safeAreaBottom,
+            $metrics->safeAreaLeft,
+            PixelRatio::get(),
+            PixelRatio::hairlineWidth(),
+            $data['__pamContainerWidth'] ?? null,
+            $data['__pamContainerHeight'] ?? null,
+            $data['__pamStyleEnvironment'] ?? null,
+        ]);
+    }
+
+    /**
+     * Moves an array into a call argument without leaving another reference,
+     * so the callee can write to it without copying it.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    private static function handOver(array &$data): array
+    {
+        $moved = $data;
+        $data = [];
+
+        return $moved;
+    }
+
+    /**
+     * Render data of a fast element's children (see fastTag()).
+     *
+     * @param array<string, mixed> $data
+     * @param array<string, mixed> $entry
+     * @param array<string, mixed>|null $prepared
+     * @param array<string, mixed> $values
+     * @param array<string, mixed> $inheritedChildStyles
+     * @return array<string, mixed>
+     */
+    private static function fastChildData(
+        array $data,
+        array $entry,
+        ?array $prepared,
+        array $values,
+        array $inheritedChildStyles,
+        ?string $inheritedKey,
+    ): array {
+        $childData = $data;
+        if ($prepared === null || $prepared['usesAncestors']) {
+            $ancestors = is_array($data['__pamStyleAncestors'] ?? null) ? $data['__pamStyleAncestors'] : [];
+            $ancestors[] = $entry['descriptor'];
+            $childData['__pamStyleAncestors'] = $ancestors;
+            $childData['__pamStyleChain'] = self::styleChain(
+                $data['__pamStyleChain'] ?? 0,
+                $entry['descriptorId'],
+            );
+        } else {
+            $childData['__pamStyleAncestors'] = [];
+        }
+        $childData['__pamContainerWidth'] = is_numeric($values['width'] ?? null)
+            ? (float) $values['width']
+            : ($data['__pamContainerWidth'] ?? null);
+        $childData['__pamContainerHeight'] = is_numeric($values['height'] ?? null)
+            ? (float) $values['height']
+            : ($data['__pamContainerHeight'] ?? null);
+        $childData['__pamInheritedStyles'] = $inheritedChildStyles;
+        $childData['__pamInheritedKey'] = $inheritedKey
+            ?? ($inheritedChildStyles === [] ? '' : serialize($inheritedChildStyles));
+        $childData['__pamParentVariants'] = ParentVariants::extend(
+            $data['__pamParentVariants'] ?? null,
+            $values,
+        );
+        $eventContexts = $data['__pamEventContexts'] ?? [];
+        $childData['__pamEventContexts'] = is_array($eventContexts) ? $eventContexts : [];
+
+        return $childData;
+    }
+
+    /**
+     * tag() for a native element whose last render took the fast path:
+     * the same entry checks without re-deriving the plan, null when they
+     * fail (tag() then runs).
+     *
+     * @param list<CompiledTemplateNode> $children
+     * @param array<string, mixed> $data
+     */
+    private static function fastNode(
+        CompiledTemplateNode $node,
+        string $tag,
+        array $children,
+        ?object $scope,
+        array $data,
+    ): Element {
+        $factory = TemplateRegistry::factory($tag);
+        $variant = $factory === null ? 'n' : 'f';
+        $last = $node->pamLastEntries[$variant] ?? null;
+        $plan = $node->pamTagPlans[$variant] ?? null;
+        $sheet = $data['__pamStyles'] ?? null;
+        if ($last === null || $plan === null || !is_array($sheet)) {
+            return self::tag($tag, $node->attributes, $children, $scope, $data, $node);
+        }
+        $resolvedClass = !$plan['dynamicClass'] && !$plan['interpolatedClass']
+            ? $plan['staticClass']
+            : self::classValue($plan['attributes'], $scope, $data);
+        $inheritedStyles = $data['__pamInheritedStyles'] ?? [];
+        $inheritedKey = $inheritedStyles === [] || !is_array($inheritedStyles)
+            ? ''
+            : (is_string($data['__pamInheritedKey'] ?? null) ? $data['__pamInheritedKey'] : null);
+        $entry = null;
+        $entryKey = null;
+        // recentEntry() and entryKey() inlined for the common case: the
+        // element's last entry still applies and does not vary with the
+        // environment.
+        if (
+            $last[2] === $resolvedClass
+            && $last[3] === $inheritedKey
+            && $last[0] === ($sheet['__pamSheetId'] ?? null)
+            && $last[1] === StyleVariables::revision()
+            && (!$last[5]['usesAncestors'] || $last[4] === ($data['__pamStyleChain'] ?? 0))
+        ) {
+            $entryKey = isset(self::$dynamicKeys[$last[6]]) ? self::entryKey($last[6], $data) : $last[6];
+            $entry = self::$styleEntries[$entryKey] ?? null;
+        } else {
+            $last = self::recentEntry($node, $variant, $sheet, $resolvedClass, $inheritedKey, $data);
+            if ($last !== null) {
+                $entryKey = self::entryKey($last[6], $data);
+                $entry = self::$styleEntries[$entryKey] ?? null;
+            }
+        }
+        if ($entry !== null && $factory !== null) {
+            if (
+                $plan['componentFast']
+                && !$plan['bindings']
+                && TemplateRegistry::isCompiledComponent($tag)
+            ) {
+                return self::componentTag(
+                    $tag,
+                    $factory,
+                    $node,
+                    $plan,
+                    $entry,
+                    $resolvedClass,
+                    $entry['attributes'],
+                    $children,
+                    $scope,
+                    $data,
+                    $last[5],
+                    $sheet,
+                    $entryKey,
+                );
+            }
+        } elseif ($entry !== null && ($entry['fast'] ?? null) !== null && !$plan['bindings']) {
+            return self::fastTag(
+                $tag,
+                $plan,
+                $entry,
+                $entry['fast'],
+                $resolvedClass,
+                $entry['attributes'],
+                $children,
+                $scope,
+                $data,
+                $last[5],
+                $entryKey,
+            );
+        }
+
+        return self::tag($tag, $node->attributes, $children, $scope, $data, $node, $resolvedClass);
+    }
+
+    /**
+     * Encoded constant properties of a fast element in key order, with
+     * placeholders for the keys whose value varies per render.
+     *
+     * @param array<string, mixed> $plan
+     * @param array<string, mixed> $fast
+     * @return array{0: array<int, string>, 1: list<int>}|false
+     */
+    private static function encodedTemplate(string $tag, array $plan, array $fast): array|false
+    {
+        $variable = [];
+        foreach ($fast['dynamic'] as [, $key]) {
+            $variable[$key->value] = true;
+        }
+        if ($tag === 'Text' || $tag === 'Span') {
+            $variable[PropKey::Text->value] = true;
+        } elseif ($tag === 'Image') {
+            $variable[PropKey::Source->value] = true;
+        } elseif ($tag === 'Grid') {
+            $variable[PropKey::GridColumns->value] = true;
+        }
+        if ($fast['specials']) {
+            $variable[PropKey::AccessibilityLabel->value] = true;
+            $variable[PropKey::TestId->value] = true;
+            $variable[PropKey::Enabled->value] = true;
+        }
+        foreach ($plan['events'] as $event) {
+            $variable[EventProperties::MAP[$event->value]] = true;
+        }
+        $map = [];
+        try {
+            foreach ($fast['constant'] as $key => $value) {
+                if ($value !== null && !isset($variable[$key])) {
+                    $map[$key] = TreeEncoder::encodeProperty($value);
+                }
+            }
+        } catch (\Throwable) {
+            return false;
+        }
+        foreach ($variable as $key => $_) {
+            $map[$key] = '';
+        }
+        ksort($map, SORT_NUMERIC);
+        // Wire bytes of the properties when none varies.
+        $bytes = null;
+        if ($variable === []) {
+            $bytes = Wire::u16(count($map));
+            foreach ($map as $key => $value) {
+                $bytes .= pack('v', $key).$value;
+            }
+        }
+
+        return [$map, array_keys($variable), $bytes];
+    }
+
+    /**
+     * Compiled .pam component tags (the common case inside lists): same
+     * semantics as tag() for a registered compiled component without native
+     * events, ripple or bindings.
+     *
+     * @param array<string, mixed> $plan
+     * @param array<string, mixed> $entry
+     * @param array<string, mixed> $attributes
+     * @param list<CompiledTemplateNode> $childNodes
+     * @param array<string, mixed> $data
+     * @param array<string, mixed>|null $prepared
+     */
+    private static function componentTag(
+        string $tag,
+        Closure $factory,
+        CompiledTemplateNode $planNode,
+        array $plan,
+        array $entry,
+        ?string $resolvedClass,
+        array $attributes,
+        array $childNodes,
+        ?object $scope,
+        array $data,
+        ?array $prepared,
+        mixed $sheet,
+        ?string $styleKey = null,
+    ): Element {
+        $values = [];
+        $evaluated = [];
+        foreach ($entry['values'] as [$name, $valueName, $mode, $payload, $remember]) {
+            $value = $mode === 0
+                ? $payload
+                : ($mode === 1
+                    ? (TemplateExpression::$compiled[$payload] ?? TemplateExpression::closure($payload))($data, $scope)
+                    : self::value($payload, $scope, $data));
+            $values[$valueName] = $value;
+            if ($remember) {
+                $evaluated[$name] = $value;
+            }
+        }
+        if ($resolvedClass !== null) {
+            $values['className'] = $resolvedClass;
+        }
+        $path = $data['__pamNodePath'] ?? $tag;
+        $values['__pamNodePath'] = $path;
+
+        // Component event attributes are static per element: validated once.
+        $eventAttributes = $plan['componentEvents'] ?? null;
+        if ($eventAttributes === null) {
+            $eventAttributes = [];
+            foreach ($attributes as $name => $raw) {
+                if (!str_starts_with($name, '@')) {
+                    continue;
+                }
+                if (!is_string($raw) && !is_bool($raw)) {
+                    throw new RuntimeException("Invalid component event expression {$name}.");
+                }
+                $event = substr($name, 1);
+                if (
+                    $event === ''
+                    || preg_match('/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/D', $event)
+                        !== 1
+                ) {
+                    throw new RuntimeException(
+                        "Invalid component event {$name}.",
+                    );
+                }
+                $eventAttributes[$event] = $raw;
+            }
+            $planNode->pamTagPlans['f']['componentEvents'] = $eventAttributes;
+        }
+        $componentEvents = [];
+        foreach ($eventAttributes as $event => $raw) {
+            $componentEvents[$event] = self::componentHandler($raw, $scope, $data);
+        }
+
+        // Inherited text attributes this element's values can carry.
+        $inheritedNames = $entry['inheritedNames'] ?? null;
+        if ($inheritedNames === null) {
+            $names = [];
+            foreach ($entry['values'] as [, $valueName]) {
+                $names[$valueName] = true;
+            }
+            $inheritedNames = array_values(array_filter(
+                self::INHERITED_STYLE_ATTRIBUTES,
+                static fn (string $attribute): bool => isset($names[$attribute]),
+            ));
+            if ($styleKey !== null && isset(self::$styleEntries[$styleKey])) {
+                self::$styleEntries[$styleKey]['inheritedNames'] = $inheritedNames;
+            }
+        }
+        $inheritedChildStyles = [];
+        foreach ($inheritedNames as $attribute) {
+            $value = $values[$attribute] ?? null;
+            if (
+                is_string($value)
+                || is_int($value)
+                || is_float($value)
+                || is_bool($value)
+            ) {
+                $inheritedChildStyles[$attribute] = $value;
+            }
+        }
+        foreach ($entry['inherited'] as [$name, $attribute, $mode, $payload]) {
+            if ($mode === 0) {
+                $value = $payload;
+            } elseif (array_key_exists($name, $evaluated) && ($attributes[$name] ?? null) === $payload) {
+                $value = $evaluated[$name];
+            } else {
+                $value = $mode === 1
+                    ? self::dynamicValue($payload, $scope, $data)
+                    : self::value($payload, $scope, $data);
+            }
+            if (
+                is_string($value)
+                || is_int($value)
+                || is_float($value)
+                || is_bool($value)
+            ) {
+                $inheritedChildStyles[$attribute] = $value;
+            }
+        }
+
+        $slotPlan = $plan['slots'];
+        if ($slotPlan === null) {
+            $slotPlan = self::componentSlotNodes($childNodes);
+            $planNode->pamTagPlans['f']['slots'] = $slotPlan;
+        }
+        [$defaultNodes, $slotNodes] = $slotPlan;
+        $memoizable = $defaultNodes === [] && $slotNodes === [] && is_string($path);
+        if ($memoizable) {
+            // Same evaluated inputs at this call site as last time: the
+            // instance keeps its props, so only its listeners are refreshed.
+            $call = PamPhpRegistry::call($scope, $path);
+            if (
+                $call !== null
+                && $call->plan === $plan['id']
+                && $call->values === $values
+                && $call->inherited === $inheritedChildStyles
+            ) {
+                $instance = PamPhpRegistry::reuseCall($call, $scope, $componentEvents, $inheritedChildStyles);
+                if ($instance !== null) {
+                    $element = $instance->toElement();
+                    self::$freshElement = null;
+                    if ($element === $call->element && $call->decorated !== null) {
+                        return $call->decorated;
+                    }
+
+                    return self::decorateComponent($call, $element, $resolvedClass, self::componentRootValues($tag, $values, $data, $planNode->attributes), $sheet, $data);
+                }
+            }
+        }
+        $componentValues = array_intersect_key($values, $plan['declaredNames'] + self::COMPONENT_CONTEXT_VALUES);
+        $children = [];
+        $slots = ['slot' => []];
+        if ($defaultNodes !== [] || $slotNodes !== []) {
+            $childData = $data;
+            if ($prepared === null || $prepared['usesAncestors']) {
+                $ancestors = is_array($data['__pamStyleAncestors'] ?? null) ? $data['__pamStyleAncestors'] : [];
+                $ancestors[] = $entry['descriptor'];
+                $childData['__pamStyleAncestors'] = $ancestors;
+                $childData['__pamStyleChain'] = self::styleChain(
+                    $data['__pamStyleChain'] ?? 0,
+                    $entry['descriptorId'],
+                );
+            } else {
+                $childData['__pamStyleAncestors'] = [];
+            }
+            $childData['__pamContainerWidth'] = is_numeric($values['width'] ?? null)
+                ? (float) $values['width']
+                : ($data['__pamContainerWidth'] ?? null);
+            $childData['__pamContainerHeight'] = is_numeric($values['height'] ?? null)
+                ? (float) $values['height']
+                : ($data['__pamContainerHeight'] ?? null);
+            $childData['__pamInheritedStyles'] = $inheritedChildStyles;
+            $childData['__pamInheritedKey'] = $inheritedChildStyles === [] ? '' : serialize($inheritedChildStyles);
+            $childData['__pamParentVariants'] = ParentVariants::extend(
+                $data['__pamParentVariants'] ?? null,
+                $componentValues,
+            );
+            $eventContexts = $data['__pamEventContexts'] ?? [];
+            $childData['__pamEventContexts'] = is_array($eventContexts) ? $eventContexts : [];
+            if ($defaultNodes !== []) {
+                foreach (self::nodes($defaultNodes, $scope, $childData) as $rendered) {
+                    if ($rendered instanceof Element) {
+                        $children[] = $rendered;
+                    }
+                }
+            }
+            $slots = ['slot' => $children];
+            foreach ($slotNodes as $slotName => $nodes) {
+                $renderedSlot = self::nodes($nodes, $scope, $childData);
+                $slotElements = array_values(array_filter(
+                    $renderedSlot,
+                    static fn (mixed $value): bool => $value instanceof Element,
+                ));
+                if (count($slotElements) !== count($renderedSlot)) {
+                    throw new RuntimeException(
+                        "Named slot {$slotName} must contain renderable elements.",
+                    );
+                }
+                $slots[$slotName] = $slotElements;
+            }
+        }
+
+        $contract = TemplateRegistry::tagContract($tag);
+        if ($contract !== null) {
+            ContractValidator::validate(
+                $contract,
+                array_filter(
+                    $componentValues,
+                    static fn (string $name): bool =>
+                        !str_starts_with($name, '__pam') && $name !== 'className',
+                    ARRAY_FILTER_USE_KEY,
+                ),
+                $slots,
+                $componentEvents,
+            );
+        }
+        $componentValues['__pamSlots'] = $slots;
+        $componentValues['__pamComponentEvents'] = $componentEvents;
+        $componentValues['__pamInheritedStyles'] = $inheritedChildStyles;
+
+        $component = $factory($componentValues, $children, $scope);
+        $call = $memoizable
+            ? PamPhpRegistry::rememberCall($plan['id'], $path, $values, $inheritedChildStyles)
+            : null;
+        $element = $component->toElement();
+        self::$freshElement = null;
+
+        return self::decorateComponent($call, $element, $resolvedClass, self::componentRootValues($tag, $values, $data, $planNode->attributes), $sheet, $data);
+    }
+
+    /**
+     * Applies the call site's class and attributes to a component's element
+     * (memoized per element when they do not depend on the render data).
+     *
+     * @param array<string, mixed> $values
+     * @param array<string, mixed> $data
+     */
+    private static function decorateComponent(
+        ?ComponentCall $call,
+        Element $element,
+        ?string $resolvedClass,
+        array $values,
+        mixed $sheet,
+        array $data,
+    ): Element {
+        if ($call !== null) {
+            $call->element = null;
+            $call->decorated = null;
+        }
+        if ($resolvedClass === null && self::attributePlanFor($element, $values)['names'] === []) {
+            // No class and no attribute applies to the element: decorating
+            // returns it unchanged (what the memoized path would return).
+            self::$freshElement = null;
+            if ($call !== null) {
+                $call->element = $element;
+                $call->decorated = $element;
+            }
+
+            return $element;
+        }
+        $decorationKey = self::decorationKey($element, $resolvedClass, $values, $sheet);
+        if ($decorationKey !== null) {
+            $decorated = (self::$decorations[$element] ?? [])[$decorationKey] ?? null;
+            if ($decorated !== null) {
+                // true: the decoration left the element unchanged.
+                $decorated = $decorated === true ? $element : $decorated;
+                if ($call !== null) {
+                    $call->element = $element;
+                    $call->decorated = $decorated;
+                }
+
+                return $decorated;
+            }
+        }
+        $undecorated = $element;
+        if ($resolvedClass !== null) {
+            $element = self::classes($element, $resolvedClass, $data);
+            $element = self::withDomClasses($element, $resolvedClass);
+        }
+        $element = self::attributes($element, $values);
+        if (
+            $decorationKey !== null
+            && ($resolvedClass === null || self::localClasses($resolvedClass, $data))
+        ) {
+            self::$decorations ??= new \WeakMap();
+            $memo = self::$decorations[$undecorated] ?? [];
+            if (count($memo) >= 8) {
+                $memo = [];
+            }
+            // Never the key itself: a weak map value referencing its key
+            // would keep it alive until the cycle collector runs.
+            $memo[$decorationKey] = $element === $undecorated ? true : $element;
+            self::$decorations[$undecorated] = $memo;
+            if ($call !== null) {
+                $call->element = $undecorated;
+                $call->decorated = $element;
+            }
+        }
+        self::$freshElement = null;
+
+        return $element;
+    }
+
+    /** Values every component receives besides its declared props. */
+    private const COMPONENT_CONTEXT_VALUES = ['className' => true, '__pamNodePath' => true];
+
+    /**
+     * Static facts about one template element, derived once per node.
+     *
+     * @param array<string, string|bool> $attributes
+     * @return array<string, mixed>
+     */
+    private static function tagPlan(string $tag, array $attributes, bool $factory, array $childNodes = []): array
+    {
+        // Children that are only text interpolations need no child render
+        // data: they are interpolated against the element's own data.
+        $textOnly = $childNodes !== [];
+        foreach ($childNodes as $child) {
+            if ($child->kind !== 2 || str_contains($child->value, '__pam')) {
+                $textOnly = false;
+                break;
+            }
+        }
+        if (!$factory) {
+            $attributes = self::nativeEventAliases($attributes);
+        }
+        $events = [];
+        foreach (self::EVENTS as $name => $event) {
+            if (isset($attributes[$name])) {
+                $events[$name] = $event;
+            }
+        }
+        $declared = [];
+        $observable = [];
+        $cacheable = !isset($attributes['recipe']);
+        foreach ($attributes as $name => $_) {
+            $declared[ltrim($name, ':')] = true;
+            if (!str_starts_with($name, '@') && !str_starts_with($name, 'on:')) {
+                $observable[ltrim($name, ':')] = true;
+            }
+            if (str_starts_with($name, 'variant:')) {
+                $cacheable = false;
+            }
+        }
+        $static = $attributes['class'] ?? null;
+
+        return [
+            'id' => ++self::$planSequence,
+            'tag' => $tag,
+            'attributes' => $attributes,
+            'events' => $events,
+            'declaredNames' => $declared,
+            'observable' => $observable,
+            'staticClass' => is_string($static) && trim($static) !== '' ? trim($static) : null,
+            'interpolatedClass' => is_string($static) && str_contains($static, '{{'),
+            'dynamicClass' => array_key_exists(':class', $attributes),
+            'cacheable' => $cacheable,
+            'bindings' => isset($attributes['p-model'])
+                || isset($attributes['p-model:checked'])
+                || isset($attributes['bind:value'])
+                || isset($attributes['bind:checked']),
+            'observed' => [],
+            'slots' => null,
+            'textOnly' => $textOnly,
+            'componentFast' => $factory && $events === [] && $tag !== 'Animated'
+                && !array_key_exists('p-ripple', $attributes) && !array_key_exists(':p-ripple', $attributes)
+                && !array_key_exists('model', $attributes) && !array_key_exists(':model', $attributes),
+        ];
+    }
+
+    /**
+     * Cache key of the resolved style/attribute entry of one element, or null
+     * when the element's styles depend on evaluated attribute values.
+     *
+     * @param array<string, mixed> $plan
+     * @param array<string, mixed>|null $prepared
+     * @param array<string, mixed> $inheritedStyles
+     * @param array<string, mixed> $data
+     */
+    private static function styleEntryKey(
+        CompiledTemplateNode $planNode,
+        string $variant,
+        array $plan,
+        mixed $sheet,
+        ?array $prepared,
+        ?string $resolvedClass,
+        array $inheritedStyles,
+        array $data,
+    ): ?string {
+        $inherited = $inheritedStyles === []
+            ? ''
+            : (is_string($data['__pamInheritedKey'] ?? null) ? $data['__pamInheritedKey'] : serialize($inheritedStyles));
+        if ($prepared === null) {
+            return $plan['id'].'|-|'.($resolvedClass ?? '').'|'.$inherited;
+        }
+        $preparedKey = $prepared['key'];
+        $sheetId = is_array($sheet) ? ($sheet['__pamSheetId'] ?? null) : null;
+        if ($preparedKey === null || !is_int($sheetId)) {
+            return null;
+        }
+        $observed = $plan['observed'][$sheetId] ?? null;
+        if ($observed === null) {
+            $observed = array_intersect_key(self::observedStyleAttributes($data), $plan['observable']) !== [];
+            $planNode->pamTagPlans[$variant]['observed'][$sheetId] = $observed;
+        }
+        if ($observed) {
+            return null;
+        }
+        $chain = $prepared['usesAncestors'] ? ($data['__pamStyleChain'] ?? 0) : 0;
+        if (!is_int($chain)) {
+            return null;
+        }
+
+        return $plan['id'].'|'.$preparedKey.'|'.($resolvedClass ?? '').'|'.$chain.'|'.$inherited;
+    }
+
+    /**
+     * @param array<string, mixed> $descriptor
+     * @param array<string, mixed> $attributes merged and font-resolved
+     * @param array<string, mixed> $unresolved merged before font resolution
+     * @return array<string, mixed>
+     */
+    private static function styleEntry(
+        string $tag,
+        bool $factory,
+        array $descriptor,
+        array $attributes,
+        array $unresolved,
+    ): array {
+        $inherited = self::inheritedCandidates($unresolved);
+        $remember = [];
+        foreach ($inherited as [$name, , $mode]) {
+            if ($mode !== 0) {
+                $remember[$name] = true;
+            }
+        }
+        $camel = !$factory && ($tag === 'Image' || $tag === 'MediaPlayer');
+        $values = [];
+        foreach ($attributes as $name => $raw) {
+            if (
+                isset(self::EVENTS[$name])
+                || $name === 'class'
+                || $name === ':class'
+                || $name === 'recipe'
+                || str_starts_with($name, 'variant:')
+                || $name === 'p-ripple'
+                || $name === ':p-ripple'
+                || str_starts_with($name, '@')
+            ) {
+                continue;
+            }
+            $valueName = ltrim($name, ':');
+            if ($camel) {
+                $valueName = self::camelAttribute($valueName);
+            }
+            [$mode, $payload] = self::valueMode($name, $raw);
+            $values[] = [$name, $valueName, $mode, $payload, isset($remember[$name])];
+        }
+
+        return [
+            'descriptor' => $descriptor,
+            'descriptorId' => self::descriptorId($descriptor),
+            'attributes' => $attributes,
+            'unresolved' => $unresolved,
+            'values' => $values,
+            'inherited' => $inherited,
+        ];
+    }
+
+    /**
+     * 0 = constant payload, 1 = dynamic expression, 2 = static value needing
+     * evaluation (paths, calls, interpolation).
+     *
+     * @return array{0: int, 1: mixed}
+     */
+    private static function valueMode(string $name, mixed $raw): array
+    {
+        if (str_starts_with($name, ':')) {
+            return is_string($raw) ? [1, $raw] : [0, $raw];
+        }
+        if (!is_string($raw)) {
+            return [0, $raw];
+        }
+        $kind = self::$valueKinds[$raw] ?? self::classifyValue($raw);
+
+        return $kind[0] === 1 ? [0, $kind[1]] : [2, $raw];
+    }
+
+    /**
+     * @param array<string, mixed> $unresolved
+     * @return list<array{0: string, 1: string, 2: int, 3: mixed}>
+     */
+    private static function inheritedCandidates(array $unresolved): array
+    {
+        $candidates = [];
+        foreach ($unresolved as $name => $raw) {
+            $attribute = ltrim($name, ':');
+            if (!isset(self::INHERITED_STYLE_SET[$attribute])) {
+                continue;
+            }
+            [$mode, $payload] = self::valueMode($name, $raw);
+            $candidates[] = [$name, $attribute, $mode, $payload];
+        }
+
+        return $candidates;
+    }
+
+    /**
+     * @param array<string, mixed> $attributes
+     * @return array{0: array<string, mixed>, 1: ?string}
+     */
+    private static function modelBindings(string $tag, array $attributes): array
+    {
+        if (isset($attributes['p-model'])) {
+            $binding = in_array($tag, ['Switch', 'Toggle'], true)
+                ? 'bind:checked'
+                : 'bind:value';
+            if (isset($attributes[$binding])) {
+                throw new RuntimeException(
+                    "p-model cannot be combined with {$binding} on {$tag}.",
+                );
+            }
+            $attributes[$binding] = $attributes['p-model'];
+            unset($attributes['p-model']);
+        }
+        if (isset($attributes['p-model:checked'])) {
+            if (isset($attributes['bind:checked'])) {
+                throw new RuntimeException(
+                    "p-model:checked cannot be combined with bind:checked on {$tag}.",
+                );
+            }
+            $attributes['bind:checked'] = $attributes['p-model:checked'];
+            unset($attributes['p-model:checked']);
+        }
+        if (isset($attributes['bind:value'])) {
+            $attributes[':value'] = $attributes['bind:value'];
+            $attributes['model'] = ltrim(
+                self::stringValue(
+                    $attributes['bind:value'],
+                    'bind:value target',
+                ),
+                '$',
+            );
+            unset($attributes['bind:value']);
+        }
+        $checkedBinding = null;
+        if (isset($attributes['bind:checked'])) {
+            $checkedBinding = self::stringValue(
+                $attributes['bind:checked'],
+                'bind:checked target',
+            );
+            $attributes[':checked'] = $attributes['bind:checked'];
+            unset($attributes['bind:checked']);
+        }
+
+        return [$attributes, $checkedBinding];
+    }
+
+    private static function camelAttribute(string $name): string
+    {
+        if (!str_contains($name, '-')) {
+            return $name;
+        }
+
+        return self::$camelNames[$name] ??= preg_replace_callback(
+            '/-([a-z])/',
+            static fn (array $match): string => strtoupper($match[1]),
+            $name,
+        ) ?? $name;
+    }
+
+    /** @param array<string, mixed> $descriptor */
+    private static function descriptorId(array $descriptor): int
+    {
+        $key = serialize($descriptor);
+        $id = self::$descriptorIds[$key] ?? null;
+        if ($id !== null) {
+            return $id;
+        }
+        if (count(self::$descriptorIds) >= 16384) {
+            self::resetStyleIdentities();
+        }
+
+        return self::$descriptorIds[$key] = ++self::$identitySequence;
+    }
+
+    private static function styleChain(mixed $parent, int $descriptor): int
+    {
+        $key = (is_int($parent) ? $parent : 0).'/'.$descriptor;
+        $id = self::$styleChains[$key] ?? null;
+        if ($id !== null) {
+            return $id;
+        }
+        if (count(self::$styleChains) >= 16384) {
+            self::resetStyleIdentities();
+        }
+
+        return self::$styleChains[$key] = ++self::$identitySequence;
+    }
+
+    private static function resetStyleIdentities(): void
+    {
+        // Entries are keyed by chain ids; ids are never reused (monotonic
+        // sequence), so dropping the maps only costs recomputation.
+        self::$descriptorIds = [];
+        self::$styleChains = [];
+        self::$styleEntries = [];
+        self::$dynamicKeys = [];
+    }
+
+    private static function withDomClasses(Element $element, string $classes): Element
+    {
+        if ($element->domClasses() !== []) {
+            return $element->class($classes);
+        }
+        $tokens = self::$domClassTokens[$classes] ?? null;
+        if ($tokens === null) {
+            $tokens = $element->class($classes)->domClasses();
+            if (count(self::$domClassTokens) >= 4096) {
+                self::$domClassTokens = [];
+            }
+            self::$domClassTokens[$classes] = $tokens;
+        }
+
+        return $element->__pamWithDomClasses($tokens);
+    }
+
+    /** Template `shared`: a bounded safe identifier, or nothing for null/'' (an untagged item). */
+    private static function sharedTag(mixed $value): ?string
+    {
+        if ($value === null || $value === false || $value === '') {
+            return null;
+        }
+        $tag = self::stringValue($value, 'shared');
+        if (preg_match('/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/', $tag) !== 1) {
+            throw new InvalidArgumentException('Template shared tags must be bounded safe identifiers.');
+        }
+
+        return $tag;
+    }
+
+    /** @param array<string, mixed> $values */
+    private static function mediaCacheAttributes(
+        Image|MediaPlayer $element,
+        array $values,
+    ): Image|MediaPlayer {
+        if (isset($values['sharedTransition'])) {
+            $style = $values['sharedTransitionStyle'] ?? null;
+            if ($style !== null && !$style instanceof SharedTransitionStyle) {
+                throw new InvalidArgumentException(
+                    'Media sharedTransitionStyle must be a SharedTransitionStyle.',
+                );
+            }
+            $element = $element->sharedTransition(
+                self::stringValue($values['sharedTransition'], 'Media sharedTransition'),
+                $style,
+            );
+        }
+        if (array_key_exists('cache', $values)) {
+            $element = $element->cache(self::mediaCachePolicy($values['cache']));
+        }
+        if (isset($values['cacheKey'])) {
+            $element = $element->cacheKey(self::stringValue($values['cacheKey'], 'Media cacheKey'));
+        }
+        if (isset($values['cacheMaxAge'])) {
+            $element = $element->maxAge(self::durationMs($values['cacheMaxAge'], 'Media cacheMaxAge'));
+        }
+        if (isset($values['cacheTags'])) {
+            $raw = $values['cacheTags'];
+            $tags = is_array($raw)
+                ? array_values($raw)
+                : (preg_split('/[,\n]+/', self::stringValue($raw, 'Media cacheTags')) ?: []);
+            $element = $element->cacheTags(array_map(
+                static fn (mixed $tag): string => trim(self::stringValue($tag, 'Media cache tag')),
+                $tags,
+            ));
+        }
+        if (isset($values['pinOffline'])) {
+            $element = $element->pinOffline(self::boolValue($values['pinOffline'], 'Media pinOffline'));
+        }
+        if (isset($values['priority'])) {
+            $element = $element->priority(self::mediaPriority($values['priority']));
+        }
+        if (isset($values['cacheMaxBytes'])) {
+            $element = $element->maxCacheSize(self::byteSize(
+                $values['cacheMaxBytes'],
+                'Media cacheMaxBytes',
+            ));
+        }
+        if (isset($values['checksum'])) {
+            $element = $element->checksum(self::stringValue($values['checksum'], 'Media checksum'));
+        }
+        if (isset($values['thumbnail'])) {
+            $element = $element->thumbnail(self::stringValue($values['thumbnail'], 'Media thumbnail'));
+        }
+        if ($element instanceof Image && isset($values['resizeWidth'], $values['resizeHeight'])) {
+            $element = $element->resize(
+                self::intValue($values['resizeWidth'], 'Image resizeWidth'),
+                self::intValue($values['resizeHeight'], 'Image resizeHeight'),
+            );
+        }
+        if ($element instanceof MediaPlayer) {
+            if (isset($values['streamingCache'])) {
+                $element = $element->streamingCache(self::boolValue(
+                    $values['streamingCache'],
+                    'Media streamingCache',
+                ));
+            }
+            if (isset($values['preloadSeconds'])) {
+                $element = $element->preloadSeconds(self::intValue(
+                    $values['preloadSeconds'],
+                    'Media preloadSeconds',
+                ));
+            }
+            if (isset($values['downloadWhilePlaying'])) {
+                $element = $element->downloadWhilePlaying(self::boolValue(
+                    $values['downloadWhilePlaying'],
+                    'Media downloadWhilePlaying',
+                ));
+            }
+        }
+
+        return $element;
+    }
+
+    private static function mediaCachePolicy(mixed $value): MediaCachePolicy
+    {
+        if ($value === true || $value === '' || $value === null) {
+            return MediaCachePolicy::MemoryAndDisk;
+        }
+        $normalized = strtolower(str_replace(['-', '_'], '', self::stringValue($value, 'Media cache')));
+
+        return match ($normalized) {
+            'none' => MediaCachePolicy::None,
+            'memory' => MediaCachePolicy::Memory,
+            'disk' => MediaCachePolicy::Disk,
+            'memoryanddisk' => MediaCachePolicy::MemoryAndDisk,
+            'cachefirst' => MediaCachePolicy::CacheFirst,
+            'networkfirst' => MediaCachePolicy::NetworkFirst,
+            'cacheonly' => MediaCachePolicy::CacheOnly,
+            'stalewhilerevalidate' => MediaCachePolicy::StaleWhileRevalidate,
+            default => throw new RuntimeException("Unknown media cache policy {$normalized}."),
+        };
+    }
+
+    private static function mediaPriority(mixed $value): MediaPriority
+    {
+        $normalized = strtolower(self::stringValue($value, 'Media priority'));
+
+        return match ($normalized) {
+            'background' => MediaPriority::Background,
+            'prefetch' => MediaPriority::Prefetch,
+            'normal' => MediaPriority::Normal,
+            'visible' => MediaPriority::Visible,
+            'immediate' => MediaPriority::Immediate,
+            default => throw new RuntimeException("Unknown media priority {$normalized}."),
+        };
+    }
+
+    private static function durationMs(mixed $value, string $context): int
+    {
+        if (is_int($value)) {
+            return max(0, $value);
+        }
+        $raw = strtolower(trim(self::stringValue($value, $context)));
+        if (preg_match('/^(\d+)(ms|s|m|h|d)$/D', $raw, $match) !== 1) {
+            throw new RuntimeException("{$context} must use ms, s, m, h or d.");
+        }
+        $factor = match ($match[2]) {
+            'ms' => 1,
+            's' => 1_000,
+            'm' => 60_000,
+            'h' => 3_600_000,
+            'd' => 86_400_000,
+        };
+
+        return min(31_536_000_000, (int) $match[1] * $factor);
+    }
+
+    private static function byteSize(mixed $value, string $context): int
+    {
+        if (is_int($value)) {
+            return max(0, $value);
+        }
+        $raw = strtolower(trim(self::stringValue($value, $context)));
+        if (preg_match('/^(\d+)(b|kb|mb|gb)$/D', $raw, $match) !== 1) {
+            throw new RuntimeException("{$context} must use b, kb, mb or gb.");
+        }
+        $factor = match ($match[2]) {
+            'b' => 1,
+            'kb' => 1_024,
+            'mb' => 1_048_576,
+            'gb' => 1_073_741_824,
+        };
+
+        return min(10_737_418_240, (int) $match[1] * $factor);
+    }
+
+    /**
+     * @param array<string, mixed> $attributes
+     */
+    private static function attributes(Element $element, array $attributes): Element
+    {
+        $plan = self::attributePlanFor($element, $attributes);
+        if ($plan['special']) {
+            $element = self::specialAttributes($element, $attributes);
+        }
+        $batch = [];
+        foreach ($plan['properties'] as [$name, $key]) {
+            $raw = $attributes[$name];
+            if (isset(self::PERCENT_DIMENSIONS[$name]) && is_string($raw) && str_ends_with(trim($raw), '%')) {
+                $raw = trim($raw);
+                if (preg_match('/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))%$/D', $raw, $match) !== 1) {
+                    throw new RuntimeException("Template {$name} must contain a valid percentage.");
+                }
+                $element = $element->domWithoutProperty($key);
+                $key = self::PERCENT_DIMENSIONS[$name];
+                $raw = max(0.0, (float) $match[1]);
+            }
+            $value = self::propertyValue($key, $raw);
+
+            if ($value !== null) {
+                $batch[$key->value] = $value;
+            }
+        }
+
+        return $batch === [] ? $element : $element->__pamWithProperties($batch);
+    }
+
+    private const PERCENT_DIMENSIONS = [
+        'width' => PropKey::WidthPercent,
+        'height' => PropKey::HeightPercent,
+        'minWidth' => PropKey::MinWidthPercent,
+        'minHeight' => PropKey::MinHeightPercent,
+        'maxWidth' => PropKey::MaxWidthPercent,
+        'maxHeight' => PropKey::MaxHeightPercent,
+    ];
+
+    /**
+     * @param array<string, mixed> $attributes
+     * @return array{special: bool, properties: list<array{0: string, 1: PropKey}>, names: list<string>}
+     */
+    private static function attributePlanFor(Element $element, array $attributes): array
+    {
+        $signature = $element::class.'|'.$element->kind()->value.'|'.implode('|', array_keys($attributes));
+        $plan = self::$attributePlans[$signature] ?? null;
+        if ($plan === null) {
+            $plan = self::attributePlan($element, $attributes);
+            if (count(self::$attributePlans) >= 4096) {
+                self::$attributePlans = [];
+            }
+            self::$attributePlans[$signature] = $plan;
+        }
+
+        return $plan;
+    }
+
+    /**
+     * Static part of attributes(): which special handlers apply and the
+     * ordered native properties for one element class and value-name set.
+     *
+     * @param array<string, mixed> $attributes
+     * @return array{special: bool, properties: list<array{0: string, 1: PropKey}>}
+     */
+    private static function attributePlan(Element $element, array $attributes): array
+    {
+        $special = false;
+        $names = [];
+        foreach ($attributes as $name => $_) {
+            if (isset(self::SPECIAL_ATTRIBUTES[$name]) || str_starts_with((string) $name, 'data-')) {
+                $special = true;
+                $names[] = (string) $name;
+            }
+        }
+        $properties = [];
+        // array_intersect_key keeps PROPERTIES order, so alias precedence is unchanged.
+        foreach (array_intersect_key(self::PROPERTIES, $attributes) as $name => $key) {
+            if (
+                ($element instanceof Image || $element instanceof MediaPlayer)
+                && in_array($name, [
+                    'cache',
+                    'cacheKey',
+                    'cacheMaxAge',
+                    'cacheTags',
+                    'pinOffline',
+                    'priority',
+                    'cacheMaxBytes',
+                    'checksum',
+                    'thumbnail',
+                    'resizeWidth',
+                    'resizeHeight',
+                    'streamingCache',
+                    'preloadSeconds',
+                    'downloadWhilePlaying',
+                ], true)
+            ) {
+                continue;
+            }
+            if (
+                $element instanceof BottomSheet
+                && in_array(
+                    $name,
+                    [
+                        'snapPoints',
+                        'index',
+                        'dismissible',
+                        'backdropDismiss',
+                        'handleVisible',
+                        'dragEnabled',
+                        'cornerRadius',
+                        'keyboardBehavior',
+                    ],
+                    true,
+                )
+            ) {
+                continue;
+            }
+            if (!self::propertyAppliesToKind($key, $element->kind())) {
+                continue;
+            }
+            $properties[] = [$name, $key];
+            $names[] = $name;
+        }
+
+        return ['special' => $special, 'properties' => $properties, 'names' => $names];
+    }
+
+    /** @param array<string, mixed> $attributes */
+    private static function specialAttributes(Element $element, array $attributes): Element
+    {
+        if (isset($attributes['id'])) {
+            $element = $element->id(self::stringValue($attributes['id'], 'DOM id'));
+        }
+
+        foreach ($attributes as $name => $value) {
+            if (str_starts_with($name, 'data-')) {
+                $element = $element->data(
+                    substr($name, 5),
+                    self::stringValue($value, "DOM {$name}"),
+                );
+            }
+        }
+
+        if (isset($attributes['key'])) {
+            $element = $element->key(self::stringValue($attributes['key'], 'Element key'));
+        }
+
+        if (isset($attributes['accessibilityLabel'])) {
+            $element = $element->accessibilityLabel(self::stringValue(
+                $attributes['accessibilityLabel'],
+                'Accessibility label',
+            ));
+        }
+
+        if (isset($attributes['accessibilityActions'])) {
+            $actions = $attributes['accessibilityActions'];
+            if (!is_array($actions)) {
+                throw new InvalidArgumentException(
+                    'Element accessibilityActions must be an array.',
+                );
+            }
+            $element = $element->accessibilityActions(...array_map(
+                static function (mixed $action): AccessibilityAction {
+                    if ($action instanceof AccessibilityAction) {
+                        return $action;
+                    }
+                    if (
+                        !is_array($action)
+                        || !is_string($action['name'] ?? null)
+                        || !is_string($action['label'] ?? null)
+                    ) {
+                        throw new InvalidArgumentException(
+                            'Each accessibility action must contain string name and label values.',
+                        );
+                    }
+
+                    return new AccessibilityAction($action['name'], $action['label']);
+                },
+                $actions,
+            ));
+        }
+
+        if (
+            !isset($attributes['accessibilityLabel'])
+            && isset($attributes['alt'])
+            && in_array(
+                $element->kind(),
+                [NodeKind::Image, NodeKind::ImageBackground, NodeKind::DrawingCanvas],
+                true,
+            )
+        ) {
+            $element = $element
+                ->accessibilityLabel(self::stringValue(
+                    $attributes['alt'],
+                    'Image alt text',
+                ))
+                ->accessible();
+        }
+
+        if (isset($attributes['testId'])) {
+            $element = $element->testId(self::stringValue($attributes['testId'], 'Test ID'));
+        }
+
+        if (isset($attributes['disabled'])) {
+            $element = $element->enabled(!self::boolValue(
+                $attributes['disabled'],
+                'Disabled',
+            ));
+        } elseif (isset($attributes['enabled'])) {
+            $element = $element->enabled(self::boolValue($attributes['enabled'], 'Enabled'));
+        }
+
+        if (isset($attributes['placeholder']) && $element instanceof Input) {
+            $element = $element->placeholder(self::stringValue(
+                $attributes['placeholder'],
+                'Input placeholder',
+            ));
+        }
+
+        if ($element instanceof Input) {
+            if (isset($attributes['readOnly'])) {
+                $element = $element->editable(!self::boolValue(
+                    $attributes['readOnly'],
+                    'Input readOnly',
+                ));
+            }
+            if (isset($attributes['scrollEnabled'])) {
+                $element = $element->scrollEnabled(self::boolValue(
+                    $attributes['scrollEnabled'],
+                    'Input scrollEnabled',
+                ));
+            }
+        }
+
+        if (
+            $element instanceof Pressable
+            && is_numeric($attributes['pressRetentionOffset'] ?? null)
+        ) {
+            $element = $element->pressRetentionOffset(
+                max(0.0, (float) $attributes['pressRetentionOffset']),
+            );
+        }
+
+        if (
+            $element instanceof Modal
+            && array_key_exists('statusBarTranslucent', $attributes)
+        ) {
+            $element = $element->statusBarTranslucent(self::boolValue(
+                $attributes['statusBarTranslucent'],
+                'Modal statusBarTranslucent',
+            ));
+        }
+
+        if (array_key_exists('horizontal', $attributes)) {
+            $horizontal = self::boolValue(
+                $attributes['horizontal'],
+                'Horizontal',
+            );
+            $key = match ($element->kind()) {
+                NodeKind::Scroll => PropKey::ScrollHorizontal,
+                NodeKind::List, NodeKind::SectionList, NodeKind::VirtualList =>
+                    PropKey::ListHorizontal,
+                default => null,
+            };
+            if ($key !== null) {
+                $element = $element->property($key, $horizontal);
+            }
+        }
+
+        if (
+            $element->kind() === NodeKind::Scroll
+            && is_numeric($attributes['contentOffset'] ?? null)
+        ) {
+            $offsetKey = self::boolValue(
+                $attributes['horizontal'] ?? false,
+                'Horizontal',
+            )
+                ? PropKey::ScrollContentOffsetX
+                : PropKey::ScrollContentOffsetY;
+            $element = $element->property(
+                $offsetKey,
+                max(0.0, (float) $attributes['contentOffset']),
+            );
+        }
+
+        return $element;
+    }
+
+    /**
+     * `<Swipeable leftWidth rightWidth group threshold :closeRequest>`: children
+     * are the left panel (when leftWidth > 0), the right panel (when
+     * rightWidth > 0) and the row content, in that order.
+     *
+     * @param array<string, mixed> $values
+     * @param list<Element> $children
+     */
+    private static function swipeable(array $values, array $children): Element
+    {
+        $leftWidth = self::floatValue($values['leftWidth'] ?? 0.0, 'Swipeable leftWidth');
+        $rightWidth = self::floatValue($values['rightWidth'] ?? 0.0, 'Swipeable rightWidth');
+        $expected = 1 + ($leftWidth > 0 ? 1 : 0) + ($rightWidth > 0 ? 1 : 0);
+        if (count($children) !== $expected) {
+            throw new RuntimeException(
+                "Swipeable expects {$expected} children: [left panel], [right panel], content.",
+            );
+        }
+        $swipeable = Swipeable::make($children[$expected - 1]);
+        $index = 0;
+        if ($leftWidth > 0) {
+            $swipeable = $swipeable->leftActions($children[$index++], $leftWidth);
+        }
+        if ($rightWidth > 0) {
+            $swipeable = $swipeable->rightActions($children[$index], $rightWidth);
+        }
+        if (isset($values['group'])) {
+            $swipeable = $swipeable->group(self::stringValue($values['group'], 'Swipeable group'));
+        }
+        if (isset($values['threshold'])) {
+            $swipeable = $swipeable->threshold(self::floatValue($values['threshold'], 'Swipeable threshold'));
+        }
+        if (isset($values['swipeEnabled'])) {
+            $swipeable = $swipeable->enabled(self::boolValue($values['swipeEnabled'], 'Swipeable swipeEnabled'));
+        }
+        if (isset($values['closeRequest'])) {
+            $swipeable = $swipeable->closeRequest(self::intValue($values['closeRequest'], 'Swipeable closeRequest'));
+        }
+
+        return $swipeable->toElement();
+    }
+
+    private static function propertyAppliesToKind(
+        PropKey $key,
+        NodeKind $kind,
+    ): bool {
+        return self::$appliesToKind[$key->value][$kind->value]
+            ??= self::computePropertyAppliesToKind($key, $kind);
+    }
+
+    private static function computePropertyAppliesToKind(
+        PropKey $key,
+        NodeKind $kind,
+    ): bool {
+        return match ($key) {
+            PropKey::ScrollContentOffsetX,
+            PropKey::ScrollContentOffsetY,
+            PropKey::ScrollAnchorToEnd,
+            PropKey::ScrollMaintainVisibleContentPosition,
+            PropKey::ScrollAutoScrollToEndThreshold,
+            PropKey::ScrollFillViewport,
+            PropKey::ScrollNestedEnabled,
+            PropKey::ScrollFadingEdgeLength,
+            PropKey::ScrollPersistentScrollbar,
+            PropKey::ScrollSnapInterval,
+            PropKey::ScrollDecelerationRate,
+            PropKey::ScrollPageTransform,
+            PropKey::ScrollOffsetAnimationMs,
+            => $kind === NodeKind::Scroll,
+            // Lists scroll natively too (React Native FlatList inherits it).
+            PropKey::ScrollKeyboardDismissMode => $kind === NodeKind::Scroll
+                || $kind === NodeKind::VirtualList
+                || $kind === NodeKind::List
+                || $kind === NodeKind::SectionList,
+            PropKey::ScrollPagingEnabled,
+            PropKey::ScrollTargetTestId,
+            PropKey::ScrollTargetOffset,
+            PropKey::ScrollTargetAlignment,
+            PropKey::ScrollAnimated,
+            PropKey::ScrollRequest,
+            PropKey::ScrollKeyboardPersistTaps,
+            => in_array(
+                $kind,
+                [
+                    NodeKind::Scroll,
+                    NodeKind::List,
+                    NodeKind::SectionList,
+                    NodeKind::VirtualList,
+                ],
+                true,
+            ),
+            // A WebView takes both: a fixed page (a game) neither scrolls
+            // nor bounces / over-scrolls.
+            PropKey::ScrollOverScrollMode => in_array($kind, [NodeKind::Scroll, NodeKind::WebView], true),
+            PropKey::ScrollEnabled =>
+                in_array(
+                    $kind,
+                    [
+                        NodeKind::Scroll,
+                        NodeKind::List,
+                        NodeKind::SectionList,
+                        NodeKind::VirtualList,
+                        NodeKind::WebView,
+                    ],
+                    true,
+                ),
+            PropKey::GridColumns => $kind !== NodeKind::VirtualList,
+            PropKey::ActivityAnimating,
+            PropKey::ActivityHidesWhenStopped,
+            PropKey::ActivitySize,
+            => $kind === NodeKind::ActivityIndicator,
+            PropKey::SwitchTrackColorFalse,
+            PropKey::SwitchTrackColorTrue,
+            PropKey::SwitchThumbColor,
+            => $kind === NodeKind::Switch,
+            PropKey::StatusBarColor,
+            PropKey::StatusBarStyle,
+            PropKey::StatusBarHidden,
+            PropKey::StatusBarAnimated,
+            PropKey::StatusBarTranslucent,
+            PropKey::NavigationBarHidden,
+            => $kind === NodeKind::StatusBar,
+            PropKey::ModalPresentation,
+            PropKey::ModalAnimationType,
+            PropKey::ModalBackdropColor,
+            PropKey::ModalTransparent,
+            PropKey::ModalHardwareAccelerated,
+            PropKey::ModalNavigationBarTranslucent,
+            PropKey::ModalNavigationBarColor,
+            PropKey::ModalStatusBarTranslucent,
+            PropKey::ModalAllowSwipeDismissal,
+            => $kind === NodeKind::Modal,
+            PropKey::ImageDefaultSource,
+            PropKey::ImageLoadingIndicatorSource,
+            PropKey::ImageFadeDurationMs,
+            PropKey::ImageResizeMethod,
+            PropKey::ImageResizeMultiplier,
+            PropKey::ImageProgressiveRenderingEnabled,
+            PropKey::ImageCachePolicy,
+            PropKey::ImageOverlayColor,
+            PropKey::ImageSourceSet,
+            PropKey::ImageRequestHeaders,
+            => in_array(
+                $kind,
+                [NodeKind::Image, NodeKind::ImageBackground, NodeKind::DrawingCanvas],
+                true,
+            ),
+            PropKey::InputEditable,
+            PropKey::InputAutoCorrect,
+            PropKey::InputAutoCapitalize,
+            PropKey::InputCaretHidden,
+            PropKey::InputContextMenuHidden,
+            PropKey::InputCursorColor,
+            PropKey::InputDisableFullscreenUi,
+            PropKey::InputAutofillImportance,
+            PropKey::InputMode,
+            PropKey::InputMinLines,
+            PropKey::InputSelectTextOnFocus,
+            PropKey::InputSelectionStart,
+            PropKey::InputSelectionEnd,
+            PropKey::InputShowSoftInputOnFocus,
+            PropKey::InputSubmitBehavior,
+            PropKey::InputTextAlignVertical,
+            PropKey::InputReturnKeyLabel,
+            PropKey::InputScrollEnabled,
+            PropKey::InputUnderlineColor,
+            PropKey::InputFormat,
+            PropKey::InputFormatPattern,
+            PropKey::InputFormatPlaceholder,
+            PropKey::InputFormatPrefix,
+            PropKey::InputFormatSuffix,
+            PropKey::InputFormatDecimalDigits,
+            PropKey::InputFormatDecimalMinDigits,
+            PropKey::InputFormatLocale,
+            => $kind === NodeKind::Input,
+            PropKey::ScrollbarGutter,
+            PropKey::ScrollbarWidth,
+            PropKey::ScrollbarThickness,
+            PropKey::ScrollbarColor,
+            => $kind === NodeKind::Scroll || $kind === NodeKind::VirtualList,
+            default => true,
+        };
+    }
+
+    private static function propertyValue(PropKey $key, mixed $value): string|int|float|bool|null
+    {
+        // Conversions of scalar inputs are pure; memoized per native key.
+        $id = $key->value;
+        if (is_string($value)) {
+            if (isset(self::$propertyStrings[$id]) && array_key_exists($value, self::$propertyStrings[$id])) {
+                return self::$propertyStrings[$id][$value];
+            }
+            $converted = self::convertPropertyValue($key, $value);
+            $length = strlen($value);
+            if ($length <= 256) {
+                self::rememberPropertyValue();
+                self::$propertyStrings[$id][$value] = $converted;
+            } elseif ($length <= 262_144) {
+                // Long values (inline images) recur every frame: memoized
+                // within a byte budget.
+                self::$propertyMemoBytes += $length;
+                if (self::$propertyMemoBytes > 16_777_216) {
+                    self::$propertyMemoSize = 16384;
+                }
+                self::rememberPropertyValue();
+                self::$propertyStrings[$id][$value] = $converted;
+            }
+
+            return $converted;
+        }
+        if (is_int($value)) {
+            if (isset(self::$propertyInts[$id]) && array_key_exists($value, self::$propertyInts[$id])) {
+                return self::$propertyInts[$id][$value];
+            }
+            self::rememberPropertyValue();
+
+            return self::$propertyInts[$id][$value] = self::convertPropertyValue($key, $value);
+        }
+        if (is_float($value)) {
+            $memo = (string) $value;
+            if (isset(self::$propertyFloats[$id]) && array_key_exists($memo, self::$propertyFloats[$id])) {
+                return self::$propertyFloats[$id][$memo];
+            }
+            $converted = self::convertPropertyValue($key, $value);
+            if (is_finite($value)) {
+                self::rememberPropertyValue();
+                self::$propertyFloats[$id][$memo] = $converted;
+            }
+
+            return $converted;
+        }
+        if (is_bool($value)) {
+            $memo = (int) $value;
+            if (isset(self::$propertyBools[$id]) && array_key_exists($memo, self::$propertyBools[$id])) {
+                return self::$propertyBools[$id][$memo];
+            }
+            self::rememberPropertyValue();
+
+            return self::$propertyBools[$id][$memo] = self::convertPropertyValue($key, $value);
+        }
+
+        return self::convertPropertyValue($key, $value);
+    }
+
+    /**
+     * `refreshColors`: a color, a list of colors or a comma-separated list
+     * (`"#e11d48, #2563eb"`), encoded as the native ARGB list.
+     */
+    private static function refreshColors(mixed $value): string
+    {
+        if (is_string($value) && preg_match('/^-?\d+(,-?\d+)*$/', $value) === 1) {
+            return $value;
+        }
+        $colors = is_array($value)
+            ? $value
+            : (is_string($value) ? array_map('trim', explode(',', $value)) : [$value]);
+        $encoded = [];
+        foreach ($colors as $color) {
+            $encoded[] = (string) self::colorValue($color, 'Template refreshColors');
+        }
+
+        return implode(',', $encoded);
+    }
+
+    private static function rememberPropertyValue(): void
+    {
+        if (++self::$propertyMemoSize > 16384) {
+            self::$propertyMemoSize = 1;
+            self::$propertyMemoBytes = 0;
+            self::$propertyStrings = [];
+            self::$propertyInts = [];
+            self::$propertyFloats = [];
+            self::$propertyBools = [];
+        }
+    }
+
+    private static function convertPropertyValue(PropKey $key, mixed $value): string|int|float|bool|null
+    {
+        return match ($key) {
+            PropKey::ScrollIndicatorStyle => self::named($value, [
+                'auto' => ScrollIndicatorStyle::Auto->value,
+                'dark' => ScrollIndicatorStyle::Dark->value,
+                'light' => ScrollIndicatorStyle::Light->value,
+            ]),
+            PropKey::PressBackgroundColor,
+            PropKey::BackgroundColor,
+            PropKey::TextColor,
+            PropKey::BorderColor,
+            PropKey::ProgressColor,
+            PropKey::TintColor,
+            PropKey::StatusBarColor,
+            PropKey::RippleColor,
+            PropKey::PlaceholderColor,
+            PropKey::SelectionColor,
+            PropKey::RefreshProgressBackgroundColor,
+            PropKey::SwitchTrackColorFalse,
+            PropKey::SwitchTrackColorTrue,
+            PropKey::SwitchThumbColor,
+            PropKey::ImageOverlayColor,
+            PropKey::InputCursorColor,
+            PropKey::InputUnderlineColor,
+            PropKey::ModalBackdropColor,
+            PropKey::ModalNavigationBarColor,
+            PropKey::DrawerOverlayColor,
+            PropKey::DrawingColor,
+            PropKey::BorderTopColor,
+            PropKey::BorderRightColor,
+            PropKey::BorderBottomColor,
+            PropKey::BorderLeftColor,
+            PropKey::TextShadowColor,
+            PropKey::ShimmerGradientColor,
+            => self::colorValue($value, "Template {$key->name}"),
+            PropKey::RefreshColors => self::refreshColors($value),
+            PropKey::AlignContent => self::named($value, [
+                'start' => 1, 'flex-start' => 1, 'normal' => 1, 'center' => 2,
+                'end' => 3, 'flex-end' => 3, 'stretch' => 4,
+                'space-between' => 5, 'space-around' => 6, 'space-evenly' => 7,
+            ]),
+            PropKey::FlexBasisContent,
+            PropKey::MarginTopAuto,
+            PropKey::MarginRightAuto,
+            PropKey::MarginBottomAuto,
+            => self::boolValue($value, "Style {$key->name}"),
+            PropKey::FlexBasis,
+            PropKey::FlexBasisPercent,
+            PropKey::MinWidthPercent,
+            PropKey::MinHeightPercent,
+            PropKey::TextShadowRadius,
+            => max(0.0, self::floatValue($value, "Style {$key->name}")),
+            PropKey::TextShadowOffsetX,
+            PropKey::TextShadowOffsetY,
+            PropKey::TransformOriginX,
+            PropKey::TransformOriginY,
+            PropKey::TranslationYPercent,
+            => self::floatValue($value, "Style {$key->name}"),
+            PropKey::BorderStyle => self::named($value, [
+                'solid' => 1, 'dashed' => 2, 'dotted' => 3,
+            ]),
+            PropKey::AlignItems, PropKey::AlignSelf => self::named($value, [
+                'start' => 1, 'flex-start' => 1, 'center' => 2,
+                'end' => 3, 'flex-end' => 3, 'stretch' => 4,
+                'baseline' => 5,
+            ]),
+            PropKey::JustifyContent => self::named($value, [
+                'start' => 1, 'flex-start' => 1, 'center' => 2,
+                'end' => 3, 'flex-end' => 3, 'space-between' => 4,
+                'space-around' => 5, 'space-evenly' => 6,
+            ]),
+            PropKey::TextAlign => self::named($value, [
+                'start' => TextAlignment::Start->value,
+                'left' => TextAlignment::Start->value,
+                'center' => TextAlignment::Center->value,
+                'end' => TextAlignment::End->value,
+                'right' => TextAlignment::End->value,
+                'justify' => TextAlignment::Justify->value,
+            ]),
+            PropKey::DrawingMode => self::named($value, [
+                'brush' => DrawingMode::Brush->value,
+                'eraser' => DrawingMode::Eraser->value,
+            ]),
+            PropKey::KeyboardType => self::named($value, [
+                'default' => KeyboardType::Text->value,
+                'text' => KeyboardType::Text->value,
+                'ascii-capable' => KeyboardType::Text->value,
+                'numbers-and-punctuation' => KeyboardType::Text->value,
+                'name-phone-pad' => KeyboardType::Text->value,
+                'twitter' => KeyboardType::Text->value,
+                'web-search' => KeyboardType::Text->value,
+                'visible-password' => KeyboardType::Text->value,
+                'email' => KeyboardType::Email->value,
+                'email-address' => KeyboardType::Email->value,
+                'number' => KeyboardType::Number->value,
+                'number-pad' => KeyboardType::Number->value,
+                'numeric' => KeyboardType::Number->value,
+                'ascii-capable-number-pad' => KeyboardType::Number->value,
+                'phone' => KeyboardType::Phone->value,
+                'phone-pad' => KeyboardType::Phone->value,
+                'decimal' => KeyboardType::Decimal->value,
+                'decimal-pad' => KeyboardType::Decimal->value,
+                'url' => KeyboardType::Url->value,
+            ]),
+            PropKey::InputSyncMode => self::named($value, [
+                'native' => InputSyncMode::Native->value,
+                'debounced' => InputSyncMode::Debounced->value,
+                'immediate' => InputSyncMode::Immediate->value,
+                'blur' => InputSyncMode::OnBlur->value,
+                'submit' => InputSyncMode::OnSubmit->value,
+            ]),
+            PropKey::InputAutoCapitalize => self::named($value, [
+                'none' => InputAutoCapitalize::None->value,
+                'sentences' => InputAutoCapitalize::Sentences->value,
+                'words' => InputAutoCapitalize::Words->value,
+                'characters' => InputAutoCapitalize::Characters->value,
+            ]),
+            PropKey::InputAutofillImportance => self::named($value, [
+                'auto' => InputAutofillImportance::Auto->value,
+                'no' => InputAutofillImportance::No->value,
+                'noExcludeDescendants' =>
+                    InputAutofillImportance::NoExcludeDescendants->value,
+                'yes' => InputAutofillImportance::Yes->value,
+                'yesExcludeDescendants' =>
+                    InputAutofillImportance::YesExcludeDescendants->value,
+            ]),
+            PropKey::InputMode => self::named($value, [
+                'text' => InputMode::Text->value,
+                'none' => InputMode::None->value,
+                'decimal' => InputMode::Decimal->value,
+                'numeric' => InputMode::Numeric->value,
+                'tel' => InputMode::Tel->value,
+                'search' => InputMode::Search->value,
+                'email' => InputMode::Email->value,
+                'url' => InputMode::Url->value,
+            ]),
+            PropKey::InputSubmitBehavior => self::named($value, [
+                'submit' => InputSubmitBehavior::Submit->value,
+                'blurAndSubmit' => InputSubmitBehavior::BlurAndSubmit->value,
+                'newline' => InputSubmitBehavior::Newline->value,
+            ]),
+            PropKey::InputTextAlignVertical => self::named($value, [
+                'auto' => InputTextAlignVertical::Auto->value,
+                'top' => InputTextAlignVertical::Top->value,
+                'center' => InputTextAlignVertical::Center->value,
+                'bottom' => InputTextAlignVertical::Bottom->value,
+            ]),
+            PropKey::ImageFit => self::named($value, [
+                'cover' => ImageFit::Cover->value,
+                'contain' => ImageFit::Contain->value,
+                'fill' => ImageFit::Fill->value,
+                'stretch' => ImageFit::Fill->value,
+                'center' => ImageFit::Center->value,
+                'repeat' => ImageFit::Repeat->value,
+            ]),
+            PropKey::ImageResizeMethod => self::named($value, [
+                'auto' => ImageResizeMethod::Auto->value,
+                'resize' => ImageResizeMethod::Resize->value,
+                'scale' => ImageResizeMethod::Scale->value,
+                'none' => ImageResizeMethod::None->value,
+            ]),
+            PropKey::ImageCachePolicy => self::named($value, [
+                'default' => ImageCachePolicy::Default->value,
+                'reload' => ImageCachePolicy::Reload->value,
+                'force-cache' => ImageCachePolicy::ForceCache->value,
+                'forceCache' => ImageCachePolicy::ForceCache->value,
+                'memory-disk' => ImageCachePolicy::ForceCache->value,
+                'memoryDisk' => ImageCachePolicy::ForceCache->value,
+                'only-if-cached' => ImageCachePolicy::OnlyIfCached->value,
+                'onlyIfCached' => ImageCachePolicy::OnlyIfCached->value,
+                'none' => ImageCachePolicy::None->value,
+            ]),
+            PropKey::ModalPresentation => self::named($value, [
+                'fullScreen' => 1, 'dialog' => 2, 'sheet' => 3, 'overlay' => 4,
+            ]),
+            PropKey::ModalAnimationType => self::named($value, [
+                'none' => ModalAnimationType::None->value,
+                'slide' => ModalAnimationType::Slide->value,
+                'fade' => ModalAnimationType::Fade->value,
+                'slide-fade' => ModalAnimationType::SlideFade->value,
+                'slideFade' => ModalAnimationType::SlideFade->value,
+            ]),
+            PropKey::StatusBarStyle => self::named($value, ['dark' => 1, 'light' => 2]),
+            // React Native names: `height` resizes the view, `position`
+            // moves it up (pan), `padding` insets its content.
+            PropKey::KeyboardBehavior => self::named($value, [
+                'resize' => 1, 'height' => 1, 'pan' => 2, 'position' => 2,
+                'padding' => 3, 'interactive' => 4,
+            ]),
+            PropKey::Overflow => self::named($value, ['visible' => 1, 'hidden' => 2]),
+            PropKey::FlexDirection => self::named($value, [
+                'column' => 1,
+                'row' => 2,
+                'column-reverse' => 3,
+                'row-reverse' => 4,
+            ]),
+            PropKey::FlexWrap => self::named($value, [
+                'nowrap' => FlexWrap::NoWrap->value,
+                'no-wrap' => FlexWrap::NoWrap->value,
+                'wrap' => FlexWrap::Wrap->value,
+                'wrap-reverse' => FlexWrap::WrapReverse->value,
+            ]),
+            PropKey::LayoutDirection => self::named($value, [
+                'ltr' => LayoutDirection::LeftToRight->value,
+                'rtl' => LayoutDirection::RightToLeft->value,
+            ]),
+            PropKey::GestureType => self::named($value, [
+                'tap' => GestureType::Tap->value,
+                'pan' => GestureType::Pan->value,
+                'pinch' => GestureType::Pinch->value,
+                'rotation' => GestureType::Rotation->value,
+                'swipe' => GestureType::Swipe->value,
+                'longPress' => GestureType::LongPress->value,
+            ]),
+            PropKey::GestureDirection => self::named($value, [
+                'any' => GestureDirection::Any->value,
+                'left' => GestureDirection::Left->value,
+                'right' => GestureDirection::Right->value,
+                'up' => GestureDirection::Up->value,
+                'down' => GestureDirection::Down->value,
+                'horizontal' => GestureDirection::Horizontal->value,
+                'vertical' => GestureDirection::Vertical->value,
+            ]),
+            PropKey::GestureComposition => self::named($value, [
+                'exclusive' => GestureComposition::Exclusive->value,
+                'simultaneous' => GestureComposition::Simultaneous->value,
+                'race' => GestureComposition::Race->value,
+            ]),
+            PropKey::PositionType => self::named($value, [
+                'static' => 1,
+                'relative' => 1,
+                'absolute' => 2,
+                'fixed' => 3,
+            ]),
+            PropKey::TextDecoration => self::named($value, [
+                'none' => 1,
+                'underline' => 2,
+                'line-through' => 3,
+                'underline-line-through' => 4,
+            ]),
+            PropKey::TextTransform => self::named($value, [
+                'none' => 1,
+                'uppercase' => 2,
+                'lowercase' => 3,
+                'capitalize' => 4,
+            ]),
+            PropKey::FontStyle => self::named($value, [
+                'normal' => 1,
+                'italic' => 2,
+            ]),
+            PropKey::PointerEvents => self::named($value, [
+                'auto' => 1,
+                'none' => 2,
+                'box-none' => 3,
+                'box-only' => 4,
+            ]),
+            PropKey::AccessibilityRole => self::named($value, [
+                'generic' => AccessibilityRole::Generic->value,
+                'button' => AccessibilityRole::Button->value,
+                'input' => AccessibilityRole::Input->value,
+                'image' => AccessibilityRole::Image->value,
+                'img' => AccessibilityRole::Image->value,
+                'switch' => AccessibilityRole::Switch->value,
+                'adjustable' => AccessibilityRole::Adjustable->value,
+                'slider' => AccessibilityRole::Adjustable->value,
+                'alert' => AccessibilityRole::Alert->value,
+                'checkbox' => AccessibilityRole::Checkbox->value,
+                'combobox' => AccessibilityRole::ComboBox->value,
+                'header' => AccessibilityRole::Header->value,
+                'heading' => AccessibilityRole::Header->value,
+                'imagebutton' => AccessibilityRole::ImageButton->value,
+                'keyboardkey' => AccessibilityRole::KeyboardKey->value,
+                'link' => AccessibilityRole::Link->value,
+                'menu' => AccessibilityRole::Menu->value,
+                'menubar' => AccessibilityRole::MenuBar->value,
+                'menuitem' => AccessibilityRole::MenuItem->value,
+                'none' => AccessibilityRole::None->value,
+                'presentation' => AccessibilityRole::Presentation->value,
+                'progressbar' => AccessibilityRole::ProgressBar->value,
+                'radio' => AccessibilityRole::Radio->value,
+                'radiogroup' => AccessibilityRole::RadioGroup->value,
+                'scrollbar' => AccessibilityRole::ScrollBar->value,
+                'search' => AccessibilityRole::Search->value,
+                'searchbox' => AccessibilityRole::Search->value,
+                'spinbutton' => AccessibilityRole::SpinButton->value,
+                'summary' => AccessibilityRole::Summary->value,
+                'tab' => AccessibilityRole::Tab->value,
+                'tablist' => AccessibilityRole::TabList->value,
+                'text' => AccessibilityRole::Text->value,
+                'timer' => AccessibilityRole::Timer->value,
+                'togglebutton' => AccessibilityRole::ToggleButton->value,
+                'toolbar' => AccessibilityRole::Toolbar->value,
+                'grid' => AccessibilityRole::Grid->value,
+                'list' => AccessibilityRole::List->value,
+                'listitem' => AccessibilityRole::ListItem->value,
+            ]),
+            PropKey::AccessibilityLiveRegion => self::named($value, [
+                'none' => AccessibilityLiveRegion::None->value,
+                'off' => AccessibilityLiveRegion::None->value,
+                'polite' => AccessibilityLiveRegion::Polite->value,
+                'assertive' => AccessibilityLiveRegion::Assertive->value,
+            ]),
+            PropKey::AccessibilityImportance => self::named($value, [
+                'auto' => AccessibilityImportance::Auto->value,
+                'yes' => AccessibilityImportance::Yes->value,
+                'no' => AccessibilityImportance::No->value,
+                'no-hide-descendants' => AccessibilityImportance::NoHideDescendants->value,
+            ]),
+            PropKey::AccessibilityCheckedState => is_bool($value)
+                ? (
+                    $value
+                        ? AccessibilityCheckedState::Checked->value
+                        : AccessibilityCheckedState::Unchecked->value
+                )
+                : self::named($value, [
+                    'false' => AccessibilityCheckedState::Unchecked->value,
+                    'unchecked' => AccessibilityCheckedState::Unchecked->value,
+                    'true' => AccessibilityCheckedState::Checked->value,
+                    'checked' => AccessibilityCheckedState::Checked->value,
+                    'mixed' => AccessibilityCheckedState::Mixed->value,
+                ]),
+            PropKey::ReturnKeyType => self::named($value, [
+                'default' => ReturnKeyType::Default->value,
+                'done' => ReturnKeyType::Done->value,
+                'go' => ReturnKeyType::Go->value,
+                'next' => ReturnKeyType::Next->value,
+                'search' => ReturnKeyType::Search->value,
+                'send' => ReturnKeyType::Send->value,
+                'none' => ReturnKeyType::None->value,
+                'previous' => ReturnKeyType::Previous->value,
+            ]),
+            PropKey::InputFormat => self::named($value, [
+                'none' => InputFormat::None->value,
+                'pattern' => InputFormat::Pattern->value,
+                'mask' => InputFormat::Pattern->value,
+                'currency' => InputFormat::Currency->value,
+                'decimal' => InputFormat::Decimal->value,
+            ]),
+            PropKey::SafeAreaMode => self::named($value, [
+                'padding' => SafeAreaMode::Padding->value,
+                'margin' => SafeAreaMode::Margin->value,
+            ]),
+            PropKey::ScrollPageTransform => $value instanceof ScrollPageTransform
+                ? $value->value
+                : ($value === null || $value === false || $value === '' || $value === 'none'
+                    ? null
+                    : self::named($value, ['cube' => ScrollPageTransform::Cube->value])),
+            PropKey::MediaStartBufferMs => max(0, min(30_000, self::intValue($value, 'startBufferMs'))),
+            // `autoPlayVisible="true"` is half the player; false/0 sends nothing (renderer default: off).
+            PropKey::MediaAutoPlayVisible => match (true) {
+                $value === null, $value === false, $value === 'false', $value === '' => null,
+                $value === true, $value === 'true' => 0.5,
+                default => ($fraction = min(1.0, self::floatValue($value, 'autoPlayVisible'))) > 0.0 ? $fraction : null,
+            },
+            PropKey::MediaAutoPlayGroup => $value === null || $value === false || $value === ''
+                ? null : self::stringValue($value, 'autoPlayGroup'),
+            PropKey::ScrollOffsetAnimationMs => max(0, min(2_000, self::intValue($value, 'contentOffsetAnimationMs'))),
+            PropKey::ScrollOverScrollMode => self::named($value, [
+                'auto' => ScrollOverScrollMode::Auto->value,
+                'always' => ScrollOverScrollMode::Always->value,
+                'never' => ScrollOverScrollMode::Never->value,
+            ]),
+            PropKey::ScrollKeyboardDismissMode => self::named($value, [
+                'none' => ScrollKeyboardDismissMode::None->value,
+                'on-drag' => ScrollKeyboardDismissMode::OnDrag->value,
+                'interactive' => ScrollKeyboardDismissMode::Interactive->value,
+            ]),
+            PropKey::ScrollKeyboardPersistTaps => match (true) {
+                $value === true, $value === 'true' => KeyboardPersistTaps::Always->value,
+                $value === false, $value === 'false' => KeyboardPersistTaps::Never->value,
+                default => self::named($value, [
+                    'never' => KeyboardPersistTaps::Never->value,
+                    'always' => KeyboardPersistTaps::Always->value,
+                    'handled' => KeyboardPersistTaps::Handled->value,
+                ]),
+            },
+            PropKey::ScrollTargetAlignment => self::named($value, [
+                'start' => ScrollTargetAlignment::Start->value,
+                'center' => ScrollTargetAlignment::Center->value,
+                'end' => ScrollTargetAlignment::End->value,
+            ]),
+            PropKey::ScrollDecelerationRate => match ($value) {
+                'normal' => 0.985,
+                'fast' => 0.9,
+                default => min(
+                    1.0,
+                    max(
+                        0.0,
+                        self::floatValue($value, 'ScrollView decelerationRate'),
+                    ),
+                ),
+            },
+            PropKey::ActivitySize => match ($value) {
+                'small' => ActivityIndicatorSize::Small
+                    ->densityIndependentPixels(),
+                'large' => ActivityIndicatorSize::Large
+                    ->densityIndependentPixels(),
+                default => self::floatValue($value, 'ActivityIndicator size'),
+            },
+            PropKey::RefreshIndicatorSize => self::named($value, [
+                'default' => RefreshIndicatorSize::Default->value,
+                'large' => RefreshIndicatorSize::Large->value,
+            ]),
+            PropKey::TextEllipsizeMode => self::named($value, [
+                'tail' => TextEllipsizeMode::Tail->value,
+                'head' => TextEllipsizeMode::Head->value,
+                'middle' => TextEllipsizeMode::Middle->value,
+                'clip' => TextEllipsizeMode::Clip->value,
+                'marquee' => TextEllipsizeMode::Marquee->value,
+            ]),
+            PropKey::TextBreakStrategy => self::named($value, [
+                'highQuality' => TextBreakStrategy::HighQuality->value,
+                'high-quality' => TextBreakStrategy::HighQuality->value,
+                'simple' => TextBreakStrategy::Simple->value,
+                'balanced' => TextBreakStrategy::Balanced->value,
+            ]),
+            PropKey::TextHyphenationFrequency => self::named($value, [
+                'none' => TextHyphenationFrequency::None->value,
+                'normal' => TextHyphenationFrequency::Normal->value,
+                'full' => TextHyphenationFrequency::Full->value,
+            ]),
+            PropKey::TextDataDetectorType => self::named($value, [
+                'none' => TextDataDetectorType::None->value,
+                'phoneNumber' => TextDataDetectorType::PhoneNumber->value,
+                'phone-number' => TextDataDetectorType::PhoneNumber->value,
+                'link' => TextDataDetectorType::Link->value,
+                'email' => TextDataDetectorType::Email->value,
+                'all' => TextDataDetectorType::All->value,
+            ]),
+            PropKey::AnimationKind => self::named($value, [
+                'none' => AnimationKind::None->value,
+                'pulse' => AnimationKind::Pulse->value,
+            ]),
+            PropKey::GridTracks => ($value instanceof \Pam\Desktop\GridTracks
+                ? $value
+                : \Pam\Desktop\GridTracks::fromWire(is_string($value) ? $value : throw new InvalidArgumentException('gridTracks requires GridTracks or a serialized string.')))->toWire(),
+            PropKey::GridTemplate => ($value instanceof \Pam\Desktop\GridTemplate
+                ? $value
+                : \Pam\Desktop\GridTemplate::fromWire(is_string($value)
+                    ? $value
+                    : throw new InvalidArgumentException('gridTemplate requires a GridTemplate or serialized string.')))->toWire(),
+            PropKey::GridColumns,
+            PropKey::GridSpan,
+            PropKey::GridSpanSm,
+            PropKey::GridSpanMd,
+            PropKey::GridSpanLg,
+            PropKey::GridSpanXl,
+            PropKey::GridSpan2xl,
+            => max(1, min(64, (int) self::floatValue($value, "Grid {$key->name}"))),
+            PropKey::GridOffset,
+            PropKey::GridOffsetSm,
+            PropKey::GridOffsetMd,
+            PropKey::GridOffsetLg,
+            PropKey::GridOffsetXl,
+            PropKey::GridOffset2xl,
+            PropKey::GridOrder,
+            PropKey::GridOrderSm,
+            PropKey::GridOrderMd,
+            PropKey::GridOrderLg,
+            PropKey::GridOrderXl,
+            PropKey::GridOrder2xl,
+            => max(0, (int) self::floatValue($value, "Grid {$key->name}")),
+            PropKey::GridColumnGap,
+            PropKey::GridRowGap,
+            PropKey::GridMinColumnWidth,
+            => max(0.0, self::floatValue($value, "Grid {$key->name}")),
+            PropKey::PressAndroidDisableSound,
+            PropKey::RippleBorderless,
+            PropKey::RippleForeground,
+            PropKey::ScrollAnchorToEnd,
+            PropKey::ScrollMaintainVisibleContentPosition,
+            => self::boolValue($value, "Pressable {$key->name}"),
+            PropKey::PressDelayLongMs,
+            PropKey::PressDelayInMs,
+            PropKey::PressDelayOutMs,
+            PropKey::ScrollRequest,
+            PropKey::DrawingClearRequest,
+            PropKey::DrawingUndoRequest,
+            => min(
+                60_000,
+                max(0, (int) self::floatValue($value, "Pressable {$key->name}")),
+            ),
+            PropKey::HitSlop,
+            PropKey::HitSlopLeft,
+            PropKey::HitSlopTop,
+            PropKey::HitSlopRight,
+            PropKey::HitSlopBottom,
+            PropKey::PressRetentionLeft,
+            PropKey::PressRetentionTop,
+            PropKey::PressRetentionRight,
+            PropKey::PressRetentionBottom,
+            PropKey::RippleRadius,
+            PropKey::ScrollAutoScrollToEndThreshold,
+            PropKey::DrawingWidth,
+            => max(0.0, self::floatValue($value, "Pressable {$key->name}")),
+            PropKey::RippleAlpha => min(
+                1.0,
+                max(0.0, self::floatValue($value, 'Pressable ripple alpha')),
+            ),
+            PropKey::IncludeFontPadding,
+            PropKey::StickyHeader,
+            PropKey::ScrollKeyboardInset,
+            PropKey::ListFullSpan,
+            => self::boolValue($value, "Template {$key->name}"),
+            PropKey::KeyboardProgress => $value instanceof \Pam\Desktop\Animation\KeyboardProgress
+                ? $value->encode()
+                : (is_string($value) && $value !== '' ? $value : null),
+            PropKey::AnimationProgram => $value instanceof Animation
+                ? $value->encode()
+                : (is_string($value) && $value !== '' ? $value : null),
+            PropKey::PressTapEffect => $value instanceof TapEffect
+                ? $value->encode()
+                : (is_string($value) && $value !== '' ? $value : null),
+            PropKey::GestureDrag => $value instanceof Drag
+                ? $value->encode()
+                : (is_string($value) && $value !== '' ? $value : null),
+            PropKey::NativeRef => Drag::ref(self::stringValue($value, 'nativeRef')),
+            PropKey::SharedTransitionTag => self::sharedTag($value),
+            PropKey::SharedTransitionConfig => $value instanceof SharedTransitionStyle
+                ? $value->toJson()
+                : ($value === null || $value === false || $value === '' ? null : self::stringValue($value, 'sharedStyle')),
+            PropKey::MediaClock,
+            PropKey::MediaProgress,
+            => $value === null || $value === false || $value === ''
+                ? null
+                : Drag::ref(self::stringValue($value, "Template {$key->name}")),
+            PropKey::MediaClockFormat => $value instanceof \Pam\Desktop\MediaClockFormat
+                ? $value->value
+                : self::named($value, [
+                    'elapsed' => \Pam\Desktop\MediaClockFormat::Elapsed->value,
+                    'remaining' => \Pam\Desktop\MediaClockFormat::Remaining->value,
+                    'elapsed-duration' => \Pam\Desktop\MediaClockFormat::ElapsedAndDuration->value,
+                    'duration' => \Pam\Desktop\MediaClockFormat::Duration->value,
+                    'countdown' => \Pam\Desktop\MediaClockFormat::CountdownSeconds->value,
+                ]),
+            PropKey::ListSection,
+            PropKey::ListActiveSection,
+            => $value === null || $value === false ? null : self::stringValue($value, "Template {$key->name}"),
+            PropKey::PressDoubleTapDelayMs => max(80, min(1_000, self::intValue($value, 'doubleTapDelay'))),
+            PropKey::GestureDragSnapIndex => Drag::snapRequestValue($value),
+            PropKey::AnimationRestartKey => max(0, self::intValue($value, "Template {$key->name}")),
+            default => is_string($value) || is_int($value) || is_float($value) || is_bool($value)
+                ? $value
+                : null,
+        };
+    }
+
+    /**
+     * expo-linear-gradient props → backgroundGradient. `start`/`end` are box
+     * fractions ({x, y} maps or [x, y] lists), `locations` stop fractions.
+     *
+     * @param array<string, mixed> $values
+     * @return array<string, mixed>
+     */
+    private static function linearGradientAttributes(array $values): array
+    {
+        $colors = $values['colors'] ?? null;
+        if (is_string($colors)) {
+            $colors = self::splitList($colors);
+        }
+        if (!is_array($colors)) {
+            throw new RuntimeException('LinearGradient requires a colors list.');
+        }
+        $locations = $values['locations'] ?? null;
+        if (is_string($locations)) {
+            $locations = self::splitList($locations);
+        }
+        if ($locations !== null && !is_array($locations)) {
+            throw new RuntimeException('LinearGradient locations must be a list of fractions.');
+        }
+        $values['backgroundGradient'] = CssEffects::encode([CssEffects::pointsGradient(
+            array_map(
+                static fn (mixed $color): int => is_int($color)
+                    ? $color
+                    : CssColor::parse(self::stringValue($color, 'LinearGradient color'), 'LinearGradient color'),
+                array_values($colors),
+            ),
+            self::gradientPoint($values['start'] ?? null, [0.5, 0.0], 'start'),
+            self::gradientPoint($values['end'] ?? null, [0.5, 1.0], 'end'),
+            $locations === null ? null : array_map(
+                static fn (mixed $location): float => self::floatValue($location, 'LinearGradient location'),
+                array_values($locations),
+            ),
+            'LinearGradient',
+        )]);
+        unset($values['colors'], $values['start'], $values['end'], $values['locations'], $values['dither']);
+
+        return $values;
+    }
+
+    /**
+     * @param array{0: float, 1: float} $default
+     * @return array{0: float, 1: float}
+     */
+    private static function gradientPoint(mixed $value, array $default, string $label): array
+    {
+        if ($value === null) {
+            return $default;
+        }
+        if (is_string($value)) {
+            $value = self::splitList($value);
+        }
+        if (is_array($value) && array_key_exists('x', $value) && array_key_exists('y', $value)) {
+            $value = [$value['x'], $value['y']];
+        }
+        if (!is_array($value) || count($value) !== 2) {
+            throw new RuntimeException("LinearGradient {$label} must be {x, y} or [x, y].");
+        }
+        $value = array_values($value);
+
+        return [
+            self::floatValue($value[0], "LinearGradient {$label}.x"),
+            self::floatValue($value[1], "LinearGradient {$label}.y"),
+        ];
+    }
+
+    /**
+     * Skeleton shimmer matching the common native shimmer: `baseColor`
+     * fills the box, a `gradientColor` highlight sweeps left to right every
+     * `duration` ms; children render on top. Clips to its radius.
+     *
+     * @param array<string, mixed> $values
+     * @return array<string, mixed>
+     */
+    private static function shimmerAttributes(array $values): array
+    {
+        if (array_key_exists('baseColor', $values)) {
+            $values['backgroundColor'] ??= $values['baseColor'];
+        }
+        $values['shimmerGradientColor'] = $values['gradientColor'] ?? 0x59FFFFFF;
+        $values['shimmerDurationMs'] = max(1, self::intValue($values['duration'] ?? 1200, 'Shimmer duration'));
+        $values['shimmerEnabled'] = self::boolValue($values['enabled'] ?? true, 'Shimmer enabled');
+        $values['overflow'] ??= 'hidden';
+        unset($values['baseColor'], $values['gradientColor'], $values['duration'], $values['enabled']);
+
+        return $values;
+    }
+
+    /** @return list<string> */
+    private static function splitList(string $value): array
+    {
+        $trimmed = trim($value);
+        if (str_starts_with($trimmed, '[')) {
+            $decoded = json_decode($trimmed, true);
+            if (is_array($decoded)) {
+                return array_map(
+                    static fn (mixed $item): string => self::stringValue($item, 'LinearGradient list item'),
+                    array_values($decoded),
+                );
+            }
+        }
+        $parts = [];
+        $depth = 0;
+        $current = '';
+        foreach (str_split($trimmed) as $character) {
+            if ($character === '(') {
+                $depth++;
+            } elseif ($character === ')') {
+                $depth--;
+            }
+            if ($character === ',' && $depth === 0) {
+                $parts[] = trim($current);
+                $current = '';
+                continue;
+            }
+            $current .= $character;
+        }
+        if (trim($current) !== '') {
+            $parts[] = trim($current);
+        }
+
+        return $parts;
+    }
+
+    /** @param array<string, mixed> $values */
+    private static function activityIndicator(array $values): ActivityIndicator
+    {
+        $indicator = ActivityIndicator::make(self::boolValue(
+            $values['animating'] ?? $values['visible'] ?? true,
+            'ActivityIndicator animating',
+        ))
+            ->hidesWhenStopped(self::boolValue(
+                $values['hidesWhenStopped'] ?? true,
+                'ActivityIndicator hidesWhenStopped',
+            ))
+            ->size(self::activityIndicatorSize($values['size'] ?? 'small'));
+
+        // React Native spelling: `color` tints the spinner unless `progressColor` is authored too.
+        return isset($values['color']) && !isset($values['progressColor'])
+            ? $indicator->color(self::colorValue($values['color'], 'ActivityIndicator color'))
+            : $indicator;
+    }
+
+    private static function colorValue(mixed $value, string $context): int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+        $raw = trim(self::stringValue($value, $context));
+        if (preg_match('/^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/D', $raw, $color) === 1) {
+            $hex = strlen($color[1]) === 6 ? 'FF'.$color[1] : $color[1];
+
+            return (int) hexdec($hex);
+        }
+
+        return CssColor::parse($raw, $context);
+    }
+
+    private static function activityIndicatorSize(
+        mixed $value,
+    ): ActivityIndicatorSize|float {
+        return match ($value) {
+            'small' => ActivityIndicatorSize::Small,
+            'large' => ActivityIndicatorSize::Large,
+            default => max(
+                1.0,
+                self::floatValue($value, 'ActivityIndicator size'),
+            ),
+        };
+    }
+
+    /** @param array<string, int> $values */
+    private static function named(mixed $value, array $values): int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        $name = self::stringValue($value, 'Template option');
+
+        if (!isset($values[$name])) {
+            throw new InvalidArgumentException("Unknown template option {$name}.");
+        }
+
+        return $values[$name];
+    }
+
+    private static function gestureType(mixed $value): GestureType
+    {
+        return GestureType::from(self::named($value, [
+            'tap' => GestureType::Tap->value,
+            'pan' => GestureType::Pan->value,
+            'pinch' => GestureType::Pinch->value,
+            'rotation' => GestureType::Rotation->value,
+            'swipe' => GestureType::Swipe->value,
+            'longPress' => GestureType::LongPress->value,
+        ]));
+    }
+
+    /** @param array<string, mixed> $data */
+    private static function classes(
+        Element $element,
+        string $classes,
+        array $data,
+    ): Element
+    {
+        $sheet = $data['__pamStyles'] ?? null;
+        $sheetId = is_array($sheet) ? ($sheet['__pamSheetId'] ?? null) : null;
+        if (is_int($sheetId) && isset(self::$localClassStrings[$sheetId][$classes])) {
+            return $element;
+        }
+        $localClasses = self::styleSheetClasses($data);
+        $allLocal = true;
+        foreach (preg_split('/\\s+/', trim($classes)) ?: [] as $class) {
+            if ($class === '' || isset($localClasses[$class])) {
+                continue;
+            }
+            $allLocal = false;
+            break;
+        }
+        if ($allLocal && is_int($sheetId)) {
+            if (count(self::$localClassStrings) >= 512) {
+                self::$localClassStrings = [];
+            }
+            self::$localClassStrings[$sheetId][$classes] = true;
+
+            return $element;
+        }
+        foreach (preg_split('/\\s+/', trim($classes)) ?: [] as $class) {
+            if ($class === '') {
+                continue;
+            }
+            if (isset($localClasses[$class])) {
+                continue;
+            }
+
+            $registered = TemplateRegistry::classProperties($class);
+
+            if ($registered !== null) {
+                foreach ($registered as $key => $value) {
+                    $element = $element->property(PropKey::from($key), $value);
+                }
+
+                continue;
+            }
+
+            $utility = self::utility($class);
+
+            if ($utility === null) {
+                throw new RuntimeException("Unknown Pam Desktop class {$class}.");
+            }
+
+            [$key, $value] = $utility;
+            $element = $element->property($key, $value);
+        }
+
+        return $element;
+    }
+
+    /**
+     * @return array{
+     *     classes: array<string, array<string, string|int|bool>>,
+     *     tags: array<string, array<string, string|int|bool>>,
+     *     classCascade: array<string, array<string, array{order: int, value: string|int|bool}>>,
+     *     fonts: array<string, list<array{source: string, weight: string, style: string}>>
+     * }
+     */
+    private static function styleSheet(CompiledTemplateNode $tree): array
+    {
+        $encoded = $tree->attributes['__pamStyles'] ?? null;
+        if (!is_string($encoded) || $encoded === '') {
+            return [
+                'classes' => [],
+                'tags' => [],
+                'classCascade' => [],
+                'cascadeRules' => [],
+                'fonts' => [],
+            ];
+        }
+        $cached = self::$styleSheets[$encoded] ?? null;
+        if ($cached !== null) {
+            return $cached;
+        }
+        try {
+            $decoded = json_decode($encoded, true, 64, JSON_THROW_ON_ERROR);
+        } catch (JsonException $error) {
+            throw new RuntimeException(
+                "Invalid compiled styles in {$tree->source}.",
+                previous: $error,
+            );
+        }
+        if (!is_array($decoded)) {
+            throw new RuntimeException("Invalid compiled styles in {$tree->source}.");
+        }
+        $classes = self::validatedStyleRules($decoded['classes'] ?? null, $tree->source);
+        $tags = self::validatedStyleRules($decoded['tags'] ?? null, $tree->source);
+        $classCascade = self::validatedClassCascade(
+            $decoded['classCascade'] ?? [],
+            $tree->source,
+        );
+        $fonts = self::validatedFontFaces($decoded['fonts'] ?? [], $tree->source);
+
+        $sheet = [
+            'classes' => $classes,
+            'tags' => $tags,
+            'classCascade' => $classCascade,
+            'cascadeRules' => self::safeStyleMetadata($decoded['cascadeRules'] ?? [], $tree->source),
+            'fonts' => $fonts,
+            'scope' => is_int($decoded['scope'] ?? null) ? $decoded['scope'] : 1,
+            'scopeId' => is_string($decoded['scopeId'] ?? null) ? $decoded['scopeId'] : '',
+            'tokens' => self::safeStyleMetadata($decoded['tokens'] ?? [], $tree->source),
+            'variables' => self::safeStyleMetadata($decoded['variables'] ?? [], $tree->source),
+            'variableRules' => self::safeStyleMetadata($decoded['variableRules'] ?? [], $tree->source),
+            'states' => self::safeStyleMetadata($decoded['states'] ?? [], $tree->source),
+            'stateRules' => self::safeStyleMetadata($decoded['stateRules'] ?? [], $tree->source),
+            'recipes' => self::safeStyleMetadata($decoded['recipes'] ?? [], $tree->source),
+            'queries' => self::safeStyleMetadata($decoded['queries'] ?? [], $tree->source),
+            'keyframes' => self::safeStyleMetadata($decoded['keyframes'] ?? [], $tree->source),
+            // Compiler-only output (style IR, bytecode, source map,
+            // compatibility report) is not kept: rendering never reads it.
+            'styleFingerprint' => is_string($decoded['styleFingerprint'] ?? null)
+                ? $decoded['styleFingerprint']
+                : '',
+            '__pamSheetId' => ++self::$styleSheetSequence,
+        ];
+        if (count(self::$styleSheets) >= 256) {
+            self::$styleSheets = [];
+        }
+
+        return self::$styleSheets[$encoded] = $sheet;
+    }
+
+    /** @return array<array-key, mixed> */
+    private static function safeStyleMetadata(mixed $value, string $source, int $depth = 0): array
+    {
+        if (!is_array($value) || $depth > 12 || count($value) > 10_000) {
+            throw new RuntimeException("Invalid Language 2 style IR in {$source}.");
+        }
+        $safe = [];
+        foreach ($value as $key => $entry) {
+            if (is_array($entry)) {
+                $safe[$key] = self::safeStyleMetadata($entry, $source, $depth + 1);
+            } elseif (is_string($entry) || is_int($entry) || is_float($entry) || is_bool($entry) || $entry === null) {
+                $safe[$key] = $entry;
+            } else {
+                throw new RuntimeException("Invalid Language 2 style IR value in {$source}.");
+            }
+        }
+        return $safe;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @return array<string, array<string, string|int|bool>>
+     */
+    private static function styleSheetClasses(array $data): array
+    {
+        $sheet = $data['__pamStyles'] ?? null;
+        $id = is_array($sheet) ? ($sheet['__pamSheetId'] ?? null) : null;
+        if (is_int($id) && isset(self::$sheetClasses[$id])) {
+            return self::$sheetClasses[$id];
+        }
+        $classes = is_array($sheet) ? ($sheet['classes'] ?? null) : null;
+        $known = self::validatedStyleRules(is_array($classes) ? $classes : [], '<scoped-classes>');
+        if (is_array($sheet)) {
+            $rules = $sheet['cascadeRules'] ?? [];
+            if (!is_array($rules)) throw new RuntimeException('Invalid scoped class rules.');
+            foreach ($rules as $rule) {
+                if (!is_array($rule) || !is_array($rule['selector'] ?? null)) continue;
+                $compounds = $rule['selector']['compounds'] ?? [];
+                if (!is_array($compounds)) continue;
+                foreach ($compounds as $compound) {
+                    if (!is_array($compound) || !is_array($compound['classes'] ?? null)) continue;
+                    foreach ($compound['classes'] as $class) {
+                        if (is_string($class) && $class !== '') {
+                            $known[$class] ??= [];
+                        }
+                    }
+                }
+            }
+        }
+        // A class may be declared only inside @media/@container: it is a
+        // known class whose properties apply while the query matches.
+        $queries = is_array($sheet) ? ($sheet['queries'] ?? []) : [];
+        foreach (is_array($queries) ? $queries : [] as $query) {
+            $queryClasses = is_array($query) && is_array($query['styles']['classes'] ?? null) ? $query['styles']['classes'] : [];
+            foreach (array_keys($queryClasses) as $class) {
+                if (is_string($class) && $class !== '') {
+                    $known[$class] ??= [];
+                }
+            }
+        }
+        if (is_int($id)) {
+            if (count(self::$sheetClasses) >= 512) {
+                self::$sheetClasses = [];
+            }
+            self::$sheetClasses[$id] = $known;
+        }
+        return $known;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @param array<string, mixed> $rawAttributes
+     * @return array<string, string|int|float|bool>
+     */
+    private static function scopedStyleAttributes(
+        string $tag,
+        ?string $classes,
+        array $data,
+        array $rawAttributes,
+        ?object $scope,
+        ?array $descriptor = null,
+        ?array $prepared = null,
+    ): array {
+        $sheet = $data['__pamStyles'] ?? null;
+        if (!is_array($sheet)) {
+            return [];
+        }
+        $prepared ??= self::preparedStyleSheet($sheet, $data);
+        $sheet = $prepared['sheet'];
+        $descriptor ??= self::styleNodeDescriptor($tag, $classes, $rawAttributes, $scope, $data);
+        $ancestors = is_array($data['__pamStyleAncestors'] ?? null) ? $data['__pamStyleAncestors'] : [];
+        $hasCascade = $prepared['hasCascade'];
+        $attributes = $hasCascade
+            ? self::indexedCascadeStyleAttributes($prepared, $descriptor, $ancestors)
+            : [];
+        $classCascade = is_array($sheet['classCascade'] ?? null)
+            ? $sheet['classCascade']
+            : [];
+        $classNames = $descriptor['uniqueClasses'];
+        $tags = is_array($sheet['tags'] ?? null) ? $sheet['tags'] : [];
+        if (!$hasCascade) {
+            $attributes = is_array($tags[$tag] ?? null) ? $tags[$tag] : [];
+        }
+        if (!$hasCascade && $classCascade !== []) {
+            $winners = [];
+            foreach ($classNames as $class) {
+                $declarations = $classCascade[$class] ?? null;
+                if (!is_array($declarations)) {
+                    continue;
+                }
+                foreach ($declarations as $attribute => $entry) {
+                    if (
+                        !is_array($entry)
+                        || !is_int($entry['order'] ?? null)
+                        || !array_key_exists('value', $entry)
+                    ) {
+                        continue;
+                    }
+                    if (
+                        !isset($winners[$attribute])
+                        || $entry['order'] >= $winners[$attribute]['order']
+                    ) {
+                        $winners[$attribute] = $entry;
+                    }
+                }
+            }
+            foreach ($winners as $attribute => $entry) {
+                $attributes[$attribute] = $entry['value'];
+            }
+        } elseif (!$hasCascade) {
+            // Backward compatibility for templates compiled before cascade indexes.
+            $classRules = is_array($sheet['classes'] ?? null) ? $sheet['classes'] : [];
+            foreach ($classNames as $class) {
+                if (is_array($classRules[$class] ?? null)) {
+                    $attributes = [...$attributes, ...$classRules[$class]];
+                }
+            }
+        }
+        $utilityAttributes = [];
+        foreach ($classNames as $class) {
+            $utility = self::$styleUtilities[$class] ?? null;
+            if ($utility === null) {
+                $utility = StyleUtilityCompiler::compile($class) ?? false;
+                if (count(self::$styleUtilities) >= 4096) {
+                    self::$styleUtilities = [];
+                }
+                self::$styleUtilities[$class] = $utility;
+            }
+            if ($utility !== false) {
+                $utilityAttributes[$utility['attribute']] = $utility['value'];
+            }
+        }
+        if ($utilityAttributes !== []) {
+            $attributes = [...$utilityAttributes, ...$attributes];
+        }
+
+        $recipeName = $rawAttributes['recipe'] ?? null;
+        if ($recipeName !== null) {
+            $recipeName = self::stringValue(
+                self::value($recipeName, $scope, $data),
+                'recipe',
+            );
+            $recipes = is_array($sheet['recipes'] ?? null) ? $sheet['recipes'] : [];
+            $recipe = $recipes[$recipeName] ?? null;
+            if (!is_array($recipe)) {
+                throw new RuntimeException("Unknown PAM recipe {$recipeName}.");
+            }
+            if (is_array($recipe['base'] ?? null)) {
+                $attributes = [...$attributes, ...$recipe['base']];
+            }
+            foreach ($rawAttributes as $name => $rawValue) {
+                if (!str_starts_with($name, 'variant:')) {
+                    continue;
+                }
+                $variant = substr($name, 8);
+                $choice = self::stringValue(
+                    self::value($rawValue, $scope, $data),
+                    "recipe variant {$variant}",
+                );
+                $recipeVariants = $recipe['variants'] ?? null;
+                $choices = is_array($recipeVariants) ? ($recipeVariants[$variant] ?? null) : null;
+                $styles = is_array($choices) ? ($choices[$choice] ?? null) : null;
+                if (!is_array($styles)) {
+                    throw new RuntimeException(
+                        "Unknown PAM recipe variant {$recipeName}.{$variant}={$choice}.",
+                    );
+                }
+                $attributes = [...$attributes, ...$styles];
+            }
+        }
+
+        $stateRules = is_array($sheet['states'] ?? null) ? $sheet['states'] : [];
+        if ($stateRules !== []) {
+            $selectors = [$tag];
+            foreach ($classNames as $class) {
+                $selectors[] = '.'.$class;
+            }
+            foreach ($selectors as $selector) {
+                $selectorStates = $stateRules[$selector] ?? null;
+                $pressed = is_array($selectorStates) ? ($selectorStates['pressed'] ?? null) : null;
+                if (!is_array($pressed)) {
+                    continue;
+                }
+                if (isset($pressed['opacity'])) {
+                    $attributes['pressedOpacity'] = $pressed['opacity'];
+                }
+                if (
+                    isset($pressed['scaleX'], $pressed['scaleY'])
+                    && $pressed['scaleX'] === $pressed['scaleY']
+                ) {
+                    $attributes['pressedScale'] = $pressed['scaleX'];
+                }
+            }
+        }
+        $nativeStates = [];
+        foreach (self::candidateStyleRules($prepared['stateBuckets'], $descriptor) as $position) {
+            $stateRule = $prepared['stateRules'][$position];
+            if (!self::compiledSelectorMatches($stateRule['compounds'], $descriptor, $ancestors)) {
+                continue;
+            }
+            $state = $stateRule['state'];
+            $declarations = $stateRule['declarations'];
+            if (!is_string($state) || !is_array($declarations)) continue;
+            $declarations = self::resolveDynamicStyles(self::styleAttributes($declarations, 'state declarations'), $data);
+            // CSS :active is the touch-down state, i.e. React Native's pressed style.
+            if ($state === 'pressed' || $state === 'active') {
+                if (isset($declarations['opacity'])) $attributes['pressedOpacity'] = $declarations['opacity'];
+                if (isset($declarations['scaleX'], $declarations['scaleY']) && $declarations['scaleX'] === $declarations['scaleY']) {
+                    $attributes['pressedScale'] = $declarations['scaleX'];
+                }
+            }
+            $stateKind = match ($state) {
+                'pressed', 'active' => StyleInteractionState::Pressed,
+                'focus', 'focus-visible' => StyleInteractionState::Focused,
+                'focus-within' => StyleInteractionState::FocusWithin,
+                'hover' => StyleInteractionState::Hovered,
+                'disabled' => StyleInteractionState::Disabled,
+                'checked' => StyleInteractionState::Checked,
+                'selected' => StyleInteractionState::Selected,
+                'loading' => StyleInteractionState::Loading,
+                'error' => StyleInteractionState::Error,
+                default => null,
+            };
+            if ($stateKind === null) continue;
+            if (isset($descriptor['pseudoSet'][$state])) {
+                $attributes = [...$attributes, ...$declarations];
+            }
+            foreach ($declarations as $attribute => $value) {
+                $property = self::PROPERTIES[$attribute] ?? null;
+                if ($property !== null && in_array($property, [
+                    PropKey::Opacity,
+                    PropKey::ScaleX,
+                    PropKey::ScaleY,
+                    PropKey::TranslationX,
+                    PropKey::TranslationY,
+                    PropKey::BackgroundColor,
+                    PropKey::TextColor,
+                    PropKey::BorderColor,
+                    PropKey::BorderTopColor,
+                    PropKey::BorderRightColor,
+                    PropKey::BorderBottomColor,
+                    PropKey::BorderLeftColor,
+                    PropKey::Elevation,
+                ], true)) {
+                    $nativeStates[$stateKind->value][$property->value] = $value;
+                }
+            }
+        }
+        if ($nativeStates !== []) {
+            $attributes['nativeStateStyles'] = json_encode(
+                $nativeStates,
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION,
+            );
+        }
+        if ($attributes === []) {
+            return [];
+        }
+
+        return self::resolveDynamicStyles(self::styleAttributes($attributes, 'scoped attributes'), $data);
+    }
+
+    /**
+     * Describes one element for selector matching. Only attributes that some
+     * selector of the active sheet can observe are evaluated: descriptors are
+     * built for every element, and evaluating every attribute expression just
+     * to discard it dominated render time.
+     *
+     * @param array<string, mixed> $raw
+     * @param array<string, mixed> $data
+     * @return array{
+     *     tag: string,
+     *     tagLower: string,
+     *     id: string|null,
+     *     classes: list<string>,
+     *     uniqueClasses: list<string>,
+     *     classSet: array<array-key, true>,
+     *     attributes: array<string, mixed>,
+     *     pseudos: list<string>,
+     *     pseudoSet: array<string, true>
+     * }
+     */
+    private static function styleNodeDescriptor(string $tag, ?string $classes, array $raw, ?object $scope, array $data): array
+    {
+        $observed = self::observedStyleAttributes($data);
+        $attributes = [];
+        if ($observed !== []) {
+            foreach ($raw as $name => $value) {
+                if (str_starts_with($name, '@') || str_starts_with($name, 'on:')) {
+                    continue;
+                }
+                $attribute = ltrim($name, ':');
+                if (!isset($observed[$attribute])) {
+                    continue;
+                }
+                try {
+                    $attributes[$attribute] = str_starts_with($name, ':')
+                        ? self::dynamicValue($value, $scope, $data)
+                        : self::value($value, $scope, $data);
+                } catch (RuntimeException) {
+                }
+            }
+        }
+        $classList = ($classes === null || $classes === '')
+            ? []
+            : array_values(array_filter(preg_split('/\s+/', trim($classes)) ?: []));
+        $unique = [];
+        $classSet = [];
+        foreach ($classList as $class) {
+            $unique[$class] = $class;
+            $classSet[$class] = true;
+        }
+        $pseudos = [];
+        foreach (['disabled', 'checked', 'selected', 'active', 'loading', 'error'] as $pseudo) {
+            if (($attributes[$pseudo] ?? false) === true) {
+                $pseudos[] = $pseudo;
+            }
+        }
+        if (($attributes['value'] ?? null) === '' || ($attributes['items'] ?? null) === []) {
+            $pseudos[] = 'empty';
+        }
+        $id = $attributes['id'] ?? null;
+        return [
+            'tag' => $tag,
+            'tagLower' => strtolower($tag),
+            'id' => is_scalar($id) ? (string) $id : null,
+            'classes' => $classList,
+            'uniqueClasses' => array_values($unique),
+            'classSet' => $classSet,
+            'attributes' => $attributes,
+            'pseudos' => $pseudos,
+            'pseudoSet' => array_fill_keys($pseudos, true),
+        ];
+    }
+
+    /**
+     * Attribute names any selector of the sheet (including responsive
+     * variants) can observe through attribute conditions, ids or pseudos.
+     *
+     * @param array<string, mixed> $data
+     * @return array<string, true>
+     */
+    private static function observedStyleAttributes(array $data): array
+    {
+        $sheet = $data['__pamStyles'] ?? null;
+        if (!is_array($sheet)) {
+            return [];
+        }
+        $id = $sheet['__pamSheetId'] ?? null;
+        if (is_int($id) && isset(self::$sheetObserved[$id])) {
+            return self::$sheetObserved[$id];
+        }
+        $groups = [$sheet['cascadeRules'] ?? [], $sheet['stateRules'] ?? []];
+        $queries = $sheet['queries'] ?? [];
+        foreach (is_array($queries) ? $queries : [] as $query) {
+            $styles = is_array($query) ? ($query['styles'] ?? null) : null;
+            if (is_array($styles)) {
+                $groups[] = $styles['cascadeRules'] ?? [];
+                $groups[] = $styles['stateRules'] ?? [];
+            }
+        }
+        $observed = [];
+        $pseudoAttributes = false;
+        $empty = false;
+        foreach ($groups as $rules) {
+            if (!is_array($rules)) {
+                continue;
+            }
+            foreach ($rules as $rule) {
+                if (!is_array($rule)) {
+                    continue;
+                }
+                if (is_string($rule['state'] ?? null)) {
+                    $pseudoAttributes = true;
+                }
+                $selector = $rule['selector'] ?? null;
+                $compounds = is_array($selector) ? ($selector['compounds'] ?? null) : null;
+                if (!is_array($compounds)) {
+                    continue;
+                }
+                for ($queue = array_values($compounds); $queue !== [];) {
+                    $compound = array_pop($queue);
+                    if (!is_array($compound)) {
+                        continue;
+                    }
+                    if (is_array($compound['nots'] ?? null)) {
+                        array_push($queue, ...array_values($compound['nots']));
+                    }
+                    if (($compound['id'] ?? null) !== null) {
+                        $observed['id'] = true;
+                    }
+                    $pseudos = $compound['pseudos'] ?? [];
+                    foreach (is_array($pseudos) ? $pseudos : [] as $pseudo) {
+                        if ($pseudo === 'empty') {
+                            $empty = true;
+                        } else {
+                            $pseudoAttributes = true;
+                        }
+                    }
+                    $conditions = $compound['attributes'] ?? [];
+                    foreach (is_array($conditions) ? $conditions : [] as $condition) {
+                        if (is_array($condition) && is_string($condition['name'] ?? null)) {
+                            $observed[$condition['name']] = true;
+                        }
+                    }
+                }
+            }
+        }
+        if ($pseudoAttributes) {
+            foreach (['disabled', 'checked', 'selected', 'active', 'loading', 'error'] as $name) {
+                $observed[$name] = true;
+            }
+        }
+        if ($empty) {
+            $observed['value'] = true;
+            $observed['items'] = true;
+        }
+        if (is_int($id)) {
+            if (count(self::$sheetObserved) >= 512) {
+                self::$sheetObserved = [];
+            }
+            self::$sheetObserved[$id] = $observed;
+        }
+
+        return $observed;
+    }
+
+    /**
+     * Resolves the effective (reactive + responsive) sheet for an element and
+     * returns it with selector indexes. Results are cached per base sheet,
+     * style-variable revision and matched query set, so the per-element cost
+     * is the query evaluation plus one array lookup.
+     *
+     * @param array<string, mixed> $sheet
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    private static function preparedStyleSheet(array $sheet, array $data): array
+    {
+        $id = $sheet['__pamSheetId'] ?? null;
+        if (is_int($id) && ($sheet['queries'] ?? null) === []) {
+            // No responsive queries: the prepared sheet only depends on the
+            // style-variable revision.
+            $plain = self::$plainPrepared[$id] ?? null;
+            if ($plain !== null && $plain[0] === StyleVariables::revision()) {
+                return $plain[1];
+            }
+        }
+        $matched = self::matchedStyleQueries($sheet, $data);
+        $key = is_int($id)
+            ? $id.':'.StyleVariables::revision().':'.implode(',', $matched)
+            : null;
+        if ($key !== null && isset(self::$preparedStyles[$key])) {
+            if (($sheet['queries'] ?? null) === []) {
+                self::$plainPrepared[$id] = [StyleVariables::revision(), self::$preparedStyles[$key]];
+            }
+
+            return self::$preparedStyles[$key];
+        }
+        $effective = self::applyStyleQueries(
+            self::reactiveStyleSheet(self::styleMap($sheet, 'scoped sheet')),
+            $matched,
+        );
+        $cascade = $effective['cascadeRules'] ?? [];
+        $cascade = is_array($cascade) ? $cascade : [];
+        $stateRules = $effective['stateRules'] ?? [];
+        if (!is_array($stateRules)) throw new RuntimeException('Invalid compiled state rules.');
+        [$compiledCascade, $cascadeBuckets] = self::indexStyleRules($cascade, true);
+        [$compiledStates, $stateBuckets] = self::indexStyleRules($stateRules, false);
+        $prepared = [
+            'key' => $key,
+            'usesAncestors' => self::sheetUsesAncestors($sheet),
+            'sheet' => $effective,
+            'hasCascade' => $cascade !== [],
+            'cascade' => $compiledCascade,
+            'cascadeBuckets' => $cascadeBuckets,
+            'stateRules' => $compiledStates,
+            'stateBuckets' => $stateBuckets,
+        ];
+        if ($key !== null) {
+            if (count(self::$preparedStyles) >= 512) {
+                self::$preparedStyles = [];
+                self::$plainPrepared = [];
+            }
+            self::$preparedStyles[$key] = $prepared;
+            if (($sheet['queries'] ?? null) === []) {
+                self::$plainPrepared[$id] = [StyleVariables::revision(), $prepared];
+            }
+        }
+
+        return $prepared;
+    }
+
+    /**
+     * True when any selector of the sheet (base or responsive) relates the
+     * subject to its ancestors; otherwise ancestor descriptors are not kept.
+     *
+     * @param array<string, mixed> $sheet
+     */
+    private static function sheetUsesAncestors(array $sheet): bool
+    {
+        $id = $sheet['__pamSheetId'] ?? null;
+        if (is_int($id) && isset(self::$sheetAncestors[$id])) {
+            return self::$sheetAncestors[$id];
+        }
+        $groups = [$sheet['cascadeRules'] ?? [], $sheet['stateRules'] ?? []];
+        $queries = $sheet['queries'] ?? [];
+        foreach (is_array($queries) ? $queries : [] as $query) {
+            $styles = is_array($query) ? ($query['styles'] ?? null) : null;
+            if (is_array($styles)) {
+                $groups[] = $styles['cascadeRules'] ?? [];
+                $groups[] = $styles['stateRules'] ?? [];
+            }
+        }
+        $uses = false;
+        foreach ($groups as $rules) {
+            foreach (is_array($rules) ? $rules : [] as $rule) {
+                $selector = is_array($rule) ? ($rule['selector'] ?? null) : null;
+                $compounds = is_array($selector) ? ($selector['compounds'] ?? null) : null;
+                if (is_array($compounds) && count($compounds) > 1) {
+                    $uses = true;
+                    break 2;
+                }
+            }
+        }
+        if (is_int($id)) {
+            if (count(self::$sheetAncestors) >= 512) {
+                self::$sheetAncestors = [];
+            }
+            self::$sheetAncestors[$id] = $uses;
+        }
+
+        return $uses;
+    }
+
+    /**
+     * Indexes rules by their subject (rightmost) compound: id, first class,
+     * tag, or universal. Rules that can never match are dropped; validation
+     * errors are kept and raised only when the rule matches, as before.
+     *
+     * @param array<array-key, mixed> $rules
+     * @return array{0: array<int, array<string, mixed>>, 1: array{id: array<string, list<int>>, class: array<array-key, list<int>>, tag: array<string, list<int>>, any: list<int>}}
+     */
+    private static function indexStyleRules(array $rules, bool $cascade): array
+    {
+        $compiled = [];
+        $buckets = ['id' => [], 'class' => [], 'tag' => [], 'any' => []];
+        $position = 0;
+        foreach ($rules as $rule) {
+            $position++;
+            if (!is_array($rule) || !is_array($rule['selector'] ?? null)) {
+                continue;
+            }
+            $compounds = $rule['selector']['compounds'] ?? null;
+            if (!is_array($compounds) || $compounds === []) {
+                continue;
+            }
+            $normalized = [];
+            foreach ($compounds as $compound) {
+                $compound = self::compileStyleCompound($compound);
+                if ($compound === null) {
+                    continue 2;
+                }
+                $normalized[] = $compound;
+            }
+            $entry = ['compounds' => $normalized];
+            if ($cascade) {
+                $entry += self::compileCascadeDeclarations($rule);
+            } else {
+                $entry['state'] = $rule['state'] ?? null;
+                $entry['declarations'] = $rule['declarations'] ?? [];
+            }
+            $compiled[$position] = $entry;
+            $subject = $normalized[count($normalized) - 1];
+            if ($subject['id'] !== null) {
+                $buckets['id'][$subject['id']][] = $position;
+            } elseif ($subject['classes'] !== []) {
+                $buckets['class'][$subject['classes'][0]][] = $position;
+            } elseif ($subject['tag'] !== null) {
+                $buckets['tag'][$subject['tag']][] = $position;
+            } else {
+                $buckets['any'][] = $position;
+            }
+        }
+
+        return [$compiled, $buckets];
+    }
+
+    /**
+     * @return array{tag: string|null, id: string|null, classes: list<string>, pseudos: list<string>, conditions: list<array{0: string, 1: mixed, 2: string}>, combinator: mixed}|null
+     *         null when the compound can never match.
+     */
+    private static function compileStyleCompound(mixed $compound): ?array
+    {
+        if (!is_array($compound)) return null;
+        $tag = $compound['tag'] ?? null;
+        if ($tag === '*') $tag = null;
+        if ($tag !== null && !is_string($tag)) return null;
+        $id = $compound['id'] ?? null;
+        if ($id !== null && !is_string($id)) return null;
+        $classes = $compound['classes'] ?? [];
+        $pseudos = $compound['pseudos'] ?? [];
+        $conditions = $compound['attributes'] ?? [];
+        if (!is_array($classes) || !is_array($pseudos) || !is_array($conditions)) return null;
+        foreach ($classes as $class) {
+            if (!is_string($class)) return null;
+        }
+        foreach ($pseudos as $pseudo) {
+            if (!is_string($pseudo) || in_array($pseudo, ['pressed', 'hover', 'focus', 'focus-visible', 'focus-within', 'first-child', 'last-child'], true)) {
+                return null;
+            }
+        }
+        $compiledConditions = [];
+        foreach ($conditions as $condition) {
+            if (!is_array($condition) || !is_string($condition['name'] ?? null)) return null;
+            $operator = $condition['operator'] ?? '';
+            if ($operator === '') {
+                $compiledConditions[] = [$condition['name'], '', ''];
+                continue;
+            }
+            $expected = $condition['value'] ?? '';
+            if (!is_scalar($expected)) return null;
+            $compiledConditions[] = [$condition['name'], $operator, (string) $expected];
+        }
+
+        // :not() compounds; one that can never match excludes nothing.
+        $nots = [];
+        $negations = $compound['nots'] ?? [];
+        if (is_array($negations)) {
+            foreach ($negations as $negated) {
+                $negated = self::compileStyleCompound($negated);
+                if ($negated !== null) {
+                    $nots[] = $negated;
+                }
+            }
+        }
+
+        return [
+            'tag' => $tag === null ? null : strtolower($tag),
+            'id' => $id,
+            'nots' => $nots,
+            'classes' => array_values($classes),
+            'pseudos' => array_values($pseudos),
+            'conditions' => $compiledConditions,
+            'combinator' => $compound['combinator'] ?? 'descendant',
+        ];
+    }
+
+    /**
+     * @param array<array-key, mixed> $rule
+     * @return array{error: string|null, declarations: list<array{0: string, 1: string|int|bool, 2: list<int>}>}
+     */
+    private static function compileCascadeDeclarations(array $rule): array
+    {
+        $specificity = $rule['selector']['specificity'] ?? [0, 0, 0];
+        if (!is_array($specificity) || count($specificity) !== 3
+            || !is_int($specificity[0] ?? null) || !is_int($specificity[1] ?? null)
+            || !is_int($specificity[2] ?? null) || min($specificity) < 0) {
+            return ['error' => 'Invalid selector specificity.', 'declarations' => []];
+        }
+        $declarations = $rule['declarations'] ?? [];
+        $order = $rule['order'] ?? 0;
+        if (!is_array($declarations) || !is_int($order)) {
+            return ['error' => 'Invalid cascade declarations or order.', 'declarations' => []];
+        }
+        $compiled = [];
+        foreach ($declarations as $attribute => $entry) {
+            if (!is_array($entry) || !array_key_exists('value', $entry)) {
+                continue;
+            }
+            $value = $entry['value'];
+            if (!is_string($attribute) || (!is_string($value) && !is_int($value) && !is_bool($value))) {
+                return ['error' => 'Invalid cascade declaration value.', 'declarations' => []];
+            }
+            $compiled[] = [
+                $attribute,
+                $value,
+                [(bool) ($entry['important'] ?? false) ? 1 : 0,
+                    $specificity[0], $specificity[1], $specificity[2], $order],
+            ];
+        }
+
+        return ['error' => null, 'declarations' => $compiled];
+    }
+
+    /**
+     * @param array{id: array<string, list<int>>, class: array<array-key, list<int>>, tag: array<string, list<int>>, any: list<int>} $buckets
+     * @param array<string, mixed> $node
+     * @return list<int>
+     */
+    private static function candidateStyleRules(array $buckets, array $node): array
+    {
+        $positions = $buckets['any'];
+        $sources = 0;
+        if ($node['id'] !== null && isset($buckets['id'][$node['id']])) {
+            $positions = [...$positions, ...$buckets['id'][$node['id']]];
+            $sources++;
+        }
+        foreach ($node['uniqueClasses'] as $class) {
+            if (isset($buckets['class'][$class])) {
+                $positions = [...$positions, ...$buckets['class'][$class]];
+                $sources++;
+            }
+        }
+        if (isset($buckets['tag'][$node['tagLower']])) {
+            $positions = [...$positions, ...$buckets['tag'][$node['tagLower']]];
+            $sources++;
+        }
+        if ($sources > 1 || ($sources === 1 && $buckets['any'] !== [])) {
+            sort($positions);
+        }
+
+        return $positions;
+    }
+
+    /**
+     * @param array<string, mixed> $prepared
+     * @param array<string, mixed> $node
+     * @param list<array<string, mixed>> $ancestors
+     * @return array<string, string|int|bool>
+     */
+    private static function indexedCascadeStyleAttributes(array $prepared, array $node, array $ancestors): array
+    {
+        $winners = [];
+        foreach (self::candidateStyleRules($prepared['cascadeBuckets'], $node) as $position) {
+            $rule = $prepared['cascade'][$position];
+            if (!self::compiledSelectorMatches($rule['compounds'], $node, $ancestors)) {
+                continue;
+            }
+            if ($rule['error'] !== null) {
+                throw new RuntimeException($rule['error']);
+            }
+            foreach ($rule['declarations'] as [$attribute, $value, $rank]) {
+                $property = self::styleCascadeProperty($attribute);
+                if (!isset($winners[$property]) || $rank >= $winners[$property][0]) {
+                    $winners[$property] = [$rank, $value, $attribute];
+                }
+            }
+        }
+        $attributes = [];
+        foreach ($winners as $winner) {
+            $attributes[$winner[2]] = $winner[1];
+        }
+
+        return $attributes;
+    }
+
+    /**
+     * Unindexed cascade over raw rules (kept for direct callers and tests).
+     *
+     * @param array<array-key, mixed> $rules
+     * @param array<string, mixed> $node
+     * @param array<string, mixed> $data
+     * @return array<string, string|int|bool>
+     */
+    private static function cascadeStyleAttributes(array $rules, array $node, array $data): array
+    {
+        [$compiled, $buckets] = self::indexStyleRules($rules, true);
+        $ancestors = is_array($data['__pamStyleAncestors'] ?? null) ? $data['__pamStyleAncestors'] : [];
+
+        return self::indexedCascadeStyleAttributes(
+            ['cascade' => $compiled, 'cascadeBuckets' => $buckets],
+            self::normalizedStyleNode($node),
+            array_map(self::normalizedStyleNode(...), array_values($ancestors)),
+        );
+    }
+
+    /**
+     * @param array<array-key, mixed> $selector
+     * @param array<array-key, mixed> $node
+     * @param array<array-key, mixed> $ancestors
+     */
+    private static function styleSelectorMatches(array $selector, array $node, array $ancestors): bool
+    {
+        $compounds = $selector['compounds'] ?? null;
+        if (!is_array($compounds) || $compounds === []) return false;
+        $normalized = [];
+        foreach ($compounds as $compound) {
+            $compound = self::compileStyleCompound($compound);
+            if ($compound === null) return false;
+            $normalized[] = $compound;
+        }
+
+        return self::compiledSelectorMatches(
+            $normalized,
+            self::normalizedStyleNode($node),
+            array_map(self::normalizedStyleNode(...), array_values($ancestors)),
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private static function normalizedStyleNode(mixed $node): array
+    {
+        $node = is_array($node) ? $node : [];
+        if (isset($node['tagLower'], $node['classSet'], $node['pseudoSet'], $node['uniqueClasses'])) {
+            return $node;
+        }
+        $tag = is_string($node['tag'] ?? null) ? $node['tag'] : '';
+        $classes = array_values(array_filter(
+            is_array($node['classes'] ?? null) ? $node['classes'] : [],
+            static fn (mixed $class): bool => is_string($class),
+        ));
+        $pseudos = array_values(array_filter(
+            is_array($node['pseudos'] ?? null) ? $node['pseudos'] : [],
+            static fn (mixed $pseudo): bool => is_string($pseudo),
+        ));
+        $unique = [];
+        foreach ($classes as $class) {
+            $unique[$class] = $class;
+        }
+
+        return [
+            'tag' => $tag,
+            'tagLower' => strtolower($tag),
+            'id' => is_string($node['id'] ?? null) ? $node['id'] : null,
+            'classes' => $classes,
+            'uniqueClasses' => array_values($unique),
+            'classSet' => array_fill_keys($classes, true),
+            'attributes' => is_array($node['attributes'] ?? null) ? $node['attributes'] : [],
+            'pseudos' => $pseudos,
+            'pseudoSet' => array_fill_keys($pseudos, true),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $sheet
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    private static function responsiveStyleSheet(array $sheet, array $data): array
+    {
+        return self::applyStyleQueries($sheet, self::matchedStyleQueries($sheet, $data));
+    }
+
+    /**
+     * @param list<array<string, mixed>> $compounds
+     * @param array<string, mixed> $node
+     * @param list<array<string, mixed>> $ancestors
+     */
+    private static function compiledSelectorMatches(array $compounds, array $node, array $ancestors): bool
+    {
+        $index = count($compounds) - 1;
+        if (!self::compiledCompoundMatches($compounds[$index], $node)) return false;
+        $ancestorIndex = count($ancestors) - 1;
+        while ($index > 0) {
+            $relation = $compounds[$index]['combinator'];
+            $index--;
+            if ($relation === 'child') {
+                if ($ancestorIndex < 0 || !self::compiledCompoundMatches($compounds[$index], $ancestors[$ancestorIndex])) return false;
+                $ancestorIndex--;
+                continue;
+            }
+            $found = false;
+            while ($ancestorIndex >= 0) {
+                if (self::compiledCompoundMatches($compounds[$index], $ancestors[$ancestorIndex])) { $found = true; $ancestorIndex--; break; }
+                $ancestorIndex--;
+            }
+            if (!$found) return false;
+        }
+        return true;
+    }
+
+    /**
+     * @param array<string, mixed> $compound
+     * @param array<string, mixed> $node
+     */
+    private static function compiledCompoundMatches(array $compound, array $node): bool
+    {
+        if ($compound['tag'] !== null && $compound['tag'] !== $node['tagLower']) return false;
+        if ($compound['id'] !== null && $node['id'] !== $compound['id']) return false;
+        foreach ($compound['classes'] as $class) {
+            if (!isset($node['classSet'][$class])) return false;
+        }
+        foreach ($compound['nots'] as $negated) {
+            if (self::compiledCompoundMatches($negated, $node)) return false;
+        }
+        foreach ($compound['pseudos'] as $pseudo) {
+            if (!isset($node['pseudoSet'][$pseudo])) return false;
+        }
+        foreach ($compound['conditions'] as [$name, $operator, $expected]) {
+            $nodeAttributes = $node['attributes'];
+            if (!array_key_exists($name, $nodeAttributes)) return false;
+            if ($operator === '') continue;
+            $actualValue = $nodeAttributes[$name];
+            if (!is_scalar($actualValue) && $actualValue !== null) return false;
+            $actual = (string) $actualValue;
+            $matches = match ($operator) {
+                '=' => $actual === $expected,
+                '~=' => in_array($expected, preg_split('/\s+/', $actual) ?: [], true),
+                '|=' => $actual === $expected || str_starts_with($actual, $expected.'-'),
+                '^=' => str_starts_with($actual, $expected), '$=' => str_ends_with($actual, $expected),
+                '*=' => str_contains($actual, $expected), default => false,
+            };
+            if (!$matches) return false;
+        }
+        return true;
+    }
+
+    /**
+     * @param array<string, string|int|float|bool> $attributes
+     * @param array<string, mixed> $data
+     * @return array<string, string|int|float|bool>
+     */
+    private static function resolveDynamicStyles(array $attributes, array $data): array
+    {
+        $dynamic = array_key_exists('lineHeightMultiplier', $attributes);
+        foreach ($attributes as $value) {
+            if (is_string($value) && StyleValueCompiler::encoded($value)) {
+                $dynamic = true;
+                break;
+            }
+        }
+        if (!$dynamic) {
+            return $attributes;
+        }
+        self::$dynamicStyles = true;
+        $metrics = Runtime::windowMetrics();
+        $containerWidth = self::styleDimension($data['__pamContainerWidth'] ?? $metrics->width, 'container width');
+        $containerHeight = self::styleDimension($data['__pamContainerHeight'] ?? $metrics->height, 'container height');
+        $provided = is_array($data['__pamStyleEnvironment'] ?? null)
+            ? $data['__pamStyleEnvironment']
+            : [];
+        $environment = [
+            'width' => $metrics->width,
+            'height' => $metrics->height,
+            'fontScale' => is_numeric($provided['fontScale'] ?? null)
+                ? self::styleDimension($provided['fontScale'], 'font scale')
+                : $metrics->fontScale,
+            'rootFontSize' => is_numeric($provided['rootFontSize'] ?? null)
+                ? self::styleDimension($provided['rootFontSize'], 'root font size')
+                : 16.0,
+            'env.safe-area-inset-top' => $metrics->safeAreaTop,
+            'env.safe-area-inset-right' => $metrics->safeAreaRight,
+            'env.safe-area-inset-bottom' => $metrics->safeAreaBottom,
+            'env.safe-area-inset-left' => $metrics->safeAreaLeft,
+            'env.hairline-width' => PixelRatio::hairlineWidth(),
+            'env.device-pixel' => 1.0 / PixelRatio::get(),
+        ];
+        foreach ($provided as $name => $value) {
+            if (is_string($name) && (is_int($value) || is_float($value))) {
+                if (!is_finite((float) $value)) {
+                    throw new InvalidArgumentException("Nonfinite style environment value: {$name}.");
+                }
+                $environment[$name] = $value;
+            }
+        }
+        $rootFontSize = (float) $environment['rootFontSize'];
+        $environment['fontSize'] = $rootFontSize;
+        $fontSize = $attributes['fontSize'] ?? null;
+        if (is_string($fontSize) && StyleValueCompiler::encoded($fontSize)) {
+            // `em` on font-size has no parent font in native trees; it resolves
+            // against the root font size (same as `rem`).
+            $environment['reference'] = $rootFontSize;
+            $fontSize = StyleValueCompiler::resolve($fontSize, $environment);
+            $attributes['fontSize'] = $fontSize;
+        }
+        $knownFontSize = is_int($fontSize) || is_float($fontSize) || (is_string($fontSize) && is_numeric($fontSize));
+        if ($knownFontSize) {
+            $environment['fontSize'] = (float) $fontSize;
+        }
+        $vertical = [
+            'height' => true,
+            'minHeight' => true,
+            'maxHeight' => true,
+            'top' => true,
+            'bottom' => true,
+            'paddingTop' => true,
+            'paddingBottom' => true,
+            'marginTop' => true,
+            'marginBottom' => true,
+            'translationY' => true,
+        ];
+        foreach ($attributes as $name => $value) {
+            if (!is_string($value) || !StyleValueCompiler::encoded($value)) {
+                continue;
+            }
+            $environment['reference'] = isset($vertical[$name])
+                ? $containerHeight
+                : $containerWidth;
+            $attributes[$name] = StyleValueCompiler::resolve($value, $environment);
+        }
+        if (array_key_exists('lineHeightMultiplier', $attributes)) {
+            $multiplier = $attributes['lineHeightMultiplier'];
+            unset($attributes['lineHeightMultiplier']);
+            if (!array_key_exists('lineHeight', $attributes) && is_numeric($multiplier)) {
+                // Native text defaults to 14dp when no font-size is authored.
+                $base = $knownFontSize ? (float) $environment['fontSize'] : 14.0;
+                $attributes['lineHeight'] = round((float) $multiplier * $base * 100) / 100;
+            }
+        }
+
+        return $attributes;
+    }
+
+    private static function styleDimension(mixed $value, string $label): float
+    {
+        if (!is_numeric($value) || !is_finite((float) $value) || (float) $value < 0.0) {
+            throw new InvalidArgumentException("Invalid style {$label}: expected a finite nonnegative number.");
+        }
+        return (float) $value;
+    }
+
+    /**
+     * @param array<string, mixed> $sheet
+     * @return array<string, mixed>
+     */
+    private static function reactiveStyleSheet(array $sheet): array
+    {
+        $overrides = StyleVariables::all();
+        $bindings = $sheet['variableRules'] ?? [];
+        if ($overrides === [] || !is_array($bindings) || $bindings === []) return $sheet;
+        $fingerprint = is_string($sheet['styleFingerprint'] ?? null) && $sheet['styleFingerprint'] !== ''
+            ? $sheet['styleFingerprint']
+            : hash('sha256', serialize($sheet));
+        $key = $fingerprint.':'.StyleVariables::revision();
+        if (isset(self::$reactiveStyleCache[$key])) return self::$reactiveStyleCache[$key];
+        $variables = [];
+        $rawVariables = $sheet['variables'] ?? [];
+        if (!is_array($rawVariables)) {
+            throw new RuntimeException('Invalid reactive style variables.');
+        }
+        foreach ($rawVariables as $name => $value) {
+            if (!is_string($name) || !is_string($value)) {
+                throw new RuntimeException('Reactive style variables require string names and values.');
+            }
+            $variables[$name] = $value;
+        }
+        $rules = $sheet['cascadeRules'] ?? [];
+        if (!is_array($rules)) {
+            throw new RuntimeException('Invalid reactive style cascade rules.');
+        }
+        foreach ($overrides as $name => $value) $variables[$name] = $value;
+        foreach ($bindings as $binding) {
+            if (!is_array($binding)
+                || !is_string($binding['selector'] ?? null)
+                || !is_int($binding['order'] ?? null)
+                || !is_string($binding['body'] ?? null)) continue;
+            $declarations = ScopedStyleCompiler::compileDeclarations(
+                $binding['body'],
+                $variables,
+                '<reactive-style-variable>',
+            );
+            foreach ($rules as $index => $rule) {
+                if (!is_array($rule)
+                    || ($rule['order'] ?? null) !== $binding['order']
+                    || !is_array($rule['selector'] ?? null)
+                    || ($rule['selector']['source'] ?? null) !== $binding['selector']) continue;
+                $ruleDeclarations = $rule['declarations'] ?? [];
+                if (!is_array($ruleDeclarations)) {
+                    throw new RuntimeException('Invalid reactive style declarations.');
+                }
+                foreach ($declarations as $attribute => $value) {
+                    $declaration = $ruleDeclarations[$attribute] ?? [];
+                    if (!is_array($declaration)) {
+                        throw new RuntimeException('Invalid reactive style declaration.');
+                    }
+                    $declaration['value'] = $value;
+                    $ruleDeclarations[$attribute] = $declaration;
+                }
+                $rule['declarations'] = $ruleDeclarations;
+                $rules[$index] = $rule;
+            }
+        }
+        $sheet['cascadeRules'] = $rules;
+        if (count(self::$reactiveStyleCache) >= 64) self::$reactiveStyleCache = [];
+        return self::$reactiveStyleCache[$key] = $sheet;
+    }
+
+    /**
+     * @param array<string, mixed> $sheet
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    private static function matchedStyleQueries(array $sheet, array $data): array
+    {
+        $queries = $sheet['queries'] ?? [];
+        if (!is_array($queries) || $queries === []) {
+            return [];
+        }
+        $matched = [];
+        foreach ($queries as $index => $query) {
+            if (!is_array($query) || !is_array($query['styles'] ?? null)) {
+                continue;
+            }
+            $kind = $query['kind'] ?? null;
+            $condition = $query['condition'] ?? null;
+            if (!is_int($kind) || !is_string($condition)) {
+                continue;
+            }
+            $metrics = Runtime::windowMetrics();
+            $width = $kind === 1 ? $metrics->width : ($data['__pamContainerWidth'] ?? null);
+            $height = $kind === 1 ? $metrics->height : ($data['__pamContainerHeight'] ?? null);
+            $providedEnvironment = is_array($data['__pamStyleEnvironment'] ?? null)
+                ? $data['__pamStyleEnvironment']
+                : [];
+            $environment = [
+                // The desktop host exports the system it runs on.
+                'platform' => \Pam\Desktop\Platform::os(),
+                ...$providedEnvironment,
+                'width' => $width,
+                'height' => $height,
+                'orientation' => is_int($width) || is_float($width)
+                    ? ((is_int($height) || is_float($height)) && $width > $height
+                        ? 'landscape'
+                        : 'portrait')
+                    : null,
+                'colorScheme' => $metrics->appearance->value === 2 ? 'dark' : 'light',
+                'reducedMotion' => $metrics->reducedMotion ? 'reduce' : 'no-preference',
+                'pointer' => $metrics->pointer,
+                'deviceType' => $metrics->deviceType,
+                'refreshRate' => $metrics->refreshRate,
+                'dynamicRange' => $metrics->dynamicRange,
+                'displayMode' => $metrics->displayMode,
+                'foldPosture' => $metrics->foldPosture,
+                'inputMode' => $metrics->inputMode,
+                'memoryClass' => $metrics->memoryClass,
+                'performanceTier' => $metrics->performanceTier,
+            ];
+            $ast = is_array($query['ast'] ?? null) ? $query['ast'] : null;
+            if (self::queryMatches($condition, $ast, $environment)) {
+                $matched[] = $index;
+            }
+        }
+
+        return $matched;
+    }
+
+    /**
+     * @param array<string, mixed> $sheet
+     * @param list<array-key> $matched
+     * @return array<string, mixed>
+     */
+    private static function applyStyleQueries(array $sheet, array $matched): array
+    {
+        if ($matched === []) {
+            return $sheet;
+        }
+        $queries = $sheet['queries'];
+        foreach ($matched as $index) {
+            $query = $queries[$index];
+            $queryStyles = self::reactiveStyleSheet(self::styleMap($query['styles'], 'responsive sheet'));
+            foreach (['classes', 'tags'] as $group) {
+                $incoming = self::validatedStyleRules($queryStyles[$group] ?? [], '<responsive-style>');
+                $base = self::validatedStyleRules($sheet[$group] ?? [], '<base-style>');
+                foreach ($incoming as $selector => $styles) {
+                    $existing = $base[$selector] ?? [];
+                    foreach (array_keys($styles) as $attribute) {
+                        $property = self::styleCascadeProperty((string) $attribute);
+                        foreach (array_keys($existing) as $previous) {
+                            if ($previous !== $attribute && self::styleCascadeProperty((string) $previous) === $property) {
+                                unset($existing[$previous]);
+                            }
+                        }
+                    }
+                    $base[$selector] = [...$existing, ...$styles];
+                }
+                $sheet[$group] = $base;
+            }
+            $incomingRules = $queryStyles['cascadeRules'] ?? [];
+            if (is_array($incomingRules)) {
+                $baseRules = $sheet['cascadeRules'] ?? [];
+                if (!is_array($baseRules)) {
+                    throw new RuntimeException('Invalid responsive base cascade.');
+                }
+                $baseOrder = 0;
+                foreach ($baseRules as $baseRule) {
+                    $order = is_array($baseRule) ? ($baseRule['order'] ?? 0) : null;
+                    if (!is_int($order) || $order < 0 || $order === PHP_INT_MAX) {
+                        throw new RuntimeException('Invalid responsive base rule order.');
+                    }
+                    $baseOrder = max($baseOrder, $order + 1);
+                }
+                foreach ($incomingRules as $incomingRule) {
+                    if (!is_array($incomingRule)) {
+                        continue;
+                    }
+                    $order = $incomingRule['order'] ?? 0;
+                    if (!is_int($order) || $order < 0 || $order > PHP_INT_MAX - $baseOrder) {
+                        throw new RuntimeException('Invalid responsive rule order.');
+                    }
+                    $incomingRule['order'] = $baseOrder + $order;
+                    $baseRules[] = $incomingRule;
+                }
+                $sheet['cascadeRules'] = $baseRules;
+            }
+            // Query rules are later than base rules by definition.
+            $sheet['classCascade'] = [];
+        }
+        return $sheet;
+    }
+
+    /** CSS aliases such as width/widthPercent remain one cascade property. */
+    private static function styleCascadeProperty(string $attribute): string
+    {
+        return match ($attribute) {
+            'widthPercent' => 'width',
+            'heightPercent' => 'height',
+            'minWidthPercent' => 'minWidth',
+            'minHeightPercent' => 'minHeight',
+            'maxWidthPercent' => 'maxWidth',
+            'maxHeightPercent' => 'maxHeight',
+            'leftPercent' => 'left',
+            'rightPercent' => 'right',
+            'topPercent' => 'top',
+            'bottomPercent' => 'bottom',
+            'flexBasisPercent', 'flexBasisContent' => 'flexBasis',
+            default => $attribute,
+        };
+    }
+
+    /** @return array<string, string|int|float|bool> */
+    private static function styleAttributes(mixed $value, string $label): array
+    {
+        if (!is_array($value)) throw new RuntimeException("Invalid {$label}.");
+        $attributes = [];
+        foreach ($value as $key => $entry) {
+            if (!is_string($key) || !is_scalar($entry) || (is_float($entry) && !is_finite($entry))) {
+                throw new RuntimeException("Invalid {$label} attribute.");
+            }
+            $attributes[$key] = $entry;
+        }
+        return $attributes;
+    }
+
+    /** @return array<string, mixed> */
+    private static function styleMap(mixed $value, string $label): array
+    {
+        if (!is_array($value)) throw new RuntimeException("Invalid {$label}.");
+        $map = [];
+        foreach ($value as $key => $entry) {
+            if (!is_string($key)) throw new RuntimeException("Invalid {$label} key.");
+            $map[$key] = $entry;
+        }
+        return $map;
+    }
+
+    /**
+     * @param array<array-key, mixed>|null $ast
+     * @param array<array-key, mixed> $environment
+     */
+    private static function queryMatches(
+        string $condition,
+        ?array $ast,
+        array $environment,
+    ): bool {
+        if ($ast !== null) {
+            $queryEnvironment = [];
+            foreach ($environment as $key => $value) {
+                if (is_string($key) && (is_scalar($value) || $value === null)) {
+                    $queryEnvironment[$key] = $value;
+                }
+            }
+            return StyleQueryCompiler::matches($ast, $queryEnvironment);
+        }
+        if (preg_match('/\((min|max)-(width|height):\s*([0-9]+(?:\.[0-9]+)?)(?:dp|px)\)/D', $condition, $match) !== 1) {
+            return false;
+        }
+        $actual = $environment[$match[2]] ?? null;
+        if (!is_int($actual) && !is_float($actual)) {
+            return false;
+        }
+        $threshold = (float) $match[3];
+        return $match[1] === 'min' ? $actual >= $threshold : $actual <= $threshold;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @return array<string, list<array{source: string, weight: string, style: string}>>
+     */
+    private static function styleSheetFonts(array $data): array
+    {
+        $sheet = $data['__pamStyles'] ?? null;
+        $id = is_array($sheet) ? ($sheet['__pamSheetId'] ?? null) : null;
+        if (is_int($id) && isset(self::$sheetFonts[$id])) {
+            return self::$sheetFonts[$id];
+        }
+        $fonts = is_array($sheet) ? ($sheet['fonts'] ?? null) : null;
+        $validated = self::validatedFontFaces(is_array($fonts) ? $fonts : [], '<scoped-style-data>');
+        if (is_int($id)) {
+            if (count(self::$sheetFonts) >= 512) {
+                self::$sheetFonts = [];
+            }
+            self::$sheetFonts[$id] = $validated;
+        }
+
+        return $validated;
+    }
+
+    /**
+     * @param array<string, string|int|float|bool> $attributes
+     * @param array<string, list<array{source: string, weight: string, style: string}>> $fonts
+     * @return array<string, string|int|float|bool>
+     */
+    private static function resolveScopedFont(array $attributes, array $fonts): array
+    {
+        $family = $attributes['fontFamily'] ?? null;
+        if (!is_string($family) || $fonts === []) {
+            return $attributes;
+        }
+        // A font-family list: each family declared by @font-face becomes the
+        // face that best matches the weight and style; the others stay as
+        // fallbacks for the backend.
+        $entries = array_map('trim', explode(',', $family));
+        $resolved = false;
+        $exactFirst = false;
+        foreach ($entries as $index => $entry) {
+            if (!isset($fonts[$entry])) {
+                continue;
+            }
+            [$source, $exact] = self::bestFontFace($fonts[$entry], $attributes);
+            if ($source === null) {
+                continue;
+            }
+            $entries[$index] = $source;
+            $resolved = true;
+            if ($index === 0) {
+                $exactFirst = $exact;
+            }
+        }
+        if (!$resolved) {
+            return $attributes;
+        }
+        $attributes['fontFamily'] = implode(', ', $entries);
+        if ($exactFirst) {
+            unset($attributes['fontWeight'], $attributes['fontStyle']);
+        }
+
+        return $attributes;
+    }
+
+    /**
+     * @param list<array{source: string, weight: string, style: string}> $faces
+     * @param array<string, string|int|float|bool> $attributes
+     * @return array{0: string|null, 1: bool}
+     */
+    private static function bestFontFace(array $faces, array $attributes): array
+    {
+        $wantedWeight = (int) ($attributes['fontWeight'] ?? '400');
+        $wantedStyle = (string) ($attributes['fontStyle'] ?? 'normal');
+        $best = null;
+        $bestScore = PHP_INT_MAX;
+        $exact = false;
+        foreach ($faces as $face) {
+            $weight = (int) $face['weight'];
+            $stylePenalty = $face['style'] === $wantedStyle ? 0 : 10_000;
+            $score = $stylePenalty + abs($weight - $wantedWeight);
+            if ($score < $bestScore) {
+                $best = $face;
+                $bestScore = $score;
+            }
+            if ($score === 0) {
+                $exact = true;
+                break;
+            }
+        }
+        return [$best['source'] ?? null, $exact];
+    }
+
+    /**
+     * @return array<string, array<string, string|int|bool>>
+     */
+    private static function validatedStyleRules(mixed $rules, string $source): array
+    {
+        if (!is_array($rules)) {
+            throw new RuntimeException("Invalid compiled styles in {$source}.");
+        }
+        $validated = [];
+        foreach ($rules as $selector => $attributes) {
+            if (!is_string($selector) || !is_array($attributes)) {
+                throw new RuntimeException("Invalid compiled style rule in {$source}.");
+            }
+            foreach ($attributes as $name => $value) {
+                if (
+                    !is_string($name)
+                    || (!is_string($value) && !is_int($value) && !is_bool($value))
+                ) {
+                    throw new RuntimeException("Invalid compiled style value in {$source}.");
+                }
+            }
+            /** @var array<string, string|int|bool> $attributes */
+            $validated[$selector] = $attributes;
+        }
+
+        return $validated;
+    }
+
+    /**
+     * @return array<string, array<string, array{order: int, value: string|int|bool}>>
+     */
+    private static function validatedClassCascade(
+        mixed $cascade,
+        string $source,
+    ): array {
+        if (!is_array($cascade)) {
+            throw new RuntimeException("Invalid compiled class cascade in {$source}.");
+        }
+        $validated = [];
+        foreach ($cascade as $class => $declarations) {
+            if (!is_string($class) || !is_array($declarations)) {
+                throw new RuntimeException("Invalid compiled class cascade in {$source}.");
+            }
+            foreach ($declarations as $attribute => $entry) {
+                $value = is_array($entry) ? ($entry['value'] ?? null) : null;
+                if (
+                    !is_string($attribute)
+                    || !is_array($entry)
+                    || !is_int($entry['order'] ?? null)
+                    || (
+                        !is_string($value)
+                        && !is_int($value)
+                        && !is_bool($value)
+                    )
+                ) {
+                    throw new RuntimeException(
+                        "Invalid compiled class cascade entry in {$source}.",
+                    );
+                }
+                $validated[$class][$attribute] = [
+                    'order' => $entry['order'],
+                    'value' => $value,
+                ];
+            }
+        }
+
+        return $validated;
+    }
+
+    /**
+     * @param array<string, mixed> $values
+     * @param array<string, mixed> $unresolved
+     * @param array<string, mixed> $data
+     * @return array<string, string|int|float|bool>
+     */
+    private static function inheritedStyleAttributes(
+        array $values,
+        array $unresolved,
+        ?object $scope,
+        array $data,
+    ): array {
+        $inherited = [];
+        foreach (self::INHERITED_STYLE_ATTRIBUTES as $attribute) {
+            $value = $values[$attribute] ?? null;
+            if (
+                is_string($value)
+                || is_int($value)
+                || is_float($value)
+                || is_bool($value)
+            ) {
+                $inherited[$attribute] = $value;
+            }
+        }
+        foreach ($unresolved as $name => $raw) {
+            $attribute = ltrim($name, ':');
+            if (!in_array($attribute, self::INHERITED_STYLE_ATTRIBUTES, true)) {
+                continue;
+            }
+            $value = str_starts_with($name, ':')
+                ? self::dynamicValue($raw, $scope, $data)
+                : self::value($raw, $scope, $data);
+            if (
+                is_string($value)
+                || is_int($value)
+                || is_float($value)
+                || is_bool($value)
+            ) {
+                $inherited[$attribute] = $value;
+            }
+        }
+
+        return $inherited;
+    }
+
+    /**
+     * @return array<string, list<array{source: string, weight: string, style: string}>>
+     */
+    private static function validatedFontFaces(mixed $fonts, string $source): array
+    {
+        if (!is_array($fonts)) {
+            throw new RuntimeException("Invalid compiled fonts in {$source}.");
+        }
+        $validated = [];
+        foreach ($fonts as $family => $faces) {
+            if (!is_string($family) || $family === '' || !is_array($faces)) {
+                throw new RuntimeException("Invalid compiled font family in {$source}.");
+            }
+            foreach ($faces as $face) {
+                if (
+                    !is_array($face)
+                    || !is_string($face['source'] ?? null)
+                    || !is_string($face['weight'] ?? null)
+                    || !is_string($face['style'] ?? null)
+                ) {
+                    throw new RuntimeException("Invalid compiled font face in {$source}.");
+                }
+                $validated[$family][] = [
+                    'source' => $face['source'],
+                    'weight' => $face['weight'],
+                    'style' => $face['style'],
+                ];
+            }
+        }
+
+        return $validated;
+    }
+
+    /** @return array{PropKey, int|float}|null */
+    private static function utility(string $class): ?array
+    {
+        $compiled = StyleUtilityCompiler::compile($class);
+        if ($compiled !== null) {
+            $key = self::PROPERTIES[$compiled['attribute']] ?? null;
+            return $key === null ? null : [$key, $compiled['value']];
+        }
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $values
+     * @param list<Element> $children
+     */
+    private static function custom(
+        string $tag,
+        array $values,
+        array $children,
+        ?object $scope,
+    ): Element {
+        $factory = TemplateRegistry::factory($tag);
+
+        if ($factory === null) {
+            throw new RuntimeException("Unknown Pam Desktop tag {$tag}.");
+        }
+
+        $result = $factory($values, $children, $scope);
+
+        if ($result instanceof \Pam\Desktop\View && $scope !== null) {
+            $result = $result->withScope($scope);
+        }
+
+        return $result->toElement();
+    }
+
+    /**
+     * @param array<string, string|int|bool> $attributes
+     * @return array<string, string|int|bool>
+     */
+    private static function nativeEventAliases(array $attributes): array
+    {
+        if (self::$eventAliases === null) {
+            self::$eventAliases = [];
+            foreach (self::EVENTS as $native => $_kind) {
+                self::$eventAliases['@'.substr($native, 3)] = $native;
+            }
+        }
+        foreach (array_intersect_key(self::$eventAliases, $attributes) as $alias => $native) {
+            $attributes[$native] ??= $attributes[$alias];
+            unset($attributes[$alias]);
+        }
+
+        return $attributes;
+    }
+
+    /**
+     * @param list<CompiledTemplateNode> $nodes
+     * @return array{
+     *     list<CompiledTemplateNode>,
+     *     array<string, list<CompiledTemplateNode>>
+     * }
+     */
+    private static function componentSlotNodes(array $nodes): array
+    {
+        $default = [];
+        $slots = [];
+
+        foreach ($nodes as $node) {
+            if (
+                $node->kind !== 1
+                || strtolower($node->name) !== 'template'
+            ) {
+                $default[] = $node;
+                continue;
+            }
+
+            $slotName = null;
+            foreach ($node->attributes as $name => $value) {
+                if (str_starts_with($name, '#')) {
+                    $slotName = substr($name, 1);
+                    break;
+                }
+                if ($name === 'slot' && is_string($value)) {
+                    $slotName = $value;
+                    break;
+                }
+            }
+            if (
+                $slotName === null
+                || preg_match('/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/D', $slotName)
+                    !== 1
+            ) {
+                throw new RuntimeException(
+                    'Named component templates require #slot or slot="name".',
+                );
+            }
+            if (isset($slots[$slotName])) {
+                throw new RuntimeException("Duplicate named slot {$slotName}.");
+            }
+            $slots[$slotName] = $node->children;
+        }
+
+        return [$default, $slots];
+    }
+
+    /**
+     * @param array<string, string|int|bool> $attributes
+     * @param array<string, mixed> $data
+     */
+    private static function classValue(
+        array $attributes,
+        ?object $scope,
+        array $data,
+    ): ?string {
+        $classes = [];
+        $static = $attributes['class'] ?? null;
+
+        if (is_string($static)) {
+            $classes[] = self::interpolate($static, $scope, $data);
+        }
+        $list = array_key_exists(':class', $attributes) && is_string($attributes[':class'])
+            ? TemplateExpression::classList($attributes[':class'], $scope, $data)
+            : null;
+        if ($list !== null) {
+            foreach ($list as $class) {
+                $classes[] = $class;
+            }
+        } elseif (array_key_exists(':class', $attributes)) {
+            $dynamic = self::dynamicValue(
+                $attributes[':class'],
+                $scope,
+                $data,
+            );
+            if (is_string($dynamic)) {
+                $classes[] = $dynamic;
+            } elseif (is_array($dynamic)) {
+                foreach ($dynamic as $class => $enabled) {
+                    if (is_int($class)) {
+                        if (!is_string($enabled)) {
+                            throw new RuntimeException(
+                                'Numeric dynamic class entries must contain class names.',
+                            );
+                        }
+                        $classes[] = $enabled;
+                    } elseif ((bool) $enabled) {
+                        $classes[] = $class;
+                    }
+                }
+            } elseif ($dynamic !== null && $dynamic !== false) {
+                throw new RuntimeException(
+                    ':class must resolve to a string, array, false or null.',
+                );
+            }
+        }
+
+        $parts = [];
+        foreach ($classes as $class) {
+            if (trim($class) !== '') {
+                $parts[] = $class;
+            }
+        }
+        $value = trim(implode(' ', $parts));
+
+        return $value === '' ? null : $value;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private static function componentHandler(
+        string|bool $raw,
+        ?object $scope,
+        array $data,
+    ): Closure {
+        if ($scope === null || !is_string($raw)) {
+            throw new RuntimeException(
+                'Component events require a method or expression on the parent component.',
+            );
+        }
+        if (self::$methodNames[$raw] ??= preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/D', $raw) === 1) {
+            // A method handler only captures its scope: built once per scope.
+            $cached = $scope instanceof Component ? $scope->__pamHandler('@'.$raw) : null;
+            if ($cached !== null) {
+                return $cached;
+            }
+            $method = self::$componentMethods[$scope::class.'::'.$raw] ?? null;
+            if ($method === null) {
+                if (!method_exists($scope, $raw)) {
+                    throw new RuntimeException(
+                        "Component event handler {$raw} does not exist.",
+                    );
+                }
+                $method = new ReflectionMethod($scope, $raw);
+                if (!$method->isPublic()) {
+                    throw new RuntimeException(
+                        "Component event handler {$raw} must be public.",
+                    );
+                }
+                if (count(self::$componentMethods) >= 4096) {
+                    self::$componentMethods = [];
+                }
+                self::$componentMethods[$scope::class.'::'.$raw] = $method;
+            }
+
+            $declared = self::pureMethod($method);
+            $pure = $declared || HandlerPurity::inferred($method);
+            $handler = static function (mixed $payload = null) use (
+                $method,
+                $scope,
+                $declared,
+                $pure,
+            ): void {
+                $skips = $pure && ($declared || !$scope instanceof Component || HandlerPurity::plainState($scope));
+                if ($scope instanceof Component && !$skips) {
+                    DependencyTracker::markDirty($scope);
+                }
+                try {
+                    if ($method->getNumberOfParameters() === 0) {
+                        $method->invoke($scope);
+                    } else {
+                        $method->invoke($scope, $payload);
+                    }
+                } finally {
+                    if ($skips) {
+                        self::settlePureHandler($scope, $declared ? null : $method);
+                    }
+                }
+            };
+            if ($pure) {
+                self::$pureHandlers ??= new \WeakMap();
+                self::$pureHandlers[$handler] = true;
+            }
+
+            return $scope instanceof Component ? $scope->__pamRememberHandler('@'.$raw, $handler) : $handler;
+        }
+
+        return static function (mixed $payload = null) use (
+            $raw,
+            $scope,
+            $data,
+        ): void {
+            if ($scope instanceof Component) {
+                DependencyTracker::markDirty($scope);
+            }
+            TemplateExpression::evaluate(
+                $raw,
+                $scope,
+                [...$data, 'event' => $payload],
+            );
+        };
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private static function handler(
+        string|bool $raw,
+        EventKind $kind,
+        ?object $scope,
+        array $data,
+    ): Closure {
+        if (
+            is_string($raw)
+            && (self::$callExpressions[$raw] ??= preg_match('/^[A-Za-z_][A-Za-z0-9_]*\s*\(/D', $raw) === 1)
+        ) {
+            if ($scope === null) {
+                throw new RuntimeException(
+                    'Template event expressions require a component scope.',
+                );
+            }
+
+            return static function (mixed $payload = '') use (
+                $raw,
+                $scope,
+                $data,
+            ): void {
+                if ($scope instanceof Component) {
+                    DependencyTracker::markDirty($scope);
+                }
+                TemplateExpression::evaluate(
+                    $raw,
+                    $scope,
+                    [...$data, 'event' => $payload],
+                );
+            };
+        }
+
+        $resolved = self::value($raw, $scope, $data);
+
+        if ($resolved instanceof Closure) {
+            return $resolved;
+        }
+
+        if ($scope === null || !is_string($resolved) || !method_exists($scope, $resolved)) {
+            throw new RuntimeException(
+                'Template event handler '.get_debug_type($resolved).' does not exist.',
+            );
+        }
+
+        $method = self::$methods[$scope::class.'::'.$resolved]
+            ??= new ReflectionMethod($scope, $resolved);
+
+        if (!$method->isPublic()) {
+            throw new RuntimeException("Template event handler {$resolved} must be public.");
+        }
+
+        // A method handler only captures its kind, method and scope.
+        $handlerKey = $kind->value.':'.$resolved;
+        $cached = $scope instanceof Component ? $scope->__pamHandler($handlerKey) : null;
+        if ($cached !== null) {
+            return $cached;
+        }
+        $declared = self::pureMethod($method);
+        $pure = $declared || HandlerPurity::inferred($method);
+        $handler = static function (mixed $payload = '') use ($kind, $method, $scope, $declared, $pure): void {
+            // Inferred pure (static analysis of the method): only while the
+            // component's state is plain, so the snapshot sees every change.
+            if (!$pure || (!$declared && $scope instanceof Component && !HandlerPurity::plainState($scope))) {
+                if ($scope instanceof Component) {
+                    DependencyTracker::markDirty($scope);
+                }
+                self::invokeMethodHandler($kind, $method, $scope, $payload);
+
+                return;
+            }
+            try {
+                self::invokeMethodHandler($kind, $method, $scope, $payload);
+            } finally {
+                self::settlePureHandler($scope, $declared ? null : $method);
+            }
+        };
+        if ($pure) {
+            self::$pureHandlers ??= new \WeakMap();
+            self::$pureHandlers[$handler] = true;
+        }
+
+        return $scope instanceof Component ? $scope->__pamRememberHandler($handlerKey, $handler) : $handler;
+    }
+
+    /**
+     * Attributes of a compiled component tag that also apply to its root
+     * element: the component's own props (constructor parameters, public
+     * properties) are consumed as props only, like React Native props.
+     *
+     * @param array<string, mixed> $values
+     * @return array<string, mixed>
+     */
+    private static function rootValues(string $tag, array $values): array
+    {
+        if (!TemplateRegistry::isCompiledComponent($tag)) {
+            return $values;
+        }
+        $props = PamPhpRegistry::propNames($tag);
+
+        return $props === [] ? $values : array_diff_key($values, $props);
+    }
+
+    /**
+     * Call-site values applied over a component's root element, minus the
+     * text styles the call site only inherited from an ancestor (a `color`
+     * on a dark container): those reach the component through its inherited
+     * styles, below the root's own attributes. Decorating the root with them
+     * overrode the root's own text colour (an icon glyph drawn in the
+     * container's text colour).
+     *
+     * @param array<string, mixed> $values
+     * @param array<string, mixed> $data
+     * @param array<string, mixed> $authored the call site's own attributes
+     * @return array<string, mixed>
+     */
+    private static function componentRootValues(string $tag, array $values, array $data, array $authored): array
+    {
+        $values = self::rootValues($tag, $values);
+        $inherited = $data['__pamInheritedStyles'] ?? null;
+        if (!is_array($inherited) || $inherited === []) {
+            return $values;
+        }
+        foreach ($inherited as $attribute => $value) {
+            if (
+                array_key_exists($attribute, $values)
+                && $values[$attribute] === $value
+                && !array_key_exists($attribute, $authored)
+                && !array_key_exists(':'.$attribute, $authored)
+            ) {
+                unset($values[$attribute]);
+            }
+        }
+
+        return $values;
+    }
+
+    /** @var \WeakMap<Closure, true>|null */
+    private static ?\WeakMap $pureHandlers = null;
+
+    /** @var array<string, bool> */
+    private static array $pureMethods = [];
+
+    /** @internal True for a template handler built from a #[PureHandler] method. */
+    public static function isPureHandler(Closure $handler): bool
+    {
+        return self::$pureHandlers !== null && isset(self::$pureHandlers[$handler]);
+    }
+
+    private static function pureMethod(ReflectionMethod $method): bool
+    {
+        return self::$pureMethods[$method->class.'::'.$method->name]
+            ??= $method->getAttributes(\Pam\Desktop\Attributes\PureHandler::class) !== [];
+    }
+
+    /**
+     * A pure handler re-renders its component only when its own state really
+     * changed. A render an inferred-pure handler ($inferred) skips is still
+     * done in development builds and verified (HandlerPurity::verify()).
+     */
+    private static function settlePureHandler(object $scope, ?ReflectionMethod $inferred = null): void
+    {
+        if (!$scope instanceof Component || DependencyTracker::isDirty($scope)) {
+            return;
+        }
+        if ($scope->__pamStateChanged() || ($inferred !== null && HandlerPurity::skipped($inferred))) {
+            DependencyTracker::markDirty($scope);
+        }
+    }
+
+    private static function invokeMethodHandler(
+        EventKind $kind,
+        ReflectionMethod $method,
+        object $scope,
+        mixed $payload,
+    ): void {
+        if ($method->getNumberOfParameters() === 0) {
+            $method->invoke($scope);
+            return;
+        }
+
+        $typed = EventPayloads::parameterClass($method, 0);
+        if ($typed !== null && is_string($payload)) {
+            $method->invoke($scope, EventPayloads::decode($typed, $payload));
+            return;
+        }
+        if ($typed !== null && $payload instanceof $typed) {
+            $method->invoke($scope, $payload);
+            return;
+        }
+        if (in_array($kind, [EventKind::Press, EventKind::LongPress], true) && is_string($payload)) {
+            // Press payloads now carry coordinates; untyped handlers keep
+            // the historical empty payload.
+            $payload = '';
+        }
+
+        if (
+            $kind === EventKind::MediaProgress
+            && is_string($payload)
+            && $method->getNumberOfParameters() >= 2
+        ) {
+            $values = Wire::decodeMap($payload);
+            $method->invoke(
+                $scope,
+                (float) ($values['currentTime'] ?? 0.0),
+                (float) ($values['duration'] ?? 0.0),
+            );
+            return;
+        }
+
+        if (
+            is_string($payload)
+            && in_array($kind, [
+                EventKind::GestureBegin,
+                EventKind::GestureUpdate,
+                EventKind::GestureEnd,
+                EventKind::GestureCancel,
+            ], true)
+        ) {
+            $value = GestureEvent::fromPayload($payload);
+        } elseif ($kind === EventKind::Layout && is_string($payload)) {
+            $value = \Pam\Desktop\LayoutEvent::fromPayload($payload);
+        } elseif ($kind === EventKind::MediaReady && is_string($payload)) {
+            $value = \Pam\Desktop\MediaReadyEvent::fromPayload($payload);
+        } elseif ($kind === EventKind::MediaBuffering && is_string($payload)) {
+            $value = (bool) (Wire::decodeMap($payload)['buffering'] ?? false);
+        } elseif ($kind === EventKind::Toggle) {
+            $value = $payload === true || $payload === '1';
+        } elseif (is_array($payload)) {
+            $value = $payload;
+        } elseif (
+            is_string($payload)
+            || is_int($payload)
+            || is_float($payload)
+            || is_bool($payload)
+            || $payload === null
+            || $payload instanceof Stringable
+        ) {
+            $value = (string) $payload;
+        } elseif (is_object($payload)) {
+            $value = $payload;
+        } else {
+            throw new RuntimeException(
+                'Template event payload must be scalar, stringable, an object, or an array.',
+            );
+        }
+        if (
+            in_array($kind, [EventKind::Layout, EventKind::MediaReady], true)
+            && is_object($value)
+            && ($type = $method->getParameters()[0]->getType()) instanceof \ReflectionNamedType
+            && $type->getName() === 'string'
+        ) {
+            // Handlers written before typed payloads keep the raw string.
+            $value = is_string($payload) ? $payload : '';
+        }
+        $method->invoke($scope, $value);
+    }
+
+    private static function modelHandler(string $model, ?object $scope): Closure
+    {
+        $property = ltrim($model, '$');
+
+        if (
+            $scope === null
+            || preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $property) !== 1
+            || !property_exists($scope, $property)
+        ) {
+            throw new RuntimeException("Model {$model} is not a component property.");
+        }
+
+        $reflection = self::reflectionProperty($scope, $property);
+
+        return static function (string $value) use ($property, $reflection, $scope): void {
+            $previous = $reflection->getValue($scope);
+            if ($previous === $value) {
+                return;
+            }
+            if ($scope instanceof Component) {
+                $scope->__pamNotifyUpdating($property, $value, $previous);
+            }
+            $reflection->setValue($scope, $value);
+            if ($scope instanceof Component) {
+                $scope->__pamNotifyUpdated($property);
+                $scope->__pamFlushChanges();
+            }
+        };
+    }
+
+    private static function checkedModelHandler(
+        string $model,
+        ?object $scope,
+    ): Closure {
+        $property = ltrim($model, '$');
+        if (
+            $scope === null
+            || preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/D', $property) !== 1
+            || !property_exists($scope, $property)
+        ) {
+            throw new RuntimeException(
+                "Template checked binding {$model} does not resolve to component state.",
+            );
+        }
+        $reflection = self::reflectionProperty($scope, $property);
+        if ($reflection->isReadOnly()) {
+            throw new RuntimeException(
+                "Template checked binding {$model} cannot write a readonly property.",
+            );
+        }
+
+        return static function (mixed $payload) use ($property, $reflection, $scope): void {
+            $value = $payload === true || $payload === 1 || $payload === '1';
+            $previous = $reflection->getValue($scope);
+            if ($previous === $value) {
+                return;
+            }
+            if ($scope instanceof Component) {
+                $scope->__pamNotifyUpdating($property, $value, $previous);
+            }
+            $reflection->setValue($scope, $value);
+            if ($scope instanceof Component) {
+                $scope->__pamNotifyUpdated($property);
+                $scope->__pamFlushChanges();
+            }
+        };
+    }
+
+    /** @param array<string, mixed> $values */
+    private static function modelValue(array $values, ?object $scope): string
+    {
+        if (!isset($values['model'])) {
+            return '';
+        }
+
+        $property = ltrim(self::stringValue($values['model'], 'Input model'), '$');
+
+        return self::stringValue(
+            self::path('$'.$property, $scope, []),
+            'Input model value',
+        );
+    }
+
+    /**
+     * @param array<string, string|bool> $attributes
+     * @return array<string, string|bool>
+     */
+    private static function directiveAliases(array $attributes): array
+    {
+        foreach ([
+            'v-if' => 'p-if',
+            'v-else-if' => 'p-else-if',
+            'v-else' => 'p-else',
+            'v-for' => 'p-for',
+        ] as $legacy => $native) {
+            if (!array_key_exists($legacy, $attributes)) {
+                continue;
+            }
+            if (
+                array_key_exists($native, $attributes)
+                && $attributes[$native] !== $attributes[$legacy]
+            ) {
+                throw new RuntimeException(
+                    "Template directives {$native} and {$legacy} cannot disagree.",
+                );
+            }
+            $attributes[$native] ??= $attributes[$legacy];
+            unset($attributes[$legacy]);
+        }
+
+        return $attributes;
+    }
+
+    /**
+     * @param array<string, string|bool> $attributes
+     */
+    private static function withAttributes(
+        CompiledTemplateNode $node,
+        array $attributes,
+    ): CompiledTemplateNode {
+        $copy = new CompiledTemplateNode(
+            kind: $node->kind,
+            name: $node->name,
+            attributes: $attributes,
+            source: $node->source,
+            line: $node->line,
+            column: $node->column,
+            value: $node->value,
+        );
+        $copy->children = $node->children;
+
+        return $copy;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private static function value(mixed $raw, ?object $scope, array $data): mixed
+    {
+        if (!is_string($raw)) {
+            return $raw;
+        }
+        $kind = self::$valueKinds[$raw] ?? self::classifyValue($raw);
+
+        return match ($kind[0]) {
+            0 => self::path($raw, $scope, $data),
+            1 => $kind[1],
+            2 => TemplateExpression::evaluate($raw, $scope, $data),
+            default => TemplateExpression::interpolate($raw, $scope, $data),
+        };
+    }
+
+    /**
+     * Static attribute values are classified once per source string: plain
+     * literals become constants, and only paths, calls and interpolations are
+     * evaluated per render.
+     *
+     * @return array{0: int, 1: mixed}
+     */
+    private static function classifyValue(string $raw): array
+    {
+        if (preg_match('/^\\$[A-Za-z_][A-Za-z0-9_]*(?:(?:\\.|->)[A-Za-z_][A-Za-z0-9_]*)*$/', $raw) === 1) {
+            $kind = [0, null];
+        } elseif (preg_match('/^(?:rgba?|hsla?)\(/Di', trim($raw)) === 1) {
+            $kind = [1, trim($raw)];
+        } elseif ($raw === 'true' || $raw === 'false' || $raw === 'null') {
+            $kind = [1, match ($raw) { 'true' => true, 'false' => false, default => null }];
+        } elseif (preg_match('/^[A-Za-z_][A-Za-z0-9_]*\s*\(/D', $raw) === 1) {
+            $kind = [2, null];
+        } elseif (preg_match('/^-?\\d+$/', $raw) === 1) {
+            $kind = [1, (int) $raw];
+        } elseif (preg_match('/^-?\\d+\\.\\d+$/', $raw) === 1) {
+            $kind = [1, (float) $raw];
+        } elseif (preg_match('/^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/', $raw, $color) === 1) {
+            $hex = strlen($color[1]) === 6 ? 'FF'.$color[1] : $color[1];
+            $kind = [1, (int) hexdec($hex)];
+        } elseif (str_contains($raw, '{{')) {
+            $kind = [3, null];
+        } else {
+            $kind = [1, $raw];
+        }
+        if (count(self::$valueKinds) >= 16384) {
+            self::$valueKinds = [];
+        }
+
+        return self::$valueKinds[$raw] = $kind;
+    }
+
+    /** @param array<string, mixed> $data */
+    private static function dynamicValue(
+        mixed $raw,
+        ?object $scope,
+        array $data,
+    ): mixed {
+        if (!is_string($raw)) {
+            return $raw;
+        }
+
+        return (TemplateExpression::$compiled[$raw] ?? TemplateExpression::closure($raw))($data, $scope);
+    }
+
+    /** @param array<string, mixed> $data */
+    private static function literal(string $raw, ?object $scope, array $data): string|int|float
+    {
+        if (preg_match('/^-?\\d+$/', $raw) === 1) {
+            return (int) $raw;
+        }
+
+        if (preg_match('/^-?\\d+\\.\\d+$/', $raw) === 1) {
+            return (float) $raw;
+        }
+
+        if (preg_match('/^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/', $raw, $color) === 1) {
+            $hex = strlen($color[1]) === 6 ? 'FF'.$color[1] : $color[1];
+
+            return (int) hexdec($hex);
+        }
+
+        return self::interpolate($raw, $scope, $data);
+    }
+
+    /** @param array<string, mixed> $data */
+    private static function interpolate(string $value, ?object $scope, array $data): string
+    {
+        return TemplateExpression::interpolate($value, $scope, $data);
+    }
+
+    /** @param array<string, mixed> $data */
+    private static function path(string $path, ?object $scope, array $data): mixed
+    {
+        $segments = self::$pathSegments[$path] ??= (preg_split('/\\.|->/', ltrim($path, '$')) ?: []);
+        $first = array_shift($segments);
+
+        if ($first === null) {
+            throw new RuntimeException('Template expression is empty.');
+        }
+
+        if (array_key_exists($first, $data)) {
+            $value = $data[$first];
+        } elseif ($scope !== null && property_exists($scope, $first)) {
+            $value = self::reflectionProperty($scope, $first)->getValue($scope);
+        } else {
+            throw new RuntimeException("Template expression {$path} is undefined.");
+        }
+
+        foreach ($segments as $segment) {
+            $value = match (true) {
+                is_array($value) && array_key_exists($segment, $value) => $value[$segment],
+                is_object($value) && property_exists($value, $segment) => $value->{$segment},
+                default => throw new RuntimeException("Cannot resolve template expression {$path}."),
+            };
+        }
+
+        return $value;
+    }
+
+    private static function isDeclarativeContextValue(
+        mixed $value,
+        int $depth = 0,
+    ): bool {
+        if (is_scalar($value)) {
+            return true;
+        }
+        if ($value === null) {
+            return $depth > 0;
+        }
+        if (
+            !is_array($value)
+            || $depth >= self::MAX_CONTEXT_DEPTH
+            || count($value) > self::MAX_CONTEXT_ITEMS
+        ) {
+            return false;
+        }
+
+        foreach ($value as $key => $item) {
+            if (
+                !is_int($key)
+                && preg_match('/^[A-Za-z][A-Za-z0-9_-]{0,127}$/D', $key) !== 1
+            ) {
+                return false;
+            }
+            if (!self::isDeclarativeContextValue($item, $depth + 1)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private const int MAX_CONTEXT_DEPTH = 4;
+    private const int MAX_CONTEXT_ITEMS = 1_024;
+
+    private static function reflectionProperty(object $scope, string $property): ReflectionProperty
+    {
+        return self::$properties[$scope::class.'::$'.$property]
+            ??= new ReflectionProperty($scope, $property);
+    }
+
+    /** @param list<Element> $children */
+    private static function singleChild(array $children, string $tag): Element
+    {
+        if (count($children) !== 1) {
+            throw new RuntimeException("{$tag} requires exactly one child.");
+        }
+
+        return $children[0];
+    }
+
+    /** @param list<Element> $children */
+    private static function scrollViewContent(
+        array $children,
+        bool $horizontal,
+    ): Element {
+        if ($children === []) {
+            throw new RuntimeException(
+                'ScrollView requires at least one child.',
+            );
+        }
+
+        return $horizontal
+            ? Row::make(...$children)
+            : Column::make(...$children);
+    }
+
+    /** @param list<Element> $children */
+    private static function childAt(array $children, int $index, string $tag): Element
+    {
+        return $children[$index]
+            ?? throw new RuntimeException("{$tag} requires two children.");
+    }
+
+    /** @return list<string> */
+    private static function stringItems(mixed $items): array
+    {
+        if ($items instanceof Traversable) {
+            $items = iterator_to_array($items, false);
+        }
+
+        if (!is_array($items)) {
+            throw new RuntimeException('List items must resolve to an array.');
+        }
+
+        return array_map(
+            static fn (mixed $item): string => self::stringValue($item, 'List item'),
+            array_values($items),
+        );
+    }
+
+    /** @return array<string, list<string>> */
+    private static function sections(mixed $sections): array
+    {
+        if (!is_array($sections)) {
+            throw new RuntimeException('SectionList sections must resolve to an array.');
+        }
+
+        $result = [];
+
+        foreach ($sections as $title => $items) {
+            $result[(string) $title] = self::stringItems($items);
+        }
+
+        return $result;
+    }
+
+    private static function modalPresentation(mixed $value): ModalPresentation
+    {
+        return match ($value) {
+            1, 'fullScreen' => ModalPresentation::FullScreen,
+            3, 'sheet' => ModalPresentation::Sheet,
+            4, 'overlay' => ModalPresentation::Overlay,
+            default => ModalPresentation::Dialog,
+        };
+    }
+
+    /** @return list<float> */
+    private static function bottomSheetSnapPoints(mixed $value): array
+    {
+        // `snapPoints="content"` (or an empty list): dynamic sizing.
+        if ($value === 'content') {
+            return [];
+        }
+        if (!is_array($value)) {
+            throw new InvalidArgumentException('BottomSheet snapPoints must be an array.');
+        }
+
+        return array_values(array_map(
+            static function (mixed $point): float {
+                if (!is_int($point) && !is_float($point)) {
+                    throw new InvalidArgumentException(
+                        'BottomSheet snapPoints must contain only numbers.',
+                    );
+                }
+
+                return (float) $point;
+            },
+            $value,
+        ));
+    }
+
+    private static function bottomSheetKeyboardBehavior(
+        mixed $value,
+    ): BottomSheetKeyboardBehavior {
+        return match ($value) {
+            2, 'extend' => BottomSheetKeyboardBehavior::Extend,
+            3, 'fillParent' => BottomSheetKeyboardBehavior::FillParent,
+            4, 'contain' => BottomSheetKeyboardBehavior::Contain,
+            default => BottomSheetKeyboardBehavior::Interactive,
+        };
+    }
+
+    /** @return list<NativeMenuItem> */
+    private static function nativeMenuItems(mixed $value): array
+    {
+        if (!is_array($value)) {
+            throw new InvalidArgumentException('InteractionRegion menuItems must be an array.');
+        }
+
+        return array_values(array_map(
+            static function (mixed $item): NativeMenuItem {
+                if (!is_array($item)) {
+                    throw new InvalidArgumentException('Each native menu item must be an array.');
+                }
+
+                return new NativeMenuItem(
+                    id: self::stringValue($item['id'] ?? '', 'Native menu item id'),
+                    title: self::stringValue($item['title'] ?? '', 'Native menu item title'),
+                    destructive: self::boolValue(
+                        $item['destructive'] ?? false,
+                        'Native menu item destructive',
+                    ),
+                    disabled: self::boolValue(
+                        $item['disabled'] ?? false,
+                        'Native menu item disabled',
+                    ),
+                );
+            },
+            $value,
+        ));
+    }
+
+    /** @return list<AnimationKeyframe> */
+    private static function animationKeyframes(mixed $value): array
+    {
+        if (!is_array($value)) {
+            throw new InvalidArgumentException('Animated keyframes must be an array.');
+        }
+
+        return array_values(array_map(
+            static function (mixed $frame): AnimationKeyframe {
+                if (!is_array($frame)) {
+                    throw new InvalidArgumentException('Each animation keyframe must be an array.');
+                }
+                $number = static fn (string $key): ?float =>
+                    array_key_exists($key, $frame)
+                        ? self::floatValue($frame[$key], "Animation {$key}")
+                        : null;
+
+                return new AnimationKeyframe(
+                    offset: self::floatValue($frame['offset'] ?? -1, 'Animation offset'),
+                    opacity: $number('opacity'),
+                    translationX: $number('translationX'),
+                    translationY: $number('translationY'),
+                    scaleX: $number('scaleX'),
+                    scaleY: $number('scaleY'),
+                    rotation: $number('rotation'),
+                );
+            },
+            $value,
+        ));
+    }
+
+    private static function animationEasing(mixed $value): AnimationEasing
+    {
+        return match ($value) {
+            1, 'linear' => AnimationEasing::Linear,
+            2, 'easeIn' => AnimationEasing::EaseIn,
+            3, 'easeOut' => AnimationEasing::EaseOut,
+            5, 'spring' => AnimationEasing::Spring,
+            default => AnimationEasing::EaseInOut,
+        };
+    }
+
+    private static function animationFillMode(mixed $value): AnimationFillMode
+    {
+        return match ($value) {
+            1, 'none' => AnimationFillMode::None,
+            3, 'backwards' => AnimationFillMode::Backwards,
+            4, 'both' => AnimationFillMode::Both,
+            default => AnimationFillMode::Forwards,
+        };
+    }
+
+    private static function animationPlayState(mixed $value): AnimationPlayState
+    {
+        return match ($value) {
+            2, 'paused' => AnimationPlayState::Paused,
+            3, 'stopped' => AnimationPlayState::Stopped,
+            default => AnimationPlayState::Running,
+        };
+    }
+
+    private static function keyboardBehavior(mixed $value): KeyboardAvoidingBehavior
+    {
+        return match ($value) {
+            2, 'pan', 'position' => KeyboardAvoidingBehavior::Pan,
+            3, 'padding' => KeyboardAvoidingBehavior::Padding,
+            4, 'interactive' => KeyboardAvoidingBehavior::Interactive,
+            default => KeyboardAvoidingBehavior::Resize,
+        };
+    }
+
+    private static function statusBarAppearance(mixed $value): StatusBarAppearance
+    {
+        return match ($value) {
+            2, 'light', 'light-content' => StatusBarAppearance::Light,
+            default => StatusBarAppearance::Dark,
+        };
+    }
+
+    private static function linkRoute(mixed $route): string|\BackedEnum|\Pam\Desktop\Routing\TypedRoute
+    {
+        if (is_string($route) && $route !== '' || $route instanceof \BackedEnum || $route instanceof \Pam\Desktop\Routing\TypedRoute) {
+            return $route;
+        }
+
+        throw new RuntimeException('Link requires a route="name" (or :route="Routes::name(...)") attribute.');
+    }
+
+    /** @return array<string, string|int|float|bool|null> */
+    private static function linkParams(mixed $params): array
+    {
+        if (!is_array($params)) throw new RuntimeException('Link :params must be an array or { key: value } object.');
+        foreach ($params as $key => $value) {
+            if (!is_string($key) || !($value === null || is_scalar($value))) {
+                throw new RuntimeException('Link :params must map names to scalar values.');
+            }
+        }
+
+        return $params;
+    }
+
+    /** @param array<string, mixed> $values */
+    private static function statusBar(array $values): StatusBar
+    {
+        $authoredColor = $values['color'] ?? $values['backgroundColor'] ?? null;
+        $bar = StatusBar::make(
+            $authoredColor === null
+                ? null
+                : self::colorValue($authoredColor, 'StatusBar color'),
+            self::statusBarAppearance(
+                $values['appearance'] ?? $values['barStyle'] ?? 'dark',
+            ),
+            self::boolValue($values['hidden'] ?? false, 'StatusBar hidden'),
+        );
+
+        $bar = $bar
+            ->animated(self::boolValue($values['animated'] ?? false, 'StatusBar animated'))
+            ->translucent(self::boolValue(
+                $values['translucent'] ?? false,
+                'StatusBar translucent',
+            ));
+
+        return array_key_exists('navigationBarHidden', $values)
+            ? $bar->navigationBarHidden(self::boolValue(
+                $values['navigationBarHidden'] ?? false,
+                'StatusBar navigationBarHidden',
+            ))
+            : $bar;
+    }
+
+    /** stringValue() limited like a string property (withProperty()). */
+    private static function boundedString(mixed $value, string $label): string
+    {
+        $string = self::stringValue($value, $label);
+        if (strlen($string) > 1_048_576) {
+            throw new InvalidArgumentException('String properties cannot exceed one megabyte.');
+        }
+
+        return $string;
+    }
+
+    private static function stringValue(mixed $value, string $label): string
+    {
+        if (
+            is_string($value)
+            || is_int($value)
+            || is_float($value)
+            || is_bool($value)
+            || $value instanceof Stringable
+        ) {
+            return (string) $value;
+        }
+
+        throw new RuntimeException("{$label} must be printable.");
+    }
+
+    private static function floatValue(mixed $value, string $label): float
+    {
+        if (is_int($value) || is_float($value)) {
+            return (float) $value;
+        }
+        if (is_string($value) && is_numeric($value)) {
+            return (float) $value;
+        }
+
+        throw new RuntimeException("{$label} must be numeric.");
+    }
+
+    private static function intValue(mixed $value, string $label): int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+        if (is_string($value) && preg_match('/^-?\\d+$/', $value) === 1) {
+            return (int) $value;
+        }
+
+        throw new RuntimeException("{$label} must be an integer.");
+    }
+
+    private static function boolValue(mixed $value, string $label): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if ($value === 1 || $value === '1' || $value === 'true') {
+            return true;
+        }
+        if ($value === 0 || $value === '0' || $value === 'false') {
+            return false;
+        }
+
+        throw new RuntimeException("{$label} must be a boolean.");
+    }
+
+    /** @return array<string, string|int|float|bool> */
+    private static function scalarMap(mixed $value): array
+    {
+        if (!is_array($value)) {
+            throw new RuntimeException('Native view properties must resolve to a map.');
+        }
+        $properties = [];
+
+        foreach ($value as $key => $property) {
+            if (
+                !is_string($key)
+                || (!is_string($property)
+                    && !is_int($property)
+                    && !is_float($property)
+                    && !is_bool($property))
+            ) {
+                throw new RuntimeException('Native view properties must be named scalars.');
+            }
+
+            $properties[$key] = $property;
+        }
+
+        return $properties;
+    }
+}

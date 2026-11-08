@@ -1,0 +1,894 @@
+use std::ffi::c_void;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::ptr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+use crate::{Engine, EngineStats};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i32)]
+pub enum PamStatus {
+    Success = 1,
+    InvalidArgument = 2,
+    InvalidFrame = 3,
+    Panic = 4,
+}
+
+#[repr(C)]
+pub struct PamDesktopBuffer {
+    pub data: *mut u8,
+    pub length: usize,
+    pub lease: u64,
+}
+
+impl Default for PamDesktopBuffer {
+    fn default() -> Self {
+        Self {
+            data: ptr::null_mut(),
+            length: 0,
+            lease: 0,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PamDesktopStats {
+    pub commits: u64,
+    pub nodes: u64,
+    pub created: u64,
+    pub removed: u64,
+    pub updated: u64,
+    pub retained_bytes: u64,
+    pub full_commits: u64,
+    pub patch_commits: u64,
+    pub input_bytes: u64,
+    pub output_bytes: u64,
+    pub decode_p95_micros: u64,
+    pub reconcile_p95_micros: u64,
+    pub layout_p95_micros: u64,
+    pub encode_p95_micros: u64,
+    pub coalesced_commands: u64,
+    pub buffer_reuses: u64,
+    pub reused_buffer_bytes: u64,
+    pub measured_frames: u64,
+    pub deadline_misses: u64,
+}
+
+impl From<EngineStats> for PamDesktopStats {
+    fn from(value: EngineStats) -> Self {
+        Self {
+            commits: value.commits,
+            nodes: value.nodes,
+            created: value.created,
+            removed: value.removed,
+            updated: value.updated,
+            retained_bytes: value.retained_bytes,
+            full_commits: value.full_commits,
+            patch_commits: value.patch_commits,
+            input_bytes: value.input_bytes,
+            output_bytes: value.output_bytes,
+            decode_p95_micros: value.decode_p95_micros,
+            reconcile_p95_micros: value.reconcile_p95_micros,
+            layout_p95_micros: value.layout_p95_micros,
+            encode_p95_micros: value.encode_p95_micros,
+            coalesced_commands: value.coalesced_commands,
+            buffer_reuses: BUFFER_REUSES.load(Ordering::Relaxed),
+            reused_buffer_bytes: REUSED_BUFFER_BYTES.load(Ordering::Relaxed),
+            measured_frames: value.measured_frames,
+            deadline_misses: value.deadline_misses,
+        }
+    }
+}
+
+#[repr(C)]
+pub struct PamDesktopEngineHandle {
+    engine: Engine,
+    last_error: Option<String>,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pam_desktop_engine_new() -> *mut PamDesktopEngineHandle {
+    Box::into_raw(Box::new(PamDesktopEngineHandle {
+        engine: Engine::new(),
+        last_error: None,
+    }))
+}
+
+#[unsafe(no_mangle)]
+/// Sets the root directory used to resolve `asset://` font families.
+///
+/// # Safety
+///
+/// `handle` must point to a live engine. `data` must reference `length` readable
+/// bytes containing a valid UTF-8 path for the duration of this call.
+pub unsafe extern "C" fn pam_desktop_engine_set_asset_root(
+    handle: *mut PamDesktopEngineHandle,
+    data: *const u8,
+    length: usize,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    if data.is_null() || length == 0 {
+        return PamStatus::InvalidArgument;
+    }
+    // SAFETY: The caller guarantees that `data` references `length` readable
+    // bytes for the duration of this call.
+    let bytes = unsafe { std::slice::from_raw_parts(data, length) };
+    let Ok(path) = std::str::from_utf8(bytes) else {
+        return PamStatus::InvalidArgument;
+    };
+    match catch_unwind(AssertUnwindSafe(|| handle.engine.set_asset_root(path))) {
+        Ok(()) => PamStatus::Success,
+        Err(_) => PamStatus::Panic,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Installs a host text measurer, or removes it when `callback` is null.
+///
+/// # Safety
+///
+/// `handle` must point to a live engine. `callback` must remain callable with
+/// `context` from every thread that later calls into this engine until it is
+/// replaced, removed, or the engine is freed. The callback must not retain the
+/// request or result pointers and must not call back into this engine.
+pub unsafe extern "C" fn pam_desktop_engine_set_text_measurer(
+    handle: *mut PamDesktopEngineHandle,
+    callback: Option<crate::PamTextMeasureCallback>,
+    context: *mut c_void,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    match catch_unwind(AssertUnwindSafe(|| unsafe {
+        handle
+            .engine
+            .set_text_measurer(callback.map(|callback| (callback, context)));
+    })) {
+        Ok(()) => PamStatus::Success,
+        Err(_) => PamStatus::Panic,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Sets the window safe-area insets (points) used to lay out `SafeAreaView`.
+///
+/// # Safety
+///
+/// `handle` must point to a live engine.
+pub unsafe extern "C" fn pam_desktop_engine_set_safe_area_insets(
+    handle: *mut PamDesktopEngineHandle,
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    match handle.engine.set_safe_area_insets(left, top, right, bottom) {
+        Ok(()) => PamStatus::Success,
+        Err(_) => PamStatus::InvalidArgument,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Sets how the host presents `Modal`/`BottomSheet` surfaces: `0` in-window
+/// views (iOS), `1` own windows that fit the system bars unless translucent
+/// (Android 14 and older dialogs), `2` own edge-to-edge windows (Android 15+
+/// enforced edge-to-edge). Writes 1 to `changed` when the policy changed.
+///
+/// # Safety
+///
+/// `handle` must point to a live engine and `changed` must be null or point to
+/// writable memory.
+pub unsafe extern "C" fn pam_desktop_engine_set_surface_policy(
+    handle: *mut PamDesktopEngineHandle,
+    policy: u32,
+    changed: *mut u8,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    let Some(policy) = crate::SurfacePolicy::from_raw(policy) else {
+        return PamStatus::InvalidArgument;
+    };
+    let value = handle.engine.set_surface_policy(policy);
+    if let Some(changed) = unsafe { changed.as_mut() } {
+        *changed = u8::from(value);
+    }
+    PamStatus::Success
+}
+
+#[unsafe(no_mangle)]
+/// Sets the visible IME height (points from the window bottom, 0 when hidden).
+/// Writes 1 to `changed` when the value differs from the previous one; the
+/// host then relayouts with [`pam_desktop_engine_relayout_with_metrics`].
+///
+/// # Safety
+///
+/// `handle` must point to a live engine and `changed` must be null or point to
+/// writable memory.
+pub unsafe extern "C" fn pam_desktop_engine_set_keyboard_inset(
+    handle: *mut PamDesktopEngineHandle,
+    bottom: f32,
+    changed: *mut u8,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    match handle.engine.set_keyboard_inset(bottom) {
+        Ok(value) => {
+            if let Some(changed) = unsafe { changed.as_mut() } {
+                *changed = u8::from(value);
+            }
+            PamStatus::Success
+        }
+        Err(_) => PamStatus::InvalidArgument,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Sets the visible IME height (points from the window bottom, 0 when hidden)
+/// over the `Modal`/`BottomSheet` whose node id is `surface`. Writes 1 to
+/// `changed` when a `KeyboardAvoidingView` of that surface must move; the
+/// host then relayouts with [`pam_desktop_engine_relayout_with_metrics`].
+///
+/// # Safety
+///
+/// `handle` must point to a live engine and `changed` must be null or point to
+/// writable memory.
+pub unsafe extern "C" fn pam_desktop_engine_set_surface_keyboard_inset(
+    handle: *mut PamDesktopEngineHandle,
+    surface: u64,
+    bottom: f32,
+    changed: *mut u8,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    match handle.engine.set_surface_keyboard_inset(surface, bottom) {
+        Ok(value) => {
+            if let Some(changed) = unsafe { changed.as_mut() } {
+                *changed = u8::from(value);
+            }
+            PamStatus::Success
+        }
+        Err(_) => PamStatus::InvalidArgument,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Releases an engine allocated by [`pam_desktop_engine_new`].
+///
+/// # Safety
+///
+/// `handle` must be null or the unique, still-live pointer returned by
+/// [`pam_desktop_engine_new`]. A non-null handle may be released exactly once.
+pub unsafe extern "C" fn pam_desktop_engine_free(handle: *mut PamDesktopEngineHandle) {
+    if !handle.is_null() {
+        // SAFETY: The caller transfers the unique pointer returned by
+        // pam_desktop_engine_new and calls this function at most once.
+        drop(unsafe { Box::from_raw(handle) });
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Changes the viewport used by subsequent commits.
+///
+/// # Safety
+///
+/// `handle` must point to a live engine and the caller must provide exclusive
+/// access to it for the duration of this call.
+pub unsafe extern "C" fn pam_desktop_engine_set_viewport(
+    handle: *mut PamDesktopEngineHandle,
+    width: f32,
+    height: f32,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    match catch_unwind(AssertUnwindSafe(|| {
+        handle.engine.set_viewport(width, height)
+    })) {
+        Ok(Ok(())) => PamStatus::Success,
+        Ok(Err(_)) => PamStatus::InvalidArgument,
+        Err(_) => PamStatus::Panic,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Changes the display refresh rate used by the deadline observer.
+///
+/// # Safety
+///
+/// `handle` must point to a live engine and the caller must provide exclusive
+/// access to it for the duration of this call.
+pub unsafe extern "C" fn pam_desktop_engine_set_refresh_rate(
+    handle: *mut PamDesktopEngineHandle,
+    refresh_rate_hz: f64,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    match catch_unwind(AssertUnwindSafe(|| {
+        handle.engine.set_refresh_rate(refresh_rate_hz)
+    })) {
+        Ok(Ok(())) => PamStatus::Success,
+        Ok(Err(_)) => PamStatus::InvalidArgument,
+        Err(_) => PamStatus::Panic,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Sets the intrinsic size of a Switch without explicit width/height to the
+/// host's native control (iOS: the UISwitch `sizeThatFits`). Process-wide; a
+/// non-positive or non-finite size restores the default (React Native Android,
+/// 46.5 x 27).
+pub extern "C" fn pam_desktop_engine_set_switch_size(width: f32, height: f32) -> PamStatus {
+    match catch_unwind(|| crate::layout::set_host_switch_size(width, height)) {
+        Ok(()) => PamStatus::Success,
+        Err(_) => PamStatus::Panic,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Changes the text scale used by subsequent commits.
+///
+/// # Safety
+///
+/// `handle` must point to a live engine and the caller must provide exclusive
+/// access to it for the duration of this call.
+pub unsafe extern "C" fn pam_desktop_engine_set_text_scale(
+    handle: *mut PamDesktopEngineHandle,
+    text_scale: f32,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    match catch_unwind(AssertUnwindSafe(|| {
+        handle.engine.set_text_scale(text_scale)
+    })) {
+        Ok(Ok(())) => PamStatus::Success,
+        Ok(Err(_)) => PamStatus::InvalidArgument,
+        Err(_) => PamStatus::Panic,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Changes the viewport and returns layout mutations for the retained tree.
+///
+/// # Safety
+///
+/// `handle` must point to a live, exclusively borrowed engine and `output`
+/// must point to writable storage for one [`PamDesktopBuffer`].
+pub unsafe extern "C" fn pam_desktop_engine_relayout(
+    handle: *mut PamDesktopEngineHandle,
+    width: f32,
+    height: f32,
+    output: *mut PamDesktopBuffer,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    let Some(output) = (unsafe { output.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    *output = PamDesktopBuffer::default();
+    match catch_unwind(AssertUnwindSafe(|| {
+        let mut batch = acquire_buffer();
+        handle
+            .engine
+            .relayout_with_metrics_into(width, height, handle.engine.text_scale(), &mut batch)
+            .map(|()| batch)
+    })) {
+        Ok(Ok(batch)) => {
+            *output = lease_buffer(batch);
+            PamStatus::Success
+        }
+        Ok(Err(_)) => PamStatus::InvalidArgument,
+        Err(_) => PamStatus::Panic,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Changes a custom host's direct child visibility and returns layout mutations.
+/// `visible` must be zero or one. Authored property commits remain authoritative.
+///
+/// # Safety
+/// `handle` must be live and exclusively borrowed. `output` must point to writable
+/// storage with no outstanding buffer lease. Release successful output normally.
+pub unsafe extern "C" fn pam_desktop_engine_set_native_child_visibility(
+    handle: *mut PamDesktopEngineHandle,
+    owner: u64,
+    child: u64,
+    visible: u8,
+    output: *mut PamDesktopBuffer,
+) -> PamStatus {
+    let Some(output) = (unsafe { output.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    *output = PamDesktopBuffer::default();
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    if visible > 1 {
+        return PamStatus::InvalidArgument;
+    }
+    match catch_unwind(AssertUnwindSafe(|| {
+        handle
+            .engine
+            .set_native_child_visibility(owner, child, visible == 1)
+    })) {
+        Ok(Ok(batch)) => {
+            *output = lease_buffer(batch);
+            PamStatus::Success
+        }
+        Ok(Err(_)) => PamStatus::InvalidArgument,
+        Err(_) => PamStatus::Panic,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Changes viewport and text metrics and returns retained-tree layout mutations.
+///
+/// # Safety
+///
+/// `handle` must point to a live, exclusively borrowed engine and `output`
+/// must point to writable storage for one [`PamDesktopBuffer`].
+pub unsafe extern "C" fn pam_desktop_engine_relayout_with_metrics(
+    handle: *mut PamDesktopEngineHandle,
+    width: f32,
+    height: f32,
+    text_scale: f32,
+    output: *mut PamDesktopBuffer,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    let Some(output) = (unsafe { output.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    *output = PamDesktopBuffer::default();
+    match catch_unwind(AssertUnwindSafe(|| {
+        let mut batch = acquire_buffer();
+        handle
+            .engine
+            .relayout_with_metrics_into(width, height, text_scale, &mut batch)
+            .map(|()| batch)
+    })) {
+        Ok(Ok(batch)) => {
+            *output = lease_buffer(batch);
+            PamStatus::Success
+        }
+        Ok(Err(_)) => PamStatus::InvalidArgument,
+        Err(_) => PamStatus::Panic,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Writes a batch that mounts the retained tree from scratch (set root,
+/// create every node, every layout) for a host surface that was recreated.
+///
+/// # Safety
+///
+/// `handle` must point to a live, exclusively borrowed engine and `output`
+/// must point to writable storage for one [`PamDesktopBuffer`].
+pub unsafe extern "C" fn pam_desktop_engine_remount(
+    handle: *mut PamDesktopEngineHandle,
+    output: *mut PamDesktopBuffer,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    let Some(output) = (unsafe { output.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    *output = PamDesktopBuffer::default();
+    match catch_unwind(AssertUnwindSafe(|| {
+        let mut batch = acquire_buffer();
+        handle.engine.remount_into(&mut batch).map(|()| batch)
+    })) {
+        Ok(Ok(batch)) => {
+            *output = lease_buffer(batch);
+            PamStatus::Success
+        }
+        Ok(Err(_)) => PamStatus::InvalidArgument,
+        Err(_) => PamStatus::Panic,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Applies an encoded tree or patch and writes an owned mutation buffer.
+///
+/// # Safety
+///
+/// `handle` must point to a live, exclusively borrowed engine. `input` must be
+/// readable for `input_length` bytes, and `output` must be writable. A
+/// successful non-empty output must later be passed exactly once to
+/// [`pam_desktop_buffer_free`].
+pub unsafe extern "C" fn pam_desktop_engine_commit(
+    handle: *mut PamDesktopEngineHandle,
+    input: *const u8,
+    input_length: usize,
+    output: *mut PamDesktopBuffer,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    let Some(output) = (unsafe { output.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    *output = PamDesktopBuffer::default();
+    if input.is_null() || input_length == 0 {
+        return PamStatus::InvalidArgument;
+    }
+    // SAFETY: The caller guarantees input points to input_length readable bytes
+    // and retains the allocation for this call.
+    let input = unsafe { std::slice::from_raw_parts(input, input_length) };
+    match catch_unwind(AssertUnwindSafe(|| {
+        let mut batch = acquire_buffer();
+        handle.engine.commit_into(input, &mut batch).map(|()| batch)
+    })) {
+        Ok(Ok(batch)) => {
+            handle.last_error = None;
+            *output = lease_buffer(batch);
+            PamStatus::Success
+        }
+        Ok(Err(error)) => {
+            let detail = format!("{error:?}");
+            eprintln!("Pam Desktop rejected render frame: {detail}");
+            handle.last_error = Some(detail);
+            PamStatus::InvalidFrame
+        }
+        Err(payload) => {
+            eprintln!("Pam Desktop panicked while committing render frame: {payload:?}");
+            handle.last_error = Some(format!("Panic({payload:?})"));
+            PamStatus::Panic
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Copies the most recent commit error into an owned UTF-8 buffer.
+///
+/// # Safety
+///
+/// `handle` must point to a live engine and `output` must point to writable
+/// storage for one [`PamDesktopBuffer`].
+pub unsafe extern "C" fn pam_desktop_engine_last_error(
+    handle: *const PamDesktopEngineHandle,
+    output: *mut PamDesktopBuffer,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    let Some(output) = (unsafe { output.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    *output = PamDesktopBuffer::default();
+    if let Some(error) = &handle.last_error {
+        *output = lease_buffer(error.as_bytes().to_vec());
+    }
+    PamStatus::Success
+}
+
+#[unsafe(no_mangle)]
+/// Copies the current engine statistics into `output`.
+///
+/// # Safety
+///
+/// `handle` must point to a live engine for the duration of this call and
+/// `output` must point to writable storage for one [`PamDesktopStats`].
+pub unsafe extern "C" fn pam_desktop_engine_stats(
+    handle: *const PamDesktopEngineHandle,
+    output: *mut PamDesktopStats,
+) -> PamStatus {
+    let Some(handle) = (unsafe { handle.as_ref() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    let Some(output) = (unsafe { output.as_mut() }) else {
+        return PamStatus::InvalidArgument;
+    };
+    *output = handle.engine.stats().into();
+    PamStatus::Success
+}
+
+#[unsafe(no_mangle)]
+/// Releases an owned buffer returned by the engine C ABI.
+///
+/// # Safety
+///
+/// A non-empty `buffer` must be the exact, unmodified value returned by a
+/// successful output call and may be released exactly once.
+pub unsafe extern "C" fn pam_desktop_buffer_free(buffer: PamDesktopBuffer) {
+    if buffer.lease == 0 {
+        return;
+    }
+    // SAFETY: `lease` is the unique Box<Vec<u8>> token created by
+    // `lease_buffer`; the caller returns it exactly once and does not modify it.
+    let mut bytes = unsafe { Box::from_raw(buffer.lease as *mut Vec<u8>) };
+    if bytes.as_mut_ptr() != buffer.data || bytes.len() != buffer.length {
+        return;
+    }
+    bytes.clear();
+    recycle_buffer(*bytes);
+}
+
+const MAX_POOLED_BUFFERS: usize = 8;
+const MAX_POOLED_CAPACITY: usize = 4 * 1024 * 1024;
+static BUFFER_REUSES: AtomicU64 = AtomicU64::new(0);
+static REUSED_BUFFER_BYTES: AtomicU64 = AtomicU64::new(0);
+
+fn buffer_pool() -> &'static Mutex<Vec<Vec<u8>>> {
+    static POOL: OnceLock<Mutex<Vec<Vec<u8>>>> = OnceLock::new();
+    POOL.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn acquire_buffer() -> Vec<u8> {
+    let buffer = buffer_pool()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .pop()
+        .unwrap_or_default();
+    if buffer.capacity() > 0 {
+        BUFFER_REUSES.fetch_add(1, Ordering::Relaxed);
+        REUSED_BUFFER_BYTES.fetch_add(
+            u64::try_from(buffer.capacity()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+    }
+    buffer
+}
+
+fn recycle_buffer(buffer: Vec<u8>) {
+    if buffer.capacity() == 0 || buffer.capacity() > MAX_POOLED_CAPACITY {
+        return;
+    }
+    let mut pool = buffer_pool()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if pool.len() < MAX_POOLED_BUFFERS {
+        pool.push(buffer);
+    }
+}
+
+fn lease_buffer(buffer: Vec<u8>) -> PamDesktopBuffer {
+    if buffer.is_empty() {
+        recycle_buffer(buffer);
+        return PamDesktopBuffer::default();
+    }
+    let mut leased = Box::new(buffer);
+    let data = leased.as_mut_ptr();
+    let length = leased.len();
+    let lease = Box::into_raw(leased) as u64;
+    PamDesktopBuffer {
+        data,
+        length,
+        lease,
+    }
+}
+
+#[allow(dead_code)]
+fn _opaque_pointer(_: *mut c_void) {}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::{Mutex, MutexGuard};
+
+    use pam_desktop_wire::{Node, NodeKind, Tree};
+
+    use super::*;
+
+    fn lock_shared_buffer_pool() -> MutexGuard<'static, ()> {
+        static TEST_LOCK: Mutex<()> = Mutex::new(());
+        TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[test]
+    fn ffi_sets_the_surface_policy_and_rejects_unknown_values() {
+        let handle = pam_desktop_engine_new();
+        let mut changed = 9_u8;
+        // SAFETY: The handle is live and `changed` is writable.
+        unsafe {
+            assert_eq!(
+                pam_desktop_engine_set_surface_policy(handle, 1, &raw mut changed),
+                PamStatus::Success
+            );
+            assert_eq!(changed, 1);
+            assert_eq!(
+                pam_desktop_engine_set_surface_policy(handle, 1, &raw mut changed),
+                PamStatus::Success
+            );
+            assert_eq!(changed, 0);
+            assert_eq!(
+                pam_desktop_engine_set_surface_policy(handle, 3, std::ptr::null_mut()),
+                PamStatus::InvalidArgument
+            );
+            assert_eq!(
+                pam_desktop_engine_set_surface_policy(
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut()
+                ),
+                PamStatus::InvalidArgument
+            );
+            pam_desktop_engine_free(handle);
+        }
+    }
+
+    #[test]
+    fn released_abi_buffers_return_their_allocation_to_the_bounded_pool() {
+        let _pool_guard = lock_shared_buffer_pool();
+        let mut bytes = Vec::with_capacity(32_768);
+        bytes.extend_from_slice(b"reusable-command-buffer");
+        let allocation = bytes.as_ptr();
+        let capacity = bytes.capacity();
+        let leased = lease_buffer(bytes);
+        assert_ne!(leased.lease, 0);
+        // SAFETY: The lease came from this module and is returned exactly once.
+        unsafe { pam_desktop_buffer_free(leased) };
+
+        let recycled = acquire_buffer();
+        assert_eq!(recycled.as_ptr(), allocation);
+        assert_eq!(recycled.capacity(), capacity);
+        recycle_buffer(recycled);
+    }
+
+    #[test]
+    fn ffi_owns_and_releases_every_output() {
+        let _pool_guard = lock_shared_buffer_pool();
+        let frame = Tree {
+            root: 1,
+            nodes: BTreeMap::from([(
+                1,
+                Node {
+                    id: 1,
+                    parent: 0,
+                    index: 0,
+                    kind: NodeKind::Screen,
+                    properties: BTreeMap::new(),
+                },
+            )]),
+        }
+        .encode()
+        .expect("frame");
+        let handle = pam_desktop_engine_new();
+        for _ in 0..20_000 {
+            let mut output = PamDesktopBuffer::default();
+            // SAFETY: All pointers are live for the duration of the call.
+            let status = unsafe {
+                pam_desktop_engine_commit(handle, frame.as_ptr(), frame.len(), &mut output)
+            };
+            assert_eq!(status, PamStatus::Success);
+            // SAFETY: The output is returned with unique ownership.
+            unsafe { pam_desktop_buffer_free(output) };
+        }
+        let mut stats = PamDesktopStats::default();
+        // SAFETY: Handle and output are valid.
+        assert_eq!(
+            unsafe { pam_desktop_engine_stats(handle, &mut stats) },
+            PamStatus::Success
+        );
+        assert_eq!(stats.nodes, 1);
+        // SAFETY: Handle is released exactly once.
+        unsafe { pam_desktop_engine_free(handle) };
+    }
+
+    #[test]
+    fn native_child_visibility_abi_validates_inputs_and_leases_output() {
+        let _pool_guard = lock_shared_buffer_pool();
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    Node {
+                        id: 1,
+                        parent: 0,
+                        index: 0,
+                        kind: NodeKind::CustomView,
+                        properties: BTreeMap::new(),
+                    },
+                ),
+                (
+                    2,
+                    Node {
+                        id: 2,
+                        parent: 1,
+                        index: 0,
+                        kind: NodeKind::Column,
+                        properties: BTreeMap::new(),
+                    },
+                ),
+            ]),
+        }
+        .encode()
+        .expect("tree");
+        let handle = pam_desktop_engine_new();
+        let mut output = PamDesktopBuffer::default();
+        // SAFETY: Live exclusive handle, valid input and uniquely owned buffers.
+        unsafe {
+            assert_eq!(
+                pam_desktop_engine_commit(handle, tree.as_ptr(), tree.len(), &mut output),
+                PamStatus::Success
+            );
+            pam_desktop_buffer_free(output);
+            output = PamDesktopBuffer::default();
+            assert_eq!(
+                pam_desktop_engine_set_native_child_visibility(
+                    ptr::null_mut(),
+                    1,
+                    2,
+                    0,
+                    &mut output
+                ),
+                PamStatus::InvalidArgument
+            );
+            assert_eq!(
+                pam_desktop_engine_set_native_child_visibility(handle, 1, 2, 2, &mut output),
+                PamStatus::InvalidArgument
+            );
+            assert_eq!(
+                pam_desktop_engine_set_native_child_visibility(handle, 2, 1, 0, &mut output),
+                PamStatus::InvalidArgument
+            );
+            assert!(output.data.is_null());
+            assert_eq!(output.lease, 0);
+            for visible in [0, 1] {
+                assert_eq!(
+                    pam_desktop_engine_set_native_child_visibility(
+                        handle,
+                        1,
+                        2,
+                        visible,
+                        &mut output
+                    ),
+                    PamStatus::Success
+                );
+                assert!(output.length > 0);
+                assert_ne!(output.lease, 0);
+                let bytes = std::slice::from_raw_parts(output.data, output.length);
+                assert!(pam_desktop_wire::decode_batch(bytes).is_ok());
+                pam_desktop_buffer_free(output);
+                output = PamDesktopBuffer::default();
+            }
+            pam_desktop_engine_free(handle);
+        }
+    }
+
+    #[test]
+    fn ffi_exposes_the_last_commit_error() {
+        let _pool_guard = lock_shared_buffer_pool();
+        let handle = pam_desktop_engine_new();
+        let invalid = b"NOPE";
+        let mut mutations = PamDesktopBuffer::default();
+        // SAFETY: All pointers are live for the duration of the call.
+        assert_eq!(
+            unsafe {
+                pam_desktop_engine_commit(handle, invalid.as_ptr(), invalid.len(), &mut mutations)
+            },
+            PamStatus::InvalidFrame,
+        );
+        let mut detail = PamDesktopBuffer::default();
+        // SAFETY: Handle and output are valid.
+        assert_eq!(
+            unsafe { pam_desktop_engine_last_error(handle, &mut detail) },
+            PamStatus::Success,
+        );
+        // SAFETY: The function returned a live buffer with `length` bytes.
+        let message = unsafe { std::slice::from_raw_parts(detail.data, detail.length) };
+        assert!(String::from_utf8_lossy(message).contains("InvalidMagic"));
+        // SAFETY: The buffers and handle are released exactly once.
+        unsafe {
+            pam_desktop_buffer_free(detail);
+            pam_desktop_engine_free(handle);
+        }
+    }
+}

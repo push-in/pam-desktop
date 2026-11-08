@@ -1,0 +1,210 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\UI;
+
+use Closure;
+use Pam\Desktop\UI\Concerns\HasRefreshControl;
+use Pam\Desktop\UI\Concerns\HasScrollPhaseEvents;
+use Pam\Desktop\Element;
+use Pam\Desktop\EventKind;
+use Pam\Desktop\NodeKind;
+use Pam\Desktop\PropKey;
+use Pam\Desktop\Renderable;
+use Pam\Desktop\ScrollKeyboardDismissMode;
+use Pam\Desktop\ScrollIndicatorStyle;
+use Pam\Desktop\ScrollOverScrollMode;
+use Pam\Desktop\ScrollPageTransform;
+use Pam\Desktop\ScrollTargetAlignment;
+
+final class Scroll extends Element
+{
+    use HasRefreshControl;
+    use HasScrollPhaseEvents;
+
+    public static function make(Renderable $child): self
+    {
+        return (new self(NodeKind::Scroll))->withChildren([$child]);
+    }
+
+    /** Content padding uses the native scroll insets; no extra wrapper or rows. */
+    public function contentContainerStyle(\Pam\Desktop\Style $style): self
+    {
+        return $this->style($style);
+    }
+
+    public function scrollEnabled(bool $enabled = true): self
+    {
+        return $this->withProperty(PropKey::ScrollEnabled, $enabled);
+    }
+
+    public function showsIndicator(bool $visible = true): self
+    {
+        return $this->withProperty(PropKey::ShowsScrollIndicator, $visible);
+    }
+
+    public function horizontal(bool $horizontal = true): self
+    {
+        return $this->withProperty(PropKey::ScrollHorizontal, $horizontal);
+    }
+
+    public function indicatorStyle(ScrollIndicatorStyle $style): self
+    {
+        return $this->withProperty(PropKey::ScrollIndicatorStyle, $style->value);
+    }
+
+    public function contentOffset(float $x = 0.0, float $y = 0.0): self
+    {
+        return $this
+            ->withProperty(PropKey::ScrollContentOffsetX, max(0.0, $x))
+            ->withProperty(PropKey::ScrollContentOffsetY, max(0.0, $y));
+    }
+
+    public function anchorToEnd(bool $anchor = true): self
+    {
+        return $this->withProperty(PropKey::ScrollAnchorToEnd, $anchor);
+    }
+
+    public function maintainVisibleContentPosition(bool $maintain = true): self
+    {
+        return $this->withProperty(
+            PropKey::ScrollMaintainVisibleContentPosition,
+            $maintain,
+        );
+    }
+
+    public function autoScrollToEndThreshold(float $threshold): self
+    {
+        return $this->withProperty(
+            PropKey::ScrollAutoScrollToEndThreshold,
+            max(0.0, $threshold),
+        );
+    }
+
+    public function scrollRequest(
+        int $request,
+        string $targetTestId = '',
+        float $targetOffset = -1.0,
+        ScrollTargetAlignment $targetAlignment = ScrollTargetAlignment::Start,
+        bool $animated = false,
+    ): self
+    {
+        return $this
+            ->withProperty(PropKey::ScrollTargetTestId, $targetTestId)
+            ->withProperty(PropKey::ScrollTargetOffset, $targetOffset)
+            ->withProperty(PropKey::ScrollTargetAlignment, $targetAlignment->value)
+            ->withProperty(PropKey::ScrollAnimated, $animated)
+            ->withProperty(PropKey::ScrollRequest, max(0, $request));
+    }
+
+    public function fillViewport(bool $fill = true): self
+    {
+        return $this->withProperty(PropKey::ScrollFillViewport, $fill);
+    }
+
+    /**
+     * Native per-page transform of a horizontal pager (e.g. the stories
+     * cube), driven by the scroll offset on the UI thread.
+     */
+    public function pageTransform(ScrollPageTransform $transform): self
+    {
+        return $this->withProperty(PropKey::ScrollPageTransform, $transform->value);
+    }
+
+    /**
+     * A changed `contentOffset` glides there in [milliseconds] (ease-in-out,
+     * one offset per frame, so scroll listeners and `pageTransform` run during
+     * it) instead of jumping; a finger down completes it. 0 jumps (the default).
+     */
+    public function contentOffsetAnimation(int $milliseconds): self
+    {
+        return $this->withProperty(PropKey::ScrollOffsetAnimationMs, max(0, min(2_000, $milliseconds)));
+    }
+
+    public function overScrollMode(ScrollOverScrollMode $mode): self
+    {
+        return $this->withProperty(PropKey::ScrollOverScrollMode, $mode->value);
+    }
+
+    public function nestedScrollEnabled(bool $enabled = true): self
+    {
+        return $this->withProperty(PropKey::ScrollNestedEnabled, $enabled);
+    }
+
+    public function fadingEdgeLength(float $length): self
+    {
+        return $this->withProperty(
+            PropKey::ScrollFadingEdgeLength,
+            max(0.0, $length),
+        );
+    }
+
+    public function persistentScrollbar(bool $persistent = true): self
+    {
+        return $this->withProperty(
+            PropKey::ScrollPersistentScrollbar,
+            $persistent,
+        );
+    }
+
+    public function pagingEnabled(bool $enabled = true): self
+    {
+        return $this->withProperty(PropKey::ScrollPagingEnabled, $enabled);
+    }
+
+    public function snapToInterval(float $interval): self
+    {
+        return $this->withProperty(
+            PropKey::ScrollSnapInterval,
+            max(0.0, $interval),
+        );
+    }
+
+    public function decelerationRate(float $rate): self
+    {
+        return $this->withProperty(
+            PropKey::ScrollDecelerationRate,
+            min(1.0, max(0.0, $rate)),
+        );
+    }
+
+    /**
+     * React Native `keyboardShouldPersistTaps`: what a tap inside this
+     * scroll view does while the soft keyboard is visible. `true` is
+     * `Always`, `false` is `Never`. Without it, taps never dismiss the
+     * keyboard (PAM's historical behaviour).
+     */
+    public function keyboardShouldPersistTaps(\Pam\Desktop\KeyboardPersistTaps|bool $mode): self
+    {
+        if (is_bool($mode)) {
+            $mode = \Pam\Desktop\KeyboardPersistTaps::fromBool($mode);
+        }
+
+        return $this->withProperty(PropKey::ScrollKeyboardPersistTaps, $mode->value);
+    }
+
+    public function keyboardDismissMode(ScrollKeyboardDismissMode $mode): self
+    {
+        return $this->withProperty(
+            PropKey::ScrollKeyboardDismissMode,
+            $mode->value,
+        );
+    }
+
+    public function onScroll(Closure $handler): self
+    {
+        return $this->withEvent(EventKind::Scroll, $handler);
+    }
+
+    /**
+     * Fires once when the remaining content is within $threshold viewports of
+     * the end, and again after the content grows or the user scrolls back.
+     */
+    public function onEndReached(Closure $handler, float $threshold = 0.5): self
+    {
+        return $this
+            ->withProperty(PropKey::EndReachedThreshold, min(10.0, max(0.0, $threshold)))
+            ->withEvent(EventKind::EndReached, $handler);
+    }
+}

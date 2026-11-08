@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.showcase",
+    "name": "PAM Desktop Showcase",
+    "entry": "index.php",
+    "window": {
+        "width": 1100,
+        "height": 760
+    }
+}

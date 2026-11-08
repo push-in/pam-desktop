@@ -1,6 +1,18 @@
 /target/
-/packages/desktop/vendor/
+/packages/*/vendor/
+/examples/*/vendor/
 /.idea/
 /.vscode/
 *.log
 .DS_Store
+/vendor/
+.claude/
+# Compiled component caches, anywhere in the tree
+.pam/
+.pam-desktop/
+/target-*/
+.env
+.env.*
+!.env.example
+auth.json
+/composer.lock

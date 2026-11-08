@@ -4,140 +4,88 @@ declare(strict_types=1);
 
 namespace Pam\Desktop;
 
+use Closure;
 use InvalidArgumentException;
 
+/**
+ * One entry of a menu: an action, a check item, a separator or a submenu.
+ *
+ * Items are immutable values; build the menu again to change it.
+ */
 final readonly class MenuItem
 {
     /**
-     * @param list<MenuItem> $items
+     * @param list<self> $children
      */
     private function __construct(
-        public MenuItemKind $kind,
-        public string $id,
         public string $label,
-        public bool $enabled,
-        public bool $checked,
-        public ?string $accelerator,
-        public array $items,
+        public ?Closure $handler = null,
+        public ?string $shortcut = null,
+        public bool $enabled = true,
+        public ?bool $checked = null,
+        public bool $destructive = false,
+        public ?MenuRole $role = null,
+        public bool $separator = false,
+        public array $children = [],
+        public ?string $id = null,
     ) {
-        if ($kind === MenuItemKind::Separator) {
-            if ($id !== '' || $label !== '' || $checked || $accelerator !== null || $items !== []) {
-                throw new InvalidArgumentException(
-                    'Menu separators cannot define identity, text, state, or children.',
-                );
-            }
-
-            return;
-        }
-
-        Identifier::assert($id, 'The menu item identifier');
-        if (trim($label) === '' || strlen($label) > 80) {
-            throw new InvalidArgumentException(
-                'Menu item labels must contain at most 80 bytes of printable text.',
-            );
-        }
-        if ($accelerator !== null) {
-            Accelerator::assert($accelerator);
-        }
-        if ($kind === MenuItemKind::Submenu && $items === []) {
-            throw new InvalidArgumentException('Submenus must contain at least one child item.');
-        }
-        if ($kind !== MenuItemKind::Submenu && $items !== []) {
-            throw new InvalidArgumentException('Only submenus can contain child items.');
-        }
-        if ($kind !== MenuItemKind::Checkbox && $checked) {
-            throw new InvalidArgumentException('Only checkbox menu items can be checked.');
-        }
-        if ($kind === MenuItemKind::Submenu && $accelerator !== null) {
-            throw new InvalidArgumentException('Submenus cannot define accelerators.');
-        }
     }
 
-    public static function command(
-        string $id,
+    /**
+     * An item that runs `$handler` when chosen.
+     *
+     * `$shortcut` is a key combination such as `CmdOrCtrl+Shift+N` (Command
+     * on macOS, Control elsewhere), `Alt+F4` or `F11`.
+     */
+    public static function make(
         string $label,
-        ?string $accelerator = null,
+        ?Closure $handler = null,
+        ?string $shortcut = null,
+        bool $enabled = true,
+        bool $destructive = false,
+        ?string $id = null,
     ): self {
-        return new self(MenuItemKind::Command, $id, $label, true, false, $accelerator, []);
+        if (trim($label) === '') {
+            throw new InvalidArgumentException('A menu item needs a label.');
+        }
+
+        return new self($label, $handler, $shortcut, $enabled, null, $destructive, id: $id);
     }
 
+    /** An item with a check mark. The handler receives the new state. */
     public static function checkbox(
-        string $id,
         string $label,
-        bool $checked = false,
-        ?string $accelerator = null,
+        bool $checked,
+        ?Closure $handler = null,
+        ?string $shortcut = null,
+        bool $enabled = true,
+        ?string $id = null,
     ): self {
-        return new self(MenuItemKind::Checkbox, $id, $label, true, $checked, $accelerator, []);
+        if (trim($label) === '') {
+            throw new InvalidArgumentException('A menu item needs a label.');
+        }
+        $toggle = $handler === null ? null : static fn (): mixed => $handler(!$checked);
+
+        return new self($label, $toggle, $shortcut, $enabled, $checked, id: $id);
+    }
+
+    /** An item the operating system implements (Quit, Copy, Paste, Minimize…). */
+    public static function role(MenuRole $role, ?string $label = null, ?string $shortcut = null): self
+    {
+        return new self($label ?? $role->label(), null, $shortcut ?? $role->shortcut(), role: $role);
     }
 
     public static function separator(): self
     {
-        return new self(MenuItemKind::Separator, '', '', true, false, null, []);
+        return new self('', separator: true);
     }
 
-    public static function submenu(string $id, string $label, self ...$items): self
+    public static function submenu(string $label, self ...$items): self
     {
-        return new self(
-            MenuItemKind::Submenu,
-            $id,
-            $label,
-            true,
-            false,
-            null,
-            array_values($items),
-        );
-    }
+        if (trim($label) === '') {
+            throw new InvalidArgumentException('A submenu needs a label.');
+        }
 
-    public function enabled(bool $enabled = true): self
-    {
-        return new self(
-            $this->kind,
-            $this->id,
-            $this->label,
-            $enabled,
-            $this->checked,
-            $this->accelerator,
-            $this->items,
-        );
-    }
-
-    public function checked(bool $checked = true): self
-    {
-        return new self(
-            $this->kind,
-            $this->id,
-            $this->label,
-            $this->enabled,
-            $checked,
-            $this->accelerator,
-            $this->items,
-        );
-    }
-
-    /**
-     * @return array{
-     *     kind: int,
-     *     id: string,
-     *     label: string,
-     *     enabled: bool,
-     *     checked: bool,
-     *     accelerator: ?string,
-     *     items: list<array<string, mixed>>
-     * }
-     */
-    public function toArray(): array
-    {
-        return [
-            'kind' => $this->kind->value,
-            'id' => $this->id,
-            'label' => $this->label,
-            'enabled' => $this->enabled,
-            'checked' => $this->checked,
-            'accelerator' => $this->accelerator,
-            'items' => array_map(
-                static fn (self $item): array => $item->toArray(),
-                $this->items,
-            ),
-        ];
+        return new self($label, children: array_values($items));
     }
 }

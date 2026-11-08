@@ -6,85 +6,60 @@ namespace Pam\Desktop;
 
 use InvalidArgumentException;
 
+/**
+ * A top-level menu of the application menu bar, or the menu of a tray icon.
+ *
+ * ```php
+ * App::menu(
+ *     Menu::make('File',
+ *         MenuItem::make('New', $this->newDocument(...), 'CmdOrCtrl+N'),
+ *         MenuItem::separator(),
+ *         MenuItem::role(MenuRole::Quit),
+ *     ),
+ *     Menu::edit(),
+ * );
+ * ```
+ */
 final readonly class Menu
 {
-    /**
-     * @param list<MenuItem> $items
-     */
+    /** @param list<MenuItem> $items */
     private function __construct(
-        public string $id,
         public string $label,
         public array $items,
     ) {
-        Identifier::assert($id, 'The menu identifier');
-        if (trim($label) === '' || strlen($label) > 80) {
-            throw new InvalidArgumentException(
-                'Menu labels must contain at most 80 bytes of printable text.',
-            );
-        }
-        self::assertUniqueItems($items);
     }
 
-    public static function create(string $id, string $label, MenuItem ...$items): self
+    public static function make(string $label, MenuItem ...$items): self
     {
-        return new self($id, $label, array_values($items));
-    }
-
-    public function item(MenuItem ...$items): self
-    {
-        return new self(
-            $this->id,
-            $this->label,
-            array_values(array_merge($this->items, $items)),
-        );
-    }
-
-    /**
-     * @return array{id: string, label: string, items: list<array<string, mixed>>}
-     */
-    public function toArray(): array
-    {
-        if ($this->items === []) {
-            throw new InvalidArgumentException("The menu {$this->id} must contain at least one item.");
+        if (trim($label) === '') {
+            throw new InvalidArgumentException('A menu needs a label.');
         }
 
-        return [
-            'id' => $this->id,
-            'label' => $this->label,
-            'items' => array_map(
-                static fn (MenuItem $item): array => $item->toArray(),
-                $this->items,
-            ),
-        ];
+        return new self($label, array_values($items));
     }
 
-    /**
-     * @param list<MenuItem> $items
-     */
-    private static function assertUniqueItems(array $items): void
+    /** The standard Edit menu: undo, redo, cut, copy, paste and select all. */
+    public static function edit(?string $label = null): self
     {
-        $ids = [];
-        $count = 0;
-        $walk = static function (array $children, int $depth) use (&$walk, &$ids, &$count): void {
-            if ($depth > 8) {
-                throw new InvalidArgumentException('Native menu nesting cannot exceed eight levels.');
-            }
-            foreach ($children as $item) {
-                ++$count;
-                if ($item->kind !== MenuItemKind::Separator) {
-                    if (isset($ids[$item->id])) {
-                        throw new InvalidArgumentException(
-                            "The menu item {$item->id} is duplicated.",
-                        );
-                    }
-                    $ids[$item->id] = true;
-                }
-                $walk($item->items, $depth + 1);
-            }
-        };
-        $walk($items, 1);
-        if ($count > 256) {
-            throw new InvalidArgumentException('Native menus cannot contain more than 256 items.');
-        }
+        return new self($label ?? \Pam\Desktop\I18n\FrameworkText::get('menu.edit'), [
+            MenuItem::role(MenuRole::Undo),
+            MenuItem::role(MenuRole::Redo),
+            MenuItem::separator(),
+            MenuItem::role(MenuRole::Cut),
+            MenuItem::role(MenuRole::Copy),
+            MenuItem::role(MenuRole::Paste),
+            MenuItem::role(MenuRole::SelectAll),
+        ]);
+    }
+
+    /** The standard Window menu: minimize, zoom and full screen. */
+    public static function window(?string $label = null): self
+    {
+        return new self($label ?? \Pam\Desktop\I18n\FrameworkText::get('menu.window'), [
+            MenuItem::role(MenuRole::Minimize),
+            MenuItem::role(MenuRole::Zoom),
+            MenuItem::separator(),
+            MenuItem::role(MenuRole::ToggleFullScreen),
+        ]);
     }
 }

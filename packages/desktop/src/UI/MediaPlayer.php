@@ -1,0 +1,237 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Pam\Desktop\UI;
+
+use Closure;
+use InvalidArgumentException;
+use Pam\Desktop\Element;
+use Pam\Desktop\EventKind;
+use Pam\Desktop\ImageFit;
+use Pam\Desktop\Internal\Wire;
+use Pam\Desktop\MediaType;
+use Pam\Desktop\MediaCachePolicy;
+use Pam\Desktop\UI\Concerns\HasMediaCacheBehavior;
+use Pam\Desktop\NodeKind;
+use Pam\Desktop\PropKey;
+
+use function is_string;
+use function strlen;
+
+final class MediaPlayer extends Element
+{
+    use HasMediaCacheBehavior;
+    public static function make(string $source, MediaType $type = MediaType::Video): self
+    {
+        if ($source === '' || strlen($source) > 8192) {
+            throw new InvalidArgumentException('Media source is invalid.');
+        }
+
+        return (new self(NodeKind::Media))
+            ->withProperty(PropKey::MediaSource, $source)
+            ->withProperty(PropKey::MediaType, $type->value)
+            ->withProperty(PropKey::MediaAutoPlay, false)
+            ->withProperty(PropKey::MediaControls, true)
+            ->withProperty(PropKey::MediaLoop, false)
+            ->withProperty(PropKey::MediaMuted, false)
+            ->withProperty(PropKey::MediaVolume, 1.0)
+            ->withProperty(PropKey::MediaCurrentTime, 0.0)
+            ->withProperty(PropKey::MediaPlaybackRate, 1.0);
+    }
+
+    public function autoPlay(bool $enabled = true): self
+    {
+        return $this->withProperty(PropKey::MediaAutoPlay, $enabled);
+    }
+
+    public function controls(bool $visible = true): self
+    {
+        return $this->withProperty(PropKey::MediaControls, $visible);
+    }
+
+    public function loop(bool $enabled = true): self
+    {
+        return $this->withProperty(PropKey::MediaLoop, $enabled);
+    }
+
+    public function muted(bool $muted = true): self
+    {
+        return $this->withProperty(PropKey::MediaMuted, $muted);
+    }
+
+    public function volume(float $volume): self
+    {
+        return $this->withProperty(PropKey::MediaVolume, max(0.0, min(1.0, $volume)));
+    }
+
+    public function currentTime(float $seconds): self
+    {
+        return $this->withProperty(PropKey::MediaCurrentTime, max(0.0, $seconds));
+    }
+
+    public function playbackRate(float $rate): self
+    {
+        return $this->withProperty(PropKey::MediaPlaybackRate, max(0.25, min(4.0, $rate)));
+    }
+
+    /**
+     * Opts this player out of the covered-route policy: by default a player
+     * whose route is covered by a full-screen route (or whose tab is
+     * inactive) releases its decoder and recreates it, at the same position,
+     * when the route is visible again. Keep it alive only for audio that
+     * must continue under another screen.
+     */
+    public function keepAliveWhenCovered(bool $enabled = true): self
+    {
+        return $this->withProperty(PropKey::MediaKeepAliveWhenCovered, $enabled);
+    }
+
+    /**
+     * Idle surface (React Native expo-video `VideoView player={null}` kept
+     * mounted): while true the player, its decoder and its network/cache
+     * work are released, the poster (`thumbnail`) covers the view, and the
+     * view with its empty video surface stays mounted, so a list cell that
+     * plays again (a vertical pager's neighbour) reuses it instead of
+     * building a new video view. Back to false, the same source is prepared
+     * again. Requires a renderer declaring property 1004.
+     */
+    public function idleSurface(bool $idle = true): self
+    {
+        return $this->withProperty(PropKey::MediaIdleSurface, $idle);
+    }
+
+    /**
+     * Visible autoplay, decided natively with no round-trip: the player
+     * prepares and plays while at least `$fraction` of it shows on screen; it
+     * pauses when it falls below `$fraction - 0.2` (or another player of its group
+     * takes over) and releases its decoder shortly after, keeping its
+     * position for when it plays again. `autoPlay` stays the play intent:
+     * false keeps the player paused whatever its visibility.
+     *
+     * `$group`: players sharing a group play one at a time (the one already
+     * playing while it stays visible, else the topmost eligible). An empty
+     * group lets each player decide alone.
+     *
+     * Implemented by the desktop core, the same on every backend.
+     */
+    public function autoPlayWhenVisible(float $fraction = 0.5, string $group = ''): self
+    {
+        if (!is_finite($fraction) || $fraction <= 0.0 || $fraction > 1.0) {
+            throw new InvalidArgumentException('Visible autoplay fraction must be in (0, 1].');
+        }
+        $player = $this->withProperty(PropKey::MediaAutoPlayVisible, $fraction);
+
+        return $group === '' ? $player : $player->withProperty(PropKey::MediaAutoPlayGroup, $group);
+    }
+
+    public function fit(ImageFit $fit): self
+    {
+        return $this->withProperty(PropKey::ImageFit, $fit->value);
+    }
+
+    public function cache(
+        MediaCachePolicy $policy = MediaCachePolicy::Disk,
+    ): self {
+        return $this->withProperty(PropKey::MediaCachePolicy, $policy->value);
+    }
+
+    public function streamingCache(bool $enabled = true): self
+    {
+        return $this->withProperty(PropKey::MediaCacheStreaming, $enabled);
+    }
+
+    public function preloadSeconds(int $seconds): self
+    {
+        return $this->withProperty(
+            PropKey::MediaCachePreloadSeconds,
+            max(0, min(300, $seconds)),
+        );
+    }
+
+    /**
+     * Media buffered before playback starts; 0 keeps the platform default.
+     * Ignored on desktop.
+     */
+    public function startBufferMs(int $milliseconds): self
+    {
+        return $this->withProperty(
+            PropKey::MediaStartBufferMs,
+            max(0, min(30_000, $milliseconds)),
+        );
+    }
+
+    public function downloadWhilePlaying(bool $enabled = true): self
+    {
+        return $this->withProperty(
+            PropKey::MediaCacheDownloadWhilePlaying,
+            $enabled,
+        );
+    }
+
+    public function thumbnail(string $source): self
+    {
+        return $this->withProperty(PropKey::MediaThumbnailSource, $source);
+    }
+
+    /** @param Closure(): void|Closure(\Pam\Desktop\MediaReadyEvent): void $handler */
+    public function onReady(Closure $handler): self
+    {
+        $wantsEvent = (new \ReflectionFunction($handler))->getNumberOfParameters() > 0;
+
+        return $this->withEvent(
+            EventKind::MediaReady,
+            static fn (mixed $payload = ''): mixed => $wantsEvent
+                ? $handler(\Pam\Desktop\MediaReadyEvent::fromPayload(is_string($payload) ? $payload : ''))
+                : $handler(),
+        );
+    }
+
+    /** Playback started (true) or finished (false) waiting for data. @param Closure(bool): void $handler */
+    public function onBuffering(Closure $handler): self
+    {
+        return $this->withEvent(
+            EventKind::MediaBuffering,
+            static fn (mixed $payload = ''): mixed => $handler(
+                is_string($payload) && $payload !== '' && (bool) (Wire::decodeMap($payload)['buffering'] ?? false),
+            ),
+        );
+    }
+
+    /** The source started loading. */
+    public function onLoadStart(Closure $handler): self
+    {
+        return $this->withEvent(EventKind::MediaLoadStart, static fn (mixed $payload = ''): mixed => $handler());
+    }
+
+    /** @param Closure(float, float): void $handler */
+    public function onProgress(Closure $handler): self
+    {
+        return $this->withEvent(
+            EventKind::MediaProgress,
+            static function (string $payload) use ($handler): mixed {
+                $values = Wire::decodeMap($payload);
+                return $handler(
+                    (float) ($values['currentTime'] ?? 0.0),
+                    (float) ($values['duration'] ?? 0.0),
+                );
+            },
+        );
+    }
+
+    public function onEnd(Closure $handler): self
+    {
+        return $this->withEvent(EventKind::MediaEnd, $handler);
+    }
+
+    /** @param Closure(string): void $handler */
+    public function onError(Closure $handler): self
+    {
+        return $this->withEvent(
+            EventKind::MediaError,
+            static fn (string $payload): mixed => $handler(
+                (string) (Wire::decodeMap($payload)['message'] ?? ''),
+            ),
+        );
+    }
+}

@@ -1,0 +1,14 @@
+{
+    "name": "pushinbr/pam-desktop-qr",
+    "description": "Local native QR codes for PAM Desktop using an established encoder and Canvas.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.5",
+        "pushinbr/pam-desktop": "^2.0",
+        "pushinbr/pam-desktop-canvas": "^0.1",
+        "bacon/bacon-qr-code": "^3.1.1"
+    },
+    "autoload": {"psr-4": {"Pam\\Desktop\\Qr\\": "src/"}},
+    "scripts": {"test": "php tests/run.php"}
+}

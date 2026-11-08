@@ -1,83 +1,48 @@
 # pushinbr/pam-desktop
 
-The PHP application model for Pam Desktop. It owns windows, commands, events,
-jobs, plugins, native-shell policy, typed effects, payload validation and the
-versioned worker loop. The Rust host owns Servo, operating-system handles,
-security boundaries, plugin processes and lifecycle.
-
-The default authoring model follows PAM Native: declare the application once,
-write commands as ordinary typed methods, and inject only the services a use
-case needs.
+The PHP side of PAM Desktop: reactive components, styles, navigation,
+animation and the system modules of a native Linux, macOS and Windows
+application. The interface is drawn by the platform toolkit (GTK 4, AppKit,
+Win32 with Direct2D), not by a web view.
 
 ```php
 <?php
 
 use Pam\Desktop\App;
-use Pam\Desktop\Attributes\Command;
-use Pam\Desktop\Attributes\Desktop;
-use Pam\Desktop\Events;
-use Pam\Desktop\WindowHandle;
+use Pam\Desktop\Attributes\State;
+use Pam\Desktop\Component;
+use Pam\Desktop\UI\Button;
+use Pam\Desktop\UI\Column;
+use Pam\Desktop\UI\Text;
 
-#[Desktop(id: 'com.example.my-app', name: 'My application')]
-final class MyApp extends App
+require __DIR__.'/vendor/autoload.php';
+
+final class Counter extends Component
 {
-    #[Command]
-    public function greet(
-        WindowHandle $window,
-        Events $events,
-        string $name = 'world',
-    ): array {
-        $window->title("Hello, {$name}");
-        $events->emit('greeting.completed', compact('name'));
+    #[State]
+    public int $count = 0;
 
-        return ['message' => "Hello, {$name}!"];
+    public function render(): Column
+    {
+        return Column::make(
+            Text::make("Count: {$this->count}"),
+            Button::make('Add one')->onPress(fn () => $this->count++),
+        );
     }
 }
 
-MyApp::run();
+App::run(new Counter());
 ```
-
-The immutable builders shown in previous releases remain supported as the
-advanced API and compile to the same protocol.
-
-Protocol 6 supports:
-
-- named windows and targeted effects;
-- JavaScript-to-PHP event handlers and PHP-to-JavaScript events;
-- bounded command timeouts, cancellation and crash recovery;
-- explicit native capabilities and signed-update policy;
-- native menus, tray, global shortcuts and dynamic shell effects;
-- supervised periodic PHP jobs;
-- composable PHP plugins;
-- process-isolated Rust plugins invoked through `window.pam.plugins`.
-
-All coded variants—statuses, kinds, categories, themes, policies and
-errors—are sequential integer-backed enums. Application command, event, job and
-plugin names remain explicit validated identifiers chosen by the application.
-
-The PHP API has public version `1`:
-
-```php
-assert(Application::API_VERSION === 1);
-assert(Application::PROTOCOL_VERSION === 6);
-```
-
-Every public symbol, method signature, constant, enum case and promoted
-property is checked against `compat/php-api-v1.txt`. Additive changes require an
-intentional snapshot review; removals or signature changes require a new major
-API version.
-
-Rust extensions use the separate `pam-desktop-plugin` SDK and never load a
-dynamic-library ABI into the Servo host. Create one with:
 
 ```bash
-pam desktop plugin new system.info
-pam desktop plugin build system.info
+composer require pushinbr/pam-desktop
+vendor/bin/pam-desktop init      # writes index.php and pam-desktop.json
+vendor/bin/pam-desktop dev       # runs with hot reload
+vendor/bin/pam-desktop build     # bundles the application and its installers
 ```
 
-Validate the package with:
+`vendor/bin/pam-desktop` downloads the native host of the installed version
+for the current system, verifies its SHA-256 and keeps it in the user cache.
+`PAM_DESKTOP_HOST` points it at a host built from source instead.
 
-```bash
-composer test
-composer analyse
-```
+The documentation lives in the [repository](https://github.com/push-in/pam-desktop/tree/main/docs).

@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.controls",
+    "name": "PAM Desktop controls",
+    "entry": "index.php",
+    "window": {
+        "width": 520,
+        "height": 600
+    }
+}
