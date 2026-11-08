@@ -150,11 +150,11 @@ final class PamPhpCompiler
         while ($pending !== []) {
             $directory = array_pop($pending);
             $real = realpath($directory);
-            if ($real === false || isset($visited[$real])) {
+            if ($real === false || isset($visited[self::identity($real)])) {
                 continue;
             }
             self::assertInsideRoots($directory, $real, $allowedRoots);
-            $visited[$real] = true;
+            $visited[self::identity($real)] = true;
             if (count($visited) > self::MAX_COMPONENT_DIRECTORIES) {
                 throw new RuntimeException('PAM component directory exceeds 10,000 directories; check for a symlink that leaves the project.');
             }
@@ -174,7 +174,7 @@ final class PamPhpCompiler
                     continue;
                 }
                 self::assertInsideRoots($file->getPathname(), $resolved, $allowedRoots);
-                $sources[$resolved] = $resolved;
+                $sources[self::identity($resolved)] ??= $resolved;
                 if (count($sources) > self::MAX_COMPONENTS) {
                     throw new RuntimeException('PAM component directory exceeds 10,000 files.');
                 }
@@ -336,6 +336,18 @@ final class PamPhpCompiler
             $parts[] = $part;
         }
         return $parts === [] ? null : implode('/', $parts);
+    }
+
+    /**
+     * Identity of a file or directory: device and inode where the platform
+     * reports them, so one folder reached through different spellings (8.3
+     * short names, letter case, links) is recognised as the same; otherwise
+     * its resolved path.
+     */
+    private static function identity(string $path): string
+    {
+        $stat = @stat($path);
+        return $stat !== false && $stat['ino'] !== 0 ? $stat['dev'].':'.$stat['ino'] : $path;
     }
 
     private static function isInside(string $path, string $root): bool

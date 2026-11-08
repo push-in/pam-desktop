@@ -62,6 +62,9 @@ exec('cp -R '.escapeshellarg($prebuiltRoot).' '.escapeshellarg($prebuiltCopy));
 $installedCache = $prebuiltCopy.'/.cache';
 $installedComponents = PamPhpCompiler::compileDirectory($prebuiltCopy.'/src', $installedCache);
 $installedComponent = $installedComponents[0] ?? null;
+// The compiler reports resolved paths (on macOS the temp folder /var is a
+// link to /private/var).
+$prebuiltCopy = realpath($prebuiltCopy) ?: $prebuiltCopy;
 $assert(
     $installedComponent !== null
         && str_starts_with($installedComponent->classFile, $prebuiltCopy.'/'.PamPhpCompiler::PREBUILT_DIRECTORY.'/.')
