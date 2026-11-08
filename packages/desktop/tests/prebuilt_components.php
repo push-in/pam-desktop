@@ -111,8 +111,8 @@ try {
     $readOnlyComponent = PamPhpCompiler::compileDirectory($readOnlyCopy.'/src', $readOnlyCopy.'-cache')[0] ?? null;
     $readOnlyElement = $readOnlyComponent === null ? null
         : TemplateRenderer::render($readOnlyComponent->template, null, ['active' => false, 'label' => 'Ro']);
-    // chmod() cannot make a folder read-only on Windows (only its access
-    // list can): there the bundle stays writable and keeps its own files.
+    // Where chmod() cannot mark a folder read-only (Wine), the bundle stays
+    // writable and keeps its own files.
     $readOnlyBundle = !is_writable($readOnlyCopy.'/'.PamPhpCompiler::PREBUILT_DIRECTORY);
     $assert(
         $readOnlyComponent !== null

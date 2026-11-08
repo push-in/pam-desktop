@@ -36,8 +36,15 @@ chmod($fallbackRoot.'/app', 0o555);
 $previousCache = getenv('PAM_DESKTOP_CACHE_DIR');
 putenv('PAM_DESKTOP_CACHE_DIR='.$fallbackRoot.'/user-cache');
 try {
-    if (is_writable($fallbackRoot.'/app')) {
-        echo "component cache fallback: skipped (running as a user who can write anywhere)\n";
+    // Whether the folder really refuses writes: Windows ignores the
+    // read-only attribute chmod() sets on a folder, whatever is_writable() says.
+    $probe = $fallbackRoot.'/app/.write-probe';
+    $writable = @file_put_contents($probe, '') !== false;
+    if ($writable) {
+        unlink($probe);
+    }
+    if ($writable) {
+        echo "component cache fallback: skipped (the folder still accepts writes: a user who can write anywhere, or Windows)\n";
     } else {
         $components = PamPhpCompiler::compileDirectory($fallbackRoot.'/app/src', $fallbackRoot.'/app/.pam-desktop/components');
         if (count($components) !== 1 || !str_starts_with($components[0]->classFile, $fallbackRoot.'/user-cache/components/')) {
