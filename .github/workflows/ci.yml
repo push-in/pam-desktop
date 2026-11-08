@@ -52,7 +52,7 @@ jobs:
           composer analyse --working-dir=packages/desktop
       - name: Composer launcher
         run: |
-          sh -n scripts/package-host.sh scripts/test-host-cache.sh
+          sh -n scripts/package-host.sh scripts/test-host-cache.sh scripts/check-glibc.sh
           php -l packages/desktop/bin/pam-desktop
           scripts/test-host-cache.sh
       - name: The counter example opens a window
@@ -77,6 +77,26 @@ jobs:
           scripts/package-host.sh target/debug/pam-desktop "${RUNNER_TEMP}/one" "${version}" x86_64-unknown-linux-gnu
           scripts/package-host.sh target/debug/pam-desktop "${RUNNER_TEMP}/two" "${version}" x86_64-unknown-linux-gnu
           cmp "${RUNNER_TEMP}"/one/*.tar.gz "${RUNNER_TEMP}"/two/*.tar.gz
+
+  linux-baseline:
+    name: Linux (GTK 4.6, glibc 2.35)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install GTK 4.6 and a virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev xvfb
+      - run: cargo clippy --locked -p pam-desktop-gtk -p pam-desktop-host --all-targets -- -D warnings
+      - run: xvfb-run -a cargo test --locked -p pam-desktop-gtk
+      - run: cargo build --locked -p pam-desktop-host
+      - name: The host runs on glibc 2.35
+        run: scripts/check-glibc.sh target/debug/pam-desktop 2.35
 
   native:
     name: ${{ matrix.name }}

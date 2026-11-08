@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.0.1 - 2026-11-08
+
+### Fixed
+
+- The released Linux host runs on glibc 2.35 and GTK 4.6 again (Ubuntu and
+  Pop!_OS 22.04, Debian 12 and later). The 2.0.0 host was built on Ubuntu
+  24.04 against GTK 4.14 and stopped at start on older systems with
+  ``GLIBC_2.39' not found`` and `undefined symbol:
+  gdk_file_list_new_from_array`. The Linux hosts are now built on Ubuntu
+  22.04, the GTK backend is compiled against GTK 4.6, and each GTK function
+  newer than 4.6 is looked up when first used: GTK 4.8 scroll units, picture
+  content fit and file lists; GTK 4.10 alert and file dialogs, URI and file
+  launchers, snapshot masks, scaled textures and widget colors; GTK 4.12 CSS
+  loading from a string; GTK 4.14 path strokes and screen reader
+  announcements. A newer GTK keeps using them; on an older one the backend
+  falls back to the GTK 4.6 equivalent (`GtkMessageDialog`,
+  `GtkFileChooserNative`, `gtk_show_uri`, `GtkAppChooserDialog`, the
+  `org.freedesktop.FileManager1` interface, a `text/uri-list`, a color
+  matrix for image tints, Cairo for dashed and gradient borders). The
+  toggle button accessible role (GTK 4.10) is a button before 4.10, and
+  announcements are not spoken before 4.14.
+- CI builds and tests the host on Ubuntu 22.04 too, and the release fails
+  when a Linux host needs a glibc newer than 2.35
+  (`scripts/check-glibc.sh`).
+
 ## 2.0.0 - 2026-11-08
 
 PAM Desktop 2.0 renders with native toolkit widgets (GTK 4 on Linux, AppKit on macOS, Win32/Direct2D on Windows) instead of a web view. The first part of this entry covers the work since the 2.0 foundation; the foundation itself is listed after it.

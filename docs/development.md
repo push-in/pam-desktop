@@ -207,12 +207,14 @@ composer install --working-dir=packages/desktop --no-interaction --prefer-dist
 composer test --working-dir=packages/desktop
 composer analyse --working-dir=packages/desktop
 
-sh -n scripts/package-host.sh scripts/test-host-cache.sh
+sh -n scripts/package-host.sh scripts/test-host-cache.sh scripts/check-glibc.sh
 php -l packages/desktop/bin/pam-desktop
 scripts/test-host-cache.sh
 ```
 
 It then runs `composer install` at the root, builds the host, starts `examples/counter` under `xvfb-run` and waits for a window named "PAM Desktop counter", and packs the host twice with `scripts/package-host.sh` to check that both archives are identical.
+
+The Linux baseline job runs on Ubuntu 22.04 (glibc 2.35, GTK 4.6, the oldest supported system): `cargo clippy` and `cargo test` of the GTK backend and the host, a host build, and `scripts/check-glibc.sh target/debug/pam-desktop 2.35`, which fails when the host needs a newer glibc. The backend is built against GTK 4.6 (`gtk4` feature `v4_6`); a GTK function newer than that is declared in `crates/pam-desktop-gtk/src/compat.rs`, looked up at run time, and needs a GTK 4.6 fallback.
 
 A second job runs on a macOS runner and on a Windows runner: `cargo clippy`, `cargo test --locked --workspace`, `cargo build --locked -p pam-desktop-host` and the PHP suite. It starts no application.
 
@@ -221,7 +223,7 @@ A second job runs on a macOS runner and on a Windows runner: `cargo clippy`, `ca
 Runs when a tag `v*` is pushed:
 
 1. Fails unless the tag is the version in `Cargo.toml` and the `HOST_VERSION` of `packages/desktop/bin/pam-desktop`.
-2. Builds the host in release mode for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-apple-darwin` and `x86_64-pc-windows-msvc`. The Linux hosts are built on Ubuntu 24.04.
+2. Builds the host in release mode for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, `x86_64-apple-darwin` and `x86_64-pc-windows-msvc`. The Linux hosts are built on Ubuntu 22.04 (glibc 2.35, GTK 4.6), the oldest supported system, and the build fails if a host needs a newer glibc.
 3. Packs each one with `scripts/package-host.sh` and attests the archive and its checksum.
 4. Runs the checks of `ci.yml` beside the builds.
 5. Once the checks and every build passed, publishes `pam-desktop-<version>-<target>.tar.gz` and its `.sha256` on the GitHub release of the tag. These are the files `vendor/bin/pam-desktop` downloads.

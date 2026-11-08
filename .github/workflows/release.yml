@@ -46,11 +46,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux hosts are built on the oldest supported system (glibc 2.35,
+          # GTK 4.6) and use newer GTK functions when they are installed.
           - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-24.04
+            runner: ubuntu-22.04
             binary: pam-desktop
           - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm
             binary: pam-desktop
           - target: aarch64-apple-darwin
             runner: macos-15
@@ -79,6 +81,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends libgtk-4-dev
       - name: Build the host
         run: cargo build --locked --release -p pam-desktop-host --target ${{ matrix.target }}
+      - name: The host runs on glibc 2.35
+        if: runner.os == 'Linux'
+        run: scripts/check-glibc.sh "target/${{ matrix.target }}/release/${{ matrix.binary }}" 2.35
       - name: Pack the host
         shell: bash
         run: |

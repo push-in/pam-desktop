@@ -113,9 +113,9 @@ Assigning to a `#[State]` property schedules a render. The host receives a patch
 | --- | --- |
 | PHP 8.5 | The `php` executable on `PATH`, or `pam` (the host then runs `pam exec`), or the path in `PAM_DESKTOP_PHP`. On Linux and macOS without any of them, the host installs the PAM runtime, which embeds PHP; on Windows it downloads the official PHP 8.5 build from windows.php.net (not run on Windows yet). |
 | Composer | To install the `pushinbr/pam-desktop` package. |
-| Linux, to run a released host | glibc 2.39 or newer, GTK 4.14 or newer and the GStreamer plugins for media. WebKitGTK 6 (`libwebkitgtk-6.0-4`) only for applications that show a `WebView`. The released host is built on Ubuntu 24.04. |
+| Linux, to run a released host | glibc 2.35 or newer, GTK 4.6 or newer and the GStreamer plugins for media (Ubuntu 22.04, Debian 12, Fedora 36 and later). WebKitGTK 6 (`libwebkitgtk-6.0-4`, Ubuntu 24.04 and later) only for applications that show a `WebView`. The released host is built on Ubuntu 22.04 and uses the GTK features newer than 4.6 when the installed GTK has them. |
 | Rust 1.92 or newer | Only to build the host from a checkout. `rust-toolchain.toml` selects the stable channel. |
-| Linux, to build: `libgtk-4-dev` | GTK 4.14 or newer. |
+| Linux, to build: `libgtk-4-dev` | GTK 4.6 or newer. |
 
 The optional features of the host on Linux, `tray` and `hotkeys`, need no extra system library. [Platforms](docs/platforms.md) lists what each feature does.
 

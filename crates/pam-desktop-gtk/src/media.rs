@@ -38,7 +38,7 @@ impl MediaHost {
     pub fn new(id: NodeId, container: &PamView, events: &Rc<EventQueue>) -> Self {
         let picture = gtk::Picture::new();
         picture.set_can_shrink(true);
-        picture.set_content_fit(gtk::ContentFit::Cover);
+        crate::compat::set_content_fit(&picture, ImageFit::Cover);
         let controls = gtk::MediaControls::new(gtk::MediaStream::NONE);
         let revealer = gtk::Revealer::builder()
             .transition_type(gtk::RevealerTransitionType::Crossfade)
@@ -219,12 +219,7 @@ impl MediaHost {
             }
         }
         self.play_when_ready.set(state.playing);
-        self.picture.set_content_fit(match state.fit {
-            ImageFit::Contain => gtk::ContentFit::Contain,
-            ImageFit::Fill => gtk::ContentFit::Fill,
-            ImageFit::Center | ImageFit::Repeat => gtk::ContentFit::ScaleDown,
-            ImageFit::Cover => gtk::ContentFit::Cover,
-        });
+        crate::compat::set_content_fit(&self.picture, state.fit);
         self.revealer.set_visible(state.controls);
         self.revealer
             .set_reveal_child(state.controls && self.hovered.get());

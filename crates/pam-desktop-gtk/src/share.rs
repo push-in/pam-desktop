@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use gtk::prelude::*;
-use gtk::{gdk, gio, glib, graphene};
+use gtk::{gio, glib, graphene};
 use pam_desktop_ui::geometry::Point;
 use pam_desktop_ui::shell::{MenuNode, ShareRequest};
 
@@ -123,7 +123,7 @@ fn mail(window: &gtk::Window, request: &ShareRequest) {
             escape(&request.title),
             escape(&request.text)
         );
-        gtk::UriLauncher::new(&uri).launch(Some(window), gio::Cancellable::NONE, |_| {});
+        crate::compat::launch_uri(window, &uri);
         return;
     }
     let Some(tool) = mail_tool() else {
@@ -155,31 +155,23 @@ fn run(choice: &str, window: &gtk::Window, request: &ShareRequest) {
     let file = |index: usize| request.files.get(index).map(gio::File::for_path);
     match choice {
         "link" => {
-            gtk::UriLauncher::new(request.text.trim()).launch(
-                Some(window),
-                gio::Cancellable::NONE,
-                |_| {},
-            );
+            crate::compat::launch_uri(window, request.text.trim());
         }
         "copy-text" => window.clipboard().set_text(&request.text),
         "copy-files" => {
-            let files: Vec<gio::File> = request.files.iter().map(gio::File::for_path).collect();
-            let list = gdk::FileList::from_array(&files);
-            let content = gdk::ContentProvider::for_value(&list.to_value());
+            let content = crate::compat::file_list(&request.files);
             let _ = window.clipboard().set_content(Some(&content));
         }
         "mail" => mail(window, request),
         "open" => {
-            let launcher = gtk::FileLauncher::new(file(0).as_ref());
-            launcher.set_always_ask(true);
-            launcher.launch(Some(window), gio::Cancellable::NONE, |_| {});
+            if let Some(file) = file(0) {
+                crate::compat::open_with(window, &file);
+            }
         }
         "folder" => {
-            gtk::FileLauncher::new(file(0).as_ref()).open_containing_folder(
-                Some(window),
-                gio::Cancellable::NONE,
-                |_| {},
-            );
+            if let Some(file) = file(0) {
+                crate::compat::show_in_folder(window, &file);
+            }
         }
         _ => {}
     }
