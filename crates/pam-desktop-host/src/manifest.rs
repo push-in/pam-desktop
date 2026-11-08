@@ -21,6 +21,27 @@ pub const DEFAULT_ENTRY: &str = "index.php";
 /// Used when the manifest declares no version: older than any release.
 pub const DEFAULT_VERSION: &str = "0.0.0";
 
+/// The project `start` belongs to: the nearest directory, from `start` up,
+/// that holds a `pam-desktop.json`.
+#[must_use]
+pub fn find_project(start: &Path) -> Option<PathBuf> {
+    start
+        .ancestors()
+        .find(|directory| directory.join(FILE_NAME).is_file())
+        .map(Path::to_path_buf)
+}
+
+/// The project of a command given none: the one the current directory is
+/// in, so `pam-desktop dev` works from any of its folders, else the current
+/// directory itself.
+#[must_use]
+pub fn current_project() -> PathBuf {
+    std::env::current_dir()
+        .ok()
+        .and_then(|directory| find_project(&directory))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_EXCLUSIONS: usize = 256;
 const MAX_EXTENSIONS: usize = 128;
@@ -773,6 +794,19 @@ mod tests {
             document,
             folder: String::from("My App"),
         }
+    }
+
+    #[test]
+    fn the_project_is_found_from_any_of_its_folders() {
+        let directory = temporary_directory("manifest-find");
+        let project = directory.join("app");
+        let nested = project.join("src/Screens/Home");
+        std::fs::create_dir_all(&nested).unwrap();
+        assert_eq!(find_project(&nested), None);
+        std::fs::write(project.join(FILE_NAME), "{}").unwrap();
+        assert_eq!(find_project(&nested), Some(project.clone()));
+        assert_eq!(find_project(&project), Some(project));
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]

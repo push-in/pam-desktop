@@ -109,6 +109,8 @@ $language2Styles = ScopedStyleCompiler::compile(<<<'CSS'
     transform: scale(0.98);
 }
 
+.touchable:focus-within { border-color: #33CC66; }
+
 .touchable:focus-visible {
     background: #3366FF;
     border-color: #2244CC;
@@ -537,6 +539,11 @@ $assert(
             (string) ($styledElement->properties()[PropKey::NativeStateStyles->value] ?? ''),
             '"2"',
         )
+        && ($nativeStateStyles[10][PropKey::BorderColor->value] ?? null) === 0xFF33CC66
+        && ($nativeStateStyles[10][PropKey::BorderTopColor->value] ?? null) === 0xFF33CC66
+        && ($nativeStateStyles[10][PropKey::BorderRightColor->value] ?? null) === 0xFF33CC66
+        && ($nativeStateStyles[10][PropKey::BorderBottomColor->value] ?? null) === 0xFF33CC66
+        && ($nativeStateStyles[10][PropKey::BorderLeftColor->value] ?? null) === 0xFF33CC66
         && ($nativeStateStyles[2][PropKey::BorderColor->value] ?? null) === 0xFF2244CC
         && (float) ($nativeStateStyles[2][PropKey::Elevation->value] ?? 0) === 3.0
         && $styledChild instanceof \Pam\Desktop\Element

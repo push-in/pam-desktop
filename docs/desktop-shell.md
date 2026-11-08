@@ -310,6 +310,40 @@ InteractionRegion::make(Text::make('Done'), ...$cards)
 
 The drag starts once the pointer moves a few units with the button down, and it is a system drag: text dragged from another application onto a region that accepts drops arrives the same way, and a draggable region can be dropped on other applications. `onDragStart` and `onDragEnd` report the two ends of a drag on its source.
 
+### Typed drag and drop
+
+`DragSource` and `DropTarget` move a typed payload between elements of the application, such as a card between columns of a board. A target only reacts to the types it accepts.
+
+```php
+use Pam\Desktop\DragPayload;
+use Pam\Desktop\UI\DragSource;
+use Pam\Desktop\UI\DropTarget;
+
+enum Drag: int { case Card = 1; }
+
+DropTarget::make(...$cards)
+    ->accepts(Drag::Card)
+    ->onDragEnter(fn (DragPayload $drag) => $this->over = 'done')
+    ->onDragLeave(fn (DragPayload $drag) => $this->over = null)
+    ->onDrop(fn (DragPayload $drag) => $this->move($drag->data, 'done'));
+
+DragSource::make(Text::make($card->title))
+    ->payload(Drag::Card, $card->id)
+    ->onDragStart(fn (DragPayload $drag) => $this->dragging = $drag->data)
+    ->onDragEnd(fn () => $this->dragging = null);
+```
+
+```html
+<DropTarget dropType="1" on:drop="drop" on:dragEnter="enter" on:dragLeave="leave">
+    <DragSource dragType="1" :dragData="$card->id">…</DragSource>
+</DropTarget>
+```
+
+- The type is an integer from 1 to 65535 or an int-backed enum; the data is a string of at most 512 bytes. `DragPayload` has `type` and `data`.
+- Holding a drag within 32 points of the edge of a scroll view scrolls it (12 points every 40 ms), so a long list can be crossed.
+- Drags work in secondary windows too. A drag is cancelled when the application goes to the background.
+- Needs a host that declares properties 2018 to 2021 ([Compatibility](compatibility.md)). Verified on Linux; the macOS and Windows code type-checks and has not run.
+
 ### Files from the system
 
 ```php
@@ -353,7 +387,15 @@ Column::make(...$rows)->onKeyDown(function (KeyEvent $event): void {
 | `repeat` | The key is being held. |
 | `primary()` | Command on macOS, Control elsewhere. |
 
-A key that no text control consumed goes to the nearest listener at or above the focused element. When nothing has focus it goes to every visible listener, which is how a screen handles keys globally.
+A key that no text control consumed goes to the nearest listener at or above the focused element.
+
+Some keys are handled by the focused native control before anyone sees them (Space presses a button, arrows move a caret). `captureKeys` gives them to the element first: while it or a descendant has the focus, the listed keys go to its nearest `onKeyDown` before native handling, and the control does not see them.
+
+```html
+<Column captureKeys="ArrowUp,ArrowDown,Enter,Space" on:keyDown="key">…</Column>
+```
+
+Keys are W3C names separated by commas (`Space` for the space bar), at most 512 bytes. A key with Control, Alt or Meta is never captured, so shortcuts keep working. On Windows the key is taken before `TranslateMessage`, so no character is typed. Verified on Linux; not run on macOS or Windows. When nothing has focus it goes to every visible listener, which is how a screen handles keys globally.
 
 ## Hover events
 

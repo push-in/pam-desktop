@@ -54,7 +54,7 @@ final class Language2StyleCompiler
         $expanded = [];
         foreach ($blocks as [$header, $body]) {
             if (!str_starts_with($header, '@') && str_contains($header, ',')
-                && preg_match('/::?(?:pressed|focus|focused|focus-visible|disabled|selected|checked|hover|hovered|active|loading|error|placeholder|selection)\b/', $header) === 1) {
+                && preg_match('/::?(?:pressed|focus|focused|focus-visible|focus-within|disabled|selected|checked|hover|hovered|active|loading|error|placeholder|selection)\b/', $header) === 1) {
                 foreach (self::splitSelectors($header) as $part) {
                     $expanded[] = [$part, $body];
                 }
@@ -100,7 +100,7 @@ final class Language2StyleCompiler
                 continue;
             }
 
-            if (preg_match('/^(.+):(pressed|focus|focused|focus-visible|disabled|selected|checked|hover|hovered|active|loading|error)$/D', $header, $match) === 1) {
+            if (preg_match('/^(.+):(pressed|focus|focused|focus-visible|focus-within|disabled|selected|checked|hover|hovered|active|loading|error)$/D', $header, $match) === 1) {
                 $selector = trim($match[1]);
                 self::assertSelector($selector, $name);
                 $state = match ($match[2]) {

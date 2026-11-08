@@ -4,16 +4,25 @@ declare(strict_types=1);
 
 namespace Pam\Desktop\Host;
 
+use ErrorException;
+use Pam\Desktop\Diagnostics\RuntimeErrorPhase;
 use Pam\Desktop\Internal\Runtime;
 use Throwable;
 
+use function error_get_last;
 use function fwrite;
 use function ini_set;
+use function memory_get_usage;
 use function ob_start;
+use function register_shutdown_function;
 use function strlen;
 use function substr;
 use function unpack;
 
+use const E_COMPILE_ERROR;
+use const E_CORE_ERROR;
+use const E_ERROR;
+use const E_USER_ERROR;
 use const STDERR;
 
 /**
@@ -43,6 +52,7 @@ final class Worker
         }, 1);
 
         require_once __DIR__.'/functions.php';
+        register_shutdown_function(self::reportFatalError(...));
 
         try {
             (static function (string $__pamEntry): void {
@@ -110,6 +120,29 @@ final class Worker
             Runtime::flush();
         } catch (Throwable $error) {
             self::report($error);
+        }
+    }
+
+    /**
+     * A fatal error (out of memory, time limit, a class that cannot compile)
+     * ends PHP without an exception: it is reported before the process goes.
+     */
+    private static function reportFatalError(): void
+    {
+        $error = error_get_last();
+        if ($error === null || ($error['type'] & (E_ERROR | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR)) === 0) {
+            return;
+        }
+        // Room to build the report when the memory limit is what failed.
+        @ini_set('memory_limit', (string) (memory_get_usage() + 33_554_432));
+        try {
+            Runtime::reportError(
+                new ErrorException($error['message'], 0, $error['type'], $error['file'], $error['line']),
+                RuntimeErrorPhase::Worker,
+            );
+            Channel::flush();
+        } catch (Throwable) {
+            // stderr already has PHP's own message.
         }
     }
 

@@ -29,6 +29,8 @@ const DOUBLE_TAP_SLOP: f32 = 100.0;
 const STATE_PRESSED: u8 = 1;
 const STATE_FOCUSED: u8 = 2;
 const STATE_HOVERED: u8 = 3;
+// IDs4–9 are PHP-evaluated states. Keep10 aligned with StyleInteractionState.
+const STATE_FOCUS_WITHIN: u8 = 10;
 
 #[derive(Clone, Copy, Debug)]
 struct Press {
@@ -68,7 +70,7 @@ impl StateStyles {
             let (Ok(state), Some(rules)) = (state.parse::<u8>(), rules.as_object()) else {
                 continue;
             };
-            if !(STATE_PRESSED..=STATE_HOVERED).contains(&state) {
+            if !(STATE_PRESSED..=STATE_HOVERED).contains(&state) && state != STATE_FOCUS_WITHIN {
                 continue;
             }
             let mut props = PropMap::new();
@@ -82,12 +84,22 @@ impl StateStyles {
                     Ok(10) => PropKey::BackgroundColor,
                     Ok(11) => PropKey::TextColor,
                     Ok(37) => PropKey::BorderColor,
+                    Ok(480) => PropKey::BorderTopColor,
+                    Ok(481) => PropKey::BorderRightColor,
+                    Ok(482) => PropKey::BorderBottomColor,
+                    Ok(483) => PropKey::BorderLeftColor,
                     Ok(56) => PropKey::Elevation,
                     _ => continue,
                 };
                 let colour = matches!(
                     key,
-                    PropKey::BackgroundColor | PropKey::TextColor | PropKey::BorderColor
+                    PropKey::BackgroundColor
+                        | PropKey::TextColor
+                        | PropKey::BorderColor
+                        | PropKey::BorderTopColor
+                        | PropKey::BorderRightColor
+                        | PropKey::BorderBottomColor
+                        | PropKey::BorderLeftColor
                 );
                 let value = match (colour, value.as_i64(), value.as_f64()) {
                     (true, Some(integer), _) => PropValue::Integer(integer),
@@ -119,6 +131,7 @@ pub struct Interaction {
     /// Nodes under the pointer, innermost first.
     hovered: Vec<NodeId>,
     focused: Option<NodeId>,
+    focus_within: Vec<NodeId>,
     pointer: Option<Point>,
     /// A pointer move waiting to be reported (one per drain).
     pending_move: Option<(NodeId, Vec<u8>)>,
@@ -196,6 +209,7 @@ impl Interaction {
                     self.restyle(ctx, id);
                 }
             }
+            Change::Children(_) if self.focused.is_some() => self.refresh_focus_within(ctx),
             Change::Removed(id, _) => {
                 self.styles.remove(&id);
                 self.outside_observers.retain(|observer| *observer != id);
@@ -210,6 +224,7 @@ impl Interaction {
                 ctx.timers.cancel(Timer::DeferredPress(id));
                 if self.focused == Some(id) {
                     self.focused = None;
+                    self.refresh_focus_within(ctx);
                 }
                 if self.last_tap.is_some_and(|tap| tap.node == id) {
                     self.last_tap = None;
@@ -315,6 +330,7 @@ impl Interaction {
             // Later states win: hover, then focus, then pressed.
             for (active, state) in [
                 (hovered, STATE_HOVERED),
+                (self.focus_within.contains(&id), STATE_FOCUS_WITHIN),
                 (focused, STATE_FOCUSED),
                 (pressed, STATE_PRESSED),
             ] {
@@ -884,6 +900,7 @@ impl Interaction {
         } else if self.focused == Some(id) {
             self.focused = None;
         }
+        self.refresh_focus_within(ctx);
         for node in [previous, Some(id)].into_iter().flatten() {
             if self.styles.contains_key(&node) {
                 self.restyle(ctx, node);
@@ -891,9 +908,69 @@ impl Interaction {
         }
     }
 
+    /// Only the previous/new focus ancestry is revisited; no tree scan or timer.
+    fn refresh_focus_within(&mut self, ctx: &mut Ctx<'_>) {
+        let mut chain = Vec::new();
+        let mut current = self.focused;
+        while let Some(id) = current {
+            let Some(node) = ctx.scene.node(id) else {
+                break;
+            };
+            chain.push(id);
+            current = (node.parent != 0).then_some(node.parent);
+        }
+        let previous = std::mem::replace(&mut self.focus_within, chain);
+        let mut affected = previous;
+        for id in &self.focus_within {
+            if !affected.contains(id) {
+                affected.push(*id);
+            }
+        }
+        for id in affected {
+            if self.styles.contains_key(&id) {
+                self.restyle(ctx, id);
+            }
+        }
+    }
+
     #[must_use]
     pub fn focused(&self) -> Option<NodeId> {
         self.focused
+    }
+
+    /// Explicit composite-control ownership, before scrolling/modal dismissal/default activation.
+    /// Comma-separated W3C key names; `Space` represents the literal space key.
+    pub fn capture_key(&mut self, ctx: &mut Ctx<'_>, key: &KeyEvent) -> bool {
+        if key.modifiers.control || key.modifiers.alt || key.modifiers.meta {
+            return false;
+        }
+        let Some(focused) = self.focused else {
+            return false;
+        };
+        let Some(target) = Self::nearest_with(ctx, focused, PropKey::CaptureKeys) else {
+            return false;
+        };
+        let Some(node) = ctx.scene.node(target) else {
+            return false;
+        };
+        if !ctx.scene.is_effectively_visible(target)
+            || !node.props().flag_or(PropKey::Enabled, true)
+        {
+            return false;
+        }
+        let wanted = if key.key == " " {
+            "Space"
+        } else {
+            key.key.as_str()
+        };
+        let capture = node.props().text(PropKey::CaptureKeys).is_some_and(|keys| {
+            keys.len() <= 512 && keys.split(',').any(|candidate| candidate.trim() == wanted)
+        });
+        if !capture || !node.handles(PropKey::OnKeyDown) {
+            return false;
+        }
+        self.report_key(ctx, key);
+        true
     }
 
     /// Enter and Space activate the focused pressable, reporting its center.

@@ -45,6 +45,9 @@ pub struct View {
     pub drawing: Vec<DrawCommand>,
     pub scroll: Option<Box<ScrollState>>,
     pub focusable: bool,
+    pub capture_keys: String,
+    pub target_self: bool,
+    pub target_children: bool,
     pub cursor: Cursor,
     pub tooltip: Option<String>,
     pub accessibility: Option<Box<Accessibility>>,
@@ -72,6 +75,9 @@ impl View {
             drawing: Vec::new(),
             scroll: (class == ViewClass::Scroll).then(|| Box::new(ScrollState::default())),
             focusable: false,
+            capture_keys: String::new(),
+            target_self: true,
+            target_children: true,
             cursor: Cursor::Default,
             tooltip: None,
             accessibility: None,
@@ -158,6 +164,25 @@ pub struct Scene {
 }
 
 impl Scene {
+    pub fn captures_key(&self, id: NodeId, key: &str) -> bool {
+        let wanted = if key == " " { "Space" } else { key };
+        let mut current = Some(id);
+        while let Some(id) = current {
+            let Some(view) = self.views.get(&id) else {
+                return false;
+            };
+            if view
+                .capture_keys
+                .split(',')
+                .any(|candidate| candidate.trim() == wanted)
+            {
+                return true;
+            }
+            current = view.parent;
+        }
+        false
+    }
+
     pub fn create(&mut self, id: NodeId, class: ViewClass) {
         // Replacing a view the core forgot to destroy must not leak its links.
         if self.views.contains_key(&id) {
@@ -466,7 +491,7 @@ impl Scene {
         let Some(view) = self.views.get(&id) else {
             return false;
         };
-        if !view.layer.visible || depth > 512 {
+        if !view.layer.visible || (!view.target_self && !view.target_children) || depth > 512 {
             return false;
         }
         let Some(inverse) = view.to_parent().invert() else {
@@ -480,12 +505,12 @@ impl Scene {
         path.push(id);
         let offset = view.content_offset();
         let content = Point::new(local.x + offset.x, local.y + offset.y);
-        for child in view.children.iter().rev() {
+        for child in view.children.iter().rev().filter(|_| view.target_children) {
             if self.hit_view(*child, content, path, depth + 1) {
                 return true;
             }
         }
-        if inside {
+        if inside && view.target_self {
             return true;
         }
         path.pop();

@@ -21,6 +21,7 @@ Every report is also written to the standard error of the host, prefixed with `[
 | Event | An element, back, lifecycle or dimension event handler | No |
 | Module callback | The callback of a module call that has no failure handler | No |
 | Unhandled promise rejection | A rejected promise nobody handled | No |
+| Worker | A PHP fatal error that ends the worker: memory or time limit | Yes |
 
 A fatal error means the screen is stale or was never drawn. A non-fatal error means one handler failed and the interface on screen is still the last good frame.
 
@@ -30,14 +31,19 @@ A **non-fatal** error shows a toast at the bottom of the window. The application
 
 A **fatal** error shows the full report over the window:
 
+- a title for what failed: **Boot error**, **Render error**, **Template error** (a template that does not compile), **Syntax error** (PHP that does not parse), **PHP worker stopped**, and so on;
 - the type of the error and its message;
-- where it was raised, with the source around the failing line;
+- where it was raised, with the source around the failing line, in the `.pam.php` file you wrote (never in the compiled cache);
 - the call stack, with the frames of the framework folded away until you expand them;
 - **Dismiss**, **Copy** (the report as plain text, on the clipboard) and **Reload** (restarts the PHP worker).
 
 When several distinct errors are pending, the report steps through them. An error that repeats is counted instead of queued again; at most 50 distinct errors are kept. A dismissed error stays silent until the next reload. Escape dismisses everything while the full report is open.
 
-Fixing the source is enough: the file watcher reloads the application and the overlay clears.
+An error raised inside a template, by a method an expression calls or by a component, is reported as that error, where it was raised: its type, its message and its line, with the template line as the next frame of the stack. An error of the template itself (an expression that does not parse, an unknown component) points at the template line and column.
+
+When the PHP worker ends (a fatal error, `exit()`, a crash), the window keeps its last frame and the report says so: a fatal error shows its message and line; otherwise **PHP worker stopped** says what to do. Saving a file or pressing **Reload** starts a new worker.
+
+Fixing the source is enough: the file watcher reloads the application and the overlay clears, in about a quarter of a second.
 
 ### In production (`pam-desktop run`)
 
@@ -238,6 +244,7 @@ The script writes `pam-desktop-<version>-<target>.tar.gz` and its `.sha256` in t
 | `PAM_DESKTOP_WINDOW=800x600` | Forces the size of the first window. |
 | `PAM_DESKTOP_STATE_DIR`, `PAM_DESKTOP_DATA_DIR`, `PAM_DESKTOP_CACHE_DIR` | Absolute paths that isolate a run from the application's real files. |
 | `PAM_DESKTOP_PHP=/path/to/php` | Runs the worker with another PHP executable. |
+| `PAM_DESKTOP_CAPTURE=/path/shot.png` | macOS: writes the content of the first visible window to a PNG `PAM_DESKTOP_CAPTURE_AFTER` seconds (3 by default) after it shows. It renders the layer tree in the process, so it needs no screen recording permission and works on a locked session, but leaves out layer shadows, masks and Core Image filters. |
 | `PAM_DESKTOP_WORKER=/path/to/pam-desktop-worker` | Runs another copy of the worker bootstrap. |
 | `PAM_DESKTOP_STRICT=1` | Makes `BuildConfiguration::strict()` true in development. |
 | `PAM_DESKTOP_FRAME_GC=0` | Leaves PHP's cycle collector on its own schedule. |

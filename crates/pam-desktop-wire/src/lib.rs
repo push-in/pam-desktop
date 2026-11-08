@@ -30,8 +30,8 @@ pub const EXTENSION_BASE: u16 = 1001;
 /// Identifiers that exist only in PAM Desktop start here.
 pub const DESKTOP_BASE: u16 = 2001;
 /// Highest property and event identifiers of the desktop table.
-pub const DESKTOP_PROPERTY_CEILING: u16 = 2016;
-pub const DESKTOP_EVENT_CEILING: u16 = 2005;
+pub const DESKTOP_PROPERTY_CEILING: u16 = 2028;
+pub const DESKTOP_EVENT_CEILING: u16 = 2007;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -763,6 +763,27 @@ pub enum PropKey {
     WindowModal = 2014,
     WindowMinWidth = 2015,
     WindowMinHeight = 2016,
+    CaptureKeys = 2017,
+    DragType = 2018,
+    DropType = 2019,
+    OnDragEnter = 2020,
+    OnDragLeave = 2021,
+    GridTracks = 2022,
+    InputFormatDecimalMinDigits = 2023,
+    /// CSS `scrollbar-gutter`: 1 auto, 2 stable, 3 stable both-edges.
+    ScrollbarGutter = 2024,
+    /// CSS `scrollbar-width`: 1 auto, 2 thin, 3 none (gutter thickness).
+    ScrollbarWidth = 2025,
+    /// CSS `scrollbar-width: <length>`: exact gutter thickness in px.
+    ScrollbarThickness = 2026,
+    /// CSS `scrollbar-color` thumb colour (ARGB).
+    ScrollbarColor = 2027,
+    /// CSS inline boxes of nested texts (padding, border, background):
+    /// `start,end,paddingTop,paddingRight,paddingBottom,paddingLeft,
+    /// borderTop,borderRight,borderBottom,borderLeft,borderColor,radius,
+    /// background,lineHeight` records separated by `;`, offsets in code
+    /// points of `Text` like `TextSpans`.
+    TextSpanBoxes = 2028,
 }
 
 impl TryFrom<u16> for PropKey {
@@ -1340,6 +1361,18 @@ impl TryFrom<u16> for PropKey {
             2014 => Ok(Self::WindowModal),
             2015 => Ok(Self::WindowMinWidth),
             2016 => Ok(Self::WindowMinHeight),
+            2017 => Ok(Self::CaptureKeys),
+            2018 => Ok(Self::DragType),
+            2019 => Ok(Self::DropType),
+            2020 => Ok(Self::OnDragEnter),
+            2021 => Ok(Self::OnDragLeave),
+            2022 => Ok(Self::GridTracks),
+            2023 => Ok(Self::InputFormatDecimalMinDigits),
+            2024 => Ok(Self::ScrollbarGutter),
+            2025 => Ok(Self::ScrollbarWidth),
+            2026 => Ok(Self::ScrollbarThickness),
+            2027 => Ok(Self::ScrollbarColor),
+            2028 => Ok(Self::TextSpanBoxes),
             other => Err(ProtocolError::UnknownProperty(other)),
         }
     }
@@ -1419,7 +1452,8 @@ impl Patch {
             return Err(ProtocolError::LimitExceeded("patch operation count"));
         }
         let mut seen = BTreeSet::new();
-        let mut operations = Vec::with_capacity(count);
+        // The count is untrusted: a 10-byte frame must not reserve gigabytes.
+        let mut operations = Vec::with_capacity(count.min(4096));
         for _ in 0..count {
             let operation = reader.u8()?;
             operations.push(match operation {
@@ -1808,7 +1842,8 @@ pub fn decode_batch(frame: &[u8]) -> Result<Vec<Mutation>, ProtocolError> {
     if count > MAX_NODES.saturating_mul(8) {
         return Err(ProtocolError::LimitExceeded("mutation count"));
     }
-    let mut mutations = Vec::with_capacity(count);
+    // The count is untrusted: a short frame must not reserve a large buffer.
+    let mut mutations = Vec::with_capacity(count.min(4096));
     for _ in 0..count {
         mutations.push(match reader.u8()? {
             1 => Mutation::Create(decode_node(&mut reader)?),
@@ -2292,6 +2327,13 @@ mod tests {
             );
         }
         assert!(PropKey::try_from(1012).is_err());
+        for value in DESKTOP_BASE..=DESKTOP_PROPERTY_CEILING {
+            assert!(
+                PropKey::try_from(value).is_ok(),
+                "missing desktop property {value}"
+            );
+        }
+        assert!(PropKey::try_from(DESKTOP_PROPERTY_CEILING + 1).is_err());
     }
 
     #[test]

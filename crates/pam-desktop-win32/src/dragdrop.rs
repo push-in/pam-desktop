@@ -146,9 +146,16 @@ impl IDropTarget_Impl for DropTarget_Impl {
         &self,
         data: Ref<IDataObject>,
         _keys: MODIFIERKEYS_FLAGS,
-        _point: &POINTL,
+        point: &POINTL,
         effect: *mut DROPEFFECT,
     ) -> Result<()> {
+        if let (Some(app), Some(position)) = (App::current(), self.position(point)) {
+            app.emit(BackendEvent::DragMotion {
+                window: self.window,
+                position: Some(position),
+            });
+            app.pump();
+        }
         let accepts = data
             .as_ref()
             .is_some_and(|data| offers(data, CF_HDROP.0) || offers(data, CF_UNICODETEXT.0));
@@ -160,14 +167,28 @@ impl IDropTarget_Impl for DropTarget_Impl {
     fn DragOver(
         &self,
         _keys: MODIFIERKEYS_FLAGS,
-        _point: &POINTL,
+        point: &POINTL,
         effect: *mut DROPEFFECT,
     ) -> Result<()> {
+        if let (Some(app), Some(position)) = (App::current(), self.position(point)) {
+            app.emit(BackendEvent::DragMotion {
+                window: self.window,
+                position: Some(position),
+            });
+            app.pump();
+        }
         self.effect(effect);
         Ok(())
     }
 
     fn DragLeave(&self) -> Result<()> {
+        if let Some(app) = App::current() {
+            app.emit(BackendEvent::DragMotion {
+                window: self.window,
+                position: None,
+            });
+            app.pump();
+        }
         self.accepts.set(false);
         Ok(())
     }

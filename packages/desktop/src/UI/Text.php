@@ -40,6 +40,21 @@ final class Text extends Element
 
     private const MAX_SPANS = 4_096;
 
+    /** Side keys of an inline box, top/right/bottom/left, after the shorthands. */
+    private const BOX_PADDING = [
+        [PropKey::PaddingTop, PropKey::PaddingVertical],
+        [PropKey::PaddingRight, PropKey::PaddingHorizontal],
+        [PropKey::PaddingBottom, PropKey::PaddingVertical],
+        [PropKey::PaddingLeft, PropKey::PaddingHorizontal],
+    ];
+
+    private const BOX_BORDER = [
+        PropKey::BorderTopWidth,
+        PropKey::BorderRightWidth,
+        PropKey::BorderBottomWidth,
+        PropKey::BorderLeftWidth,
+    ];
+
     /** @var list<string|Text>|null */
     private ?array $richParts = null;
 
@@ -78,8 +93,10 @@ final class Text extends Element
         $spans = [];
         /** @var list<\Closure> $handlers */
         $handlers = [];
+        /** @var list<string> $boxes */
+        $boxes = [];
         foreach ($parts as $part) {
-            self::appendRun($part, [], $text, $length, $spans, $handlers);
+            self::appendRun($part, [], $text, $length, $spans, $handlers, $boxes);
         }
         $records = [];
         foreach ($spans as $span) {
@@ -100,6 +117,9 @@ final class Text extends Element
         if ($records !== []) {
             $element = $element->withProperty(PropKey::TextSpans, implode(';', $records));
         }
+        if ($boxes !== []) {
+            $element = $element->withProperty(PropKey::TextSpanBoxes, implode(';', $boxes));
+        }
         if ($handlers !== []) {
             $element = $element->on(EventKind::SpanPress, static function (mixed $payload = null) use ($handlers): void {
                 $handler = $handlers[(int) (is_scalar($payload) ? $payload : -1)] ?? null;
@@ -117,6 +137,7 @@ final class Text extends Element
      * @param array<int|string, mixed> $inherited
      * @param array<int, array{int, int, array<int|string, mixed>}|null> $spans
      * @param list<\Closure> $handlers
+     * @param list<string> $boxes
      */
     private static function appendRun(
         string|self $part,
@@ -125,6 +146,7 @@ final class Text extends Element
         int &$length,
         array &$spans,
         array &$handlers,
+        array &$boxes,
     ): void {
         if (is_string($part)) {
             $text .= $part;
@@ -140,6 +162,16 @@ final class Text extends Element
                 $merged[self::SPAN_FIELDS[$key]] = $value;
             }
         }
+        $box = self::inlineBox($part->properties());
+        if ($box !== null) {
+            // The box paints its own background under its padding too; like
+            // CSS, the runs inside do not repeat it.
+            if (isset($part->properties()[PropKey::BackgroundColor->value])) {
+                unset($merged[self::SPAN_FIELDS[PropKey::BackgroundColor->value]]);
+            }
+            $boxSlot = count($boxes);
+            $boxes[] = '';
+        }
         $press = $part->events()[EventKind::Press->value] ?? null;
         if ($press !== null) {
             $merged[10] = count($handlers);
@@ -150,11 +182,18 @@ final class Text extends Element
         $spans[] = null;
         if ($part->richParts !== null) {
             foreach ($part->richParts as $child) {
-                self::appendRun($child, $merged, $text, $length, $spans, $handlers);
+                self::appendRun($child, $merged, $text, $length, $spans, $handlers, $boxes);
             }
         } else {
             $content = $part->properties()[PropKey::Text->value] ?? '';
-            self::appendRun(is_string($content) ? $content : '', $merged, $text, $length, $spans, $handlers);
+            self::appendRun(is_string($content) ? $content : '', $merged, $text, $length, $spans, $handlers, $boxes);
+        }
+        if ($box !== null) {
+            if ($length > $start) {
+                $boxes[$boxSlot] = rtrim($start.','.$length.','.$box, ',');
+            } else {
+                array_splice($boxes, $boxSlot, 1);
+            }
         }
         if ($merged !== [] && $length > $start) {
             $spans[$slot] = [$start, $length, $merged];
@@ -162,6 +201,61 @@ final class Text extends Element
         if (count($spans) > self::MAX_SPANS) {
             throw new InvalidArgumentException('Rich text supports at most 4096 runs.');
         }
+    }
+
+    /**
+     * The CSS inline box of a nested run (`<span>` with padding, border,
+     * radius or background): its record fields after `start,end`, or null
+     * when the run draws no box.
+     *
+     * @param array<int, mixed> $properties
+     */
+    private static function inlineBox(array $properties): ?string
+    {
+        $length = static function (mixed $value): ?float {
+            if (is_int($value) || is_float($value)) {
+                return is_finite((float) $value) ? max(0.0, (float) $value) : null;
+            }
+            return is_string($value) && preg_match('/^\s*(\d+(?:\.\d+)?)(?:px)?\s*$/D', $value, $match) === 1
+                ? (float) $match[1]
+                : null;
+        };
+        // `padding` may be a number or a CSS shorthand of one to four lengths.
+        $all = $properties[PropKey::Padding->value] ?? null;
+        $shorthand = is_string($all) ? preg_split('/\s+/', trim($all)) : [$all];
+        $shorthand = $shorthand === false ? [] : $shorthand;
+        $sides = match (count($shorthand)) {
+            1 => [$shorthand[0], $shorthand[0], $shorthand[0], $shorthand[0]],
+            2 => [$shorthand[0], $shorthand[1], $shorthand[0], $shorthand[1]],
+            3 => [$shorthand[0], $shorthand[1], $shorthand[2], $shorthand[1]],
+            default => [$shorthand[0] ?? null, $shorthand[1] ?? null, $shorthand[2] ?? null, $shorthand[3] ?? null],
+        };
+        $padding = [];
+        $border = [];
+        foreach (self::BOX_PADDING as $side => [$own, $axis]) {
+            $padding[] = $length($properties[$own->value] ?? $properties[$axis->value] ?? $sides[$side]) ?? 0.0;
+            $border[] = $length($properties[self::BOX_BORDER[$side]->value] ?? $properties[PropKey::BorderWidth->value] ?? null) ?? 0.0;
+        }
+        $radius = $length($properties[PropKey::BorderRadius->value] ?? null) ?? 0.0;
+        $background = $properties[PropKey::BackgroundColor->value] ?? null;
+        $background = is_int($background) ? $background : null;
+        if (max([...$padding, ...$border]) <= 0.0 && ($radius <= 0.0 || $background === null)) {
+            return null;
+        }
+        $color = $properties[PropKey::BorderColor->value] ?? $properties[PropKey::BorderTopColor->value] ?? null;
+        $fields = [
+            ...$padding,
+            ...$border,
+            is_int($color) ? $color : '',
+            $radius,
+            $background ?? '',
+            $length($properties[PropKey::LineHeight->value] ?? null) ?? '',
+        ];
+
+        return implode(',', array_map(
+            static fn (mixed $value): string => $value === '' ? '' : self::spanField($value, 0),
+            $fields,
+        ));
     }
 
     private static function spanField(mixed $value, int $index): string

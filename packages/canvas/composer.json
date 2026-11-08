@@ -1,0 +1,18 @@
+{
+    "name": "pushinbr/pam-desktop-canvas",
+    "description": "Native desktop canvas for PAM Desktop, sharing the PAM Native immutable API.",
+    "type": "library",
+    "license": "Apache-2.0",
+    "require": {
+        "php": "^8.5",
+        "pushinbr/pam-desktop": "^2.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pam\\Desktop\\Canvas\\": "src/"
+        }
+    },
+    "scripts": {
+        "test": "php tests/run.php"
+    }
+}

@@ -147,6 +147,12 @@ impl FontMetricsCache {
     }
 
     fn resolve_asset_font(&self, family: &str) -> Option<PathBuf> {
+        // A list measures with its first family when that is packaged.
+        let Some(crate::font_family::Family::Asset(family)) =
+            crate::font_family::families(family).next()
+        else {
+            return None;
+        };
         let relative = family.strip_prefix("asset://")?;
         let relative = Path::new(relative);
         if relative.is_absolute()
@@ -156,7 +162,12 @@ impl FontMetricsCache {
         {
             return None;
         }
-        Some(self.asset_root.as_ref()?.join(relative))
+        // Lexical checks alone would follow a symlink inside the application
+        // (`assets/font.ttf -> /home/user/secret`): like the GTK, AppKit and
+        // Win32 backends, resolve both and require the font to stay inside.
+        let root = self.asset_root.as_ref()?.canonicalize().ok()?;
+        let resolved = root.join(relative).canonicalize().ok()?;
+        (resolved.starts_with(&root) && resolved.is_file()).then_some(resolved)
     }
 }
 
@@ -169,20 +180,51 @@ mod tests {
 
     #[test]
     fn rejects_asset_paths_that_escape_the_application_root() {
+        let base = std::env::temp_dir().join(format!("pam-font-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("app");
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        std::fs::write(root.join("assets/font.ttf"), b"font").unwrap();
+        std::fs::write(base.join("private.ttf"), b"secret").unwrap();
         let mut cache = FontMetricsCache::default();
-        cache.set_asset_root(PathBuf::from("/tmp/pam-app"));
+        cache.set_asset_root(root.clone());
 
-        assert!(
-            cache
-                .resolve_asset_font("asset://assets/font.ttf")
-                .is_some()
+        assert_eq!(
+            cache.resolve_asset_font("asset://assets/font.ttf"),
+            Some(root.join("assets/font.ttf").canonicalize().unwrap())
         );
+        assert!(cache.resolve_asset_font("asset://../private.ttf").is_none());
+        assert!(cache.resolve_asset_font("/private/font.ttf").is_none());
         assert!(
             cache
-                .resolve_asset_font("asset://../private/font.ttf")
+                .resolve_asset_font("asset://assets/missing.ttf")
                 .is_none()
         );
-        assert!(cache.resolve_asset_font("/private/font.ttf").is_none());
+        #[cfg(unix)]
+        {
+            // A symlink inside the application that points outside it.
+            std::os::unix::fs::symlink(base.join("private.ttf"), root.join("assets/link.ttf"))
+                .unwrap();
+            std::os::unix::fs::symlink(&base, root.join("assets/up")).unwrap();
+            assert!(
+                cache
+                    .resolve_asset_font("asset://assets/link.ttf")
+                    .is_none()
+            );
+            assert!(
+                cache
+                    .resolve_asset_font("asset://assets/up/private.ttf")
+                    .is_none()
+            );
+            // A symlink that stays inside is fine.
+            std::os::unix::fs::symlink("font.ttf", root.join("assets/alias.ttf")).unwrap();
+            assert!(
+                cache
+                    .resolve_asset_font("asset://assets/alias.ttf")
+                    .is_some()
+            );
+        }
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

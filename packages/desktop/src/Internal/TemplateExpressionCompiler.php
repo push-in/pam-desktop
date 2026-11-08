@@ -15,7 +15,7 @@ use function is_string;
 
 /**
  * Compiles a template expression to the PHP source of one closure with the
- * exact semantics of TemplateExpression's closure tree (same grammar, eager
+ * exact semantics of TemplateExpression's closure tree (same grammar, short-circuit
  * operand evaluation in the same order, the same "missing" coalescing rules
  * and the same diagnostics), so it runs as straight-line opcodes. The source
  * is written into the component cache at build time and evaluated once at
@@ -148,24 +148,32 @@ final class TemplateExpressionCompiler
         return '$m';
     }
 
+    /** @param \Closure(): string $parse @return array{string, string} */
+    private function branch(\Closure $parse): array
+    {
+        $outer = $this->statements;
+        $this->statements = [];
+        try {
+            $value = $parse();
+            return [$value, implode("\n", $this->statements)];
+        } finally {
+            $this->statements = $outer;
+        }
+    }
+
     private function ternary(): string
     {
         $condition = $this->coalescing();
-
-        if (!$this->take('?')) {
-            return $condition;
-        }
-        $truthy = null;
+        if (!$this->take('?')) return $condition;
+        $truthy = $condition;
+        $trueCode = '';
         if (!$this->take(':')) {
-            $truthy = $this->ternary();
+            [$truthy, $trueCode] = $this->branch(fn () => $this->ternary());
             $this->expect(':');
         }
-        $falsy = $this->ternary();
+        [$falsy, $falseCode] = $this->branch(fn () => $this->ternary());
         $result = $this->temporary();
-        $this->emit($truthy === null
-            ? "{$result} = (bool) {$condition} ? {$condition} : {$falsy};"
-            : "{$result} = (bool) {$condition} ? {$truthy} : {$falsy};");
-
+        $this->emit("if ((bool) {$condition}) {\n{$trueCode}\n{$result} = {$truthy};\n} else {\n{$falseCode}\n{$result} = {$falsy};\n}");
         return $result;
     }
 
@@ -179,10 +187,10 @@ final class TemplateExpressionCompiler
         }
 
         if ($this->take(T_COALESCE)) {
-            $right = $this->coalescing();
+            [$right, $rightCode] = $this->branch(fn () => $this->coalescing());
             $result = $this->temporary();
             $missing = $this->missing();
-            $this->emit("{$result} = {$left} === {$missing} || {$left} === null ? {$right} : {$left};");
+            $this->emit("if ({$left} === {$missing} || {$left} === null) {\n{$rightCode}\n{$result} = {$right};\n} else { {$result} = {$left}; }");
 
             return $result;
         }
@@ -198,9 +206,9 @@ final class TemplateExpressionCompiler
     {
         $value = $this->logicalAnd();
         while ($this->take(T_BOOLEAN_OR) || $this->take('||')) {
-            $right = $this->logicalAnd();
+            [$right, $rightCode] = $this->branch(fn () => $this->logicalAnd());
             $result = $this->temporary();
-            $this->emit("{$result} = (bool) {$value} || (bool) {$right};");
+            $this->emit("if ((bool) {$value}) { {$result} = true; } else {\n{$rightCode}\n{$result} = (bool) {$right};\n}");
             $value = $result;
         }
 
@@ -211,9 +219,9 @@ final class TemplateExpressionCompiler
     {
         $value = $this->equality();
         while ($this->take(T_BOOLEAN_AND) || $this->take('&&')) {
-            $right = $this->equality();
+            [$right, $rightCode] = $this->branch(fn () => $this->equality());
             $result = $this->temporary();
-            $this->emit("{$result} = (bool) {$value} && (bool) {$right};");
+            $this->emit("if (!(bool) {$value}) { {$result} = false; } else {\n{$rightCode}\n{$result} = (bool) {$right};\n}");
             $value = $result;
         }
 
@@ -496,13 +504,21 @@ final class TemplateExpressionCompiler
         $runtime = self::RUNTIME;
 
         while (true) {
-            if ($this->take(T_OBJECT_OPERATOR) || $this->takePropertyDot()) {
+            $arrow = $this->take(T_OBJECT_OPERATOR);
+            if ($arrow || $this->takePropertyDot()) {
                 $segment = $this->peek();
                 if ($segment === null || $segment['type'] !== T_STRING) {
                     throw new RuntimeException('Template property path is invalid.');
                 }
                 $this->position++;
                 $step = var_export($segment['text'], true);
+                if ($arrow && $this->take('(')) {
+                    $arguments = $this->arguments();
+                    $this->emit(
+                        "{$value} = {$runtime}::__pamMethodStep({$value}, {$step}, [".implode(', ', $arguments)."], {$lenient});",
+                    );
+                    continue;
+                }
                 $this->emit(
                     "{$value} = is_array({$value}) && array_key_exists({$step}, {$value}) ? {$value}[{$step}] : {$runtime}::__pamPropertyStep({$value}, {$step}, {$lenient});",
                 );

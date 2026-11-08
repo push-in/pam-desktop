@@ -713,9 +713,6 @@ final class ScopedStyleCompiler
         'tab-size' => true,
         'font-kerning' => true,
         'text-align-last' => true,
-        'scrollbar-width' => true,
-        'scrollbar-color' => true,
-        'scrollbar-gutter' => true,
     ];
 
     /**
@@ -1023,6 +1020,7 @@ final class ScopedStyleCompiler
         }
         if ($property === 'grid-template-columns') {
             $output['columns'] = self::gridColumns($value, $name);
+            $output['gridTracks'] = \Pam\Desktop\GridTracks::fromCss($value)->toWire();
             return;
         }
         if ($property === 'grid-column') {
@@ -1168,6 +1166,10 @@ final class ScopedStyleCompiler
             $output['textColor'] = self::color($value, $property, $name);
             return;
         }
+        // `placeholder-color` is the shorthand for an input's `::placeholder { color }`.
+        if ($property === 'placeholder-color') {
+            $property = '-pam-placeholder-color';
+        }
         if ($property === '-pam-placeholder-color' || $property === '-pam-selection-color') {
             $output[$property === '-pam-placeholder-color' ? 'placeholderColor' : 'selectionColor'] =
                 self::color($value, $property === '-pam-placeholder-color' ? '::placeholder' : '::selection', $name);
@@ -1178,6 +1180,46 @@ final class ScopedStyleCompiler
                 return;
             }
             $output['cursorColor'] = self::color($value, $property, $name);
+            return;
+        }
+        if ($property === 'scrollbar-gutter') {
+            // Integer variants: 1 auto (overlay, no gutter), 2 stable, 3 stable both-edges.
+            $output['scrollbarGutter'] = match (preg_replace('/\s+/', ' ', $lower)) {
+                'auto' => 1,
+                'stable' => 2,
+                'stable both-edges', 'both-edges stable' => 3,
+                default => throw new RuntimeException("{$name}: scrollbar-gutter must be auto, stable or stable both-edges."),
+            };
+            return;
+        }
+        if ($property === 'scrollbar-color') {
+            // `scrollbar-color: <thumb> <track>`: the thumb colour is drawn;
+            // the track stays transparent like Chromium's thin scrollbars.
+            if (in_array($lower, ['auto', 'initial', 'unset'], true)) {
+                return;
+            }
+            $thumb = preg_split('/\s+(?![^(]*\))/', trim($value))[0] ?? '';
+            $output['scrollbarColor'] = self::color($thumb, $property, $name);
+            return;
+        }
+        if ($property === 'scrollbar-width') {
+            // Integer variants: 1 auto, 2 thin, 3 none; the reserved gutter thickness.
+            if (preg_match('/^(\d+(?:\.\d+)?)px$/D', $lower, $match) === 1) {
+                // A length reserves exactly that gutter (e.g. 8px like a styled
+                // ::-webkit-scrollbar).
+                $thickness = (float) $match[1];
+                if ($thickness > 64) {
+                    throw new RuntimeException("{$name}: scrollbar-width lengths are at most 64px.");
+                }
+                $output['scrollbarThickness'] = $thickness;
+                return;
+            }
+            $output['scrollbarWidth'] = match ($lower) {
+                'auto' => 1,
+                'thin' => 2,
+                'none' => 3,
+                default => throw new RuntimeException("{$name}: scrollbar-width must be auto, thin, none or a px length."),
+            };
             return;
         }
         if ($property === 'box-shadow') {
@@ -1298,8 +1340,15 @@ final class ScopedStyleCompiler
             if (!in_array($lower, ['normal', 'break-word', 'anywhere', 'break-all', 'keep-all'], true)) {
                 throw new RuntimeException("Invalid {$property} value {$value} in {$name}.");
             }
+            // Desktop line breaking follows CSS: words never break unless asked.
+            // break-all -> any character (simple); overflow-wrap anywhere /
+            // break-word -> inside a word only when it cannot fit (balanced).
             if ($property === 'word-break' && $lower === 'break-all') {
                 $output['textBreakStrategy'] = 'simple';
+            } elseif (in_array($property, ['overflow-wrap', 'word-wrap'], true) && in_array($lower, ['anywhere', 'break-word'], true)) {
+                $output['textBreakStrategy'] = 'balanced';
+            } elseif ($property === 'word-break' && $lower === 'break-word') {
+                $output['textBreakStrategy'] = 'balanced';
             }
             return;
         }
@@ -2677,11 +2726,21 @@ final class ScopedStyleCompiler
 
     private static function fontFamily(string $value, string $name): string
     {
-        $families = str_getcsv($value, ',', '"', '\\');
-        if ($families === [] || trim((string) $families[0]) === '') {
+        // The whole CSS list is kept ("Inter, system-ui, sans-serif"): every
+        // backend walks it and uses the first family it has, mapping the CSS
+        // generic families to the platform's UI and monospace fonts.
+        $families = [];
+        foreach (str_getcsv($value, ',', '"', '\\') as $family) {
+            $family = self::unquote(trim((string) $family));
+            if ($family === '') {
+                throw new RuntimeException("font-family has an empty family in {$name}.");
+            }
+            $families[] = $family;
+        }
+        if ($families === []) {
             throw new RuntimeException("font-family requires at least one family in {$name}.");
         }
 
-        return self::unquote(trim((string) $families[0]));
+        return implode(', ', $families);
     }
 }

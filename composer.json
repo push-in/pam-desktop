@@ -14,7 +14,11 @@
         "windows"
     ],
     "require": {
-        "php": "^8.5"
+        "php": "^8.5",
+        "symfony/polyfill-intl-normalizer": "^1.43"
+    },
+    "suggest": {
+        "bacon/bacon-qr-code": "Required by Pam\\Desktop\\Qr (^3.1.1)"
     },
     "autoload": {
         "files": [
@@ -24,7 +28,14 @@
             "packages/desktop/src/Testing/functions.php"
         ],
         "psr-4": {
-            "Pam\\Desktop\\": "packages/desktop/src/"
+            "Pam\\Desktop\\": "packages/desktop/src/",
+            "Pam\\Desktop\\Canvas\\": "packages/canvas/src/",
+            "Pam\\Desktop\\Charts\\": "packages/charts/src/",
+            "Pam\\Desktop\\Qr\\": "packages/qr/src/",
+            "Pam\\Desktop\\Realtime\\": "packages/realtime/src/",
+            "Pam\\Desktop\\Sync\\Durable\\": "packages/sync/src/",
+            "Pam\\DesktopPrinting\\": "packages/desktop-printing/src/",
+            "Pam\\DesktopUi\\": "packages/desktop-ui/src/"
         }
     },
     "bin": [

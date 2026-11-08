@@ -93,4 +93,6 @@ enum EventKind: int
     case KeyDown = 2003;
     case KeyUp = 2004;
     case FilesDrop = 2005;
+    case DragEnter = 2006;
+    case DragLeave = 2007;
 }

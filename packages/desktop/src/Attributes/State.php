@@ -11,6 +11,8 @@ final readonly class State
 {
     public function __construct(
         public bool $persist = false,
+        /** Exclude secrets and in-flight state from development refresh snapshots. */
+        public bool $hotReload = true,
     ) {
     }
 }

@@ -205,7 +205,7 @@ final class StyleSelectorCompiler
                 throw new RuntimeException(
                     "Structural pseudo-class :{$match[1]} in {$selector} is unsupported natively in {$name}; bind a class from the loop (e.g. :class=\"\$loop->first ? 'first' : ''\").",
                 );
-            } elseif (preg_match('/^:(pressed|hover|focus|focus-visible|disabled|checked|selected|active|loading|error|empty)(?![A-Za-z-])/', $tail, $match) === 1) {
+            } elseif (preg_match('/^:(pressed|hover|focus|focus-visible|focus-within|disabled|checked|selected|active|loading|error|empty)(?![A-Za-z-])/', $tail, $match) === 1) {
                 $pseudos[] = $match[1];
             } else {
                 throw new RuntimeException("Unsupported native selector fragment {$tail} in {$selector} ({$name}).");

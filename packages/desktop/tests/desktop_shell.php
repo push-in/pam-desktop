@@ -90,10 +90,10 @@ App::menu(
 );
 $menu = json_decode($host->last('menu')['items'], true);
 $file = $menu[0]['children'];
-$assert($menu[0]['label'] === 'File' && $menu[1]['label'] === 'Edit' && count($menu[1]['children']) === 7, 'Menus become top-level submenus.');
+$assert($menu[0]['label'] === 'File' && $menu[1]['label'] === \Pam\Desktop\I18n\FrameworkText::get('menu.edit') && count($menu[1]['children']) === 7, 'Menus become top-level submenus.');
 $assert($file[0]['shortcut'] === 'CmdOrCtrl+N' && $file[1] === ['separator' => true], 'Items carry shortcuts and separators.');
 $assert($file[2]['children'][0]['label'] === 'a.txt' && $file[3]['checked'] === true, 'Submenus and check items are encoded.');
-$assert($file[4]['role'] === 'quit' && $file[4]['label'] === 'Quit' && $file[4]['shortcut'] === 'CmdOrCtrl+Q', 'Roles bring their label and shortcut.');
+$assert($file[4]['role'] === 'quit' && $file[4]['label'] === \Pam\Desktop\I18n\FrameworkText::get('menu.quit') && $file[4]['shortcut'] === 'CmdOrCtrl+Q', 'Roles bring their label and shortcut.');
 $assert($host->polls === 1 && $host->waiter !== null, 'A menu with handlers starts the event channel once.');
 
 $host->emit('menu', $file[0]['id']);

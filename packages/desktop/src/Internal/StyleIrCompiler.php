@@ -91,7 +91,7 @@ final class StyleIrCompiler
         if (str_contains($source, 'var(')) {
             $dependencies['variables'] = StyleInvalidationKind::Value->value;
         }
-        if (preg_match('/:(?:pressed|focused|focus-visible|disabled|selected|checked|hover|hovered|state\()/i', $source) === 1) {
+        if (preg_match('/:(?:pressed|focused|focus-visible|focus-within|disabled|selected|checked|hover|hovered|state\()/i', $source) === 1) {
             $dependencies['states'] = StyleInvalidationKind::State->value;
         }
         if (str_contains($source, '@container')) {

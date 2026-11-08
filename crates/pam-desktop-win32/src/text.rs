@@ -7,7 +7,9 @@ use std::collections::HashMap;
 use pam_desktop_ui::backend::VerticalAlign;
 use pam_desktop_ui::color::Color;
 use pam_desktop_ui::geometry::{Insets, Point, Rect, Size};
-use pam_desktop_ui::text::{Ellipsize, FontSpec, TextAlign, TextBlock, TextMetrics};
+use pam_desktop_ui::text::{
+    Ellipsize, FontSpec, SpacerMap, TextAlign, TextBlock, TextMetrics, TextWrap,
+};
 use windows::Win32::Globalization::GetUserDefaultLocaleName;
 use windows::Win32::Graphics::Direct2D::ID2D1SolidColorBrush;
 use windows::Win32::Graphics::DirectWrite::{
@@ -17,7 +19,8 @@ use windows::Win32::Graphics::DirectWrite::{
     DWRITE_LINE_SPACING_METHOD_UNIFORM, DWRITE_TEXT_ALIGNMENT_CENTER,
     DWRITE_TEXT_ALIGNMENT_JUSTIFIED, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING,
     DWRITE_TEXT_METRICS, DWRITE_TEXT_RANGE, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER,
-    DWRITE_WORD_WRAPPING_EMERGENCY_BREAK, DWRITE_WORD_WRAPPING_NO_WRAP, IDWriteFactory,
+    DWRITE_WORD_WRAPPING_CHARACTER, DWRITE_WORD_WRAPPING_EMERGENCY_BREAK,
+    DWRITE_WORD_WRAPPING_NO_WRAP, DWRITE_WORD_WRAPPING_WHOLE_WORD, IDWriteFactory,
     IDWriteFontCollection, IDWriteTextFormat, IDWriteTextLayout, IDWriteTextLayout1,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -55,6 +58,10 @@ pub struct Layout {
     /// stands for. The layout holds the shortened text: offsets of the
     /// block go through `visible_index` before they reach it.
     pub elided: Option<(u32, u32)>,
+    /// Paragraph to layout offsets around the spacers of inline boxes.
+    pub spacers: SpacerMap,
+    /// The inline boxes to paint under the text, in layout coordinates.
+    pub boxes: Vec<crate::inline_boxes::Fragment>,
 }
 
 pub struct TextEngine {
@@ -66,6 +73,8 @@ pub struct TextEngine {
     collection: Option<IDWriteFontCollection>,
     /// Authored family (or list) to the installed family it resolves to.
     families: RefCell<HashMap<String, String>>,
+    /// Loads the packaged (`asset://`) fonts.
+    dwrite: IDWriteFactory,
 }
 
 fn system_ui_font() -> String {
@@ -248,7 +257,26 @@ impl TextEngine {
             metrics: HashMap::new(),
             collection,
             families: RefCell::new(HashMap::new()),
+            dwrite: dwrite.clone(),
         }
+    }
+
+    /// Ascent and descent of a run's font (the content area of a CSS
+    /// inline box).
+    fn extents(&self, font: &FontSpec) -> (f32, f32) {
+        let family = self.family(font);
+        match self.asset(font) {
+            Some(asset) => {
+                crate::inline_boxes::font_extents(Some(&asset.collection), &family, font)
+            }
+            None => crate::inline_boxes::font_extents(self.collection.as_ref(), &family, font),
+        }
+    }
+
+    /// Forgets resolved families and measurements (the asset root changed).
+    pub fn forget_families(&mut self) {
+        self.families.borrow_mut().clear();
+        self.metrics.clear();
     }
 
     fn installed(&self, family: &str) -> bool {
@@ -272,17 +300,23 @@ impl TextEngine {
         if let Some(known) = self.families.borrow().get(&font.family) {
             return known.clone();
         }
-        let resolved = font
-            .family
-            .split(',')
-            .map(|entry| entry.trim().trim_matches(['"', '\'']))
-            .filter(|entry| !entry.is_empty())
-            .find_map(|entry| match entry.to_ascii_lowercase().as_str() {
-                "system-ui" | "system" | "sans-serif" | "ui-sans-serif" | "-apple-system"
-                | "blinkmacsystemfont" => Some(self.ui_font.clone()),
-                "serif" | "ui-serif" => Some(String::from("Times New Roman")),
-                "monospace" | "ui-monospace" => Some(String::from("Consolas")),
-                _ => self.installed(entry).then(|| entry.to_owned()),
+        if let Some(asset) = self.asset(font) {
+            // The list starts with a packaged font that loaded.
+            self.families
+                .borrow_mut()
+                .insert(font.family.clone(), asset.family.clone());
+            return asset.family;
+        }
+        use pam_desktop_ui::engine::font_family::{Family, families};
+        let resolved = families(&font.family)
+            .find_map(|entry| match entry {
+                // A packaged font after the first entry, or one that cannot
+                // be loaded, is skipped.
+                Family::Asset(_) => None,
+                Family::SystemUi | Family::Rounded => Some(self.ui_font.clone()),
+                Family::Serif => Some(String::from("Times New Roman")),
+                Family::Monospace => Some(String::from("Consolas")),
+                Family::Named(entry) => self.installed(entry).then(|| entry.to_owned()),
             })
             .unwrap_or_else(|| self.ui_font.clone());
         self.families
@@ -291,12 +325,18 @@ impl TextEngine {
         resolved
     }
 
+    /// The packaged font a run names (`asset://…`), once loaded.
+    fn asset(&self, font: &FontSpec) -> Option<crate::fonts::AssetFont> {
+        crate::fonts::asset(&self.dwrite, &font.family)
+    }
+
     fn format(
         &self,
         dwrite: &IDWriteFactory,
         font: &FontSpec,
     ) -> windows::core::Result<IDWriteTextFormat> {
         let family = wide(&self.family(font));
+        let asset = self.asset(font);
         let style = if font.italic {
             DWRITE_FONT_STYLE_ITALIC
         } else {
@@ -306,7 +346,7 @@ impl TextEngine {
         unsafe {
             dwrite.CreateTextFormat(
                 PCWSTR(family.as_ptr()),
-                None,
+                asset.as_ref().map(|asset| &asset.collection),
                 weight(font),
                 style,
                 DWRITE_FONT_STRETCH_NORMAL,
@@ -324,6 +364,16 @@ impl TextEngine {
         block: &TextBlock,
         max_width: f32,
     ) -> Option<Layout> {
+        if !block.boxes.is_empty() {
+            // Inline boxes: their edges are spacers of the layout text. A
+            // head or middle ellipsis is not cut around them (end only).
+            let (text, ranges, placed) = crate::inline_boxes::layout_text(block);
+            let mut layout = self.layout(dwrite, block, &text, ranges, max_width, &placed)?;
+            let extents = |font: &FontSpec| self.extents(font);
+            layout.boxes = crate::inline_boxes::fragments(&layout.layout, block, &placed, &extents);
+            layout.spacers = block.spacer_map();
+            return Some(layout);
+        }
         let mut text: Vec<u16> = Vec::new();
         let mut ranges = Vec::with_capacity(block.runs.len());
         for run in &block.runs {
@@ -338,12 +388,12 @@ impl TextEngine {
         // ellipsis is laid out from a text shortened here.
         if let Some(cut) = self.elision(dwrite, block, &text, &ranges, max_width) {
             let (short, moved) = elide(&text, &ranges, cut);
-            if let Some(mut layout) = self.layout(dwrite, block, &short, moved, max_width) {
+            if let Some(mut layout) = self.layout(dwrite, block, &short, moved, max_width, &[]) {
                 layout.elided = Some(cut);
                 return Some(layout);
             }
         }
-        self.layout(dwrite, block, &text, ranges, max_width)
+        self.layout(dwrite, block, &text, ranges, max_width, &[])
     }
 
     /// The UTF-16 range a head or middle ellipsis stands for: the fewest
@@ -366,7 +416,7 @@ impl TextEngine {
         if block.max_lines != 1 || !max_width.is_finite() || max_width <= 0.0 || text.is_empty() {
             return None;
         }
-        let line = self.layout(dwrite, block, text, ranges.to_vec(), f32::INFINITY)?;
+        let line = self.layout(dwrite, block, text, ranges.to_vec(), f32::INFINITY, &[])?;
         // Explicit line breaks make more than one line: those keep the end ellipsis.
         if line.truncated || line.natural_width <= max_width {
             return None;
@@ -375,7 +425,7 @@ impl TextEngine {
         let clusters = stops.len() - 1;
         let fits = |removed: usize| {
             let (short, moved) = elide(text, ranges, cut_range(&stops, removed, head));
-            self.layout(dwrite, block, &short, moved, f32::INFINITY)
+            self.layout(dwrite, block, &short, moved, f32::INFINITY, &[])
                 .is_some_and(|layout| layout.natural_width <= max_width)
         };
         // Everything goes when not even one cluster fits beside the ellipsis.
@@ -399,6 +449,7 @@ impl TextEngine {
         text: &[u16],
         ranges: Vec<DWRITE_TEXT_RANGE>,
         max_width: f32,
+        spacers: &[crate::inline_boxes::Placed],
     ) -> Option<Layout> {
         let fallback = FontSpec::default();
         let base = block
@@ -413,11 +464,19 @@ impl TextEngine {
         // SAFETY: COM calls on live DirectWrite objects; every pointer passed
         // refers to a local that outlives the call.
         unsafe {
-            let _ = format.SetWordWrapping(if wraps {
-                DWRITE_WORD_WRAPPING_EMERGENCY_BREAK
-            } else {
-                DWRITE_WORD_WRAPPING_NO_WRAP
-            });
+            // CSS line breaking: between words, a word that does not fit a
+            // line on its own overflows it (`overflow-wrap: normal`), unless
+            // `overflow-wrap` or `word-break: break-all` allow more breaks.
+            let wrapping = match block.wrap {
+                _ if !wraps => DWRITE_WORD_WRAPPING_NO_WRAP,
+                TextWrap::Word => DWRITE_WORD_WRAPPING_WHOLE_WORD,
+                TextWrap::WordChar => DWRITE_WORD_WRAPPING_EMERGENCY_BREAK,
+                TextWrap::Char => DWRITE_WORD_WRAPPING_CHARACTER,
+            };
+            if format.SetWordWrapping(wrapping).is_err() {
+                // Before Windows 8.1 only the first modes exist.
+                let _ = format.SetWordWrapping(DWRITE_WORD_WRAPPING_EMERGENCY_BREAK);
+            }
             // An unbounded layout is only measured: alignment would move it far away.
             let alignment = match block.align {
                 _ if !bounded => DWRITE_TEXT_ALIGNMENT_LEADING,
@@ -436,12 +495,26 @@ impl TextEngine {
                 .CreateTextLayout(text, &format, width, UNBOUNDED)
                 .ok()?;
             let spaced = layout.cast::<IDWriteTextLayout1>().ok();
+            if !spacers.is_empty() {
+                let extents = |font: &FontSpec| self.extents(font);
+                crate::inline_boxes::attach(&layout, block, spacers, &extents);
+            }
             for (run, range) in block.runs.iter().zip(&ranges) {
                 if range.length == 0 {
                     continue;
                 }
                 if run.font != *base {
                     let family = wide(&self.family(&run.font));
+                    // A packaged font lives in a collection of its own; the
+                    // other runs go back to the installed fonts.
+                    let asset = self.asset(&run.font);
+                    if asset.is_some() || self.asset(base).is_some() {
+                        let collection = asset
+                            .as_ref()
+                            .map(|asset| &asset.collection)
+                            .or(self.collection.as_ref());
+                        let _ = layout.SetFontCollection(collection, *range);
+                    }
                     let _ = layout.SetFontFamilyName(PCWSTR(family.as_ptr()), *range);
                     let _ = layout.SetFontSize(run.font.size.max(0.1), *range);
                     let _ = layout.SetFontWeight(weight(&run.font), *range);
@@ -527,7 +600,10 @@ impl TextEngine {
                     line_count = block.max_lines;
                     truncated = true;
                 }
-                if truncated || (bounded && !wraps) {
+                // `white-space: nowrap` (`Clip` on one line): the line
+                // overflows its box and is clipped there, without an ellipsis.
+                let nowrap = block.max_lines == 1 && block.ellipsize == Ellipsize::Clip;
+                if !nowrap && (truncated || (bounded && !wraps)) {
                     let trimming = DWRITE_TRIMMING {
                         granularity: DWRITE_TRIMMING_GRANULARITY_CHARACTER,
                         delimiter: 0,
@@ -556,6 +632,8 @@ impl TextEngine {
                 truncated,
                 utf16_length: text.len() as u32,
                 elided: None,
+                spacers: SpacerMap::default(),
+                boxes: Vec::new(),
             })
         }
     }
@@ -579,10 +657,12 @@ impl TextEngine {
             return *metrics;
         }
         let metrics = match self.build(dwrite, block, max_width) {
-            // Round up: a box narrower than its text by a fraction would wrap when drawn.
+            // Round the width up: a box narrower than its text by a fraction
+            // would wrap when drawn. The height stays exact, so fractional
+            // CSS line heights stack like a browser's line boxes (as GTK).
             Some(layout) => TextMetrics {
                 width: layout.width.ceil(),
-                height: layout.height.ceil(),
+                height: layout.height,
                 first_baseline: layout.first_baseline,
                 line_count: layout.line_count,
             },
@@ -636,8 +716,8 @@ impl Layout {
                 }
             }
             if let Some(((start, end), color)) = selection {
-                let start = self.visible_index(start);
-                let end = self.visible_index(end).min(self.utf16_length);
+                let start = self.visible_index(start, true);
+                let end = self.visible_index(end, false).min(self.utf16_length);
                 if start < end
                     && let Some(brush) = brush_for(color)
                 {
@@ -677,11 +757,13 @@ impl Layout {
 
     /// Where an offset of the block's text is in the laid out text: offsets
     /// inside the cut of a head or middle ellipsis land on the ellipsis.
-    pub fn visible_index(&self, index: u32) -> u32 {
+    /// With inline boxes, a range start (`after`) skips the edges at its
+    /// offset and a range end stops before them.
+    pub fn visible_index(&self, index: u32, after: bool) -> u32 {
         match self.elided {
             Some((from, to)) if index >= to => index - (to - from) + 1,
             Some((from, _)) => index.min(from),
-            None => index,
+            None => self.spacers.layout_index(index, after),
         }
     }
 
@@ -689,7 +771,8 @@ impl Layout {
     fn source_index(&self, index: u32) -> u32 {
         match self.elided {
             Some((from, to)) if index > from => index - 1 + (to - from),
-            _ => index,
+            Some(_) => index,
+            None => self.spacers.paragraph_index(index),
         }
     }
 

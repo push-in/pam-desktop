@@ -1,0 +1,24 @@
+/* Shared design tokens and styles. Screen-specific rules belong to each .pam.php component. */
+:root {
+    --background: #F6F6F3;
+    --surface: #FFFFFF;
+    --border: #E2E3DD;
+    --text: #17201C;
+    --muted: #5B655F;
+    --accent: #2F6B55;
+    --accent-strong: #245744;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --background: #121514;
+        --surface: #1A1E1C;
+        --border: #2C322F;
+        --text: #EEF1EF;
+        --muted: #A3ADA7;
+        --accent: #5FB592;
+        --accent-strong: #4C9E7D;
+    }
+}
+
+Text { font-family: sans-serif; }

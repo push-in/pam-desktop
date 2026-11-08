@@ -11,12 +11,15 @@
 
 mod accessibility;
 mod backend;
+mod capture;
 mod clock;
 mod events;
+mod fonts;
 mod image;
 mod input;
 mod media;
 mod paint;
+mod printing;
 mod scroll;
 mod shell;
 mod text;

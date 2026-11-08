@@ -118,7 +118,10 @@ fn build_menu(
                 });
                 group.add_action(&action);
                 let detailed = format!("{scope}.{name}");
-                section.append(Some(label), Some(&detailed));
+                section.append(
+                    Some(&pam_desktop_ui::i18n::menu_label(label, *role, None)),
+                    Some(&detailed),
+                );
                 if let Some(accelerator) = accelerator {
                     accelerators.push((detailed, accelerator_string(accelerator)));
                 }
@@ -499,7 +502,7 @@ pub fn window_state(window: &gtk::ApplicationWindow) -> WindowState {
     }
 }
 
-/// Reports maximize, full screen and focus changes.
+/// Reports maximize, minimize, full screen and focus changes.
 pub fn watch_window_state(window: &gtk::ApplicationWindow, id: WindowId, events: &Rc<EventQueue>) {
     for property in ["maximized", "fullscreened"] {
         let events = Rc::clone(events);
@@ -510,6 +513,37 @@ pub fn watch_window_state(window: &gtk::ApplicationWindow, id: WindowId, events:
             });
         });
     }
+
+    let events = Rc::clone(events);
+    watch_toplevel_state(window, move |state| {
+        events.push(BackendEvent::WindowStateChanged { window: id, state });
+    });
+}
+
+pub(crate) fn watch_toplevel_state(
+    window: &gtk::ApplicationWindow,
+    changed: impl Fn(WindowState) + 'static,
+) {
+    let changed: Rc<dyn Fn(WindowState)> = Rc::new(changed);
+    // GTK exposes minimization through GdkToplevel::state rather than a
+    // GtkWindow property. Attach after realization so the surface exists.
+    let changed = Rc::clone(&changed);
+    window.connect_realize(move |window| {
+        let Some(toplevel) = window
+            .surface()
+            .and_then(|surface| surface.downcast::<gdk::Toplevel>().ok())
+        else {
+            return;
+        };
+        let window = window.downgrade();
+        let changed = Rc::clone(&changed);
+        toplevel.connect_state_notify(move |_| {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            changed(window_state(&window));
+        });
+    });
 }
 
 /// Files dragged from the file manager onto the window.
@@ -537,6 +571,36 @@ pub fn accept_file_drops(host: &PamView, window: WindowId, events: &Rc<EventQueu
 /// Text dragged from the application itself or from another one.
 pub fn accept_text_drops(host: &PamView, window: WindowId, events: &Rc<EventQueue>) {
     let target = gtk::DropTarget::new(String::static_type(), gdk::DragAction::COPY);
+    {
+        let events = Rc::clone(events);
+        target.connect_enter(move |_, x, y| {
+            events.push(BackendEvent::DragMotion {
+                window,
+                position: Some(Point::new(x as f32, y as f32)),
+            });
+            gdk::DragAction::COPY
+        });
+    }
+    {
+        let events = Rc::clone(events);
+        target.connect_motion(move |_, x, y| {
+            events.push(BackendEvent::DragMotion {
+                window,
+                position: Some(Point::new(x as f32, y as f32)),
+            });
+            gdk::DragAction::COPY
+        });
+    }
+    {
+        let events = Rc::clone(events);
+        target.connect_leave(move |_| {
+            events.push(BackendEvent::DragMotion {
+                window,
+                position: None,
+            });
+        });
+    }
+
     let events = Rc::clone(events);
     target.connect_drop(move |_, value, x, y| {
         let Ok(text) = value.get::<String>() else {

@@ -102,6 +102,7 @@ final class Runtime
 
         self::$root = $root;
         self::$encoder = new TreeEncoder();
+        self::shareLocaleWithHost();
         Profiler::enabled(BuildConfiguration::mode() !== BuildMode::Production);
         self::manageCycleCollection();
         try {
@@ -111,6 +112,23 @@ final class Runtime
         } catch (Throwable $error) {
             self::reportError($error, RuntimeErrorPhase::Boot);
         }
+    }
+
+    private static ?int $localeListener = null;
+
+    /**
+     * The host chrome (share menu, release error screen) follows the app's
+     * I18n::use() language: sent once at boot and on every change.
+     */
+    private static function shareLocaleWithHost(): void
+    {
+        if (!function_exists('pam_desktop_call')) return;
+        $send = static function (): void {
+            $locale = \Pam\Desktop\I18n\I18n::preferredLocale() ?? '';
+            self::call('i18n', 'locale', Wire::map(['locale' => $locale]), static fn (): null => null);
+        };
+        if (\Pam\Desktop\I18n\I18n::preferredLocale() !== null) $send();
+        if (self::$localeListener === null) self::$localeListener = \Pam\Desktop\I18n\I18n::onChange($send);
     }
 
     /** @internal The booted root (Testing checks whether it owns the runtime). */
@@ -245,7 +263,9 @@ final class Runtime
                 $element = Profiler::measure('php.render', static function () use ($root): ?Element {
                     $rendered = $root instanceof Renderable ? $root : $root();
 
-                    return $rendered instanceof Renderable ? $rendered->toElement() : null;
+                    return $rendered instanceof Renderable
+                        ? \Pam\Desktop\UI\WindowLayer::attach($rendered->toElement())
+                        : null;
                 });
 
                 if (!$element instanceof Element) {
@@ -1005,6 +1025,11 @@ final class Runtime
         ShellEvents::reset();
         \Pam\Desktop\Shortcut::resetRuntime();
         PortalRegistry::reset();
+        \Pam\Desktop\UI\WindowLayer::reset();
+        if (self::$localeListener !== null) {
+            \Pam\Desktop\I18n\I18n::offChange(self::$localeListener);
+            self::$localeListener = null;
+        }
         self::$windowMetrics = self::bootMetrics();
         ComponentLifecycle::shutdown();
         PamPhpRegistry::releaseInstances();

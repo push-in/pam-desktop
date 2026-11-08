@@ -397,6 +397,15 @@ abstract class Element implements Renderable
 
     final public function on(EventKind $kind, Closure $handler): static
     {
+        if ($this instanceof \Pam\Desktop\UI\DragSource) {
+            if ($kind === EventKind::DragStart) return $this->onDragStart($handler);
+            if ($kind === EventKind::DragEnd) return $this->onDragEnd($handler);
+        }
+        if ($this instanceof \Pam\Desktop\UI\DropTarget) {
+            if ($kind === EventKind::Drop) return $this->onDrop($handler);
+            if ($kind === EventKind::DragEnter) return $this->onDragEnter($handler);
+            if ($kind === EventKind::DragLeave) return $this->onDragLeave($handler);
+        }
         // Desktop events reach their handlers decoded (KeyEvent, paths).
         return match ($kind) {
             EventKind::KeyDown => $this->onKeyDown($handler),
@@ -1208,6 +1217,8 @@ abstract class Element implements Renderable
             EventKind::KeyDown => PropKey::OnKeyDown,
             EventKind::KeyUp => PropKey::OnKeyUp,
             EventKind::FilesDrop => PropKey::OnFilesDrop,
+            EventKind::DragEnter => PropKey::OnDragEnter,
+            EventKind::DragLeave => PropKey::OnDragLeave,
             EventKind::Back,
             EventKind::ModuleResult,
             EventKind::AppState,

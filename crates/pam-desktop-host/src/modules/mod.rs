@@ -5,6 +5,7 @@ pub mod secure_storage;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 pub mod updates;
+pub mod websocket;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -52,9 +53,13 @@ pub fn host_modules(
         client,
         development,
         // The update helper replaces the bundle once this process is gone.
-        || std::process::exit(0),
+        updates::exit_for_update,
     ));
     vec![
+        (
+            String::from("websocket"),
+            Box::new(websocket::WebSockets::new(development)),
+        ),
         (String::from("secure-storage"), secure_storage),
         #[cfg(feature = "sqlite")]
         (String::from("sqlite"), sqlite),

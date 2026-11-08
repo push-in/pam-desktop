@@ -360,6 +360,7 @@ impl Painter<'_> {
                                 &surface,
                                 device,
                                 self.graphics,
+                                self.text,
                                 &view.drawing,
                                 hairline,
                                 true,
@@ -397,6 +398,7 @@ impl Painter<'_> {
                         context,
                         device,
                         self.graphics,
+                        self.text,
                         &view.drawing,
                         hairline,
                         false,
@@ -506,6 +508,51 @@ impl Painter<'_> {
         let Some(layout) = state.layout.as_ref() else {
             return;
         };
+        if !layout.boxes.is_empty() {
+            // Inline boxes (`<kbd>`, padded spans) sit behind the glyphs.
+            let origin = text_origin(size, insets, state.content.vertical, layout.height);
+            let mut env = PaintEnv {
+                graphics: &mut *self.graphics,
+                shadows: &mut *self.shadows,
+                scale: self.scale,
+                depth: self.depth,
+            };
+            let mut cache = PaintCache::default();
+            let mut transform = Matrix3x2::identity();
+            // SAFETY: COM calls on the live context inside its BeginDraw; the
+            // transform and the clip are restored before returning.
+            unsafe {
+                context.GetTransform(&mut transform);
+                if layout.truncated {
+                    let visible = D2D_RECT_F {
+                        left: -1.0e6,
+                        top: origin.y - 1.0,
+                        right: 1.0e6,
+                        bottom: origin.y + layout.height + 1.0,
+                    };
+                    context.PushAxisAlignedClip(&visible, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                }
+                for fragment in &layout.boxes {
+                    let placed = Matrix3x2::translation(
+                        origin.x + fragment.rect.x,
+                        origin.y + fragment.rect.y,
+                    ) * transform;
+                    context.SetTransform(&placed);
+                    cache.invalidate();
+                    paint::paint_decoration(
+                        context,
+                        &mut env,
+                        &mut cache,
+                        Size::new(fragment.rect.width, fragment.rect.height),
+                        &fragment.decoration,
+                    );
+                }
+                context.SetTransform(&transform);
+                if layout.truncated {
+                    context.PopAxisAlignedClip();
+                }
+            }
+        }
         let Some(device) = self.graphics.device.as_mut() else {
             return;
         };
@@ -553,8 +600,8 @@ impl Painter<'_> {
             }
             if let Some((start, end)) = state.selection {
                 layout.range_rects(
-                    layout.visible_index(start),
-                    layout.visible_index(end),
+                    layout.visible_index(start, true),
+                    layout.visible_index(end, false),
                     &mut self.rects,
                 );
                 for rect in &self.rects {
@@ -620,7 +667,14 @@ impl Painter<'_> {
         else {
             return;
         };
-        if scroll.bar_opacity <= 0.0 {
+        // A styled bar in a reserved gutter is a classic bar: always shown.
+        let opacity =
+            if scroll.config.reserved_gutter && scroll.config.scrollbar_thickness.is_some() {
+                1.0
+            } else {
+                scroll.bar_opacity
+            };
+        if opacity <= 0.0 {
             return;
         }
         let Some(device) = self.graphics.device.as_ref() else {
@@ -632,7 +686,9 @@ impl Painter<'_> {
         } else {
             pam_desktop_ui::color::Color::rgba(0, 0, 0, 115)
         };
-        let color = base.with_alpha(scroll.bar_opacity);
+        // CSS `scrollbar-color` names the thumb.
+        let base = scroll.config.scrollbar_color.unwrap_or(base);
+        let color = base.with_alpha(opacity);
         for vertical in [true, false] {
             let Some((_, thumb)) = scroll.bar(size, vertical) else {
                 continue;

@@ -1,0 +1,8 @@
+{
+    "name": "pushinbr/pam-desktop-printing",
+    "description": "Native document and receipt printing for PAM Desktop.",
+    "type": "library",
+    "license": "MIT",
+    "require": { "php": "^8.5", "pushinbr/pam-desktop": "^2.0" },
+    "autoload": { "psr-4": { "Pam\\DesktopPrinting\\": "src/" } }
+}

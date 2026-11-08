@@ -120,6 +120,7 @@ final readonly class Style
         public ?int $shadowColor = null,
         public ?float $gridMinColumnWidth = null,
         public ?GridTemplate $gridTemplate = null,
+        public ?GridTracks $gridTracks = null,
         public ?int $gridSpan2xl = null,
         public ?int $gridOffset2xl = null,
         public ?int $gridOrder2xl = null,
@@ -219,6 +220,7 @@ final readonly class Style
         'gridColumns' => PropKey::GridColumns->value,
         'gridMinColumnWidth' => PropKey::GridMinColumnWidth->value,
         'gridTemplate' => PropKey::GridTemplate->value,
+        'gridTracks' => PropKey::GridTracks->value,
         'gridSpan2xl' => PropKey::GridSpan2xl->value,
         'gridOffset2xl' => PropKey::GridOffset2xl->value,
         'gridOrder2xl' => PropKey::GridOrder2xl->value,
@@ -275,7 +277,7 @@ final readonly class Style
             }
             if ($value instanceof \BackedEnum) {
                 $value = $value->value;
-            } elseif ($value instanceof GridTemplate) {
+            } elseif ($value instanceof GridTemplate || $value instanceof GridTracks) {
                 $value = $value->toWire();
             }
             $properties[$key] = $value;

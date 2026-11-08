@@ -204,6 +204,11 @@ pub enum BackendEvent {
         phase: GesturePhase,
         radians: f32,
     },
+    /// Native drag destination motion, consumed by the shared drop-target controller.
+    DragMotion {
+        window: WindowId,
+        position: Option<Point>,
+    },
     /// Plain text was dropped on a window (from this or another application).
     TextDropped {
         window: WindowId,
@@ -279,6 +284,8 @@ pub struct InputConfig {
     /// Space between the box edges and the text (padding plus borders).
     pub insets: Insets,
     pub letter_spacing: f32,
+    /// CSS `line-height` in logical px; `None` is the font's own (normal).
+    pub line_height: Option<f32>,
     /// Password masking (single-line only).
     pub secure: bool,
     /// `false` is read-only: focusable and selectable, never modified.
@@ -310,6 +317,7 @@ impl Default for InputConfig {
             vertical: VerticalAlign::Center,
             insets: Insets::ZERO,
             letter_spacing: 0.0,
+            line_height: None,
             secure: false,
             editable: true,
             enabled: true,
@@ -480,7 +488,45 @@ pub enum WebViewEvent {
 /// One primitive of a drawing surface, in the view's logical coordinates.
 /// Commands paint in order, each over the previous ones, anti-aliased.
 #[derive(Clone, Debug, PartialEq)]
+pub enum DrawPathSegment {
+    Move(Point),
+    Line(Point),
+    Cubic {
+        control1: Point,
+        control2: Point,
+        to: Point,
+    },
+    Close,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum DrawPaint {
+    Solid(Color),
+    LinearGradient {
+        from: Point,
+        to: Point,
+        start: Color,
+        end: Color,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum DrawCommand {
+    /// A bounded vector path. An absent fill/stroke means that operation is skipped.
+    Path {
+        segments: Vec<DrawPathSegment>,
+        fill: Option<DrawPaint>,
+        stroke: Option<Color>,
+        width: f32,
+    },
+    /// A single line of text positioned by its baseline, with explicit alignment.
+    Text {
+        text: String,
+        baseline: Point,
+        font: crate::text::FontSpec,
+        color: Color,
+        align: crate::text::TextAlign,
+    },
     /// A filled rectangle; `radius` rounds every corner with a circular arc.
     Rect {
         rect: Rect,
@@ -559,6 +605,19 @@ pub struct ScrollConfig {
     /// User scrolling (wheel, drag, scrollbars) is allowed.
     pub enabled: bool,
     pub shows_indicators: bool,
+    /// CSS `scrollbar-width` (thin, none or a px length) as a bar thickness;
+    /// `None` keeps the platform scrollbar.
+    pub scrollbar_thickness: Option<f32>,
+    /// CSS `scrollbar-color` thumb colour.
+    pub scrollbar_color: Option<Color>,
+    /// `scrollbar-gutter: stable`: the layout reserved the bar's width, so
+    /// the platform may draw a classic (non-overlay) bar there. The bar is
+    /// only drawn while the content overflows; the space stays reserved.
+    pub reserved_gutter: bool,
+    /// Space between the thumb and the edges of its track across the bar:
+    /// `scrollbar-width: thin` draws Chromium's 6px thumb 2px inside its
+    /// 10px track.
+    pub thumb_inset: f32,
 }
 
 impl Default for ScrollConfig {
@@ -567,6 +626,10 @@ impl Default for ScrollConfig {
             horizontal: false,
             enabled: true,
             shows_indicators: true,
+            scrollbar_thickness: None,
+            scrollbar_color: None,
+            reserved_gutter: false,
+            thumb_inset: 0.0,
         }
     }
 }
@@ -636,6 +699,9 @@ impl Default for WindowMetrics {
 }
 
 pub trait Backend {
+    /// Root of packaged assets; font loaders must never escape this directory.
+    fn set_asset_root(&mut self, _root: &std::path::Path) {}
+
     // ---- windows -------------------------------------------------------
 
     /// Creates (or reconfigures) a native window. It becomes visible when its
@@ -648,6 +714,8 @@ pub trait Backend {
     /// Views stacked above the root, back to front, each placed by its own
     /// frame: presented modals cover the window, host chrome (error
     /// reports, toasts) may be smaller.
+    /// Non-empty host overlays must present an unshown window even without an
+    /// application root: PHP can fail before producing its first frame.
     fn set_window_overlays(&mut self, window: WindowId, overlays: &[NodeId]);
 
     // ---- views ---------------------------------------------------------
@@ -663,6 +731,11 @@ pub trait Backend {
     fn set_text(&mut self, id: NodeId, text: Option<&TextContent>);
     /// Whether the view takes part in keyboard focus traversal (Tab).
     fn set_focusable(&mut self, id: NodeId, focusable: bool);
+    /// Keys owned by a composite control before native focus traversal/text submission.
+    /// Comma-separated W3C names (`Space` for the literal space key).
+    fn set_key_capture(&mut self, _id: NodeId, _keys: &str) {}
+    /// Native event targeting must agree with scene pointerEvents hit testing.
+    fn set_pointer_events(&mut self, _id: NodeId, _target_self: bool, _target_children: bool) {}
     /// What assistive technology is told about a view; `None` restores the
     /// plain defaults (a group, or static text when the view shows text).
     fn set_accessibility(
@@ -707,6 +780,16 @@ pub trait Backend {
     /// handed over.
     fn announce(&mut self, _message: &str, _assertive: bool) -> bool {
         false
+    }
+    /// Displays the native printer dialog. `Ok(true)` means accepted by the
+    /// spooler, `Ok(false)` means cancelled; it never claims physical delivery.
+    fn print_document(
+        &mut self,
+        _window: WindowId,
+        _document: crate::printing::Document,
+        complete: crate::printing::PrintCompletion,
+    ) {
+        complete(Err("Native printing is unavailable on this backend".into()));
     }
     /// Opens the share sheet of the system for `request`, anchored to
     /// `window`. Answers whether a sheet opened: `false` on a system

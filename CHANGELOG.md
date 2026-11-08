@@ -1,6 +1,273 @@
 # Changelog
 
-## 2.0.0 - Unreleased
+## 2.0.0 - 2026-11-08
+
+PAM Desktop 2.0 renders with native toolkit widgets (GTK 4 on Linux, AppKit on macOS, Win32/Direct2D on Windows) instead of a web view. The first part of this entry covers the work since the 2.0 foundation; the foundation itself is listed after it.
+
+Changes on top of the 2.0.0 tree below, not in a tag yet. Linux (GTK 4) is
+where everything here was run. macOS was run in a virtual machine (see
+Platform); Windows was only type-checked by cross compilation.
+
+### Added
+
+CSS and text
+
+- `scrollbar-gutter: auto | stable | stable both-edges` on vertical scroll
+  views and lists: the gutter is reserved whether or not the content
+  overflows (15 px, 10 px with `scrollbar-width: thin`, the authored length,
+  or nothing with `none`).
+- `scrollbar-width: auto | thin | none | <length>` (at most 64 px) and
+  `scrollbar-color: <thumb> <track>` (the thumb colour; the track stays
+  transparent). With a reserved gutter a styled bar is a classic bar, always
+  shown and draggable; `thin` follows Chromium's thin bar (a 10 px track with
+  the thumb inset 2 px).
+- `placeholder-color: <color>`, a shorthand of `::placeholder { color }`.
+- Line breaking: `overflow-wrap` / `word-wrap: anywhere | break-word` and
+  `word-break: break-word` break long words only when they do not fit;
+  `word-break: break-all` breaks anywhere. `hyphens: auto` draws a hyphen
+  where a word is broken (GTK).
+- `font-family` keeps the whole list (`"Inter", system-ui, sans-serif`): each
+  backend uses the first family it has. `system-ui`, `-apple-system`,
+  `BlinkMacSystemFont`, `ui-sans-serif` and `sans-serif` are the platform UI
+  font, `monospace` / `ui-monospace`, `serif` / `ui-serif` and `ui-rounded`
+  their platform counterparts, `asset://` entries packaged fonts.
+- Packaged fonts (`asset://…ttf`) are loaded by every backend: Fontconfig on
+  GTK, CoreText on AppKit, a DirectWrite collection plus a private GDI font
+  for inputs on Win32 (at most 32 files, 8 MiB each, 64 MiB in all).
+- `:focus-within` state selector, and per-side border colours in state
+  styles.
+- Fractional grid tracks: `grid-template-columns` with `fr`, `minmax(<px>,
+  <n>fr)` and `repeat()`, `GridTracks` and `Grid::tracks()`
+  (`docs/grid-tracks.md`).
+- Inline boxes in nested text: a nested `<Text>` / `Text::make()` with
+  padding, a border, or a background and a radius is laid out like a CSS
+  `<span>` / `<kbd>` (`TextSpanBoxes`).
+
+Components and templates
+
+- `VirtualizedList` and `ScrollView` with `max-height` follow their content
+  and only scroll past the maximum. A vertical `VirtualizedList` without a
+  height takes the height of its rows, up to the window height, and shrinks
+  by default. `column-gap` / `row-gap` space the cells of a vertical list.
+- `backdropBlurRadius` (or `backdrop-filter: blur()`) on a `Modal` frosts the
+  content behind its backdrop; ignored on a transparent modal.
+- Typed drag and drop inside the application: `DragSource::make()->payload(
+  $type, $data)`, `DropTarget::make()->accepts($type)` with `onDrop`,
+  `onDragEnter` and `onDragLeave` (`DragPayload`); auto-scroll near the edge
+  of a scroll view; drags in secondary windows.
+- `captureKeys="Space,Enter,…"`: the listed keys go to the nearest focused
+  `on:keyDown` before native handling.
+- `Input::decimal($minDigits, $maxDigits, $prefix, $suffix, $locale)` and
+  `inputFormat="decimal"`: a locale-aware decimal field that reports an ASCII
+  number.
+- Template expressions: qualified enum cases and class constants
+  (`\App\Kind::Tab`, `\App\Kind::Order->value`), public instance methods of
+  values (`$order->status->label()`), `min()`, `max()` and `array_slice()`.
+- `<Slot :content="$expr">` renders a component or element held in a
+  property, with the slot's children as the fallback.
+- Percentage values on `width`, `height`, `min*` and `max*` attributes
+  (`width="75.5%"`), also when bound.
+- `#[State(hotReload: false)]` keeps a property out of the hot reload
+  checkpoint (passwords, in-flight flags).
+
+Modules
+
+- `WebSocket::connect()`: `wss://` (and `ws://` to loopback or in
+  development), text messages up to 64 KiB, at most 4 connections, bounded
+  queues.
+- `SQLite::transactionIf()`: runs statements in an `IMMEDIATE` transaction
+  only when a read-only guard query returns 1.
+- `Files::save($contents, $defaultName, …)`: the native save dialog, up to
+  1 MiB, replaced atomically, never through a symlink.
+- `SecureStorage::get()` takes an optional failure callback that tells an
+  unavailable keychain from a missing key.
+- Native printing (`printing` module, `pushinbr/pam-desktop-printing`):
+  text documents and receipts through the print dialog of each system.
+- Canvas: vector paths (`M/L/C/Q/Z`) with solid or linear gradient fills,
+  single-line text, and pointer events.
+
+Packages
+
+- `pushinbr/pam-desktop-ui` (`Pam\DesktopUi`): `Select`, `Autocomplete`
+  (with a select mode: filter in the popup, a selected value, clear),
+  `MultiSelect`, `DatePicker` (date, date and time, range;
+  `rangeSeparator`, `showFieldIcon`, `DatePickerLocale::system()`), `Toast`
+  (positions, severities, life, pause, a 1.5 px backdrop blur), `Checkbox`,
+  `ProgressButton`, `MediaTile`, `DialogViewport` and `SelectTheme`.
+- `pushinbr/pam-desktop-charts`: `LineChart`, `AreaChart`, `BarChart`
+  (`barThickness()`), `DonutChart` (`legendInline()`), `Sparkline` and
+  `ProgressRing`; the value axis picks 1-2-5 steps from the data, like
+  Chart.js.
+- `pushinbr/pam-desktop-canvas`: the drawing library the charts are built on.
+
+Host and tooling
+
+- `pam-desktop init` writes a small application: a router, a home screen as
+  a `.pam.php` template with scoped CSS, design tokens, a service, a helper
+  and a test.
+- `dev`, `run`, `build` and `publish-update` without an `app` argument run
+  the project of the current directory (the nearest `pam-desktop.json` going
+  up). `pam desktop dev` runs it through the PAM CLI.
+- PHP discovery: `PAM_DESKTOP_PHP`, then `pam` on `PATH` or in
+  `~/.local/bin`, then `php`; on Linux and macOS the PAM runtime is installed
+  when none exists. On Windows the official PHP 8.5 NTS x64 build is
+  downloaded from windows.php.net, checked against its published SHA-256 and
+  installed under `%LOCALAPPDATA%\PAM Desktop\php`.
+- `build` prebuilds the component templates of the bundle; on Windows it
+  ships only the DLLs PHP actually imports, plus the Visual C++ runtime.
+- `dev` registers the URL schemes of the manifest for the run on Linux and
+  restores the previous handlers afterwards.
+- `PAM_DESKTOP_CAPTURE=<file.png>` (macOS) writes the first window to a PNG
+  from inside the process.
+
+### Changed
+
+- Hot reload polls every 150 ms and settles for 80 ms (was 350 and 120):
+  save to updated window went from a median of about 555 ms to about 315 ms
+  on the skeleton (Linux, 22 samples, 181 to 346 ms); fixing an error clears
+  its report in about 0.2 to 0.25 s.
+- The desktop property table ends at 2028 and the event table at 2007
+  (were 2016 and 2005). The SDK refuses to send a property an older host did
+  not declare (`ProtocolMismatchException` naming the property); update the
+  host and the SDK together (`docs/compatibility.md`).
+- Template components compile one by one: a component that fails is reported
+  as a boot error and the others keep working. Symlinked directories and
+  files are followed (each real directory once). `__DIR__` and `__FILE__`
+  in a `.pam.php` point at the source, also in a bundle.
+- Error reports name what failed (Template error, Syntax error, PHP worker
+  stopped), point at the `.pam.php` line instead of the compiled cache, and a
+  PHP fatal error that ends the worker is reported (`RuntimeErrorPhase::Worker`).
+- `?:`, `??`, `||` and `&&` in template expressions only evaluate the branch
+  that is taken.
+- A media query rule now replaces an earlier declaration of the same
+  property when the two compile to different keys (`width: 350px` then
+  `width: 100%`).
+- A `Button` is at least as wide as its label plus padding (minimum 100).
+- The loading `Button` and `ActivityIndicator` are drawn as dot spinners.
+- `useNetwork` stops sampling while the application is in the background.
+
+Performance (measured against an Electron build of the same application,
+see `docs/performance.md`)
+
+- GTK, software rendering (no GPU: virtual machines, containers, remote
+  sessions): while a scroll view scrolls, the rows on screen are drawn from
+  images rasterized once, placed on whole pixels, and rows off screen are
+  left out of the frame; a second after the scroll the images are released.
+  Host CPU while scrolling 2500 products: 1.56 to 0.99 s down, 1.68 to
+  0.65 s up.
+- GTK: while a scroll view moves, its frame clock keeps a steady 16.7 ms
+  cadence. Without a compositor reporting presented frames, GTK timed each
+  frame from the late start of the previous one (18 to 19 ms, about 53 frames
+  per second).
+- GTK: the tick callback that drives the host's animations stays installed
+  while frames keep being requested instead of being added for every frame.
+- The drain a backend event starts (a scroll, a resize, a scroll offset GTK
+  changes during layout) handles backend events only; worker frames and
+  module results are applied by the worker's own pump at idle priority,
+  after the frame being drawn.
+- A structural patch (rows joining or leaving a list) lays out only what it
+  touched and their ancestors, as property patches already did; it laid the
+  whole tree out again before. Debug builds check every such pass against a
+  full layout.
+- GTK: freed heap memory is returned to the system (`malloc_trim`) half a
+  second after the windows stop painting, when more than a megabyte was
+  freed. Host memory after 18 screens: 78 to about 63 MB.
+- The PHP worker no longer keeps the style IR, its bytecode, source map and
+  compatibility report of each component's stylesheet: rendering never reads
+  them, and they were about 12 MB of an application's 53 MB heap after 18
+  screens. Components compiled at run time no longer store them either.
+
+### Security
+
+- PHP is no longer installed without consent: a terminal prompt says what is
+  downloaded, from where and into which folder; `--yes` or
+  `PAM_DESKTOP_AUTO_INSTALL=1` agree beforehand, and without a terminal the
+  host stops with instructions.
+- Linux/macOS: the PAM runtime is no longer installed with `curl … | sh`. The
+  host verifies the release's Ed25519-signed update manifest against the
+  pinned PAM release identity (as `pam self-update`), then the archive's
+  signed size and SHA-256, and unpacks it in Rust.
+- Windows: PHP archives must match a SHA-256 pinned in the host as well as the
+  one in `releases.json`; unknown builds fall back to the newest pinned one
+  (`PAM_DESKTOP_PHP_ALLOW_UNPINNED=1` to opt out).
+- Updates: optional signed `expiresAtUnix` (`publish-update --expires-in`),
+  refusal of feeds older than one already seen, Linux archives unpacked in
+  Rust, and `ditto`, `codesign`, `ps`, PowerShell and `tasklist` run from
+  absolute system paths.
+- Bundles: a symlink may leave the project only from the project's `vendor/`
+  into a package listed in `vendor/composer/installed.json`.
+- Components: symlinks are followed only into the project, its `vendor/` or a
+  declared `path` repository; `asset://` fonts are resolved to their real path
+  and must stay inside the application.
+
+### Fixed
+
+- Bundles: `pam-desktop build` compiled the prebuilt components in
+  development mode while an installed application runs in production
+  (strict) mode, so every component was compiled again at the first launch
+  and the pack was never used. They are compiled in the mode the bundle runs
+  in.
+- Updates: an update the helper refuses after the application closed (a bundle that does not match its `manifest.json`, an archive that does not match, a rolled back swap) starts the installed version again, removes the staged archive and extraction, and records the release so the `automatic` policy does not download it and close the application at every start. Before, the application stayed closed and the next start repeated the loop, leaving about 180 MB per attempt beside the bundle.
+- Updates: the host leaves for the update helper with `_exit` on Linux and macOS; `exit` from the updates worker ran the GTK and GL exit handlers while the interface thread drew and crashed the process (segmentation fault on every installation).
+- Classes declared only inside `@media` or `@container` were reported as
+  unknown classes.
+- GTK: text is laid out with subpixel glyph positions, as Chromium does;
+  Pango had rounded every advance and made words up to about 2 px wider
+  (`R$ 37,50` bold 18 px: 92 px, now 89.59 px).
+- GTK: a view with `opacity: 0` can be clicked again, as in CSS.
+- `pointerEvents` reaches native hit testing on every backend, so
+  transparent overlay layers no longer swallow clicks and wheel input.
+- A bound `:textColor` overrides the `color` of the scoped stylesheet.
+- Inputs use their `line-height`; the placeholder colour falls back to the
+  text colour (at 45% on AppKit, like GTK).
+- `openUrl` on Linux falls back to `gio open` when `xdg-open` is missing.
+
+### Platform: Linux
+
+- Reference backend; everything above was run on GTK 4 (Ubuntu 24.04
+  container under Xvfb and the development machine).
+- New on GTK: backdrop blur (`backdropBlur`, `backdrop-filter`, modal
+  backdrops), the scrollbar styles, subpixel text, inline boxes, packaged
+  font stacks through Fontconfig, the print dialog (Cairo and Pango).
+- Not verified: printing to a physical printer (no printer was attached;
+  Print to File and its PDF were checked).
+
+### Platform: macOS
+
+- First real run: macOS 26.7.1 (Tahoe) x86_64 in a virtual machine without a
+  GPU, Xcode 26.6, PHP 8.5.12 from PAM 2.2.9. The examples `counter`,
+  `controls`, `lists` (2000 rows), `text`, `images`, `motion`,
+  `navigation` and `showcase` ran in light and dark; hot reload, clicks,
+  typing with masks, Tab focus, the pasteboard, Command-Q, wheel scrolling,
+  a modal closed with Escape and window dragging were checked with real
+  input events. A bundle from `pam-desktop build --format directory --format
+  dmg` (19 MB DMG) opened; idle at its first screen for 30 s the host and the
+  PHP worker used 0.0% CPU and 41 MB resident each.
+- Fixed by that run: typed text never reached the core; a click left the
+  focus ring on focusable boxes (now shown only after keyboard input); icon
+  fonts drew a missing glyph; legacy scrollers took 15 points from content;
+  inputs used the system hint colour for the placeholder; a bundle built with
+  PAM shipped the launcher script instead of `pam` and `libphp.dylib`.
+- New on AppKit, type-checked and run only where listed above: packaged
+  fonts through CoreText, inline boxes, classic styled scrollbars in a
+  reserved gutter, the print panel, `PAM_DESKTOP_CAPTURE`.
+- Not verified: Apple Silicon, `blur` / `backdropBlur` on screen, menus
+  opened with the pointer, context menus, drag and drop, media, web views,
+  notifications, printing, signing. AppKit does not apply `word-break`,
+  `overflow-wrap` or `hyphens` (words wrap at word boundaries).
+
+### Platform: Windows
+
+- Not run on Windows. `cargo check --target x86_64-pc-windows-gnu` of the
+  backend and the host passes; nothing in this section was executed.
+- Written for Win32: packaged fonts, inline boxes (DirectWrite inline
+  objects), styled scrollbars, CSS line breaking and `white-space: nowrap`,
+  key capture before `TranslateMessage`, typed drag and drop in secondary
+  windows, the print dialog with GDI spooling off the UI thread, the
+  windows.php.net PHP installer, and import-table based DLL selection in
+  `build`. `hyphens` is not applied.
+
+### Native renderer foundation
 
 PAM Desktop 2.0 is a rewrite with a different rendering model. The interface is
 no longer a web page in a Servo web view: applications are written in PHP with
@@ -13,7 +280,7 @@ The PHP component core, the wire protocol and the layout and diff engine
 started as a copy of PAM Native 1.46.34 (see `NOTICE`) and are maintained here
 independently.
 
-### Breaking
+#### Breaking
 
 Applications built for 1.x do not run on 2.0. The web interface, the Servo
 host, the typed command gateway, capabilities, the protocol 6 manifest declared
@@ -21,7 +288,7 @@ in PHP and the plugin contracts are gone, and there is no compatibility layer.
 The 1.x sources are not part of the 2.0 tree; they are in the history of the
 repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
 
-### Rendering and layout
+#### Rendering and layout
 
 - Native views for every element: no web view in the rendering path.
 - Flexbox layout, absolute positioning, percentages, aspect ratio, grids and
@@ -37,7 +304,7 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
 - `.pam` templates rendered with `View::make()`, looked up in
   `resources/views` by default.
 
-### Interaction and input
+#### Interaction and input
 
 - Press, long press, double tap, hit slop and press retention implemented once
   in the core, identical on every backend.
@@ -49,7 +316,7 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
   application shortcuts.
 - Selectable text with drag, double and triple click, copy and select all.
 
-### Lists and scrolling
+#### Lists and scrolling
 
 - Native scroll views with scroll events, programmatic scrolling and sticky
   headers.
@@ -58,7 +325,7 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
 - Refresh with F5 or Ctrl/Cmd+R (there is no pull gesture), with a host-drawn
   spinner whose color, backdrop, size and offset the application sets.
 
-### Animation and gestures
+#### Animation and gestures
 
 - Implicit transitions, motion presets, keyframes, animation programs
   (timing, spring, sequence, repeat) and shimmer, all sampled by the host's
@@ -73,7 +340,7 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
 - `TextEllipsizeMode::Marquee`: a line that does not fit slides to its end
   and back.
 
-### Images, media, web and canvas
+#### Images, media, web and canvas
 
 - Images from HTTPS, bundled assets, sandbox files, absolute paths and data
   URIs, with a disk cache, cache policies, placeholders, tinting and load
@@ -84,7 +351,7 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
   injected script.
 - A vector canvas and a freehand drawing canvas.
 
-### Desktop shell
+#### Desktop shell
 
 - Main window control and state, secondary windows described as elements.
 - Application menu bar with platform roles, a tray icon, and context menus
@@ -104,7 +371,7 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
 - Screen capture protection (`Screen::secure()`, secure routes) on macOS and
   Windows. It is not enforced on Linux.
 
-### Modules
+#### Modules
 
 - Key/value storage, a private file sandbox with pickers and downloads, HTTP
   requests and transfers, SQLite databases, secure storage in the system
@@ -118,7 +385,7 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
   sensors, biometrics, SMS and others) are not included; their class names
   throw a `PluginException` naming the optional package.
 
-### Distribution
+#### Distribution
 
 - `pam-desktop build` bundles the application with the host and a PHP runtime
   and builds the installers of the system it runs on: AppImage, `.deb` and
@@ -130,7 +397,7 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
 - Signed updates: an Ed25519-signed feed, `pam-desktop update-key` and
   `pam-desktop publish-update`, and the `Updates` API.
 
-### Development experience
+#### Development experience
 
 - `composer require pushinbr/pam-desktop` installs `vendor/bin/pam-desktop`, a
   launcher that downloads the host archive of its version from the GitHub
@@ -154,7 +421,7 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
   host for six targets and publishes the archives of a tag. Neither has run
   yet.
 
-### Accessibility
+#### Accessibility
 
 - Roles, labels, hints, values, states, live regions and custom actions
   resolved in the core and mapped to AT-SPI (through GTK), NSAccessibility and
@@ -162,7 +429,7 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
 - `Accessibility::announce()` speaks through the screen reader of the system
   and `Accessibility::screenReaderEnabled()` reports whether one is running.
 
-### Platforms
+#### Platforms
 
 - The host starts the backend of the system it was built for.
 - Linux (GTK 4) is the reference backend and the only one exercised so far.
@@ -171,7 +438,8 @@ repository, at the `v1.*` tags. See `docs/migrating-from-1.x.md`.
   is shown, so only applications with one need it installed.
 - The macOS (AppKit) and Windows (Win32, Direct2D) backends are written
   against the same `Backend` contract and type-check by cross compilation, but
-  have not been run on real machines yet. `docs/first-run-macos-windows.md`
+  have not been run on real machines yet (macOS has since run in a virtual
+  machine; see Unreleased). `docs/first-run-macos-windows.md`
   is the checklist for their first run and the list of known differences.
 - On Windows a release host is a windowed program that attaches to the
   console of the terminal it was started from, and embeds an application

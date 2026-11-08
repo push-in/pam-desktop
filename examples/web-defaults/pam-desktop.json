@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.web-defaults",
+    "name": "PAM Desktop web defaults",
+    "entry": "index.php",
+    "window": {
+        "width": 760,
+        "height": 640
+    }
+}

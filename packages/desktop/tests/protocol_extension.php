@@ -47,9 +47,9 @@ $assert(
 $local = RendererContract::local();
 $coreMax = max(array_filter(array_map(static fn (PropKey $key): int => $key->value, PropKey::cases()), static fn (int $v): bool => $v < 1001));
 $assert(
-    $local->propertyCeiling === $coreMax && $local->extensionPropertyCeiling === PropKey::WindowMinHeight->value
+    $local->propertyCeiling === $coreMax && $local->extensionPropertyCeiling === PropKey::TextSpanBoxes->value
         && $local->eventCeiling === max(array_filter(array_map(static fn (EventKind $kind): int => $kind->value, EventKind::cases()), static fn (int $v): bool => $v < 1001))
-        && $local->extensionEventCeiling === EventKind::FilesDrop->value,
+        && $local->extensionEventCeiling === EventKind::DragLeave->value,
     'The local contract declares the highest core and extension identifiers of the SDK tables.',
 );
 
@@ -118,6 +118,27 @@ try {
         'A renderer that declares 1001 receives it in the ordinary u16 property field.',
     );
 
+    $decimalInput = \Pam\Desktop\UI\Input::make('0.5')->decimal(2, 3, '', ' kg', 'en-US');
+    $previousDesktop = RendererContract::fromJson('{"abi":1,"events":[80,1000],"properties":[543,2022],"protocol":[1,1]}');
+    RendererContract::use($previousDesktop);
+    $throws(
+        static fn () => (new TreeEncoder())->encode($decimalInput),
+        'does not implement property InputFormatDecimalMinDigits (2023)',
+    );
+    RendererContract::use(RendererContract::local());
+    $decimalFrame = (new TreeEncoder())->encode($decimalInput)['frame'];
+    $assert(
+        is_string($decimalFrame) && str_contains($decimalFrame, pack('v', 2023)."\x02".pack('q', 2)),
+        'The decimal formatter sends its minimum precision only to a renderer that declares it.',
+    );
+
+    // Inline boxes of nested texts (2028) are refused by a 2027 renderer.
+    $kbd = Text::rich('a ', Text::make('Ctrl')->property(PropKey::PaddingHorizontal, 6), ' b');
+    RendererContract::use(RendererContract::fromJson('{"abi":1,"events":[80,2007],"properties":[543,2027],"protocol":[1,1]}'));
+    $throws(static fn () => (new TreeEncoder())->encode($kbd), 'does not implement property TextSpanBoxes (2028)');
+    RendererContract::use(RendererContract::local());
+    $assert(is_string((new TreeEncoder())->encode($kbd)['frame']), 'A 2028 renderer receives inline boxes.');
+
     // A patch that adds the property on a later frame is checked too.
     RendererContract::use($legacy);
     $encoder = new TreeEncoder();
@@ -135,3 +156,14 @@ try {
 } finally {
     RendererContract::use(null);
 }
+$gutter = \Pam\Desktop\Internal\ScopedStyleCompiler::compile('.page { scrollbar-gutter: stable; scrollbar-width: thin; } .both { scrollbar-gutter: stable both-edges; scrollbar-width: none; }', 'ScrollbarGutterTest');
+$assert(
+    PropKey::ScrollbarGutter->value === 2024 && PropKey::ScrollbarWidth->value === 2025
+        && ($gutter['classes']['page']['scrollbarGutter'] ?? null) === 2 && ($gutter['classes']['page']['scrollbarWidth'] ?? null) === 2
+        && ($gutter['classes']['both']['scrollbarGutter'] ?? null) === 3 && ($gutter['classes']['both']['scrollbarWidth'] ?? null) === 3,
+    'scrollbar-gutter/scrollbar-width compile to the sequential integer variants (2024/2025).',
+);
+$thick = \Pam\Desktop\Internal\ScopedStyleCompiler::compile('.column { scrollbar-gutter: stable; scrollbar-width: 8px; }', 'ScrollbarThicknessTest');
+$assert(($thick['classes']['column']['scrollbarThickness'] ?? null) === 8.0 && PropKey::ScrollbarThickness->value === 2026, 'scrollbar-width accepts an exact px gutter (2026).');
+$colored = \Pam\Desktop\Internal\ScopedStyleCompiler::compile('.column { scrollbar-color: rgba(255, 255, 255, 0.08) transparent; }', 'ScrollbarColorTest');
+$assert(($colored['classes']['column']['scrollbarColor'] ?? null) === 0x14FFFFFF && PropKey::ScrollbarColor->value === 2027, 'scrollbar-color compiles the thumb colour (2027).');

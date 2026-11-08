@@ -113,9 +113,17 @@ impl EventQueue {
     }
 
     /// Queues an event and drains the runtime unless it is already draining.
+    ///
+    /// That drain handles the backend's events only. What the worker sent
+    /// (frames of rows, module results) is applied by the pump its inbox
+    /// scheduled, at idle priority: backends report from inside their own
+    /// frame (a scroll offset changed by layout), and a commit applied there
+    /// held the frame back by its whole cost.
     pub fn push(&self, event: BackendEvent) {
         self.events.borrow_mut().push_back(event);
+        let outer = EVENTS_ONLY.with(|only| only.replace(true));
         pump();
+        EVENTS_ONLY.with(|only| only.set(outer));
     }
 
     /// Queues an event without draining (the caller pumps later).
@@ -134,6 +142,8 @@ impl EventQueue {
 
 thread_local! {
     static PUMP: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
+    /// The current pump came from a backend event (see [`EventQueue::push`]).
+    static EVENTS_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Installs the UI thread's drain function (see [`Shared::install`]).
@@ -217,6 +227,7 @@ unsafe extern "C" fn measure_trampoline<B: Backend>(
     let source = TextSource {
         text: text(request.text, request.text_length),
         spans: text(request.spans, request.spans_length),
+        boxes: text(request.span_boxes, request.span_boxes_length),
         family: text(request.font_family, request.font_family_length),
         features: text(request.font_features, request.font_features_length),
         font_size: request.font_size,
@@ -227,6 +238,9 @@ unsafe extern "C" fn measure_trampoline<B: Backend>(
         italic: request.italic != 0,
         transform: i64::from(request.text_transform),
         max_lines: request.max_lines,
+        break_strategy: i64::from(request.break_strategy),
+        hyphenation: i64::from(request.hyphenation),
+        nowrap: false,
     };
     // An empty paragraph (an input without text) still occupies one line box.
     let empty = source.text.is_empty();
@@ -234,6 +248,7 @@ unsafe extern "C" fn measure_trampoline<B: Backend>(
         TextSource {
             text: " ",
             spans: "",
+            boxes: "",
             ..source
         }
     } else {
@@ -358,6 +373,7 @@ impl<B: Backend> Runtime<B> {
         events: Rc<EventQueue>,
         config: RuntimeConfig,
     ) -> std::io::Result<Self> {
+        backend.set_asset_root(&config.directories.assets);
         backend.open_window(MAIN_WINDOW, &config.window);
         let system = backend.window_metrics(MAIN_WINDOW);
         let settings = Settings::load(&config.directories.state);
@@ -503,10 +519,7 @@ impl<B: Backend> Runtime<B> {
             web_views: crate::webview::WebViews::default(),
             selection: crate::selection::TextSelection::default(),
             drag_drop: crate::dragdrop::DragDrop::default(),
-            error_overlay: crate::error_overlay::ErrorOverlay::new(
-                config.development,
-                &crate::modules::system::locale_tag(),
-            ),
+            error_overlay: crate::error_overlay::ErrorOverlay::new(config.development),
             toasts: crate::toast::Toasts::default(),
             observers: crate::observers::Observers::default(),
             gestures: crate::gestures::Gestures::default(),
@@ -589,7 +602,11 @@ impl<B: Backend> Runtime<B> {
                 self.settle();
                 progressed = true;
             }
-            let inbound = self.inbox.take();
+            let inbound = if EVENTS_ONLY.with(std::cell::Cell::get) {
+                VecDeque::new()
+            } else {
+                self.inbox.take()
+            };
             for item in inbound {
                 self.handle_inbound(item);
                 self.settle();
@@ -602,6 +619,7 @@ impl<B: Backend> Runtime<B> {
         {
             let mut ctx = ctx!(self);
             self.interaction.flush(&mut ctx);
+            self.drawings.flush(&mut ctx);
             self.gestures.flush(&mut ctx);
             self.scrolling.flush(&mut ctx);
         }
@@ -639,9 +657,11 @@ impl<B: Backend> Runtime<B> {
                 HostCommand::SetTextSelection { id, range } => {
                     self.backend.set_text_selection(id, range)
                 }
-                HostCommand::BeginTextDrag { source, text } => {
-                    self.backend.begin_text_drag(MAIN_WINDOW, source, &text)
-                }
+                HostCommand::BeginTextDrag {
+                    window,
+                    source,
+                    text,
+                } => self.backend.begin_text_drag(window, source, &text),
                 HostCommand::SetMedia { id, state } => self.backend.set_media(id, &state),
                 HostCommand::OpenWindow { window, config } => {
                     self.backend.open_window(window, &config)
@@ -818,6 +838,8 @@ impl<B: Backend> Runtime<B> {
                     eprintln!(
                         "[pam-desktop] the PHP worker stopped; waiting for a change to restart it"
                     );
+                    self.error_overlay.worker_stopped();
+                    self.refresh_error_overlay();
                 } else {
                     self.finished = true;
                 }
@@ -860,6 +882,8 @@ impl<B: Backend> Runtime<B> {
         self.generation += 1;
         self.outbox.clear();
         self.modules.reset();
+        self.drag_drop = crate::dragdrop::DragDrop::default();
+        self.timers.cancel(Timer::DragScroll);
         self.shell.reset();
         self.error_overlay.reset();
         {
@@ -1232,6 +1256,15 @@ impl<B: Backend> Runtime<B> {
                 let mut ctx = ctx!(self);
                 for timer in due {
                     match timer {
+                        Timer::DragScroll => {
+                            let root = self
+                                .drag_drop
+                                .window()
+                                .filter(|window| *window != MAIN_WINDOW)
+                                .and_then(|window| self.windows.root_of(window));
+                            ctx.scene.set_pointer_root(root);
+                            self.drag_drop.scroll_tick(&mut ctx, &mut self.scrolling);
+                        }
                         Timer::InputDebounce(id) => self.inputs.on_timer(&mut ctx, id),
                         Timer::Marquee(id) => self.marquees.on_timer(&mut ctx, id),
                         Timer::WebViewTimeout(id) => self.web_views.on_timer(&mut ctx, id),
@@ -1276,6 +1309,15 @@ impl<B: Backend> Runtime<B> {
             BackendEvent::ScrollChanged { id, offset } => {
                 let mut ctx = ctx!(self);
                 self.scrolling.on_scroll(&mut ctx, id, offset);
+                if let Some(window) = self.drag_drop.window() {
+                    let root = if window == MAIN_WINDOW {
+                        None
+                    } else {
+                        self.windows.root_of(window)
+                    };
+                    ctx.scene.set_pointer_root(root);
+                    self.drag_drop.scrolled(&mut ctx);
+                }
                 // Players that start when scrolled into view follow the offset.
                 self.media.on_scroll();
                 self.media.evaluate(&mut ctx);
@@ -1294,6 +1336,9 @@ impl<B: Backend> Runtime<B> {
                 if window == MAIN_WINDOW && modifiers.control {
                     let mut ctx = ctx!(self);
                     self.gestures.on_wheel_zoom(&mut ctx, position, delta.y);
+                } else if window == MAIN_WINDOW {
+                    let mut ctx = ctx!(self);
+                    self.scrolling.on_wheel(&mut ctx, position, delta);
                 }
             }
             BackendEvent::Magnify {
@@ -1323,10 +1368,31 @@ impl<B: Backend> Runtime<B> {
                 position,
                 text,
             } => {
-                if window == MAIN_WINDOW {
-                    let mut ctx = ctx!(self);
-                    self.drag_drop.on_text_dropped(&mut ctx, position, &text);
-                }
+                let root = if window == MAIN_WINDOW {
+                    None
+                } else {
+                    match self.windows.root_of(window) {
+                        Some(root) => Some(root),
+                        None => return,
+                    }
+                };
+                self.scene.set_pointer_root(root);
+                let mut ctx = ctx!(self);
+                self.drag_drop
+                    .on_text_dropped(&mut ctx, window, position, &text);
+            }
+            BackendEvent::DragMotion { window, position } => {
+                let root = if window == MAIN_WINDOW {
+                    None
+                } else {
+                    match self.windows.root_of(window) {
+                        Some(root) => Some(root),
+                        None => return,
+                    }
+                };
+                self.scene.set_pointer_root(root);
+                let mut ctx = ctx!(self);
+                self.drag_drop.on_motion(&mut ctx, window, position);
             }
             BackendEvent::DragFinished { source, .. } => {
                 let mut ctx = ctx!(self);
@@ -1629,6 +1695,10 @@ impl<B: Backend> Runtime<B> {
     /// Tells PHP when the application state changed.
     pub(crate) fn report_app_state(&mut self) {
         let state = self.app_state();
+        if state == 3 {
+            let mut ctx = ctx!(self);
+            self.drag_drop.cancel(&mut ctx);
+        }
         if std::mem::replace(&mut self.reported_app_state, state) != state {
             self.send_event(0, event_kind::APP_STATE, &[b'0' + state]);
         }
@@ -1647,6 +1717,12 @@ impl<B: Backend> Runtime<B> {
                 self.refresh_error_overlay();
             }
             return;
+        }
+        if key.pressed {
+            let mut ctx = ctx!(self);
+            if self.interaction.capture_key(&mut ctx, key) {
+                return;
+            }
         }
         if key.pressed && !key.repeat {
             let back = match key.key.as_str() {

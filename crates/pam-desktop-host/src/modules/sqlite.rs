@@ -173,6 +173,56 @@ fn run_atomically(connection: &mut Connection, steps: &[Step]) -> rusqlite::Resu
     transaction.commit()
 }
 
+/// The guard and projection share the writer lock; no sender can replace the
+/// lease between the check and reconciliation. Guards cannot mutate the DB.
+fn run_conditionally(
+    connection: &mut Connection,
+    sql: &str,
+    parameters: &serde_json::Value,
+) -> Result<bool, String> {
+    let args = arguments(
+        parameters
+            .get("guardArguments")
+            .ok_or("Missing guard arguments")?,
+    )?;
+    let steps = steps(
+        parameters
+            .get("statements")
+            .ok_or("Missing transaction statements")?,
+    )?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| message(&error))?;
+    let allowed = {
+        let mut guard = transaction.prepare(sql).map_err(|error| message(&error))?;
+        if !guard.readonly() || guard.column_count() != 1 {
+            return Err("SQLite guard must be readonly with one boolean column".into());
+        }
+        bind(&mut guard, &args).map_err(|error| message(&error))?;
+        let mut rows = guard.raw_query();
+        let row = rows
+            .next()
+            .map_err(|error| message(&error))?
+            .ok_or("SQLite guard must return exactly one row")?;
+        let allowed = match row.get_ref(0).map_err(|error| message(&error))? {
+            ValueRef::Integer(0) => false,
+            ValueRef::Integer(1) => true,
+            _ => return Err("SQLite guard must return integer zero or one".into()),
+        };
+        if rows.next().map_err(|error| message(&error))?.is_some() {
+            return Err("SQLite guard must return exactly one row".into());
+        }
+        allowed
+    };
+    if allowed {
+        for step in steps {
+            run(&transaction, &step.sql, &step.sets).map_err(|error| message(&error))?;
+        }
+    }
+    transaction.commit().map_err(|error| message(&error))?;
+    Ok(allowed)
+}
+
 /// Appends one column value as JSON; fails as soon as the result is known to
 /// be too large, before the value is copied.
 fn push_value(json: &mut String, value: ValueRef<'_>) -> Result<(), String> {
@@ -296,7 +346,10 @@ fn execute(
     method: &str,
     request: &WireMap,
 ) -> Result<Vec<u8>, String> {
-    if !matches!(method, "execute" | "query" | "executeMany" | "transaction") {
+    if !matches!(
+        method,
+        "execute" | "query" | "executeMany" | "transaction" | "transactionIf"
+    ) {
         return Err(format!("Unknown SQLite method {method}"));
     }
     let name = required_text(request, "database")?;
@@ -320,6 +373,12 @@ fn execute(
             let arguments = arguments(&parameters)?;
             let rows = query(connection, sql, &arguments)?;
             Ok(WireMap::new().with("rows", rows).encode())
+        }
+        "transactionIf" => {
+            let applied = run_conditionally(connection, sql, &parameters)?;
+            Ok(WireMap::new()
+                .with("applied", if applied { "1" } else { "0" })
+                .encode())
         }
         "executeMany" => {
             let step = Step {
@@ -440,6 +499,58 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.directory);
         }
+    }
+
+    #[test]
+    fn conditional_transactions_guard_all_projection_steps() {
+        let mut fixture = Fixture::new("sqlite-conditional");
+        fixture.execute(
+            "CREATE TABLE t(id INTEGER PRIMARY KEY, value INTEGER)",
+            &json!([]),
+        );
+        fixture.execute("INSERT INTO t VALUES(1, 10)", &json!([]));
+        let parameters = json!({"guardArguments": [1], "statements": [{"sql": "UPDATE t SET value=value+5", "arguments": []}]});
+        assert_eq!(
+            fixture
+                .call("transactionIf", "SELECT ?", &parameters)
+                .unwrap()
+                .text("applied"),
+            Some("1")
+        );
+        let skipped =
+            json!({"guardArguments": [0], "statements": [{"sql": "UPDATE t SET value=99"}]});
+        assert_eq!(
+            fixture
+                .call("transactionIf", "SELECT ?", &skipped)
+                .unwrap()
+                .text("applied"),
+            Some("0")
+        );
+        assert_eq!(
+            fixture.rows("SELECT value FROM t", &json!([])),
+            json!([{"value":15}])
+        );
+        let failed = json!({"guardArguments": [], "statements": [{"sql": "UPDATE t SET value=99"}, {"sql": "INSERT INTO missing VALUES(1)"}]});
+        assert!(fixture.call("transactionIf", "SELECT 1", &failed).is_err());
+        assert_eq!(
+            fixture.rows("SELECT value FROM t", &json!([])),
+            json!([{"value":15}])
+        );
+        for invalid in [
+            "SELECT 2",
+            "SELECT '1'",
+            "SELECT NULL",
+            "SELECT 1,1",
+            "SELECT 1 UNION ALL SELECT 0",
+            "SELECT 1 WHERE 0",
+            "UPDATE t SET value=99 RETURNING 1",
+        ] {
+            assert!(fixture.call("transactionIf", invalid, &json!({"guardArguments": [], "statements": [{"sql":"UPDATE t SET value=20"}]})).is_err(), "{invalid}");
+        }
+        assert_eq!(
+            fixture.rows("SELECT value FROM t", &json!([])),
+            json!([{"value":15}])
+        );
     }
 
     #[test]

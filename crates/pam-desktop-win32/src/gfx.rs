@@ -13,7 +13,7 @@ use windows::Win32::Graphics::Direct2D::Common::{
 };
 use windows::Win32::Graphics::Direct2D::{
     CLSID_D2D1GaussianBlur, D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET,
-    D2D1_BITMAP_PROPERTIES1, D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID,
+    D2D1_BITMAP_PROPERTIES1, D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID,
     D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_MULTI_THREADED,
     D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_LINE_JOIN_ROUND, D2D1_PROPERTY_TYPE_UNKNOWN,
     D2D1_STROKE_STYLE_PROPERTIES, D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE, D2D1_UNIT_MODE_DIPS,
@@ -67,6 +67,8 @@ pub struct Graphics {
     pub dwrite: IDWriteFactory,
     /// Round caps and joins (lines, strokes, dotted borders).
     pub round_stroke: ID2D1StrokeStyle,
+    /// Butt caps and round joins for authored vector paths.
+    pub path_stroke: ID2D1StrokeStyle,
     pub device: Option<Device>,
     /// Bumped whenever the device is rebuilt: caches keyed by it expire.
     pub generation: u64,
@@ -337,11 +339,19 @@ impl Graphics {
         let base: &ID2D1Factory = &factory;
         // SAFETY: the properties outlive the call; no dash array is passed.
         let round_stroke = unsafe { base.CreateStrokeStyle(&stroke, None)? };
+        let path_properties = D2D1_STROKE_STYLE_PROPERTIES {
+            startCap: D2D1_CAP_STYLE_FLAT,
+            endCap: D2D1_CAP_STYLE_FLAT,
+            ..stroke
+        };
+        // SAFETY: the properties outlive the call; no dash array is passed.
+        let path_stroke = unsafe { base.CreateStrokeStyle(&path_properties, None)? };
         let device = Device::new(&factory).ok();
         Ok(Self {
             factory: factory.clone(),
             dwrite,
             round_stroke,
+            path_stroke,
             device,
             generation: 1,
             backdrop_failed: false,

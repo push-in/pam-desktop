@@ -1378,6 +1378,35 @@ fn wheel(
     Some(LRESULT(0))
 }
 
+/// Consume composite navigation before TranslateMessage can synthesize WM_CHAR.
+pub fn capture_message(app: &Rc<App>, message: &MSG) -> bool {
+    let pressed = match message.message {
+        WM_KEYDOWN | WM_SYSKEYDOWN => true,
+        WM_KEYUP | WM_SYSKEYUP => false,
+        _ => return false,
+    };
+    let modifiers = events::modifiers();
+    if modifiers.control || modifiers.alt || modifiers.meta {
+        return false;
+    }
+    let bits = message.lParam.0 as u32;
+    let name = events::key_name(message.wParam.0 as u32, (bits >> 16) & 0xFF);
+    let captured = app
+        .with_state(|state| {
+            state
+                .scene
+                .focus
+                .is_some_and(|id| state.scene.captures_key(id, &name))
+        })
+        .unwrap_or(false);
+    if !captured {
+        return false;
+    }
+    // Child and top-level HWNDs both resolve to their owning scene window.
+    key_from_child(app, message.hwnd, pressed, message.wParam, message.lParam);
+    true
+}
+
 fn key(
     app: &Rc<App>,
     window: WindowId,
@@ -1402,6 +1431,27 @@ fn key(
                 }
             }
         });
+    }
+    let captured = !modifiers.control
+        && !modifiers.alt
+        && !modifiers.meta
+        && app
+            .with_state(|state| {
+                state
+                    .scene
+                    .focus
+                    .is_some_and(|id| state.scene.captures_key(id, &name))
+            })
+            .unwrap_or(false);
+    if captured {
+        app.emit(BackendEvent::Key(KeyEvent {
+            window,
+            pressed,
+            key: name,
+            modifiers,
+            repeat,
+        }));
+        return Some(LRESULT(0));
     }
     if pressed
         && name == "Tab"

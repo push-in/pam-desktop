@@ -116,6 +116,9 @@ pub struct Events {
     /// Set while a mouse-down is being dispatched by AppKit: a press must
     /// not move keyboard focus to a focusable box (only Tab does).
     pub dispatching_mouse_down: Cell<bool>,
+    /// The last input was the keyboard: only then is the focus ring of a
+    /// box drawn, like `:focus-visible` in GTK.
+    pub focus_visible: Cell<bool>,
     /// The application forces light or dark chrome: the appearance views
     /// see is then not the system's.
     pub appearance_forced: Cell<bool>,
@@ -128,6 +131,7 @@ impl Events {
             main,
             busy: RefCell::new(None),
             dispatching_mouse_down: Cell::new(false),
+            focus_visible: Cell::new(false),
             appearance_forced: Cell::new(false),
         })
     }

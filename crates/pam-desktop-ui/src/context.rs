@@ -91,6 +91,8 @@ pub mod event_kind {
     pub const KEY_DOWN: u16 = 2003;
     pub const KEY_UP: u16 = 2004;
     pub const FILES_DROP: u16 = 2005;
+    pub const DRAG_ENTER: u16 = 2006;
+    pub const DRAG_LEAVE: u16 = 2007;
 }
 
 /// An event on its way to the PHP worker.
@@ -149,6 +151,7 @@ pub enum HostCommand {
     },
     /// Starts a system drag of text from the press being handled.
     BeginTextDrag {
+        window: crate::backend::WindowId,
         source: NodeId,
         text: String,
     },

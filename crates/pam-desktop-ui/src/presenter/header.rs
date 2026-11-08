@@ -99,7 +99,7 @@ impl Headers {
         let search = props.flag_or(PropKey::NavigationHeaderSearchEnabled, false);
         let placeholder = props
             .text(PropKey::NavigationHeaderSearchPlaceholder)
-            .unwrap_or("Search")
+            .unwrap_or_else(|| crate::i18n::text(crate::i18n::Text::Search))
             .to_owned();
         // PHP disables the gesture on the first route: nothing to go back to.
         let back = props.flag_or(PropKey::NavigationGestureEnabled, true)

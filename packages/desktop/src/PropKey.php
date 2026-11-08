@@ -582,4 +582,16 @@ enum PropKey: int
     case WindowModal = 2014;
     case WindowMinWidth = 2015;
     case WindowMinHeight = 2016;
+    case CaptureKeys = 2017;
+    case DragType = 2018;
+    case DropType = 2019;
+    case OnDragEnter = 2020;
+    case OnDragLeave = 2021;
+    case GridTracks = 2022;
+    case InputFormatDecimalMinDigits = 2023;
+    case ScrollbarGutter = 2024;
+    case ScrollbarWidth = 2025;
+    case ScrollbarThickness = 2026;
+    case ScrollbarColor = 2027;
+    case TextSpanBoxes = 2028;
 }

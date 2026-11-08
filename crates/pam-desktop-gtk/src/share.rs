@@ -43,6 +43,7 @@ fn mail_tool() -> Option<PathBuf> {
 
 /// The entries that apply to `request`.
 fn entries(request: &ShareRequest, attachments: bool) -> Vec<MenuNode> {
+    use pam_desktop_ui::i18n::{Text, text as label};
     let mut menu = Vec::new();
     let text = !request.text.trim().is_empty();
     let files = request.files.len();
@@ -50,33 +51,37 @@ fn entries(request: &ShareRequest, attachments: bool) -> Vec<MenuNode> {
         return menu;
     }
     if text && is_link(&request.text) {
-        menu.push(item("link", "Open link"));
+        menu.push(item("link", label(Text::OpenLink)));
     }
     if text {
         menu.push(item(
             "copy-text",
-            if files > 0 { "Copy text" } else { "Copy" },
+            if files > 0 {
+                label(Text::CopyText)
+            } else {
+                label(Text::Copy)
+            },
         ));
     }
     if files > 0 {
         menu.push(item(
             "copy-files",
             match (files, text) {
-                (1, true) => "Copy file",
-                (_, true) => "Copy files",
-                _ => "Copy",
+                (1, true) => label(Text::CopyFile),
+                (_, true) => label(Text::CopyFiles),
+                _ => label(Text::Copy),
             },
         ));
     }
     if files == 0 || attachments {
-        menu.push(item("mail", "Send by e-mail…"));
+        menu.push(item("mail", label(Text::SendByEmail)));
     }
     if files > 0 {
         menu.push(MenuNode::Separator);
         if files == 1 {
-            menu.push(item("open", "Open with…"));
+            menu.push(item("open", label(Text::OpenWith)));
         }
-        menu.push(item("folder", "Show in folder"));
+        menu.push(item("folder", label(Text::ShowInFolder)));
     }
     menu
 }

@@ -19,10 +19,12 @@ enum RuntimeErrorPhase: string
     case UnhandledRejection = 'promise';
     /** Any other runtime path (observers, schedulers). */
     case Other = 'other';
+    /** A PHP fatal error (out of memory, time limit) that stops the worker. */
+    case Worker = 'worker';
 
     /** Fatal phases leave the screen unusable and need a reload. */
     public function fatal(): bool
     {
-        return $this === self::Boot || $this === self::Render;
+        return $this === self::Boot || $this === self::Render || $this === self::Worker;
     }
 }

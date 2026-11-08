@@ -52,6 +52,7 @@ impl AppTray {
                     role,
                     ..
                 } => {
+                    let label = pam_desktop_ui::i18n::menu_label(label, *role, None).into_owned();
                     let event = match role {
                         Some(role) => TrayEvent::Role(*role),
                         None => TrayEvent::Menu(id.clone()),

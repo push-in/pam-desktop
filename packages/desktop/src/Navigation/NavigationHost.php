@@ -97,7 +97,7 @@ final class NavigationHost extends Element
             ->withProperty(PropKey::NavigationHeaderShadowVisible, $options->headerShadowVisible)
             ->withProperty(PropKey::NavigationHeaderLargeTitleEnabled, $options->headerLargeTitleEnabled)
             ->withProperty(PropKey::NavigationHeaderSearchEnabled, $options->headerSearchEnabled)
-            ->withProperty(PropKey::NavigationHeaderSearchPlaceholder, $options->headerSearchPlaceholder)
+            ->withProperty(PropKey::NavigationHeaderSearchPlaceholder, $options->searchPlaceholder())
             ->withProperty(PropKey::NavigationPresentation, $options->presentation->value)
             ->withProperty(PropKey::NavigationGestureDirection, $options->gestureDirection->value)
             ->withProperty(PropKey::NavigationFullScreenGestureEnabled, $options->fullScreenGestureEnabled)

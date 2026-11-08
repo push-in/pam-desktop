@@ -15,6 +15,15 @@ pub enum Format {
         decimals: u8,
         locale: String,
     },
+    /// Locale-aware decimal value with an optional affix and a numeric value
+    /// kept separate from its display text when changes reach PHP.
+    Decimal {
+        prefix: String,
+        suffix: String,
+        minimum_decimals: u8,
+        maximum_decimals: u8,
+        locale: String,
+    },
 }
 
 fn digits(text: &str) -> Vec<char> {
@@ -130,6 +139,44 @@ impl Format {
                 output.push_str(suffix);
                 output
             }
+            Self::Decimal {
+                prefix,
+                suffix,
+                minimum_decimals,
+                maximum_decimals,
+                locale,
+            } => {
+                let Some((negative, whole, fraction, has_decimal)) =
+                    decimal_parts(value, prefix, suffix, locale, *maximum_decimals)
+                else {
+                    return String::new();
+                };
+                if whole.is_empty() && fraction.is_empty() && !has_decimal {
+                    return String::new();
+                }
+                let mut fraction = fraction;
+                while fraction.len() > usize::from(*minimum_decimals) && fraction.ends_with('0') {
+                    fraction.pop();
+                }
+                while fraction.len() < usize::from(*minimum_decimals) {
+                    fraction.push('0');
+                }
+                let (_, decimal) = separators(locale);
+                let mut output = String::with_capacity(
+                    prefix.len() + whole.len() + fraction.len() + suffix.len() + 3,
+                );
+                output.push_str(prefix);
+                if negative && (whole != "0" || fraction.chars().any(|digit| digit != '0')) {
+                    output.push('-');
+                }
+                output.push_str(&whole);
+                if !fraction.is_empty() {
+                    output.push_str(decimal);
+                    output.push_str(&fraction);
+                }
+                output.push_str(suffix);
+                output
+            }
         }
     }
 
@@ -139,6 +186,44 @@ impl Format {
     pub fn edit(&self, previous: &str, proposed: &str, caret: usize) -> (String, usize) {
         if matches!(self, Self::None) {
             return (proposed.to_owned(), caret);
+        }
+        if let Self::Decimal {
+            prefix,
+            suffix,
+            maximum_decimals,
+            locale,
+            ..
+        } = self
+        {
+            let Some((negative, whole, fraction, has_decimal)) =
+                decimal_parts(proposed, prefix, suffix, locale, *maximum_decimals)
+            else {
+                return (String::new(), 0);
+            };
+            if whole.is_empty() && fraction.is_empty() && !has_decimal {
+                return (String::new(), 0);
+            }
+            let (_, decimal) = separators(locale);
+            let mut number =
+                String::with_capacity(whole.len() + fraction.len() + decimal.len() + 1);
+            if negative {
+                number.push('-');
+            }
+            if whole.is_empty() {
+                number.push('0');
+            } else {
+                number.push_str(&whole);
+            }
+            if has_decimal {
+                number.push_str(decimal);
+                number.push_str(&fraction);
+            }
+            let mut output = String::with_capacity(prefix.len() + number.len() + suffix.len());
+            output.push_str(prefix);
+            output.push_str(&number);
+            output.push_str(suffix);
+            let position = prefix.chars().count() + number.chars().count();
+            return (output, position);
         }
         let mut proposed: Vec<char> = proposed.chars().collect();
         let mut caret = caret.min(proposed.len());
@@ -189,6 +274,110 @@ impl Format {
         };
         (formatted, caret)
     }
+
+    /// Canonical value sent to PHP. Existing masks/currency keep their display
+    /// contract; decimal inputs expose an ASCII numeric string without affixes.
+    #[must_use]
+    pub fn value_for_php(&self, text: &str) -> String {
+        match self {
+            Self::Decimal {
+                prefix,
+                suffix,
+                maximum_decimals,
+                locale,
+                ..
+            } => {
+                let Some((negative, whole, fraction, has_decimal)) =
+                    decimal_parts(text, prefix, suffix, locale, *maximum_decimals)
+                else {
+                    return String::new();
+                };
+                if whole.is_empty() && fraction.is_empty() && !has_decimal {
+                    return String::new();
+                }
+                let fraction = fraction.trim_end_matches('0');
+                let mut value = String::new();
+                if negative {
+                    value.push('-');
+                }
+                if whole.is_empty() {
+                    value.push('0');
+                } else {
+                    value.push_str(&whole);
+                }
+                if has_decimal && !fraction.is_empty() {
+                    value.push('.');
+                    value.push_str(fraction);
+                }
+                value
+            }
+            _ => text.to_owned(),
+        }
+    }
+}
+
+fn decimal_parts(
+    value: &str,
+    prefix: &str,
+    suffix: &str,
+    locale: &str,
+    maximum_decimals: u8,
+) -> Option<(bool, String, String, bool)> {
+    let mut value = value.trim();
+    if !prefix.is_empty() {
+        value = value.strip_prefix(prefix).unwrap_or(value).trim_start();
+    }
+    if !suffix.is_empty() {
+        value = value.strip_suffix(suffix).unwrap_or(value).trim_end();
+    }
+    if value.is_empty() {
+        return Some((false, String::new(), String::new(), false));
+    }
+    let negative = value.starts_with('-');
+    let value = value
+        .strip_prefix('-')
+        .or_else(|| value.strip_prefix('+'))
+        .unwrap_or(value);
+    let (grouping, decimal) = separators(locale);
+    let mut pieces = value.split(decimal);
+    let whole = pieces.next().unwrap_or_default();
+    let fraction = pieces.next();
+    if pieces.next().is_some() {
+        return None;
+    }
+    let (whole, fraction) = if fraction.is_none() && decimal != "," && value.contains(',') {
+        let mut alternate = value.split(',');
+        (alternate.next().unwrap_or_default(), alternate.next())
+    } else if fraction.is_none() && decimal != "." && value.contains('.') {
+        let mut alternate = value.split('.');
+        (alternate.next().unwrap_or_default(), alternate.next())
+    } else {
+        (whole, fraction)
+    };
+    if (whole.is_empty() && fraction.is_none())
+        || !whole
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || grouping.contains(ch))
+    {
+        return None;
+    }
+    let whole: String = whole.chars().filter(|ch| !grouping.contains(*ch)).collect();
+    let fraction = fraction.unwrap_or_default();
+    if !fraction.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let fraction: String = fraction
+        .chars()
+        .take(usize::from(maximum_decimals))
+        .collect();
+    let had_decimal = value.contains(decimal)
+        || (decimal != "," && value.contains(','))
+        || (decimal != "." && value.contains('.'));
+    let mut whole = whole.trim_start_matches('0').to_owned();
+    if whole.is_empty() && (!fraction.is_empty() || had_decimal) {
+        whole.push('0');
+    }
+    Some((negative, whole, fraction, had_decimal))
 }
 
 #[cfg(test)]
@@ -268,5 +457,31 @@ mod tests {
             locale: "en-US".into(),
         };
         assert_eq!(format.edit("0.12", "0.123", 5), ("1.23".to_owned(), 4));
+    }
+
+    #[test]
+    fn decimal_affix_is_inline_and_php_receives_a_plain_number() {
+        let weight = Format::Decimal {
+            prefix: String::new(),
+            suffix: " kg".into(),
+            minimum_decimals: 2,
+            maximum_decimals: 3,
+            locale: "en-US".into(),
+        };
+        assert_eq!(weight.format("0.500"), "0.50 kg");
+        assert_eq!(weight.format(""), "");
+        assert_eq!(weight.value_for_php("0.50 kg"), "0.5");
+        assert_eq!(weight.edit("", "0,5 kg", 6), ("0.5 kg".to_owned(), 3));
+
+        let dimension = Format::Decimal {
+            prefix: String::new(),
+            suffix: " cm".into(),
+            minimum_decimals: 1,
+            maximum_decimals: 2,
+            locale: "en-US".into(),
+        };
+        assert_eq!(dimension.format("10"), "10.0 cm");
+        assert_eq!(dimension.edit("", ".", 1), ("0. cm".to_owned(), 2));
+        assert_eq!(dimension.value_for_php("10.0 cm"), "10");
     }
 }

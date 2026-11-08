@@ -92,6 +92,31 @@ fn format_of(props: Props<'_>) -> Format {
                 .filter(|locale| !locale.is_empty())
                 .map_or_else(system_locale, str::to_owned),
         },
+        4 => {
+            let maximum_decimals = props
+                .integer_or(PropKey::InputFormatDecimalDigits, 6)
+                .clamp(0, 6) as u8;
+            Format::Decimal {
+                prefix: props
+                    .text_or_empty(PropKey::InputFormatPrefix)
+                    .chars()
+                    .take(16)
+                    .collect(),
+                suffix: props
+                    .text_or_empty(PropKey::InputFormatSuffix)
+                    .chars()
+                    .take(16)
+                    .collect(),
+                minimum_decimals: props
+                    .integer_or(PropKey::InputFormatDecimalMinDigits, 0)
+                    .clamp(0, i64::from(maximum_decimals)) as u8,
+                maximum_decimals,
+                locale: props
+                    .text(PropKey::InputFormatLocale)
+                    .filter(|locale| !locale.is_empty())
+                    .map_or_else(system_locale, str::to_owned),
+            }
+        }
         _ => Format::None,
     }
 }
@@ -166,6 +191,10 @@ fn resolve_config(
             padding.bottom + border[3],
         ),
         letter_spacing: props.number_or(PropKey::LetterSpacing, 0.0),
+        line_height: props
+            .number(PropKey::LineHeight)
+            .filter(|height| *height > 0.0)
+            .map(|height| height * effective_font_scale(props, font_scale)),
         secure: props.flag_or(PropKey::Secure, false) && !multiline,
         editable: props.flag_or(PropKey::InputEditable, true),
         enabled: props.flag_or(PropKey::Enabled, true),
@@ -185,7 +214,8 @@ fn resolve_config(
         selection_color: props.color(PropKey::SelectionColor),
         caret_color: props
             .color(PropKey::InputCursorColor)
-            .or_else(|| props.color(PropKey::SelectionColor)),
+            .or_else(|| props.color(PropKey::SelectionColor))
+            .or_else(|| props.color(PropKey::TextColor)),
         caret_hidden: props.flag_or(PropKey::InputCaretHidden, false),
         context_menu_hidden: props.flag_or(PropKey::InputContextMenuHidden, false),
         select_on_focus: props.flag_or(PropKey::InputSelectTextOnFocus, false),
@@ -227,6 +257,7 @@ impl Inputs {
                     | PropKey::InputFormatPrefix
                     | PropKey::InputFormatSuffix
                     | PropKey::InputFormatDecimalDigits
+                    | PropKey::InputFormatDecimalMinDigits
                     | PropKey::InputFormatLocale => {
                         // A new mask re-formats the current text.
                         input.value_changed = true;
@@ -337,7 +368,9 @@ impl Inputs {
         let Some(authored) = authored_value(props) else {
             return;
         };
-        let value = format_of(props).format(authored);
+        let format = format_of(props);
+        let value = format.format(authored);
+        let echo = format.value_for_php(&value);
         let Some(input) = self.inputs.get_mut(&id) else {
             return;
         };
@@ -349,11 +382,11 @@ impl Inputs {
             {
                 input.in_flight.pop_front();
             }
-            if value == input.text {
+            if echo == format.value_for_php(&input.text) {
                 input.in_flight.clear();
                 return;
             }
-            if let Some(position) = input.in_flight.iter().position(|(sent, _)| *sent == value) {
+            if let Some(position) = input.in_flight.iter().position(|(sent, _)| *sent == echo) {
                 // An echo of something typed earlier: newer keystrokes win.
                 input.in_flight.drain(..=position);
                 return;
@@ -365,7 +398,7 @@ impl Inputs {
         }
         let caret = if input.focused { utf16_len(&value) } else { 0 };
         input.text.clone_from(&value);
-        input.last_sent = Some(value.clone());
+        input.last_sent = Some(echo);
         input.pending = false;
         ctx.timers.cancel(Timer::InputDebounce(id));
         ctx.commands.push(HostCommand::InputText {
@@ -376,15 +409,20 @@ impl Inputs {
     }
 
     fn send_change(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
+        let format = ctx
+            .scene
+            .node(id)
+            .map(|node| format_of(node.props()))
+            .unwrap_or_default();
         let Some(input) = self.inputs.get_mut(&id) else {
             return;
         };
         input.pending = false;
         ctx.timers.cancel(Timer::InputDebounce(id));
-        if input.last_sent.as_deref() == Some(input.text.as_str()) {
+        let text = format.value_for_php(&input.text);
+        if input.last_sent.as_deref() == Some(text.as_str()) {
             return;
         }
-        let text = input.text.clone();
         input.last_sent = Some(text.clone());
         if input.in_flight.back().is_none_or(|(sent, _)| *sent != text) {
             input.in_flight.push_back((text.clone(), ctx.now_ms));
@@ -475,7 +513,7 @@ impl Inputs {
                 let text = self
                     .inputs
                     .get(&id)
-                    .map(|input| input.text.clone())
+                    .map(|input| format.value_for_php(&input.text))
                     .unwrap_or_default();
                 ctx.emit_if(id, PropKey::OnSubmit, event_kind::SUBMIT, text.into_bytes());
                 if submit_behavior == SUBMIT_BLUR_AND_SUBMIT {
@@ -499,6 +537,11 @@ impl Inputs {
 
     /// Returns whether `id` is an input (focus events of other nodes are not ours).
     pub fn on_focus(&mut self, ctx: &mut Ctx<'_>, id: NodeId, focused: bool) -> bool {
+        let format = ctx
+            .scene
+            .node(id)
+            .map(|node| format_of(node.props()))
+            .unwrap_or_default();
         let Some(input) = self.inputs.get_mut(&id) else {
             return false;
         };
@@ -522,7 +565,7 @@ impl Inputs {
             return true;
         };
         input.in_flight.clear();
-        let text = input.text.clone();
+        let text = format.value_for_php(&input.text);
         ctx.emit_if(
             id,
             PropKey::OnInputEndEditing,
@@ -586,5 +629,26 @@ impl Inputs {
             selection: None,
         });
         self.send_change(ctx, id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pam_desktop_wire::PropValue;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn caret_uses_the_authored_text_color_when_no_caret_or_selection_color_exists() {
+        let mut properties = BTreeMap::new();
+        let text_color = 0xFFE7_EFF5_u32 as i64;
+        properties.insert(PropKey::TextColor, PropValue::Integer(text_color));
+
+        let config = resolve_config(Props::new(&properties), false, [0.0; 4], 1.0);
+
+        assert_eq!(
+            config.caret_color,
+            Some(crate::color::Color::from_wire(text_color))
+        );
     }
 }

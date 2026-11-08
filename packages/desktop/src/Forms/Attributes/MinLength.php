@@ -38,6 +38,6 @@ final readonly class MinLength implements ValidationRule
 
         return $length !== null && $length >= $this->length
             ? null
-            : ($this->message ?? "Use at least {$this->length} characters.");
+            : ($this->message ?? \Pam\Desktop\I18n\FrameworkText::get('form.minLength', ['length' => $this->length]));
     }
 }

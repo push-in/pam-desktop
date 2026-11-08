@@ -2655,3 +2655,98 @@ mod tests {
         assert!(!fixture.root().join("other.bin").exists());
     }
 }
+
+/// Bounded content for a native save dialog; external paths cannot be supplied by callers.
+/// Returns the default file name, the dialog title (given by PHP, already
+/// localized; empty leaves the platform's own title) and the bytes.
+pub(crate) fn save_request(map: &WireMap) -> Result<(String, String, Vec<u8>), String> {
+    let title = map.text("title").unwrap_or_default();
+    if title.len() > 512 || title.chars().any(char::is_control) {
+        return Err("Invalid save dialog title".into());
+    }
+    let name = required_text(map, "defaultName")?;
+    if name.is_empty()
+        || name.len() > 255
+        || name
+            .chars()
+            .any(|c| c.is_control() || c == '/' || c == '\\')
+    {
+        return Err("Invalid save filename".into());
+    }
+    let encoded = required_text(map, "data")?;
+    if encoded.len() > MAX_BRIDGE_BASE64 {
+        return Err(BRIDGE_LIMIT.into());
+    }
+    let bytes = BASE64
+        .decode(encoded)
+        .map_err(|_| String::from("Invalid file payload"))?;
+    if bytes.len() as u64 > MAX_BRIDGE_BYTES {
+        return Err(BRIDGE_LIMIT.into());
+    }
+    Ok((name.into(), title.into(), bytes))
+}
+
+pub(crate) fn save_selected(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() as u64 > MAX_BRIDGE_BYTES {
+        return Err(BRIDGE_LIMIT.into());
+    }
+    // Do not follow a symlink introduced at the selected leaf. Atomic replacement preserves old data on failure.
+    if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink() || !m.is_file()) {
+        return Err("Selected destination is not a regular file".into());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| String::from("Invalid save destination"))?;
+    let (staged, mut output) =
+        Staged::create(staging_path(parent, path)).map_err(|e| io_message(&e))?;
+    output
+        .write_all(bytes)
+        .and_then(|()| output.sync_all())
+        .map_err(|e| io_message(&e))?;
+    drop(output);
+    staged.publish(path).map_err(|e| io_message(&e))
+}
+
+#[cfg(test)]
+mod save_tests {
+    use super::*;
+    #[test]
+    fn save_payload_is_bounded_and_filename_only() {
+        let valid = WireMap::new()
+            .with("defaultName", "extrato.csv")
+            .with("data", BASE64.encode(b"a,b\n1,2"));
+        let (_, title, bytes) = save_request(&valid).unwrap();
+        assert_eq!(
+            (title.as_str(), bytes.as_slice()),
+            ("", b"a,b\n1,2".as_slice())
+        );
+        let titled = valid.clone().with("title", "Guardar archivo");
+        assert_eq!(save_request(&titled).unwrap().1, "Guardar archivo");
+        assert!(save_request(&valid.clone().with("title", "a\nb")).is_err());
+        for name in ["", "../a.csv", "a/b", "a\\b"] {
+            assert!(
+                save_request(&WireMap::new().with("defaultName", name).with("data", "")).is_err()
+            );
+        }
+        assert!(
+            save_request(&WireMap::new().with("defaultName", "a.csv").with(
+                "data",
+                BASE64.encode(vec![0; MAX_BRIDGE_BYTES as usize + 1])
+            ))
+            .is_err()
+        );
+    }
+    #[test]
+    fn selected_save_replaces_atomically_and_preserves_on_failure() {
+        let directory = std::env::temp_dir().join(format!("pam-save-test-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("statement.csv");
+        fs::write(&path, b"old").unwrap();
+        save_selected(&path, b"new").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert!(save_selected(&path, &vec![0; MAX_BRIDGE_BYTES as usize + 1]).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert!(save_selected(&directory, b"no").is_err());
+        fs::remove_dir_all(directory).unwrap();
+    }
+}

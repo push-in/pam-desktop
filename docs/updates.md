@@ -120,12 +120,32 @@ refuses an existing destination without `--force`.
 Platforms are the integers `1` (Linux), `2` (Windows) and `3` (macOS); kinds
 are `1` (portable archive) and `2` (installer). The signature covers the
 compact JSON serialization of `release` in the field order above (`notesUrl`
-left out when absent). Unknown fields are rejected. A feed is at most one MiB.
+and `expiresAtUnix` left out when absent). Unknown fields are rejected. A feed
+is at most one MiB.
 
 The updater verifies the signature strictly, then requires the identifier and
 the channel of the application, a version newer than the running one (numeric
 parts compared as numbers, a release above its pre-releases, build metadata
 ignored) and a portable artifact for the running platform and architecture.
+
+### Feed freshness
+
+A signature proves who published a feed, not when. Two checks keep a mirror or
+an attacker on the network from serving an old signed feed indefinitely:
+
+- **Expiry (opt-in).** `publish-update --expires-in DAYS` (1 to 366) adds a
+  signed `"expiresAtUnix"` (Unix seconds) as the last field of `release`. The
+  updater refuses the feed once that moment has passed, so republish (re-sign)
+  the feed before it expires, for example from a scheduled job. Feeds without
+  the field verify exactly as before. Hosts older than this version reject
+  feeds that carry it (unknown field), so add it only once every installed
+  application runs a host that knows it.
+- **No going back (always).** For an application that runs from a bundle, the
+  updater records the newest version a verified feed of each channel offered
+  in `.<name>.update-feed-seen` beside the bundle, and refuses a later feed of
+  the same channel that offers an older version ("refusing a replayed feed").
+  A feed that offers the same version again is fine. Changing channel starts a
+  new record; an unreadable record is ignored, never trusted.
 
 ## PHP API
 
@@ -194,12 +214,30 @@ helper, then the application exits. The helper:
    place and verifies it again, rolling back if anything fails;
 6. starts the launcher of the new bundle.
 
+Every failure after the application closed for the update (an archive that
+does not match, a bundle whose files do not match its `manifest.json`, another
+application, a swap that had to roll back) ends the same way: the installed
+version, or the one the rollback restored, starts again, the staged archive
+and extraction are removed, and the SHA-256 of the refused archive is written
+beside the bundle in `.<name>.rejected-update`. The `automatic` policy does
+not download that exact archive again, so a broken release cannot close the
+application at every start; it stays `AVAILABLE`, and `Updates::download()`
+and `Updates::install()` can still try it on request. A successful
+installation removes the record.
+
+The host leaves for the helper with `_exit` on Linux and macOS, from the
+updates worker: the exit handlers of GTK and of the GL driver do not run while
+the interface thread still draws.
+
 Only an application that runs from a bundle it may replace can be updated: the
 portable bundle (extracted, or installed with `install.sh`) and the macOS
 `.app`. A development run, a system package below `/opt`, an AppImage or an
 MSIX report a failure at `download` or `install`; their package managers
-update them. On Linux the helper needs `tar`; on macOS `ditto`; on Windows
-PowerShell.
+update them. Nothing is taken from `PATH`: on Linux the archive is unpacked in
+Rust (regular files, folders and relative symlinks that stay inside the
+archive; no owners, setuid bits, extended attributes, hard links or device
+files); on macOS the helper runs `/usr/bin/ditto` (and `/usr/bin/codesign`); on
+Windows the PowerShell and `tasklist.exe` of `%SystemRoot%\System32`.
 
 ## Interrupted installation recovery
 
@@ -227,3 +265,27 @@ paths, not a history.
 This covers a helper that stops at any point of the swap. Durability on power
 loss still depends on the file system: test abrupt termination on the systems
 you support.
+
+## Verified on Linux
+
+Release host on Ubuntu 24.04 (x86_64), 2026-11-08: a real application built
+as 0.1.0, 0.1.1 and 0.1.2 with `pam-desktop build --format portable`,
+installed per user with `install.sh`, policy `automatic`, the feed signed by
+`publish-update` and served over HTTPS by a local server whose certificate
+authority was added to the system store (release hosts refuse plain HTTP,
+even on the local machine).
+
+| Feed or artifact | Result |
+| --- | --- |
+| signature with one byte changed | refused at `check`; no download; the application keeps running |
+| `release` changed after signing | refused at `check` |
+| signed with another key | refused at `check` |
+| signed archive replaced on the server | download refused (size and SHA-256); nothing installed |
+| signed archive of a bundle changed after the build | downloaded, refused by the helper (file does not match `manifest.json`); 0.1.0 started again, staged archive and extraction removed, the release recorded in `.<name>.rejected-update`; the next start checks the feed and does not download it again |
+| valid 0.1.1 | checked, downloaded, verified, swapped and restarted in about 1.1 s; 0.1.0 kept as `.<name>.previous`; the restarted 0.1.1 checks once and is up to date |
+| an older release after a newer one was offered | refused as a replay (the feed watermark): an application that saw 0.1.2 does not take 0.1.1 |
+
+The feed is fetched once per start and never again: no request and no CPU
+time (0 ticks in 60 s) while the window was hidden, and none after it was
+shown again. The `.deb` installation below `/opt` does not update itself, as
+described above.

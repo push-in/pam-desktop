@@ -279,7 +279,8 @@ fn data_uri(uri: &str) -> Location {
 /// A bundle-relative path: no empty, `.` or `..` segments, no `\`, NUL, `?` or `#`.
 fn asset_path(root: &Path, relative: &str) -> Option<PathBuf> {
     let relative = relative.trim_start_matches('/');
-    if relative.is_empty() || relative.contains(['\\', '\0', '?', '#']) {
+    // `:` too: on Windows `C:` or `file:stream` would leave the bundle.
+    if relative.is_empty() || relative.contains(['\\', '\0', '?', '#', ':']) {
         return None;
     }
     let mut path = root.to_path_buf();
@@ -1146,6 +1147,7 @@ mod tests {
         assert_eq!(asset_path(root, "a//b"), None);
         assert_eq!(asset_path(root, "a/./b"), None);
         assert_eq!(asset_path(root, "a?b"), None);
+        assert_eq!(asset_path(root, "C:/Windows/win.ini"), None);
         assert_eq!(asset_path(root, ""), None);
     }
 

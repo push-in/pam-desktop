@@ -64,6 +64,12 @@ final class HotReloadTestScreen extends Component
     #[State]
     public int $counter = 0;
 
+    #[State(hotReload: false)]
+    public string $password = '';
+
+    #[State(hotReload: false)]
+    public bool $loading = false;
+
     #[State]
     public HotReloadTestFilter $filter = HotReloadTestFilter::All;
 
@@ -109,6 +115,8 @@ $snapshotFile = $hotReloadStateDirectory.'/hot-reload-components.json';
 try {
     $before = new HotReloadTestScreen('Conversas');
     App::run($before);
+    $before->password = 'secret-must-not-be-snapshotted';
+    $before->loading = true;
     $before->counter = 7;
     $before->filter = HotReloadTestFilter::Unread;
     $before->selection = ['10' => [1, 2], 'pinned' => []];
@@ -122,6 +130,7 @@ try {
 
     Runtime::checkpointHotReload();
     $assert(is_file($snapshotFile), 'A hot reload checkpoint must record mounted component state.');
+    $assert(!str_contains((string) file_get_contents($snapshotFile), 'secret-must-not-be-snapshotted'), 'Opted-out secret state must never be written to disk.');
     Runtime::shutdown();
 
     // The "new code": a different heading prop (the edit) and fresh instances.
@@ -135,6 +144,7 @@ try {
         $after->counter === 7 && $after->filter === HotReloadTestFilter::Unread,
         'Hot reload must restore scalar and enum #[State] of a component at the same tree position.',
     );
+    $assert($after->password === '' && !$after->loading, 'Secrets and orphaned loading flags start fresh after reload.');
     $assert($after->selection === ['10' => [1, 2], 'pinned' => []], 'Hot reload must restore array state with its keys.');
     $assert($after->model === null && $after->scroll === 0, 'Hot reload must not restore objects or non-#[State] fields.');
     $assert($after->heading === 'Chats' && str_contains($frame, 'Chats-7-Unread'), 'Hot reload must render the edited props with the preserved state.');

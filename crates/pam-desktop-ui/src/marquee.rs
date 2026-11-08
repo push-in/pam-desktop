@@ -28,9 +28,10 @@ const SPEED: f32 = 30.0;
 const RECHECK_MS: u64 = 1000;
 
 /// What makes the copy look like the text it stands for.
-const TEXT_KEYS: [PropKey; 16] = [
+const TEXT_KEYS: [PropKey; 17] = [
     PropKey::Text,
     PropKey::TextSpans,
+    PropKey::TextSpanBoxes,
     PropKey::FontFamily,
     PropKey::FontFeatureSettings,
     PropKey::FontSize,

@@ -87,7 +87,7 @@ final readonly class NavigationScreen implements Renderable
             ))];
         if ($this->options->headerSearchEnabled) {
             $search = Input::make()
-                ->placeholder($this->options->headerSearchPlaceholder)
+                ->placeholder($this->options->searchPlaceholder())
                 ->returnKey(ReturnKeyType::Search)
                 ->style(new Style(
                     minHeight: 44.0,

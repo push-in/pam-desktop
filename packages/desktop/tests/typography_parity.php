@@ -110,6 +110,32 @@ $assert(
     'Unstyled runs must not emit spans.',
 );
 
+// Inline boxes: a nested Text with padding, border, radius or background is
+// a CSS inline box (`<kbd>`); its background moves from the run to the box.
+$kbd = $typographyRender(
+    '<Text>a <Text class="kbd">Ctrl</Text> b <Text padding="1px 6px" borderWidth="1" backgroundColor="#333" borderRadius="4">Esc</Text>'
+        .' <Text backgroundColor="#EEEEEE">hl</Text></Text>',
+    '.kbd { padding: 1px 6px; border-width: 1px; border-bottom-width: 2px; border-color: #FFFFFF; border-radius: 6px;'
+        .' background-color: #222222; font-weight: 600; line-height: 15.4px; }',
+);
+$kbdProperties = $kbd->properties();
+$assert($kbdProperties[PropKey::Text->value] === 'a Ctrl b Esc hl', 'Inline boxes keep one paragraph string.');
+$assert(
+    ($kbdProperties[PropKey::TextSpanBoxes->value] ?? null)
+        === '2,6,1,6,1,6,1,1,2,1,' . 0xFFFFFFFF.',6,' . 0xFF222222.',15.4;9,12,1,6,1,6,1,1,1,1,,4,' . 0xFF333333,
+    'Class and attribute boxes encode padding, per-side borders, colour, radius, background and line height: '
+        .var_export($kbdProperties[PropKey::TextSpanBoxes->value] ?? null, true),
+);
+$assert(
+    ($kbdProperties[PropKey::TextSpans->value] ?? null) === '2,6,,600;13,15,,,,,' . 0xFFEEEEEE,
+    'A boxed run does not repeat its background as a glyph highlight; a plain background run keeps it: '
+        .var_export($kbdProperties[PropKey::TextSpans->value] ?? null, true),
+);
+$assert(
+    !isset($typographyRender('<Text>a <Text class="b">b</Text></Text>', '.b { font-weight: 700; }')->properties()[PropKey::TextSpanBoxes->value]),
+    'Runs without a box send no TextSpanBoxes.',
+);
+
 // includeFontPadding: React Native Android default true, CSS/prop opt-out.
 $padded = $typographyRender('<Text class="tight">Aa</Text>', '.tight { include-font-padding: false; }');
 $assert(

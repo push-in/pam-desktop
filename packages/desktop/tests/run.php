@@ -238,6 +238,9 @@ spl_autoload_register(static function (string $class): void {
 });
 
 require __DIR__.'/../src/functions.php';
+// Match Composer's autoload.files for this direct source test runner. Several
+// tests evaluate templates that call mb_* before the later differential suite.
+require __DIR__.'/../src/Polyfill/mbstring_functions.php';
 require __DIR__.'/Fixtures/ExamplePluginProvider.php';
 require __DIR__.'/Fixtures/TemplateEnumScope.php';
 
@@ -496,7 +499,7 @@ $assert(
         'borderWidth' => '0',
         'borderColor' => 0,
         'fontWeight' => '700',
-        'fontFamily' => 'Space Grotesk',
+        'fontFamily' => 'Space Grotesk, sans-serif',
         'opacity' => '0.5',
         'translationX' => '3',
         'translationY' => '-2',
@@ -1455,6 +1458,7 @@ $assert(
 );
 $maskedInput = \Pam\Desktop\UI\Input::make('11987654321')->mask('(##) #####-####');
 $currencyInput = \Pam\Desktop\UI\Input::make('123456')->currency(2, 'R$ ', ' BRL', 'pt-BR');
+$decimalInput = \Pam\Desktop\UI\Input::make('0.5')->decimal(2, 3, '', ' kg', 'en-US');
 $assert(
     $maskedInput->properties()[PropKey::InputFormat->value] === InputFormat::Pattern->value
         && $maskedInput->properties()[PropKey::InputFormatPattern->value] === '(##) #####-####'
@@ -1463,14 +1467,21 @@ $assert(
         && $currencyInput->properties()[PropKey::InputFormatDecimalDigits->value] === 2
         && $currencyInput->properties()[PropKey::InputFormatPrefix->value] === 'R$ '
         && $currencyInput->properties()[PropKey::InputFormatSuffix->value] === ' BRL'
-        && $currencyInput->properties()[PropKey::InputFormatLocale->value] === 'pt-BR',
-    'Input formatting helpers must expose typed pattern and locale-aware currency contracts.',
+        && $currencyInput->properties()[PropKey::InputFormatLocale->value] === 'pt-BR'
+        && $decimalInput->properties()[PropKey::InputFormat->value] === InputFormat::Decimal->value
+        && $decimalInput->properties()[PropKey::InputFormatDecimalMinDigits->value] === 2
+        && $decimalInput->properties()[PropKey::InputFormatDecimalDigits->value] === 3
+        && $decimalInput->properties()[PropKey::InputMode->value] === InputMode::Decimal->value
+        && $decimalInput->properties()[PropKey::InputFormatSuffix->value] === ' kg'
+        && $decimalInput->properties()[PropKey::InputFormatLocale->value] === 'en-US',
+    'Input formatting helpers must expose typed pattern, currency and decimal contracts.',
 );
 $templateFormattedInputs = TemplateRenderer::render(
     TemplateCompiler::compile(
         '<Column>'
         .'<Input inputFormat="mask" inputFormatPattern="(##) #####-####" />'
         .'<Input inputFormat="currency" inputFormatDecimalDigits="2" inputFormatPrefix="R$ " inputFormatLocale="pt-BR" />'
+        .'<Input inputFormat="decimal" :inputFormatDecimalDigits="3" :inputFormatDecimalMinDigits="2" inputFormatSuffix=" kg" inputFormatLocale="en-US" />'
         .'</Column>',
     ),
     new class {
@@ -1482,7 +1493,7 @@ $assert(
         static fn (\Pam\Desktop\Element $input): int => $input
             ->properties()[PropKey::InputFormat->value],
         $templateFormattedInputs->children(),
-    ) === [InputFormat::Pattern->value, InputFormat::Currency->value],
+    ) === [InputFormat::Pattern->value, InputFormat::Currency->value, InputFormat::Decimal->value],
     'Template inputFormat aliases must compile to the sequential native enum.',
 );
 $secureAliasElement = TemplateRenderer::render(
@@ -7499,6 +7510,9 @@ require __DIR__.'/singularity.php';
 require __DIR__.'/signals.php';
 require __DIR__.'/visual_dom.php';
 require __DIR__.'/memoization.php';
+require __DIR__.'/component_isolation.php';
+require __DIR__.'/qualified_enum_expression.php';
+require __DIR__.'/media_only_class.php';
 require __DIR__.'/hot_reload_state.php';
 require __DIR__.'/appearance.php';
 require __DIR__.'/keyboard_visibility.php';
@@ -7528,8 +7542,10 @@ require __DIR__.'/drag_text.php';
 require __DIR__.'/error_reporting.php';
 require __DIR__.'/conditional_identity.php';
 require __DIR__.'/expression_codegen.php';
+require __DIR__.'/expression_collections.php';
 require __DIR__.'/prebuilt_components.php';
 require __DIR__.'/prebuilt_recovery.php';
+require __DIR__.'/component_cache_fallback.php';
 require __DIR__.'/gesture_scope.php';
 // The polyfill is compared with the installed ext-mbstring. Desktop workers
 // normally ship the real extension, and libmbfl revisions disagree on a few
@@ -7590,5 +7606,18 @@ require __DIR__.'/arch_v2_locale.php';
 require __DIR__.'/arch_v2_testing.php';
 require __DIR__.'/arch_v2_navigation_modes.php';
 require __DIR__.'/arch_v2_focus_order.php';
+
+require __DIR__.'/slot_content.php';
+require __DIR__.'/percentage_attributes.php';
+require __DIR__.'/expression_short_circuit.php';
+require __DIR__.'/expression_value_methods.php';
+
+require __DIR__.'/unicode_normalization.php';
+require __DIR__.'/explicit_text_color.php';
+require __DIR__.'/drag_drop.php';
+
+require __DIR__.'/secure_storage_failures.php';
+
+require __DIR__.'/grid_tracks.php';
 
 echo "Pam Desktop PHP SDK tests passed.\n";

@@ -21,6 +21,23 @@ const APPEARANCE_DARK: u8 = 3;
 
 const MAX_CLIPBOARD_BYTES: usize = 1024 * 1024;
 
+fn view_focus_target(
+    scene: &crate::scene::Scene,
+    id: NodeId,
+    input: Option<NodeId>,
+) -> Option<NodeId> {
+    let target = scene
+        .node(id)
+        .filter(|node| node.is_pressable())
+        .map(|node| node.id)
+        .or(input)?;
+    let node = scene.node(target)?;
+    (scene.is_effectively_visible(target)
+        && node.props().flag_or(PropKey::Visible, true)
+        && node.props().flag_or(PropKey::Enabled, true))
+    .then_some(target)
+}
+
 /// Preferences the application sets at run time and expects back at the next launch.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
@@ -96,7 +113,45 @@ impl<B: Backend> Runtime<B> {
 
     pub(crate) fn call_module(&mut self, request: u64, module: &str, method: &str, payload: &[u8]) {
         let reply = self.reply(request);
+        if module == "printing" {
+            if method != "print" {
+                return reply.failure(format!("Unknown printing method {method}"));
+            }
+            let document = request_map(payload)
+                .map_err(|error| error.to_string())
+                .and_then(|map| {
+                    map.text("document")
+                        .ok_or_else(|| "Missing print document".to_string())
+                        .and_then(crate::printing::Document::decode)
+                });
+            let document = match document {
+                Ok(document) => document,
+                Err(error) => return reply.failure(error),
+            };
+            self.backend.print_document(
+                MAIN_WINDOW,
+                document,
+                Box::new(move |result| match result {
+                    Ok(accepted) => reply
+                        .map(&WireMap::new().with("result", if accepted { 1_i64 } else { 2_i64 })),
+                    Err(error) => reply.failure(error),
+                }),
+            );
+            return;
+        }
+        // The app's I18n::use() language for the host chrome (crate::i18n).
+        if module == "i18n" && method == "locale" {
+            let tag = request_map(payload)
+                .ok()
+                .and_then(|map| map.text("locale").map(str::to_owned))
+                .unwrap_or_default();
+            crate::i18n::set_locale(&tag);
+            return reply.done();
+        }
         // The file pickers need the native dialog before the files module imports.
+        if module == "files" && method == "save" {
+            return self.save_file(payload, reply);
+        }
         if module == "files" && matches!(method, "pick" | "pickMany") {
             return self.pick_files(method == "pickMany", payload, reply);
         }
@@ -157,6 +212,39 @@ impl<B: Backend> Runtime<B> {
         }
         self.update_host_overlays();
         reply.done();
+    }
+
+    /// A save grant never crosses PHP: only the destination chosen by the native dialog is written.
+    fn save_file(&mut self, payload: &[u8], reply: Reply) {
+        use crate::modules::files;
+        use crate::shell::{FileDialogConfig, FileDialogKind};
+        let (name, title, bytes) =
+            match request_map(payload).and_then(|map| files::save_request(&map)) {
+                Ok(value) => value,
+                Err(error) => return reply.failure(error),
+            };
+        let config = FileDialogConfig {
+            kind: FileDialogKind::Save,
+            title,
+            default_name: name,
+            directory: None,
+            filters: Vec::new(),
+        };
+        self.backend.pick_files(
+            MAIN_WINDOW,
+            &config,
+            Box::new(move |paths| {
+                let Some(destination) = paths.first().cloned() else {
+                    return reply.map(&WireMap::new().with("saved", false));
+                };
+                let _ = std::thread::Builder::new()
+                    .name("pam-save-file".into())
+                    .spawn(move || match files::save_selected(&destination, &bytes) {
+                        Ok(()) => reply.map(&WireMap::new().with("saved", true)),
+                        Err(error) => reply.failure(error),
+                    });
+            }),
+        );
     }
 
     /// `files.pick` / `files.pickMany`: the native open dialog, then a copy of
@@ -644,13 +732,14 @@ impl<B: Backend> Runtime<B> {
         let input = self.input_under(id);
         let not_input = format!("The view {reference} is not a text input.");
         match method {
-            "focus" => match input {
-                Some(input) if self.scene.is_effectively_visible(input) => {
-                    self.commands.push(HostCommand::Focus(Some(input)));
+            "focus" => match view_focus_target(&self.scene, id, input) {
+                Some(target) => {
+                    self.commands.push(HostCommand::Focus(Some(target)));
                     reply.done();
                 }
-                Some(_) => reply.failure(format!("The input {reference} is not visible.")),
-                None => reply.failure(not_input),
+                None => reply.failure(format!(
+                    "The view {reference} is not an enabled, visible input or pressable."
+                )),
             },
             "blur" => {
                 self.commands.push(HostCommand::Focus(None));
@@ -714,6 +803,56 @@ impl<B: Backend> Runtime<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn view_ref_focus_targets_pressables_and_preserves_input_wrappers() {
+        use crate::geometry::Rect;
+        use crate::testing::Harness;
+        use pam_desktop_wire::PropValue;
+        let harness = Harness::with_tree(&[
+            (
+                1,
+                0,
+                NodeKind::Column,
+                &[],
+                Rect::new(0.0, 0.0, 400.0, 300.0),
+            ),
+            (
+                2,
+                1,
+                NodeKind::Pressable,
+                &[],
+                Rect::new(0.0, 0.0, 100.0, 40.0),
+            ),
+            (
+                3,
+                1,
+                NodeKind::Pressable,
+                &[(PropKey::Enabled, PropValue::Boolean(false))],
+                Rect::new(0.0, 40.0, 100.0, 40.0),
+            ),
+            (4, 1, NodeKind::View, &[], Rect::new(0.0, 80.0, 100.0, 40.0)),
+            (
+                5,
+                4,
+                NodeKind::Input,
+                &[],
+                Rect::new(0.0, 80.0, 100.0, 40.0),
+            ),
+            (
+                6,
+                1,
+                NodeKind::Pressable,
+                &[(PropKey::Visible, PropValue::Boolean(false))],
+                Rect::new(0.0, 120.0, 100.0, 40.0),
+            ),
+        ]);
+        assert_eq!(view_focus_target(&harness.scene, 2, None), Some(2));
+        assert_eq!(view_focus_target(&harness.scene, 3, None), None);
+        assert_eq!(view_focus_target(&harness.scene, 4, Some(5)), Some(5));
+        assert_eq!(view_focus_target(&harness.scene, 6, None), None);
+        assert_eq!(view_focus_target(&harness.scene, 1, None), None);
+    }
 
     #[test]
     fn settings_round_trip_and_resolve_preferences() {

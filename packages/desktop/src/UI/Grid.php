@@ -33,6 +33,12 @@ final class Grid extends Element
         );
     }
 
+    public function tracks(\Pam\Desktop\GridTracks|string $tracks): self
+    {
+        $tracks = is_string($tracks) ? \Pam\Desktop\GridTracks::fromCss($tracks) : $tracks;
+        return $this->columns($tracks->count())->withProperty(PropKey::GridTracks, $tracks->toWire());
+    }
+
     public function gutter(float $gutter): self
     {
         return $this

@@ -6,6 +6,17 @@ use pam_desktop_ui::color::Color;
 use pam_desktop_ui::geometry::{Insets, Size};
 use pam_desktop_ui::style::{BorderStyle, Decoration, Gradient, GradientShape, Radii};
 
+#[link(name = "pangocairo-1.0")]
+unsafe extern "C" {
+    fn pango_cairo_create_layout(
+        context: *mut gtk::cairo::ffi::cairo_t,
+    ) -> *mut gtk::pango::ffi::PangoLayout;
+    fn pango_cairo_show_layout(
+        context: *mut gtk::cairo::ffi::cairo_t,
+        layout: *mut gtk::pango::ffi::PangoLayout,
+    );
+}
+
 pub fn rgba(color: Color) -> gdk::RGBA {
     let [r, g, b, a] = color.to_f32();
     gdk::RGBA::new(r, g, b, a)
@@ -236,6 +247,118 @@ pub fn paint_drawing(
     for command in commands {
         // Cairo keeps going after an error; a failed command just draws nothing.
         match command {
+            DrawCommand::Path {
+                segments,
+                fill,
+                stroke,
+                width,
+            } => {
+                use pam_desktop_ui::backend::{DrawPaint, DrawPathSegment};
+                context.new_path();
+                for segment in segments {
+                    match segment {
+                        DrawPathSegment::Move(point) => {
+                            context.move_to(f64::from(point.x), f64::from(point.y))
+                        }
+                        DrawPathSegment::Line(point) => {
+                            context.line_to(f64::from(point.x), f64::from(point.y))
+                        }
+                        DrawPathSegment::Cubic {
+                            control1,
+                            control2,
+                            to,
+                        } => context.curve_to(
+                            f64::from(control1.x),
+                            f64::from(control1.y),
+                            f64::from(control2.x),
+                            f64::from(control2.y),
+                            f64::from(to.x),
+                            f64::from(to.y),
+                        ),
+                        DrawPathSegment::Close => context.close_path(),
+                    }
+                }
+                if let Some(fill) = fill {
+                    match fill {
+                        DrawPaint::Solid(color) => source(*color),
+                        DrawPaint::LinearGradient {
+                            from,
+                            to,
+                            start,
+                            end,
+                        } => {
+                            let gradient = gtk::cairo::LinearGradient::new(
+                                f64::from(from.x),
+                                f64::from(from.y),
+                                f64::from(to.x),
+                                f64::from(to.y),
+                            );
+                            for (offset, color) in [(0.0, *start), (1.0, *end)] {
+                                let [r, g, b, a] = color.to_f32().map(f64::from);
+                                gradient.add_color_stop_rgba(offset, r, g, b, a);
+                            }
+                            let _ = context.set_source(&gradient);
+                        }
+                    }
+                    let _ = context.fill_preserve();
+                }
+                if let Some(color) = stroke {
+                    source(*color);
+                    context.set_line_cap(LineCap::Butt);
+                    context.set_line_join(LineJoin::Round);
+                    context.set_line_width(if *width > 0.0 {
+                        f64::from(*width)
+                    } else {
+                        hairline
+                    });
+                    let _ = context.stroke();
+                } else {
+                    context.new_path();
+                }
+            }
+            DrawCommand::Text {
+                text,
+                baseline,
+                font,
+                color,
+                align,
+            } => {
+                // Pango provides the same Unicode shaping as the other native text nodes.
+                use gtk::glib::translate::{ToGlibPtr, from_glib_full};
+                // SAFETY: live Cairo context; the returned owned GObject is released by Layout.
+                let layout: gtk::pango::Layout =
+                    unsafe { from_glib_full(pango_cairo_create_layout(context.to_raw_none())) };
+                let mut description = gtk::pango::FontDescription::new();
+                description.set_family(if font.family.is_empty() {
+                    "Sans"
+                } else {
+                    &font.family
+                });
+                description.set_absolute_size(f64::from(font.size) * f64::from(gtk::pango::SCALE));
+                description.set_weight(if font.weight >= 700 {
+                    gtk::pango::Weight::Bold
+                } else if font.weight >= 500 {
+                    gtk::pango::Weight::Medium
+                } else {
+                    gtk::pango::Weight::Normal
+                });
+                layout.set_font_description(Some(&description));
+                layout.set_text(text);
+                let (width, _) = layout.size();
+                let width = f64::from(width) / f64::from(gtk::pango::SCALE);
+                let x = f64::from(baseline.x)
+                    - match align {
+                        pam_desktop_ui::text::TextAlign::Center => width / 2.0,
+                        pam_desktop_ui::text::TextAlign::End => width,
+                        _ => 0.0,
+                    };
+                let y = f64::from(baseline.y)
+                    - f64::from(layout.baseline()) / f64::from(gtk::pango::SCALE);
+                source(*color);
+                context.move_to(x, y);
+                // SAFETY: both objects remain alive throughout the native shaping/drawing call.
+                unsafe { pango_cairo_show_layout(context.to_raw_none(), layout.to_glib_none().0) };
+            }
             DrawCommand::Rect {
                 rect,
                 radius,

@@ -6,16 +6,40 @@ PAM Desktop has one render core and three backends. Each backend implements the 
 
 | System | Backend crate | Status |
 | --- | --- | --- |
-| Linux | `pam-desktop-gtk` (GTK 4) | The reference backend and the only one exercised so far. Every application under `examples/` was run and checked on Linux. |
-| macOS | `pam-desktop-appkit` (AppKit) | Written against the `Backend` contract and type-checked by cross compilation. Not run on a real machine yet. |
-| Windows | `pam-desktop-win32` (Win32, Direct2D, DirectWrite) | Written against the `Backend` contract and type-checked by cross compilation. Not run on a real machine yet. |
+| Linux | `pam-desktop-gtk` (GTK 4) | The reference backend. Every application under `examples/` was run and checked on Linux, and every feature added since was run there first. |
+| macOS | `pam-desktop-appkit` (AppKit) | Run on macOS 26.7.1 (Tahoe, x86_64) in a virtual machine without a GPU: the core examples, hot reload, input, a real application and a DMG built by `pam-desktop build`. Not run on Apple Silicon or on real Mac hardware. |
+| Windows | `pam-desktop-win32` (Win32, Direct2D, DirectWrite) | Written against the `Backend` contract and type-checked by cross compilation (most recently for `x86_64-pc-windows-gnu`). Not run on Windows yet. |
 
 What this means in practice:
 
-- **Linux is what you can use today.**
+- **Linux is what you can rely on today.**
+- **macOS runs**, with the gaps listed under [macOS](#macos). Expect differences on Apple Silicon and with a GPU, which were not tried.
+- **Windows has never run.** Type-checking proves that the code agrees with the platform bindings, not that it behaves. The first runs are expected to need fixes. [First run on macOS and Windows](first-run-macos-windows.md) is the checklist for those runs and the list of known differences from the GTK backend.
 - **The host starts the backend of the system it was built for:** `pam_desktop_gtk::run` on Linux, `pam_desktop_appkit::run` on macOS and `pam_desktop_win32::run` on Windows. The three crates export the same entry point, `run(application_id, config)`.
-- **macOS and Windows have never run.** Type-checking proves that the code agrees with the platform bindings, not that it behaves. The first runs on real machines are expected to need fixes. [First run on macOS and Windows](first-run-macos-windows.md) is the checklist for those runs and the list of known differences from the GTK backend.
 - **Two things were not verified on Linux either:** the accessibility tree with a real screen reader, and global shortcuts through the Wayland portal. Global shortcuts with X11 key grabs were verified.
+
+### Recent features by system
+
+"Yes" was run and checked on that system. "Written" means the code is in the backend and type-checks, but has not been executed there. "No" means the backend does not do it.
+
+| Feature | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| Hot reload (`pam-desktop dev`) | Yes, about 315 ms from save to window | Yes | Written |
+| `pam-desktop init`, `dev` without arguments | Yes | Not verified (`dev examples/counter` ran) | Written |
+| PHP found or installed by the host | Yes (PAM runtime) | Yes (PAM 2.2.9 installed with no PHP on the machine) | Written (windows.php.net PHP 8.5) |
+| `pam-desktop build` | Yes | Yes: directory and DMG of an x86_64 release host | Written |
+| `font-family` lists, packaged fonts | Yes | Yes (packaged icon fonts) | Written |
+| Inline boxes in nested text | Yes | Written | Written |
+| `overflow-wrap`, `word-break` | Yes | No | Written |
+| `hyphens: auto` | Yes | No | No |
+| Scrollbar gutter, width and colour | Yes | Overlay scrollers that keep the content width verified; the classic styled thumb is written | Written |
+| `backdrop-filter`, modal and toast backdrop blur | Yes | Written (Core Image), not verified on screen | Written (Direct2D) |
+| `opacity: 0` stays clickable | Yes | Not verified | Not verified |
+| `pointerEvents` in native hit testing | Yes | Written | Written |
+| Typed drag and drop, `captureKeys` | Yes | Written | Written |
+| Canvas paths, gradients, text; charts | Yes | Written | Written |
+| Printing | Print to File and its PDF checked; no physical printer | Written | Written |
+| WebSocket, `Files::save`, `SQLite::transactionIf` | Yes | Written | Written |
 
 ## Linux
 
@@ -98,7 +122,7 @@ GTK 4 has no tray icon of its own. The backend registers a StatusNotifierItem on
 
 ## macOS
 
-**Unverified: written and type-checked, never run.**
+**Run in a virtual machine.** macOS 26.7.1 (Tahoe) x86_64 without a GPU, Xcode 26.6, PHP 8.5.12 from PAM 2.2.9. [What was verified on macOS](first-run-macos-windows.md#what-was-verified-on-macos) lists what ran, what was fixed and what was not tried.
 
 Design of `pam-desktop-appkit`:
 
@@ -115,12 +139,18 @@ Design of `pam-desktop-appkit`:
 - `Window::progress()` is a badge on the Dock icon; `Screen::secure()` sets the sharing type of every window to none.
 - The appearance and Reduce Motion are followed while the application runs. The text scale of the system is always 1.
 - The host uses the system TLS stack and the Keychain.
+- Packaged fonts are registered with CoreText. Scroll views keep overlay scrollers; with `scrollbar-gutter: stable` and a styled bar the backend draws a classic thumb in the gutter. The focus ring shows only after keyboard input, like `:focus-visible`.
+- Text wraps at word boundaries only: `word-break`, `overflow-wrap` and `hyphens` are not applied.
+- `PAM_DESKTOP_CAPTURE=<file.png>` writes the first window to a PNG from inside the process (macOS only).
+- Without PHP on the machine, the host installs the PAM runtime and runs the worker with `pam exec`.
 
 [First run on macOS and Windows](first-run-macos-windows.md#macos-pam-desktop-appkit) lists what to check first and the known differences from the GTK backend.
 
 ## Windows
 
 **Unverified: written and type-checked, never run.**
+
+PHP on Windows: PAM has no Windows release, so the host uses `PAM_DESKTOP_PHP`, the PHP it installed before, `php.exe` on `PATH`, and otherwise downloads the newest official PHP 8.5 build (non thread safe, x64) from windows.php.net into `%LOCALAPPDATA%\PAM Desktop\php\<version>`, after checking its published SHA-256. It needs the Visual C++ Redistributable 2015-2022 (x64); the host says so when `vcruntime140.dll` is missing. See [Distribution](distribution.md) for what a bundle ships.
 
 Design of `pam-desktop-win32` (Windows 10 version 1809 and later, and Windows 11):
 
@@ -139,6 +169,8 @@ Design of `pam-desktop-win32` (Windows 10 version 1809 and later, and Windows 11
 - A release build of the host is a windowed program, so starting an application opens no console. Started from a terminal, the host attaches to the console of its parent, so `build`, `init` and the other commands still print. A debug build is a console program.
 - The host embeds an application manifest: version 6 of the common controls, per-monitor DPI awareness, long paths and UTF-8 as the code page of the process.
 - The host uses the system TLS stack and the Credential Manager.
+- Packaged fonts are loaded into a DirectWrite collection, and as private GDI fonts for the `EDIT` controls. Inline boxes are DirectWrite inline objects. `scrollbar-width: none` hides the bar; a reserved gutter shows a classic bar. Line breaking follows `word-break` and `overflow-wrap`; `hyphens` is not applied.
+- Printing uses the system print dialog and spools with GDI on a worker thread.
 
 [First run on macOS and Windows](first-run-macos-windows.md#windows-pam-desktop-win32) lists what to check first and the known differences from the GTK backend.
 
@@ -147,7 +179,7 @@ Design of `pam-desktop-win32` (Windows 10 version 1809 and later, and Windows 11
 The two backends can be type-checked on a Linux machine. Install the targets once:
 
 ```bash
-rustup target add aarch64-apple-darwin x86_64-pc-windows-msvc
+rustup target add aarch64-apple-darwin x86_64-pc-windows-msvc x86_64-pc-windows-gnu
 ```
 
 Then:
@@ -156,6 +188,8 @@ Then:
 cargo check -p pam-desktop-appkit --target aarch64-apple-darwin
 cargo check -p pam-desktop-win32 --target x86_64-pc-windows-msvc
 ```
+
+The host itself can be type-checked for Windows with MinGW installed (`cargo check -p pam-desktop-host --target x86_64-pc-windows-gnu`) and for macOS without its default features (`cargo check -p pam-desktop-host --target aarch64-apple-darwin --no-default-features`), since SQLite needs the Apple SDK to compile.
 
 `cargo check` compiles without linking. It catches type errors against the platform bindings and against the `Backend` trait. It does not catch a wrong selector, a wrong message, a layout that is off by a pixel or anything else that only shows when the code runs.
 

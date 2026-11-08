@@ -11,39 +11,41 @@ use crate::manifest;
 
 const USAGE: &str = "usage: pam-desktop init [directory] [--name NAME] [--id APPLICATION-ID]";
 
-const INDEX: &str = r#"<?php
+/// The release line new applications require.
+const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION_MAJOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_MINOR")
+);
 
-declare(strict_types=1);
-
-use Pam\Desktop\App;
-use Pam\Desktop\Attributes\State;
-use Pam\Desktop\Component;
-use Pam\Desktop\Style;
-use Pam\Desktop\UI\Button;
-use Pam\Desktop\UI\Column;
-use Pam\Desktop\UI\Text;
-
-require __DIR__.'/vendor/autoload.php';
-
-final class Home extends Component
-{
-    #[State]
-    public int $count = 0;
-
-    public function render(): Column
-    {
-        return Column::make(
-            Text::make('@NAME@')->style(new Style(fontSize: 26, fontWeight: 700)),
-            Text::make("Count: {$this->count}")->style(new Style(fontSize: 16)),
-            Button::make('Add one')->onPress(fn () => $this->count++),
-        )->style(new Style(flexGrow: 1, padding: 28, gap: 12));
+/// The skeleton of a new application, from `packages/desktop/resources/skeleton`:
+/// its path in the project and its contents. `@NAME@` is the application name.
+const SKELETON: [(&str, &str); 11] = {
+    macro_rules! file {
+        ($path:literal) => {
+            (
+                $path,
+                include_str!(concat!(
+                    "../../../packages/desktop/resources/skeleton/",
+                    $path
+                )),
+            )
+        };
     }
-}
-
-App::run(new Home());
-"#;
-
-const IGNORED: &str = "/vendor/\n/.pam-desktop/\n/dist/\n";
+    [
+        file!("index.php"),
+        file!("README.md"),
+        file!("composer.json"),
+        file!(".gitignore"),
+        file!("src/app.css"),
+        file!("src/Navigation/AppRoute.php"),
+        file!("src/Navigation/AppRouter.php"),
+        file!("src/Screens/Home/HomeScreen.pam.php"),
+        file!("src/Services/Greeting.php"),
+        file!("src/Lib/Plural.php"),
+        file!("tests/HomeScreenTest.php"),
+    ]
+};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct InitOptions {
@@ -109,14 +111,21 @@ fn slug(text: &str) -> String {
 }
 
 /// Writes `contents` unless the file exists; reports which happened.
-fn create(path: &Path, contents: &str, report: &mut Vec<String>) -> Result<(), String> {
-    let name = path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
+fn create(
+    directory: &Path,
+    name: &str,
+    contents: &str,
+    report: &mut Vec<String>,
+) -> Result<(), String> {
+    let path = directory.join(name);
+    let path = path.as_path();
     if path.exists() {
         report.push(format!("[kept] {name}"));
         return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
     fs::write(path, contents)
         .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
@@ -174,32 +183,26 @@ pub fn init(options: &InitOptions) -> Result<Vec<String>, String> {
     text.push('\n');
 
     let mut report = Vec::new();
-    create(&directory.join(manifest::FILE_NAME), &text, &mut report)?;
-    let title = serde_json::to_string(&name).map_err(|error| error.to_string())?;
-    // A PHP single-quoted string: only the backslash and the quote are special.
-    let title = title
-        .trim_matches('"')
-        .replace("\\\"", "\"")
-        .replace('\'', "\\'");
-    create(
-        &directory.join(manifest::DEFAULT_ENTRY),
-        &INDEX.replace("@NAME@", &title),
-        &mut report,
-    )?;
-    let composer = serde_json::json!({
-        "name": format!("app/{}", slug(&folder)),
-        "type": "project",
-        "require": { "php": "^8.5", "pushinbr/pam-desktop": concat!("^", env!("CARGO_PKG_VERSION_MAJOR"), ".", env!("CARGO_PKG_VERSION_MINOR")) },
-    });
-    let mut composer =
-        serde_json::to_string_pretty(&composer).map_err(|error| error.to_string())?;
-    composer.push('\n');
-    create(&directory.join("composer.json"), &composer, &mut report)?;
-    create(&directory.join(".gitignore"), IGNORED, &mut report)?;
+    create(&directory, manifest::FILE_NAME, &text, &mut report)?;
+    // Preserve Unicode and escape only PHP single-quoted string delimiters.
+    let title = name.replace('\\', "\\\\").replace('\'', "\\'");
+    let json_name = serde_json::to_string(&name).map_err(|error| error.to_string())?;
+    let json_name = &json_name[1..json_name.len() - 1];
+    for (path, contents) in SKELETON {
+        let contents = match path {
+            "composer.json" => contents
+                .replace("@SLUG@", &slug(&folder))
+                .replace("@VERSION@", VERSION)
+                .replace("@NAME@", json_name),
+            _ if path.ends_with(".php") => contents.replace("@NAME@", &title),
+            _ => contents.replace("@NAME@", &name),
+        };
+        create(&directory, path, &contents, &mut report)?;
+    }
     if !directory.join("vendor/autoload.php").is_file() {
-        report.push(String::from("next: composer install, then pam-desktop dev"));
+        report.push(String::from("next: composer install, then pam desktop dev"));
     } else {
-        report.push(String::from("next: pam-desktop dev"));
+        report.push(String::from("next: pam desktop dev"));
     }
     Ok(report)
 }
@@ -259,19 +262,27 @@ mod tests {
                 .iter()
                 .filter(|line| line.starts_with("[new]"))
                 .count(),
-            4
+            12
         );
 
         let manifest = manifest::Manifest::read(&directory).unwrap();
         let application = manifest.application().unwrap();
         assert_eq!(application.identifier, "com.example.bill-s-notes");
         let index = fs::read_to_string(directory.join("index.php")).unwrap();
-        assert!(index.contains(r"Text::make('Bill\'s Notes')"));
-        assert!(
-            fs::read_to_string(directory.join("composer.json"))
-                .unwrap()
-                .contains("\"pushinbr/pam-desktop\": \"^2.0\"")
+        assert!(index.contains("AppRouter::make()"));
+        let home =
+            fs::read_to_string(directory.join("src/Screens/Home/HomeScreen.pam.php")).unwrap();
+        assert!(home.contains(r"$title = 'Bill\'s Notes'"));
+        let composer: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(directory.join("composer.json")).unwrap())
+                .unwrap();
+        assert_eq!(composer["name"], "app/bill-s-notes");
+        assert_eq!(
+            composer["description"],
+            "Bill's Notes, a PAM Desktop application"
         );
+        assert_eq!(composer["require"]["pushinbr/pam-desktop"], "^2.0");
+        assert!(directory.join("src/Services/Greeting.php").is_file());
 
         fs::write(directory.join("index.php"), "<?php // mine").unwrap();
         let again = init(&InitOptions {
@@ -285,7 +296,7 @@ mod tests {
                 .iter()
                 .filter(|line| line.starts_with("[kept]"))
                 .count(),
-            4
+            12
         );
         assert_eq!(
             fs::read_to_string(directory.join("index.php")).unwrap(),

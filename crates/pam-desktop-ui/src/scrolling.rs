@@ -144,6 +144,43 @@ fn mirrored(scene: &Scene, id: NodeId, horizontal: bool, offset: f32) -> f32 {
 }
 
 impl Scrolling {
+    /// Native backends report wheel input only when no native scroller used it.
+    /// Resolve that input against PAM's pointer-events tree, so transparent
+    /// portal layers cannot hide a scroll viewport from native hit testing.
+    pub fn on_wheel(&mut self, ctx: &mut Ctx<'_>, position: Point, delta: Point) -> bool {
+        if !delta.x.is_finite() || !delta.y.is_finite() {
+            return false;
+        }
+        let mut current = ctx.scene.hit_test(position).unwrap_or(0);
+        while let Some(node) = ctx.scene.node(current) {
+            let parent = node.parent;
+            if node.class == ViewClass::Scroll && node.props().flag_or(PropKey::ScrollEnabled, true)
+            {
+                let horizontal = node.props().flag_or(PropKey::ScrollHorizontal, false)
+                    || node.props().flag_or(PropKey::ListHorizontal, false);
+                let amount = axis(delta, horizontal);
+                let offset = ctx.scene.scroll_offset(current);
+                let before = axis(offset, horizontal);
+                let after = (before + amount).clamp(0.0, extents(ctx.scene, current, horizontal).2);
+                if (after - before).abs() > 0.01 {
+                    ctx.animator.cancel(Owner::Scroll(current), ctx.now_ms);
+                    ctx.commands.push(HostCommand::ScrollTo {
+                        id: current,
+                        offset: if horizontal {
+                            Point::new(after, offset.y)
+                        } else {
+                            Point::new(offset.x, after)
+                        },
+                        animated: false,
+                    });
+                    return true;
+                }
+            }
+            current = parent;
+        }
+        false
+    }
+
     pub fn on_change(&mut self, ctx: &mut Ctx<'_>, change: Change) {
         match change {
             Change::Created(id, kind) => {

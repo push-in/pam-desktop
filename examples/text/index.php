@@ -55,6 +55,29 @@ final class Paragraphs extends Component
                 })
                 ->style(new Style(fontSize: 14, lineHeight: 21, textColor: 0xFF2A3140)),
             Text::make($this->lines)->style(new Style(fontSize: 12, textColor: 0xFF6B7485)),
+            // Nested texts with padding, a border or a background are inline
+            // boxes, like a CSS <kbd>: the padding moves the words around them.
+            Text::rich(
+                'Press ',
+                Text::make('Ctrl')->style($kbd = new Style(
+                    fontSize: 12,
+                    fontWeight: 600,
+                    paddingHorizontal: 6,
+                    paddingVertical: 1,
+                    borderWidth: 1,
+                    borderBottomWidth: 2,
+                    borderColor: 0xFFC9CED8,
+                    borderRadius: 5,
+                    backgroundColor: 0xFFFFFFFF,
+                )),
+                ' + ',
+                Text::make('C')->style($kbd),
+                ' to copy what you selected, ',
+                Text::make('Esc')->style($kbd),
+                ' to clear the selection.',
+            )
+                ->selectable()
+                ->style(new Style(fontSize: 14, lineHeight: 24, textColor: 0xFF2A3140)),
             Button::make('Show the clipboard')->onPress(function (): void {
                 Clipboard::getText(function (?string $text): void {
                     $this->clipboard = $text ?? '(empty)';

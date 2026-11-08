@@ -60,15 +60,29 @@ The paths the application cannot start without (`vendor`, `composer.json`,
 `composer.lock`, `pam-desktop.json`, the entry script and the directories that
 hold them) cannot be excluded. The build also leaves out `.git`, `.pam`,
 `.pam-desktop` (the state of development runs), `.pamignore`, `.env`, `.env.*`,
-`dist`, `node_modules`, `target`, the output directory itself and the nested
+`dist`, `node_modules`, `target`, any directory tagged as a cache with a
+`CACHEDIR.TAG` (Cargo targets under any name, for instance), the output
+directory itself and the nested
 `vendor` directories of vendored packages. `type=path` repositories and the
 local paths Composer recorded for them are removed from the bundled
 `composer.json` and `composer.lock`.
 
 A bundle holds no symbolic links. A link is replaced by a copy of what it
-points at; a link that leaves the project is only accepted below `vendor`
-(where Composer links path packages), a link into the output directory and a
-cycle of links stop the build.
+points at. A link that leaves the project is only accepted below the
+project's own `vendor/` folder and only when it resolves into a package that
+`vendor/composer/installed.json` lists there (how Composer links `path`
+repositories); a folder that is merely named `vendor` elsewhere, a package
+Composer did not install, and a link inside a linked package that leaves that
+package stop the build, as do a link into the output directory and a cycle of
+links.
+
+At run time the component compiler follows the same idea: a symlink inside a
+component folder may lead into the project (`PAM_DESKTOP_PROJECT_ROOT`, else
+the nearest folder above the components with a `composer.json`), its `vendor/`
+folder, a package installed there, or a `path` repository declared in the
+project's `composer.json`; anything else is refused with an error naming the
+link. Fonts named `asset://...` are resolved to their real path and must stay
+inside the application.
 
 ### Links and single instance
 
@@ -150,7 +164,34 @@ built, so a missing or failing tool never leaves an incomplete artifact.
 the host you mean to ship.
 
 **PHP** is found the way `run` finds it: `PAM_DESKTOP_PHP`, then `pam` on
-`PATH` (started as `pam exec`), then `php` on `PATH`. The build asks it for its
+`PATH` or in `~/.local/bin` (started as `pam exec`), then `php` on `PATH`, and
+on Linux and macOS the PAM runtime is installed when none exists, after
+consent (a prompt in a terminal, or `--yes` / `PAM_DESKTOP_AUTO_INSTALL=1`
+for CI): its archive must match the size and SHA-256 of the PAM release
+manifest, whose Ed25519 signature is checked against the pinned PAM release
+key, and it is unpacked in Rust (see
+[How the host finds PHP](getting-started.md#how-the-host-finds-php-and-the-package)).
+PAM has no Windows release, so on Windows the order is `PAM_DESKTOP_PHP`, the
+PHP that PAM Desktop installed, `php.exe` on `PATH`, and, when there is none
+and the user agrees, the newest official PHP 8.5 build of windows.php.net (non
+thread safe, x64) is downloaded into `%LOCALAPPDATA%\PAM Desktop\php\<version>`:
+its archive must match both the SHA-256 that windows.php.net publishes in
+`releases.json` and the one PAM Desktop pins for that build, before anything
+is extracted or run (with the `tar.exe` of `System32`, or its PowerShell
+before 1803); a build newer than the pinned ones is replaced by the newest
+pinned build unless `PAM_DESKTOP_PHP_ALLOW_UNPINNED=1`. Its `php.ini` turns on the common shared
+extensions the archive has (`curl`, `exif`, `fileinfo`, `gd`, `intl`,
+`mbstring`, `openssl`, `pdo_sqlite`, `sodium`, `sqlite3`, `zip`); the other
+extensions an application lists in `extensions` are turned on for it by
+`run` and `dev`. PHP's curl and OpenSSL have no certificate store of their
+own on Windows: the host writes a CA bundle of the Windows store's roots and
+Mozilla's (`webpki-root-certs`, updated with PAM Desktop) to the cache
+directory of the application at every start, rewriting it only when it
+changed, and passes it to that PHP and to the PHP of a bundle as
+`curl.cainfo` and `openssl.cafile`, so `curl` and `https://` streams verify
+servers. The official build needs the Visual C++ Redistributable
+2015-2022 (x64), recent enough for the build (PHP refuses an older
+`vcruntime140.dll`); `run` and `build` say so when it is missing. The build asks it for its
 version, its extension directory and the extensions it loads. An extension
 compiled into the binary needs nothing; a shared one is a file to ship, with
 the libraries it links against, and those add up: on Ubuntu, every extension
@@ -179,9 +220,16 @@ bundled `php.ini` only: the configuration of the build machine is not shipped,
 and the configuration of the machine the application runs on is not read
 (`PHPRC` points at the bundle and `PHP_INI_SCAN_DIR` is empty). On Linux the
 shared libraries of the binary and of each extension are collected with `ldd`
-and bundled, except the C library itself. On macOS and Windows the libraries
-that sit beside the binary are bundled: give the build a relocatable PHP, such
-as a static build or the official Windows archive.
+and bundled, except the C library itself. On macOS the libraries that sit
+beside the binary are bundled: give the build a relocatable PHP, such as a
+static build. On Windows the build reads the import tables of `php.exe` and
+of the shipped extensions and bundles only the DLLs beside PHP they load (the
+official archive also carries glib, enchant, libpq and phpdbg, which most
+applications never load), plus the Visual C++ runtime DLLs PHP needs, copied
+from `System32` of the build machine (app-local deployment, so the machine
+the application is installed on needs no redistributable). A host built
+with the GNU toolchain loads `WebView2Loader.dll`, which must sit beside it;
+the MSVC toolchain links it statically.
 
 **The launcher** starts `pam-desktop run` on the bundled project with
 `PAM_DESKTOP_PHP` pointing at the bundled PHP, and exports
@@ -199,9 +247,15 @@ has no icon of its own and the build says so in a note.
 of the machine it runs on, with its GStreamer, and WebKitGTK 6 for the
 `WebView` element, so that themes, portals and GPU drivers match. These libraries and
 everything they depend on are not bundled; `.deb` and `.rpm` packages declare
-them as dependencies (`libgtk-4-1`, `gstreamer1.0-plugins-base`,
-`gstreamer1.0-plugins-good`; `gtk4`, `gstreamer1-plugins-base`,
-`gstreamer1-plugins-good`). WebKitGTK (`libwebkitgtk-6.0-4`; `webkitgtk6.0`)
+GTK as a dependency (`libgtk-4-1`; `gtk4`). The GTK host plays media through
+the GStreamer module of GTK, which it does not link: that module comes with
+GTK's own recommendations (`libgtk-4-media-gstreamer` and
+`gstreamer1.0-plugins-base` on Ubuntu 24.04, installed by a default
+`apt install`), and the GStreamer plugins are declared
+(`gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good`;
+`gstreamer1-plugins-base`, `gstreamer1-plugins-good`) only for a host that
+links GStreamer itself. An application that plays media should tell its users
+to install `gstreamer1.0-plugins-good` for the common formats. WebKitGTK (`libwebkitgtk-6.0-4`; `webkitgtk6.0`)
 is declared only when a `.php` or `.pam` file of the application, outside
 `vendor`, names `WebView`: the host loads it on the first web view. The
 portable archive and the AppImage expect them to be installed. Any other
@@ -291,3 +345,43 @@ tray icon on Linux) and `hotkeys` (global shortcuts on Linux), next to
 `sqlite`. A leaner host is built with, for
 example, `cargo build -p pam-desktop-host --no-default-features --features
 tray,sqlite`.
+
+## Verified on Linux
+
+Release host (`cargo build --release`), built and packaged on Ubuntu 24.04
+(x86_64) with the PAM runtime as PHP, on 2026-11-08. The test application was
+a real point-of-sale application (an `index.php`, ~2 MB of PHP and templates,
+four Composer packages, a link scheme for OAuth). Everything below ran in a
+throwaway Ubuntu 24.04 container without network access to anything but a
+local test server.
+
+| Format | Result |
+| --- | --- |
+| `directory` | 123 MiB: host 11 MiB, PHP 9.4 MiB, PHP libraries 86 MiB (ICU data alone 29 MiB, `gd` with its AVIF/HEIF codecs about 30 MiB), application 15 MiB |
+| `portable` | 42 MiB `.tar.gz`; `install.sh` installs per user, registers the desktop entry, the icon and the scheme (`gio mime x-scheme-handler/<scheme>` names the entry) |
+| `deb` | 32 MiB; `apt install ./<package>.deb` on a minimal Ubuntu 24.04 pulled 101 packages (33 MiB download, GTK 4 and its recommendations); `Installed-Size` 120 MiB; `desktop-file-validate` clean |
+| `appimage` | 39 MiB, built with the official `appimagetool` (it needs `file` on `PATH`); runs with `APPIMAGE_EXTRACT_AND_RUN=1` where FUSE is missing |
+| `rpm` | not exercised (no `rpmbuild` on the build machine) |
+
+Checked in the bundle: no `.git`, `.env*`, `tests`, `target`, Cargo caches or
+`evidence`; no symbolic links; nothing writable by others; directories,
+launchers and binaries 0755, the rest 0644 (root-owned in the `.deb`). Two
+things the build does not decide for you: files at the project root that only
+serve development (visual fixtures, notes) ship unless `exclude` lists them,
+and a Composer `path` package ships the whole directory it points at, minus
+the trees listed above (`crates`, `docs`, `examples`, `tests`, nested
+`vendor`), so its README, CHANGELOG, CI files and scripts come along.
+
+The installed application never writes below `/opt`: compiled templates go to
+`~/.cache/<applicationId>` and state to `~/.local/state/<applicationId>`.
+
+Links: with the `.deb` installed, `gio open '<scheme>://…'` started the closed
+application and delivered the link (cold start), and `xdg-open '<scheme>://…'`
+with the application open handed the link to the running process, which
+stayed the only one (`singleInstance`).
+
+Cold start of the installed `.deb` under Xvfb (software GL), from the launcher
+to the window on screen and to the first screen painted, median of 10 runs
+with a warm template cache: 249 ms and 377 ms. The very first start, which
+fills `~/.cache`, took 599 ms and 768 ms. Resident memory after start: host
+185 MiB (with Mesa's software renderer), PHP worker 55 MiB.

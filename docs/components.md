@@ -83,6 +83,33 @@ Text::rich(
 );
 ```
 
+A run with padding or a border, or with a background and a corner radius, is an inline box, like a CSS `<span>` or `<kbd>`; a run with only a background keeps highlighting its glyphs. Templates get the same from a nested `<Text>` or `<Span>`:
+
+```php
+Text::rich(
+    'Press ',
+    Text::make('Ctrl')->style(new Style(
+        paddingHorizontal: 6, paddingVertical: 1,
+        borderWidth: 1, borderBottomWidth: 2, borderColor: 0x2EFFFFFF,
+        borderRadius: 6, backgroundColor: 0x0AFFFFFF,
+    )),
+    ' to finish',
+);
+```
+
+```html
+<Text>Press <Text class="kbd">Ctrl</Text>+<Text class="kbd">Enter</Text> to finish</Text>
+```
+
+It follows CSS inline layout:
+
+- The left and right padding and border take space in the line: the words around the box move. The line may break before a box and inside it, but an edge never ends up alone on a line.
+- The top and bottom padding and border paint around the text and overflow onto the line spacing: they never change the line height. A `line-height` on the box is its CSS inline `line-height`: its text gets that line box (a small key in a taller line does not push the line apart), and the painted content area is that height, centred on the text like half-leading.
+- The background covers the padding and is drawn under the text; the run itself is not highlighted again. A box that wraps paints one piece per line.
+- Selection, hit-testing and copying see only the characters: clicking the padding places the caret at the edge of the box, and a selection that covers a box's text does not paint its padding.
+
+Box properties of the paragraph itself (the outer `Text`) stay those of a block, as before. Inline boxes need a host that declares property 2028 (`TextSpanBoxes`); the SDK refuses to send one to an older host. The GTK and AppKit backends draw them (AppKit reserves each edge with an invisible character whose advance is the padding plus border, and paints the box of each line under the text with TextKit's glyph positions). The Win32 backend lays the edges out as DirectWrite inline objects and paints each line's piece under the text; that code type-checks but has not run on Windows yet.
+
 ## Buttons and pressables
 
 `Button` is a labelled push button. Without a background, border or text color of your own it gets a neutral native look that follows light and dark mode and reacts to hover and press.
@@ -147,6 +174,7 @@ Input::make($this->name)
 | `onFocus`, `onBlur`, `onSubmit` | Focus changes and Enter. |
 | `mask(pattern)` | Formats while typing; `#` stands for a digit. |
 | `currency(...)` | Formats an amount with a prefix, a suffix and a locale. |
+| `decimal($minDigits, $maxDigits, $prefix, $suffix, $locale)` | A decimal number in the separators of the locale, with up to `$maxDigits` (at most 6) decimals and at least `$minDigits`. PHP receives an ASCII number (`0.5`). Prefix and suffix are at most 16 bytes. Template: `inputFormat="decimal"`. |
 
 Masks are applied by the host as the user types, with no round trip to PHP:
 
@@ -219,6 +247,11 @@ Scroll::make(
 | `onScroll`, `onEndReached` | The offset changed; the end of the content is near. |
 | `refreshing(bool)`, `onRefresh` | Refresh. On desktop the user asks for it with F5 or Ctrl+R (Cmd+R). |
 
+The scrollbar follows the CSS properties of the scroll view:
+
+- `scrollbar-gutter: stable` reserves the bar's width inside the view, so the content never moves when the bar appears (15 px, 10 px with `scrollbar-width: thin`, or the length given to `scrollbar-width`). `scrollbar-gutter: auto` (the default) reserves nothing.
+- `scrollbar-width` (`auto`, `thin`, `none` or a length) and `scrollbar-color` (the thumb colour) style the bar. With a reserved gutter a styled bar is classic, as in Chromium on Linux and Windows: it sits in the gutter at that thickness, with a rounded thumb you can drag, and is drawn only while the content overflows (the gutter stays reserved when it does not). `thin` draws Chromium's thumb: 6 px, 2 px inside the 10 px gutter. The thumb has the exact `scrollbar-color`, alpha included (without it, the text colour at 35% on GTK, a neutral grey on Win32 and AppKit). Without a gutter the platform's overlay scrollbar stays. `scrollbar-width: none` hides the bar.
+
 A child marked `stickyHeader()` stays pinned to the top of the scroll view once scrolled past, until the next sticky sibling pushes it away.
 
 ### Refresh
@@ -257,6 +290,17 @@ VirtualizedList::of(
 
 `of($items, $row, $key)` takes the data, a closure that builds the row for one item (it also receives the index) and a closure that returns a stable key. Without a key closure the key is the item's `key` or `id`, then its index.
 
+A vertical list without a `height` is sized by its rows, like a React Native `FlatList` or a CSS block with `overflow: auto`: its height is the sum of the rows already measured plus `rowHeight()` for each row not built yet, and it scrolls past its limit. The limit is `max-height` (points, or a percentage of a parent with a definite height); without one it is the window height. The list also shrinks by default (`flex-shrink: 1`), so in a column with a definite height it takes the space its siblings leave, and `flex-grow: 1` makes it fill that space as before. An empty list has no height. Only the rows inside the list's height are built and mounted, whatever its size.
+
+```php
+// A card that follows its rows: three rows make it 132 points tall; with
+// many rows it stops at the window height and scrolls.
+Column::make(
+    Text::make('Orders'),
+    VirtualizedList::of($orders, $row, $key)->rowHeight(44),
+);
+```
+
 | Method | Meaning |
 | --- | --- |
 | `rowHeight(float)` | Height of a row, or the estimate for rows without an authored height. |
@@ -270,7 +314,7 @@ VirtualizedList::of(
 
 `VirtualizedList::make(...)` takes ready-made elements (or closures that return them) instead of data. `FlatList::make([...])` and `SectionList::make(['Title' => [...]])` show plain strings, the second one grouped under headers.
 
-`examples/lists` is a 2000-row list with programmatic scrolling; `examples/chat` is an inverted list.
+`examples/lists` is a 2000-row list with programmatic scrolling; `examples/chat` is an inverted list. `examples/web-defaults` has a content-sized list in a card, CSS font stacks, a thin classic scrollbar, value methods in the template and Chart.js value axes.
 
 ## Modal and bottom sheet
 
@@ -296,6 +340,16 @@ Modal::make(
 `onRequestClose` runs when the user presses Escape, asks to go back or clicks the backdrop. The host starts the exit animation at once and then tells PHP, which must set the state that hides the modal.
 
 `ModalPresentation` is `Dialog`, `FullScreen` or `Sheet`.
+
+A `backdropBlurRadius` on a modal frosts what is behind its backdrop, like a CSS `backdrop-filter: blur()` under a dialog. It is ignored on a transparent modal. Templates set it as an attribute:
+
+```html
+<Modal visible="true" presentation="dialog" backdropColor="#B3020618" backdropBlurRadius="8" on:requestClose="dismiss">
+    …
+</Modal>
+```
+
+The blur is drawn by GTK (verified), by Direct2D on Windows (not run yet) and by a Core Image filter on macOS (not verified on screen).
 
 A `BottomSheet` is a modal anchored to the bottom edge of the window. Its snap points are fractions of the available height:
 
@@ -447,4 +501,7 @@ With the default `TabPresentation::Adaptive` the bar is a rail on the side when 
 | --- | --- |
 | `Image`, `ImageBackground`, `MediaPlayer`, `WebView`, `Canvas`, `DrawingCanvas` | [Media and web](media-and-web.md) |
 | `GestureDetector`, `Swipeable` | [Animation and gestures](animation-and-gestures.md) |
-| `InteractionRegion` (drag and drop), `UI\Window` (secondary windows) | [Desktop shell](desktop-shell.md) |
+| `InteractionRegion`, `DragSource`, `DropTarget` (drag and drop), `UI\Window` (secondary windows) | [Desktop shell](desktop-shell.md) |
+| `Select`, `Autocomplete`, `MultiSelect`, `DatePicker`, `Toast`, `Checkbox`, `ProgressButton`, `MediaTile`, `DialogViewport` | [DesktopUI](desktop-ui.md) (package `pushinbr/pam-desktop-ui`) |
+| `LineChart`, `AreaChart`, `BarChart`, `DonutChart`, `Sparkline`, `ProgressRing` | [Charts](charts.md) (package `pushinbr/pam-desktop-charts`) |
+| `.pam.php` templates, `<Slot>`, expressions | [Templates](templates.md) |

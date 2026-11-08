@@ -80,6 +80,12 @@ struct Report {
     count: u32,
 }
 
+/// Development: the PHP worker ended while the window stays open.
+const WORKER_STOPPED: &str = "PAMERR1\n{\"version\":2,\"type\":\"WorkerStopped\",\
+    \"message\":\"The PHP worker stopped. What it printed last is in the terminal that runs \
+    pam-desktop dev. Save a file or press Reload to start it again.\",\"file\":\"\",\"line\":0,\
+    \"phase\":\"worker\",\"fatal\":true,\"frames\":[],\"fingerprint\":\"worker-stopped\"}";
+
 impl Report {
     /// Parses a `PAMERR1\n<json>` report; anything else is a fatal native error.
     fn parse(raw: &str) -> Self {
@@ -195,6 +201,12 @@ impl Report {
     }
 
     fn phase_label(&self) -> &'static str {
+        // Source that does not compile, whatever phase loaded it.
+        match self.short_kind() {
+            "TemplateException" => return "Template error",
+            "ParseError" | "CompileError" => return "Syntax error",
+            _ => {}
+        }
         match self.phase.as_str() {
             "boot" => "Boot error",
             "render" => "Render error",
@@ -203,6 +215,7 @@ impl Report {
             "promise" => "Unhandled promise rejection",
             "hot-reload" => "Hot reload error",
             "native" => "Native runtime error",
+            "worker" => "PHP worker stopped",
             _ => "Uncaught error",
         }
     }
@@ -317,12 +330,11 @@ pub struct ErrorOverlay {
     roots: Vec<NodeId>,
     /// Reloads tried since the last committed frame (production).
     attempts: u32,
-    portuguese: bool,
 }
 
 impl ErrorOverlay {
     #[must_use]
-    pub fn new(development: bool, locale: &str) -> Self {
+    pub fn new(development: bool) -> Self {
         Self {
             development,
             queue: Vec::new(),
@@ -332,7 +344,6 @@ impl ErrorOverlay {
             expanded: false,
             roots: Vec::new(),
             attempts: 0,
-            portuguese: locale.to_ascii_lowercase().starts_with("pt"),
         }
     }
 
@@ -395,6 +406,14 @@ impl ErrorOverlay {
             self.view = View::Toast;
         }
         None
+    }
+
+    /// Development: the PHP worker ended. Says so unless the fatal error
+    /// that ended it is already reported.
+    pub fn worker_stopped(&mut self) {
+        if !self.queue.iter().any(|report| report.phase == "worker") {
+            self.report(WORKER_STOPPED);
+        }
     }
 
     /// A frame of the application reached the screen: it recovered.
@@ -506,12 +525,7 @@ impl ErrorOverlay {
                     &colors,
                 )
             }),
-            View::Fallback => Some(Self::fallback(
-                &mut builder,
-                self.portuguese,
-                viewport,
-                &colors,
-            )),
+            View::Fallback => Some(Self::fallback(&mut builder, viewport, &colors)),
         };
         self.roots.extend(root);
     }
@@ -956,25 +970,13 @@ impl ErrorOverlay {
         root
     }
 
-    fn fallback(
-        builder: &mut Builder<'_, '_, '_>,
-        portuguese: bool,
-        viewport: Size,
-        colors: &Palette,
-    ) -> NodeId {
-        let (title, message, action) = if portuguese {
-            (
-                "Algo deu errado",
-                "O app encontrou um problema inesperado. Tente novamente para continuar.",
-                "Tentar novamente",
-            )
-        } else {
-            (
-                "Something went wrong",
-                "The app hit an unexpected problem. Try again to continue.",
-                "Try again",
-            )
-        };
+    fn fallback(builder: &mut Builder<'_, '_, '_>, viewport: Size, colors: &Palette) -> NodeId {
+        use crate::i18n::{Text, text};
+        let (title, message, action) = (
+            text(Text::ErrorTitle),
+            text(Text::ErrorMessage),
+            text(Text::TryAgain),
+        );
         let (width, height) = (viewport.width, viewport.height);
         let root = builder.view(
             0,
@@ -1061,13 +1063,35 @@ mod tests {
         );
         assert_eq!(report.frames.len(), 2);
         assert!(report.copy_text().contains(">    12 | b();"));
+        let template =
+            Report::parse(&REPORT.replace("App\\\\Broken", "Pam\\\\Desktop\\\\TemplateException"));
+        assert_eq!(template.phase_label(), "Template error");
+        let syntax = Report::parse(&REPORT.replace("App\\\\Broken", "ParseError"));
+        assert_eq!(syntax.phase_label(), "Syntax error");
+        let stopped = Report::parse(WORKER_STOPPED);
+        assert!(stopped.fatal && stopped.phase_label() == "PHP worker stopped");
+        assert!(stopped.message.starts_with("The PHP worker stopped."));
         let plain = Report::parse("it crashed");
         assert!(plain.fatal && plain.phase == "native" && plain.message == "it crashed");
     }
 
     #[test]
+    fn a_stopped_worker_is_reported_once() {
+        let mut overlay = ErrorOverlay::new(true);
+        overlay.worker_stopped();
+        assert!(overlay.is_blocking() && overlay.queue.len() == 1);
+        let mut overlay = ErrorOverlay::new(true);
+        overlay.report(&REPORT.replace(
+            "\"phase\":\"event\",\"fatal\":false",
+            "\"phase\":\"worker\",\"fatal\":true",
+        ));
+        overlay.worker_stopped();
+        assert_eq!(overlay.queue.len(), 1);
+    }
+
+    #[test]
     fn development_queues_counts_and_suppresses() {
-        let mut overlay = ErrorOverlay::new(true, "en-US");
+        let mut overlay = ErrorOverlay::new(true);
         assert_eq!(overlay.report(REPORT), None);
         assert_eq!(overlay.view, View::Toast);
         overlay.report(REPORT);
@@ -1091,7 +1115,7 @@ mod tests {
     #[test]
     fn production_recovers_then_falls_back() {
         let fatal = REPORT.replace("\"fatal\":false", "\"fatal\":true");
-        let mut overlay = ErrorOverlay::new(false, "pt-BR");
+        let mut overlay = ErrorOverlay::new(false);
         assert_eq!(overlay.report(REPORT), None);
         assert!(!overlay.is_visible());
         assert_eq!(overlay.report(&fatal), Some(250));

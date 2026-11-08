@@ -77,6 +77,8 @@ final class EventProperties
         EventKind::KeyDown->value => PropKey::OnKeyDown->value,
         EventKind::KeyUp->value => PropKey::OnKeyUp->value,
         EventKind::FilesDrop->value => PropKey::OnFilesDrop->value,
+        EventKind::DragEnter->value => PropKey::OnDragEnter->value,
+        EventKind::DragLeave->value => PropKey::OnDragLeave->value,
         EventKind::SpanPress->value => PropKey::OnSpanPress->value,
         EventKind::Layout->value => PropKey::OnLayout->value,
         EventKind::MediaBuffering->value => PropKey::OnMediaBuffering->value,

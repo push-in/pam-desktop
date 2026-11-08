@@ -11,6 +11,7 @@ use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use ReflectionClass;
 use RuntimeException;
+use Throwable;
 use SplFileInfo;
 use Pam\Desktop\BuildConfiguration;
 use Pam\Desktop\LanguageVersion;
@@ -26,9 +27,38 @@ use function strlen;
 
 final class PamPhpCompiler
 {
+    /** Keep magic paths tied to the authored component, including relocated bundles. */
+    private static function sourceMagicConstants(string $php, string $className): string
+    {
+        $prefix = 'PAM_DESKTOP_SOURCE_'.hash('sha256', $className).'_';
+        $result = '';
+        foreach (token_get_all($php) as $token) {
+            if (!is_array($token)) { $result .= $token; continue; }
+            $result .= match ($token[0]) {
+                T_DIR => '\\'.$prefix.'DIR',
+                T_FILE => '\\'.$prefix.'FILE',
+                default => $token[1],
+            };
+        }
+        return $result;
+    }
+
+    /** Constants remain valid in property defaults and class constant expressions. */
+    public static function bindSourceConstants(PamPhpComponent $component): void
+    {
+        $prefix = 'PAM_DESKTOP_SOURCE_'.hash('sha256', $component->className).'_';
+        foreach (['DIR' => dirname($component->source), 'FILE' => $component->source] as $kind => $value) {
+            $name = $prefix.$kind;
+            if (!defined($name)) define($name, $value);
+        }
+    }
+
     private const MAX_COMPONENTS = 10_000;
+
+    /** Directories one component walk may visit (a link to `/` or `$HOME` must not hang the build). */
+    private const MAX_COMPONENT_DIRECTORIES = 10_000;
     private const MAX_SOURCE_BYTES = 2_097_152;
-    private const CACHE_VERSION = 6;
+    private const CACHE_VERSION = 9;
 
     /**
      * Content fingerprints of stylesheets read during one compileDirectory()
@@ -49,6 +79,45 @@ final class PamPhpCompiler
     }
 
     /** @return list<PamPhpComponent> */
+    /** @var array<string, Throwable> components of the last directory pass that failed to compile */
+    private static array $failures = [];
+
+    /**
+     * Failures of the last compileDirectory() pass, by source path.
+     *
+     * @return array<string, Throwable>
+     */
+    public static function failures(): array
+    {
+        return self::$failures;
+    }
+
+    /** @var array<string, string> cache directories that could not be written, and where they went */
+    private static array $cacheRedirects = [];
+
+    /**
+     * The component cache the application asked for or, when it cannot be
+     * written (an application installed read-only: a system package, an
+     * AppImage), a private one below the per-user cache directory.
+     */
+    private static function writableCache(string $cachePath): string
+    {
+        if (isset(self::$cacheRedirects[$cachePath])) {
+            return self::$cacheRedirects[$cachePath];
+        }
+        if ((is_dir($cachePath) || @mkdir($cachePath, 0o755, true) || is_dir($cachePath)) && is_writable($cachePath)) {
+            return $cachePath;
+        }
+        $base = getenv('PAM_DESKTOP_CACHE_DIR');
+        $fallback = ($base !== false && $base !== '' ? $base : sys_get_temp_dir().DIRECTORY_SEPARATOR.'pam-desktop-'.getmyuid())
+            .DIRECTORY_SEPARATOR.'components'.DIRECTORY_SEPARATOR.substr(hash('sha256', $cachePath), 0, 16);
+        if (!is_dir($fallback) && !@mkdir($fallback, 0o700, true) && !is_dir($fallback)) {
+            throw new RuntimeException("Cannot create PAM component cache {$cachePath} or {$fallback}.");
+        }
+
+        return self::$cacheRedirects[$cachePath] = $fallback;
+    }
+
     public static function compileDirectory(
         string $sourcePath,
         string $cachePath,
@@ -63,71 +132,233 @@ final class PamPhpCompiler
         if (str_contains($cachePath, "\0")) {
             throw new RuntimeException('PAM component cache path is invalid.');
         }
-        if (
-            !is_dir($cachePath)
-            && !mkdir($cachePath, 0o755, true)
-            && !is_dir($cachePath)
-        ) {
-            throw new RuntimeException(
-                "Cannot create PAM component cache {$cachePath}.",
-            );
-        }
+        $cachePath = self::writableCache($cachePath);
 
         $bundled = self::bundledComponents($sourceRoot, $cachePath);
         if ($bundled !== null) {
             return $bundled;
         }
 
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator(
-                $sourceRoot,
-                FilesystemIterator::SKIP_DOTS,
-            ),
-        );
+        // Symlinked directories and files are followed (path repositories,
+        // shared component folders); each real directory is walked once, so
+        // a link cycle cannot loop. A link may only lead into the project,
+        // its vendor/ folder, or a path repository its composer.json declares.
+        $allowedRoots = self::componentRoots($sourceRoot);
         $sources = [];
-
-        foreach ($iterator as $file) {
-            if (!$file instanceof SplFileInfo) {
+        $visited = [];
+        $pending = [$sourceRoot];
+        while ($pending !== []) {
+            $directory = array_pop($pending);
+            $real = realpath($directory);
+            if ($real === false || isset($visited[$real])) {
                 continue;
             }
-            if ($file->isLink()) {
-                throw new RuntimeException(
-                    "PAM component directories cannot contain symlinks: {$file->getPathname()}.",
-                );
+            self::assertInsideRoots($directory, $real, $allowedRoots);
+            $visited[$real] = true;
+            if (count($visited) > self::MAX_COMPONENT_DIRECTORIES) {
+                throw new RuntimeException('PAM component directory exceeds 10,000 directories; check for a symlink that leaves the project.');
             }
-            if (!$file->isFile() || !self::isComponentFile($file->getFilename())) {
-                continue;
-            }
-            $resolved = $file->getRealPath();
-            if (
-                $resolved === false
-                || !str_starts_with($resolved, $sourceRoot.DIRECTORY_SEPARATOR)
-            ) {
-                throw new RuntimeException('PAM component escaped its source directory.');
-            }
-            $sources[] = $resolved;
-
-            if (count($sources) > self::MAX_COMPONENTS) {
-                throw new RuntimeException('PAM component directory exceeds 10,000 files.');
+            foreach (new FilesystemIterator($directory, FilesystemIterator::SKIP_DOTS) as $file) {
+                if (!$file instanceof SplFileInfo) {
+                    continue;
+                }
+                if ($file->isDir()) {
+                    $pending[] = $file->getPathname();
+                    continue;
+                }
+                if (!$file->isFile() || !self::isComponentFile($file->getFilename())) {
+                    continue;
+                }
+                $resolved = $file->getRealPath();
+                if ($resolved === false) {
+                    continue;
+                }
+                self::assertInsideRoots($file->getPathname(), $resolved, $allowedRoots);
+                $sources[$resolved] = $resolved;
+                if (count($sources) > self::MAX_COMPONENTS) {
+                    throw new RuntimeException('PAM component directory exceeds 10,000 files.');
+                }
             }
         }
-
+        $sources = array_values($sources);
         sort($sources, SORT_STRING);
 
         self::$dependencyFingerprints = [];
         self::$appStylePaths = [];
         self::$directoryPass = true;
+        self::$failures = [];
         try {
-            return array_map(
-                static fn (string $source): PamPhpComponent =>
-                    self::compileFile($source, $cachePath),
-                $sources,
-            );
+            // A broken component is reported on its own; the others still
+            // compile so the application keeps running around it.
+            $components = [];
+            foreach ($sources as $source) {
+                try {
+                    $components[] = self::compileFile($source, $cachePath);
+                } catch (Throwable $error) {
+                    self::$failures[$source] = $error;
+                }
+            }
+            return $components;
         } finally {
             self::$dependencyFingerprints = [];
             self::$appStylePaths = [];
             self::$directoryPass = false;
         }
+    }
+
+    /**
+     * Real folders a symlink under the component directory may lead into:
+     * the project (PAM_DESKTOP_PROJECT_ROOT when the components are inside
+     * it, else the nearest folder above them with a composer.json, else the
+     * component directory itself), its vendor/ folder, the packages
+     * vendor/composer/installed.json lists there, and the `path`
+     * repositories the project's composer.json declares.
+     *
+     * @return list<string>
+     */
+    private static function componentRoots(string $sourceRoot): array
+    {
+        $project = null;
+        $declared = getenv('PAM_DESKTOP_PROJECT_ROOT');
+        if (is_string($declared) && $declared !== '') {
+            $real = realpath($declared);
+            if ($real !== false && self::isInside($sourceRoot, $real)) {
+                $project = $real;
+            }
+        }
+        if ($project === null) {
+            for ($directory = $sourceRoot; ; $directory = dirname($directory)) {
+                if (is_file($directory.DIRECTORY_SEPARATOR.'composer.json')) {
+                    $project = $directory;
+                    break;
+                }
+                if (dirname($directory) === $directory) {
+                    break;
+                }
+            }
+        }
+        $project ??= $sourceRoot;
+        $roots = [$project];
+        $vendor = realpath($project.DIRECTORY_SEPARATOR.'vendor');
+        if ($vendor !== false) {
+            $roots[] = $vendor;
+            $roots = [...$roots, ...self::installedPackageRoots($vendor)];
+        }
+        return [...$roots, ...self::pathRepositoryRoots($project)];
+    }
+
+    /** @return list<string> */
+    private static function installedPackageRoots(string $vendor): array
+    {
+        $document = self::jsonFile($vendor.DIRECTORY_SEPARATOR.'composer'.DIRECTORY_SEPARATOR.'installed.json');
+        $packages = $document['packages'] ?? $document;
+        $roots = [];
+        foreach (is_array($packages) ? $packages : [] as $package) {
+            $path = is_array($package) ? ($package['install-path'] ?? null) : null;
+            if (!is_string($path) || $path === '' || str_contains($path, "\0")) {
+                continue;
+            }
+            // Only vendor/<vendor>/<package>: an install path naming vendor/
+            // itself or anything above it allows nothing.
+            $relative = self::normalizeRelative('composer/'.$path);
+            if ($relative === null || count(explode('/', $relative)) < 2 || str_starts_with($relative.'/', 'composer/')) {
+                continue;
+            }
+            $real = realpath($vendor.DIRECTORY_SEPARATOR.$relative);
+            if ($real !== false) {
+                $roots[] = $real;
+            }
+        }
+        return $roots;
+    }
+
+    /** @return list<string> */
+    private static function pathRepositoryRoots(string $project): array
+    {
+        $document = self::jsonFile($project.DIRECTORY_SEPARATOR.'composer.json');
+        $repositories = $document['repositories'] ?? [];
+        $roots = [];
+        foreach (is_array($repositories) ? $repositories : [] as $repository) {
+            if (!is_array($repository) || ($repository['type'] ?? null) !== 'path') {
+                continue;
+            }
+            $url = $repository['url'] ?? null;
+            if (!is_string($url) || $url === '' || str_contains($url, "\0")) {
+                continue;
+            }
+            $pattern = preg_match('~^(/|[A-Za-z]:[\\\\/])~', $url) === 1
+                ? $url
+                : $project.DIRECTORY_SEPARATOR.$url;
+            foreach (glob($pattern, GLOB_ONLYDIR) ?: [] as $match) {
+                $real = realpath($match);
+                // A repository that is a whole filesystem root would allow everything.
+                if ($real !== false && dirname($real) !== $real) {
+                    $roots[] = $real;
+                }
+            }
+        }
+        return $roots;
+    }
+
+    /** @return array<mixed> */
+    private static function jsonFile(string $path): array
+    {
+        if (!is_file($path)) {
+            return [];
+        }
+        $contents = @file_get_contents($path);
+        if ($contents === false) {
+            return [];
+        }
+        try {
+            $document = json_decode($contents, true, 64, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            return [];
+        }
+        return is_array($document) ? $document : [];
+    }
+
+    /** Resolves `.` and `..` of a relative path; null when it climbs out. */
+    private static function normalizeRelative(string $path): ?string
+    {
+        $parts = [];
+        foreach (preg_split('~[\\\\/]+~', $path) ?: [] as $part) {
+            if ($part === '' || $part === '.') {
+                continue;
+            }
+            if ($part === '..') {
+                if ($parts === []) {
+                    return null;
+                }
+                array_pop($parts);
+                continue;
+            }
+            $parts[] = $part;
+        }
+        return $parts === [] ? null : implode('/', $parts);
+    }
+
+    private static function isInside(string $path, string $root): bool
+    {
+        $root = rtrim($root, '/\\');
+        return $path === $root
+            || str_starts_with($path, $root.DIRECTORY_SEPARATOR)
+            || ($root === '' && str_starts_with($path, DIRECTORY_SEPARATOR));
+    }
+
+    /** @param list<string> $roots */
+    private static function assertInsideRoots(string $path, string $real, array $roots): void
+    {
+        foreach ($roots as $root) {
+            if (self::isInside($real, $root)) {
+                return;
+            }
+        }
+        throw new RuntimeException(
+            "PAM component path {$path} resolves to {$real}, outside the project. "
+            .'A symlink in a component folder may only point into the project, its vendor/ '
+            .'folder, or a "path" repository declared in its composer.json.',
+        );
     }
 
     /**
@@ -208,6 +439,7 @@ final class PamPhpCompiler
         string $source,
         string $cachePath,
     ): PamPhpComponent {
+        $cachePath = self::$cacheRedirects[$cachePath] ?? $cachePath;
         $contents = file_get_contents($source);
 
         if ($contents === false) {
@@ -294,7 +526,7 @@ final class PamPhpCompiler
                     ScopedStyleCompiler::compile($style, $source, $styleScope),
                 );
             }
-            self::writeAtomic($classFile, rtrim($php)."\n");
+            self::writeAtomic($classFile, rtrim(self::sourceMagicConstants($php, $className))."\n");
             try {
                 $encodedTree = json_encode(
                     $tree->toArray(),
@@ -1191,6 +1423,16 @@ final class PamPhpCompiler
         CompiledTemplateNode $tree,
         array $styleSheet,
     ): CompiledTemplateNode {
+        // The style IR, its bytecode, source map and compatibility report
+        // are compiler output for tooling: rendering never reads them, and
+        // they were most of a component's stylesheet in memory (a screen
+        // with the application's stylesheet carried about 1 MB of them).
+        unset(
+            $styleSheet['styleIr'],
+            $styleSheet['styleBytecode'],
+            $styleSheet['styleSourceMap'],
+            $styleSheet['styleCompatibility'],
+        );
         try {
             $encoded = json_encode(
                 $styleSheet,

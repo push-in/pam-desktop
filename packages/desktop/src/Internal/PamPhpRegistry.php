@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Pam\Desktop\Internal;
 
+use Pam\Desktop\Diagnostics\RuntimeErrorPhase;
+
 use Closure;
 use BackedEnum;
 use LogicException;
@@ -75,6 +77,15 @@ final class PamPhpRegistry
     public static function discover(string $sourcePath, string $cachePath): void
     {
         $components = PamPhpCompiler::compileDirectory($sourcePath, $cachePath);
+        $failures = PamPhpCompiler::failures();
+        if ($components === [] && $failures !== []) {
+            throw reset($failures);
+        }
+        foreach ($failures as $error) {
+            // Shown on the development error screen; the other components
+            // stay usable.
+            Runtime::reportError($error, RuntimeErrorPhase::Boot);
+        }
 
         foreach ($components as $component) {
             /** @var class-string<Component> $className */
@@ -115,10 +126,14 @@ final class PamPhpRegistry
             }
             /** @var class-string<Component> $className */
             $className = $component->className;
-            self::autoload($className);
-            TemplateRegistry::contract(
-                ComponentContractFactory::fromClass($className, $component->tag),
-            );
+            try {
+                self::autoload($className);
+                TemplateRegistry::contract(
+                    ComponentContractFactory::fromClass($className, $component->tag),
+                );
+            } catch (\Throwable $error) {
+                Runtime::reportError($error, RuntimeErrorPhase::Boot);
+            }
         }
 
         foreach ($components as $component) {
@@ -127,7 +142,11 @@ final class PamPhpRegistry
             }
             /** @var class-string<Component> $className */
             $className = $component->className;
-            TemplateContractValidator::validate($className, $component->template);
+            try {
+                TemplateContractValidator::validate($className, $component->template);
+            } catch (\Throwable $error) {
+                Runtime::reportError($error, RuntimeErrorPhase::Boot);
+            }
         }
     }
 
@@ -244,6 +263,31 @@ final class PamPhpRegistry
     }
 
     /** True when $className is a discovered .pam.php component. */
+    /**
+     * The .pam.php source a compiled file of a registered component comes
+     * from, and whether that file holds the template expressions (whose lines
+     * are not the source's) rather than the class (whose lines are).
+     *
+     * @return array{0: string, 1: bool}|null
+     */
+    public static function sourceOf(string $compiled): ?array
+    {
+        if (!str_ends_with($compiled, '.php')) {
+            return null;
+        }
+        foreach (self::$components as $component) {
+            if ($component->classFile === $compiled) {
+                return [$component->source, false];
+            }
+            if (str_ends_with($component->classFile, '.class.php')
+                && substr($component->classFile, 0, -10).'.expressions.php' === $compiled) {
+                return [$component->source, true];
+            }
+        }
+
+        return null;
+    }
+
     public static function has(string $className): bool
     {
         return isset(self::$components[$className]);
@@ -696,6 +740,7 @@ final class PamPhpRegistry
         $file = self::$classFiles[$className] ?? null;
 
         if ($file !== null && !class_exists($className, false)) {
+            PamPhpCompiler::bindSourceConstants(self::$components[$className]);
             PamPhpCompiler::materializePrebuilt($file);
             require $file;
         }

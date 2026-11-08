@@ -449,7 +449,8 @@ $assert($resolved->apply('a', ['id' => 'a']) === ['id' => 'a', 'resolved' => tru
 $overlay->clear();
 $assert($overlay->count() === 0, 'clear() must drop every overlay.');
 
-// Format and Text.
+// Format and Text (Portuguese fixed: the default follows the system locale).
+Format::useLocale('pt-BR');
 $assert(
     Format::count(1234567) === '1.234.567' && Format::count(1234567, 'en') === '1,234,567'
         && Format::countLabel(1, 'item', 'itens') === '1 item' && Format::countLabel(1234, 'item', 'itens') === '1.234 itens',

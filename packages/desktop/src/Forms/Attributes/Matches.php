@@ -13,7 +13,7 @@ final readonly class Matches implements ValidationRule
 {
     public function __construct(
         public string $other,
-        public string $message = 'The values do not match.',
+        public ?string $message = null,
     ) {
     }
 
@@ -21,6 +21,6 @@ final readonly class Matches implements ValidationRule
     {
         unset($field);
 
-        return $form->value($this->other) === $value ? null : $this->message;
+        return $form->value($this->other) === $value ? null : ($this->message ?? \Pam\Desktop\I18n\FrameworkText::get('form.matches'));
     }
 }

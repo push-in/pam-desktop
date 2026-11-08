@@ -119,6 +119,7 @@ pub struct InputHost {
     /// The first half of a character outside the basic plane, waiting for
     /// the second `WM_CHAR`.
     high_surrogate: Option<u16>,
+    /// A captured key must not also insert its translated WM_CHAR.
     /// `TrackMouseEvent` is armed for the control.
     tracking_leave: bool,
 }

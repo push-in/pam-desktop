@@ -3,8 +3,10 @@ pub mod bridge_v2;
 #[cfg(feature = "ffi")]
 mod ffi;
 pub mod fiber;
+pub mod font_family;
 mod font_metrics;
 pub mod grid_template;
+pub mod grid_tracks;
 mod layout;
 pub mod performance;
 pub mod reactive;
@@ -613,10 +615,19 @@ impl Engine {
         let current = self.current.as_ref().ok_or(EngineError::PatchWithoutTree)?;
         let reconcile_started = Instant::now();
         let mut next = current.clone();
+        // What the patch touched: only these nodes and their ancestors are
+        // laid out again; untouched subtrees keep their frames (see
+        // `layout::calculate_incremental_with_text_metrics`).
+        let mut dirty = BTreeSet::new();
+        let mut touched = Vec::new();
+        let mut full = self.layouts.is_empty();
         for operation in patch.operations {
             match operation {
                 PatchOperation::Create(node) => {
                     let id = node.id;
+                    dirty.insert(id);
+                    dirty.insert(node.parent);
+                    touched.push(id);
                     if id == 0 || next.nodes.insert(id, node).is_some() {
                         return Err(EngineError::Protocol(
                             pam_desktop_wire::ProtocolError::DuplicateNode(id),
@@ -624,9 +635,11 @@ impl Engine {
                     }
                 }
                 PatchOperation::Remove { id } => {
-                    if next.nodes.remove(&id).is_none() {
+                    let Some(removed) = next.nodes.remove(&id) else {
                         return Err(EngineError::UnknownPatchNode(id));
-                    }
+                    };
+                    dirty.insert(removed.parent);
+                    touched.push(id);
                 }
                 PatchOperation::Update(PropertyPatch { id, key, value }) => {
                     let node = next
@@ -641,19 +654,28 @@ impl Engine {
                             node.properties.remove(&key);
                         }
                     }
+                    dirty.insert(id);
+                    touched.push(id);
                 }
                 PatchOperation::Move { id, parent, index } => {
                     let node = next
                         .nodes
                         .get_mut(&id)
                         .ok_or(EngineError::UnknownPatchNode(id))?;
+                    dirty.insert(node.parent);
+                    dirty.insert(id);
+                    dirty.insert(parent);
                     node.parent = parent;
                     node.index = index;
                 }
-                PatchOperation::SetRoot { id } => next.root = id,
+                PatchOperation::SetRoot { id } => {
+                    next.root = id;
+                    full = true;
+                }
             }
         }
         next.validate().map_err(EngineError::Protocol)?;
+        dirty.retain(|id| next.nodes.contains_key(id));
         self.performance.record(
             performance::PerformanceStage::Reconcile,
             reconcile_started.elapsed(),
@@ -667,18 +689,55 @@ impl Engine {
         )
         .with_surface_policy(self.surface_policy)
         .with_surface_keyboard_insets(&self.surface_keyboard_insets);
+        #[cfg(debug_assertions)]
+        let safe_area_before = self.auto_safe_area.clone();
         let auto_scope = auto_safe_area::Scope::enter_with(
             std::mem::take(&mut self.auto_safe_area),
             self.automatic_safe_area,
         );
-        let text_metrics = self.font_metrics.measure_tree(&next);
-        let next_layouts = layout::calculate_with_text_metrics(
-            &next,
-            self.viewport,
-            self.text_scale,
-            text_metrics,
-        )?;
+        let next_layouts = if full {
+            let text_metrics = self.font_metrics.measure_tree(&next);
+            layout::calculate_with_text_metrics(
+                &next,
+                self.viewport,
+                self.text_scale,
+                text_metrics,
+            )?
+        } else {
+            // A structural patch (rows joining a list) used to lay the whole
+            // tree out again: tens of milliseconds on the UI thread with a
+            // few thousand nodes, a dropped frame per page of rows.
+            let text_metrics = self.font_metrics.measure_nodes(&next, &touched);
+            let (mut layouts, _visited) = layout::calculate_incremental_with_text_metrics(
+                &next,
+                self.viewport,
+                self.text_scale,
+                text_metrics,
+                &self.layouts,
+                &dirty,
+            )?;
+            layouts.retain(|id, _| next.nodes.contains_key(id));
+            layouts
+        };
         self.auto_safe_area = auto_scope.finish();
+        #[cfg(debug_assertions)]
+        if !full {
+            // The incremental pass must give the frames of a full one.
+            let check_scope =
+                auto_safe_area::Scope::enter_with(safe_area_before, self.automatic_safe_area);
+            let text_metrics = self.font_metrics.measure_tree(&next);
+            let expected = layout::calculate_with_text_metrics(
+                &next,
+                self.viewport,
+                self.text_scale,
+                text_metrics,
+            )?;
+            let _ = check_scope.finish();
+            debug_assert_eq!(
+                next_layouts, expected,
+                "incremental layout of a structural patch differs from a full layout"
+            );
+        }
         self.performance.record(
             performance::PerformanceStage::Layout,
             layout_started.elapsed(),
@@ -1060,8 +1119,12 @@ fn affects_layout(key: PropKey) -> bool {
             | PropKey::MarginLeftAuto
             | PropKey::ScrollHorizontal
             | PropKey::ScrollFillViewport
+            | PropKey::ScrollbarGutter
+            | PropKey::ScrollbarWidth
+            | PropKey::ScrollbarThickness
             | PropKey::GridColumns
             | PropKey::GridMinColumnWidth
+            | PropKey::GridTracks
             | PropKey::GridTemplate
             | PropKey::GridSpan2xl
             | PropKey::GridOffset2xl
@@ -1094,6 +1157,7 @@ fn affects_layout(key: PropKey) -> bool {
             | PropKey::MinHeightPercent
             | PropKey::FontFeatureSettings
             | PropKey::TextSpans
+            | PropKey::TextSpanBoxes
             | PropKey::IncludeFontPadding
             | PropKey::BorderWidth
             | PropKey::BorderLeftWidth
@@ -1129,6 +1193,7 @@ fn affects_resolved_layout(node: &Node, key: PropKey) -> bool {
                 | PropKey::TextAdjustsFontSizeToFit
                 | PropKey::TextMinimumFontScale
                 | PropKey::TextSpans
+                | PropKey::TextSpanBoxes
                 | PropKey::IncludeFontPadding
         )
     {

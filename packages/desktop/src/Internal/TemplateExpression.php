@@ -27,7 +27,7 @@ use function strlen;
 /**
  * Template expressions are compiled once per source string into a closure
  * tree and evaluated against the render scope/data afterwards. The grammar and
- * evaluation order (eager operands, coalescing "missing" semantics) match the
+ * evaluation order (short-circuit guards, coalescing "missing" semantics) match the
  * original token-walking interpreter exactly; only the parse is hoisted out of
  * the render loop.
  */
@@ -54,6 +54,9 @@ final class TemplateExpression
 
     /** @var array<class-string, array<string, array{public: bool, gestures: list<int>}>> */
     private static array $scopeMethods = [];
+
+    /** @var array<string, bool> whether `Class::method` may be called on a value */
+    private static array $valueMethods = [];
 
     /** @var array<string, string|false> */
     private static array $enumClasses = [];
@@ -444,6 +447,46 @@ final class TemplateExpression
         };
     }
 
+    /**
+     * @internal `$value->name(...)`: calls a public instance method of an
+     * object value, under the rule that applies to component methods (only
+     * public methods). Static and magic (`__*`) methods and closures are
+     * refused; a value missing inside `??` stays missing.
+     *
+     * @param list<mixed> $arguments
+     */
+    public static function __pamMethodStep(mixed $value, string $name, array $arguments, bool $lenient): mixed
+    {
+        $missing = self::missing();
+        if ($value === $missing) {
+            return $missing;
+        }
+        if (!is_object($value) || $value instanceof Closure) {
+            if ($lenient && $value === null) {
+                return $missing;
+            }
+            throw new RuntimeException("Template method {$name}() needs an object value.");
+        }
+        $key = $value::class.'::'.strtolower($name);
+        $callable = self::$valueMethods[$key] ?? null;
+        if ($callable === null) {
+            $callable = false;
+            if (!str_starts_with($name, '__') && method_exists($value, $name)) {
+                $method = new ReflectionMethod($value, $name);
+                $callable = $method->isPublic() && !$method->isStatic();
+            }
+            if (count(self::$valueMethods) >= self::CACHE_LIMIT) {
+                self::$valueMethods = [];
+            }
+            self::$valueMethods[$key] = $callable;
+        }
+        if (!$callable) {
+            throw new RuntimeException("Template method {$name}() is not a public method of ".$value::class.'.');
+        }
+
+        return $value->{$name}(...$arguments);
+    }
+
     /** @internal Index step that is not a present array key. */
     public static function __pamIndex(mixed $value, mixed $index, bool $lenient): mixed
     {
@@ -469,7 +512,7 @@ final class TemplateExpression
     public static function __pamEnumCase(string $name, string $caseName, ?object $scope): mixed
     {
         $class = self::resolveScopedClassName($name, $scope);
-        if ($class === null || !enum_exists($class)) {
+        if ($class === null) {
             throw new RuntimeException("Template enum {$name} does not exist.");
         }
         $constant = $class.'::'.$caseName;
@@ -507,18 +550,13 @@ final class TemplateExpression
         if ($truthy === null) {
             return static function (array $data, ?object $scope) use ($condition, $falsy): mixed {
                 $value = $condition($data, $scope);
-                $otherwise = $falsy($data, $scope);
-
-                return (bool) $value ? $value : $otherwise;
+                return (bool) $value ? $value : $falsy($data, $scope);
             };
         }
 
         return static function (array $data, ?object $scope) use ($condition, $truthy, $falsy): mixed {
             $value = $condition($data, $scope);
-            $whenTrue = $truthy($data, $scope);
-            $whenFalse = $falsy($data, $scope);
-
-            return (bool) $value ? $whenTrue : $whenFalse;
+            return (bool) $value ? $truthy($data, $scope) : $falsy($data, $scope);
         };
     }
 
@@ -537,9 +575,7 @@ final class TemplateExpression
 
             return static function (array $data, ?object $scope) use ($left, $right, $missing): mixed {
                 $value = $left($data, $scope);
-                $fallback = $right($data, $scope);
-
-                return $value === $missing || $value === null ? $fallback : $value;
+                return $value === $missing || $value === null ? $right($data, $scope) : $value;
             };
         }
         if ($this->coalescingDepth === 0) {
@@ -571,8 +607,8 @@ final class TemplateExpression
         return static function (array $data, ?object $scope) use ($first, $rest): bool {
             $value = $first($data, $scope);
             foreach ($rest as $operand) {
-                $right = $operand($data, $scope);
-                $value = (bool) $value || (bool) $right;
+                if ((bool) $value) return true;
+                $value = (bool) $operand($data, $scope);
             }
 
             return $value;
@@ -594,8 +630,8 @@ final class TemplateExpression
         return static function (array $data, ?object $scope) use ($first, $rest): bool {
             $value = $first($data, $scope);
             foreach ($rest as $operand) {
-                $right = $operand($data, $scope);
-                $value = (bool) $value && (bool) $right;
+                if (!(bool) $value) return false;
+                $value = (bool) $operand($data, $scope);
             }
 
             return $value;
@@ -932,16 +968,22 @@ final class TemplateExpression
     {
         $lenient = $this->coalescingDepth > 0;
         $missing = $this->missing;
-        /** @var list<array{0: bool, 1: string|Closure}> $steps */
+        /** @var list<array{0: bool|string, 1: string|Closure|list<Closure>}> $steps */
         $steps = [];
 
         while (true) {
-            if ($this->take(T_OBJECT_OPERATOR) || $this->takePropertyDot()) {
+            $arrow = $this->take(T_OBJECT_OPERATOR);
+            if ($arrow || $this->takePropertyDot()) {
                 $segment = $this->peek();
                 if ($segment === null || $segment['type'] !== T_STRING) {
                     throw new RuntimeException('Template property path is invalid.');
                 }
                 $this->position++;
+                // `$value->method(...)`: a public method of the value.
+                if ($arrow && $this->take('(')) {
+                    $steps[] = [$segment['text'], $this->arguments()];
+                    continue;
+                }
                 $steps[] = [true, $segment['text']];
                 continue;
             }
@@ -959,6 +1001,15 @@ final class TemplateExpression
 
         return static function (mixed $value, array $data, ?object $scope) use ($steps, $lenient, $missing): mixed {
             foreach ($steps as [$isProperty, $step]) {
+                if (is_string($isProperty)) {
+                    /** @var list<Closure> $step */
+                    $arguments = [];
+                    foreach ($step as $argument) {
+                        $arguments[] = $argument($data, $scope);
+                    }
+                    $value = self::__pamMethodStep($value, $isProperty, $arguments, $lenient);
+                    continue;
+                }
                 if ($isProperty) {
                     $value = is_array($value) && array_key_exists($step, $value)
                         ? $value[$step]
@@ -1016,7 +1067,7 @@ final class TemplateExpression
 
         return static function (array $data, ?object $scope) use ($name, $caseName, $postfix): mixed {
             $class = self::resolveScopedClassName($name, $scope);
-            if ($class === null || !enum_exists($class)) {
+            if ($class === null) {
                 throw new RuntimeException("Template enum {$name} does not exist.");
             }
             $constant = $class.'::'.$caseName;
@@ -1044,7 +1095,7 @@ final class TemplateExpression
 
     private static function locateScopedClassName(string $name, ?object $scope): ?string
     {
-        if (enum_exists($name)) {
+        if (enum_exists($name) || (str_contains($name, '\\') && (class_exists($name) || interface_exists($name)))) {
             return $name;
         }
         if ($scope === null) {
@@ -1117,6 +1168,25 @@ final class TemplateExpression
     /** @param list<mixed> $arguments */
     private static function invoke(string $name, string $builtIn, array $arguments, ?object $scope): mixed
     {
+        if ($builtIn === 'min' || $builtIn === 'max') {
+            $values = count($arguments) === 1 && is_array($arguments[0]) ? $arguments[0] : $arguments;
+            if ($values === []) throw new RuntimeException("Template {$builtIn}() expects numeric values.");
+            foreach ($values as $value) {
+                if ((!is_int($value) && !is_float($value)) || !is_finite((float) $value)) {
+                    throw new RuntimeException("Template {$builtIn}() expects finite numeric values.");
+                }
+            }
+            return $builtIn === 'min' ? min($values) : max($values);
+        }
+        if ($builtIn === 'array_slice') {
+            if (count($arguments) < 2 || count($arguments) > 4
+                || !is_array($arguments[0]) || !is_int($arguments[1])
+                || (isset($arguments[2]) && !is_int($arguments[2]))
+                || (array_key_exists(3, $arguments) && !is_bool($arguments[3]))) {
+                throw new RuntimeException('Template array_slice() expects an array, integer offset, optional integer length and preserve-keys boolean.');
+            }
+            return array_slice($arguments[0], $arguments[1], $arguments[2] ?? null, $arguments[3] ?? false);
+        }
         if ($builtIn === 'count') {
             if (count($arguments) !== 1 || (!is_array($arguments[0]) && !$arguments[0] instanceof \Countable)) {
                 throw new RuntimeException('Template count() expects exactly one countable value.');
@@ -1398,6 +1468,12 @@ final class TemplateExpression
         foreach ($raw as $token) {
             if (is_array($token)) {
                 if (in_array($token[0], [T_OPEN_TAG, T_WHITESPACE], true)) {
+                    continue;
+                }
+                if ($token[0] === T_NAME_FULLY_QUALIFIED || $token[0] === T_NAME_QUALIFIED) {
+                    // Qualified class names (\App\Models\Kind::Case) resolve
+                    // like the short ones: enum cases and class constants.
+                    $tokens[] = ['type' => T_STRING, 'text' => ltrim($token[1], '\\')];
                     continue;
                 }
                 if (

@@ -1,0 +1,77 @@
+{
+  "architectureCode": 1,
+  "artifact": {
+    "bytes": 80370682,
+    "path": "files/candidate.tar.gz",
+    "sha256": "b436824b8bcd1becc7bbc2e55f8e742f142addabacbdc8c78e9b93aee17b8736"
+  },
+  "baselineArtifact": {
+    "bytes": 47674714,
+    "path": "files/baseline.tar.gz",
+    "sha256": "d8678a42dd875e14fca20d6ec3f524ab5d88b8e1c04526a28d50f1fffcd13001"
+  },
+  "baselineRevision": "b1073668c74d4682ec8b00cba101554086aa4926",
+  "checks": [
+    {
+      "checkCode": 1,
+      "durationMillis": 2121,
+      "resultCode": 1
+    },
+    {
+      "checkCode": 2,
+      "durationMillis": 8,
+      "resultCode": 1
+    },
+    {
+      "checkCode": 3,
+      "durationMillis": 45,
+      "resultCode": 1
+    },
+    {
+      "checkCode": 4,
+      "durationMillis": 48,
+      "resultCode": 1
+    },
+    {
+      "checkCode": 5,
+      "durationMillis": 48,
+      "resultCode": 1
+    },
+    {
+      "checkCode": 6,
+      "durationMillis": 10830,
+      "resultCode": 1
+    },
+    {
+      "checkCode": 7,
+      "durationMillis": 170,
+      "resultCode": 1
+    }
+  ],
+  "dependencyInventory": {
+    "bytes": 15880,
+    "path": "files/dependency-inventory.sha256",
+    "sha256": "95d6c20ba3af685d8501814955259bf44218a8fc135298d6b937ef01c340a9e5"
+  },
+  "expiresAtUnix": 1795837760,
+  "firstSuccessMillis": 45,
+  "generatedAtUnixMs": 1793159360590,
+  "hostImage": "ubuntu@sha256:e0f80c829509ef4df9e76bd8944eb7b8ec25cbb379b112a7f9448b2c77a77c9b;image=sha256:a7b0f6af325461862a99c677cf3229ca5241d9f4f4289bd00cc2cce91a3aff23;machine=x86_64",
+  "installedBytes": 211710038,
+  "issuedAtUnix": 1793159360,
+  "launchMillis": 8,
+  "manifestSignature": "1Gz70fHV8vPJ817RSqkQPXhbJrSllTW7CTzXlv2cgIvSumMvLOPDDx2tiBddaUgVJU6IPuSj1NYegquzcni7AA==",
+  "packageCode": 1,
+  "platformCode": 1,
+  "provenanceInventory": {
+    "bytes": 514,
+    "path": "files/provenance-inventory.sha256",
+    "sha256": "09500805e5bde8860cfd6378dd73b126d44f692e4eb92fb2f4453b1664a15ec7"
+  },
+  "releaseVersion": "v2.2.9",
+  "revision": "91d3ba81974adac347441826438e87f80538998e",
+  "schemaVersion": 1,
+  "signingIdentitySha256": "ce476acae3184856032eda6d60f3be11db8b396204ddb0a3d1444306539e3bcd",
+  "signingPublicKey": "QyBdBmQr/NR6dY8DUBjtJqVUMWT4XLkQrVLkS6KXcq8=",
+  "surfaceCode": 1
+}

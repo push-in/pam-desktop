@@ -29,6 +29,7 @@ pub enum Command {
     Layer(NodeId, LayerState),
     Text(NodeId, Option<String>),
     Focusable(NodeId, bool),
+    PointerEvents(NodeId, bool, bool),
     Accessibility(NodeId, Option<crate::accessibility::Accessibility>),
     Focus(Option<NodeId>),
     InputConfig(NodeId, Box<InputConfig>),
@@ -189,6 +190,11 @@ impl Backend for RecordingBackend {
         );
         self.frames.insert(id, frame);
         self.commands.push(Command::Frame(id, frame));
+    }
+
+    fn set_pointer_events(&mut self, id: NodeId, target_self: bool, target_children: bool) {
+        self.commands
+            .push(Command::PointerEvents(id, target_self, target_children));
     }
 
     fn set_decoration(&mut self, id: NodeId, decoration: &Decoration) {

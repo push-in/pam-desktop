@@ -59,6 +59,14 @@ impl Win32Backend {
 }
 
 impl Backend for Win32Backend {
+    fn set_asset_root(&mut self, root: &std::path::Path) {
+        crate::fonts::set_root(root);
+        // Families resolved before the root was known resolve again.
+        if let Some(mut state) = self.app.state() {
+            state.text.forget_families();
+        }
+    }
+
     // ---- windows -------------------------------------------------------
 
     fn open_window(&mut self, window: WindowId, config: &WindowConfig) {
@@ -83,6 +91,10 @@ impl Backend for Win32Backend {
     fn set_window_overlays(&mut self, window: WindowId, overlays: &[NodeId]) {
         if let Some(mut state) = self.app.state() {
             state.scene.set_layers(window, None, Some(overlays));
+        }
+        // Boot diagnostics must be visible even without a PHP application frame.
+        if !overlays.is_empty() {
+            crate::window::present(&self.app, window);
         }
     }
 
@@ -243,6 +255,23 @@ impl Backend for Win32Backend {
         crate::accessibility::content_changed(&self.app, id);
     }
 
+    fn set_key_capture(&mut self, id: NodeId, keys: &str) {
+        if let Some(mut state) = self.app.state()
+            && let Some(view) = state.scene.views.get_mut(&id)
+        {
+            view.capture_keys = keys.to_owned();
+        }
+    }
+
+    fn set_pointer_events(&mut self, id: NodeId, target_self: bool, target_children: bool) {
+        if let Some(mut state) = self.app.state()
+            && let Some(view) = state.scene.views.get_mut(&id)
+        {
+            view.target_self = target_self;
+            view.target_children = target_children;
+        }
+    }
+
     fn set_focusable(&mut self, id: NodeId, focusable: bool) {
         if let Some(mut state) = self.app.state()
             && let Some(view) = state.scene.views.get_mut(&id)
@@ -365,6 +394,20 @@ impl Backend for Win32Backend {
 
     fn begin_text_drag(&mut self, window: WindowId, source: NodeId, text: &str) {
         crate::dragdrop::begin_text_drag(&self.app, window, source, text);
+    }
+
+    fn print_document(
+        &mut self,
+        window: WindowId,
+        document: pam_desktop_ui::printing::Document,
+        complete: pam_desktop_ui::printing::PrintCompletion,
+    ) {
+        let parent = self
+            .app
+            .with_state(|state| state.scene.windows.get(&window).map(|entry| entry.hwnd))
+            .flatten()
+            .unwrap_or_default();
+        crate::printing::print(parent, document, complete);
     }
 
     fn announce(&mut self, message: &str, assertive: bool) -> bool {
@@ -679,7 +722,9 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
                     failed = true;
                     break;
                 }
-                if !crate::shell::translate_accelerator(&app, &message) {
+                if !crate::window::capture_message(&app, &message)
+                    && !crate::shell::translate_accelerator(&app, &message)
+                {
                     let _ = TranslateMessage(&message);
                     DispatchMessageW(&message);
                 }

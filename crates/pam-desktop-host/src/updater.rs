@@ -6,6 +6,18 @@
 //! system, checks its signed size and SHA-256, and hands it to a copy of the
 //! host (`apply-update`) that swaps the installed bundle once the
 //! application has exited.
+//!
+//! Freshness: a feed may carry a signed `expiresAtUnix` (`publish-update
+//! --expires-in DAYS`); an expired feed is refused, so a mirror cannot keep
+//! serving an old signed release forever. Independently of that, the updater
+//! remembers the newest version a verified feed of each channel offered
+//! (`.<bundle>.update-feed-seen` beside the bundle) and refuses a feed that
+//! goes back to an older one. Feeds without `expiresAtUnix` verify exactly as
+//! before; hosts older than this one refuse feeds that carry it, so publishers
+//! add it once every installed application runs a host that knows it.
+//!
+//! Archives are unpacked without programs from `PATH`: in Rust on Linux,
+//! with `/usr/bin/ditto` on macOS and the PowerShell of `System32` on Windows.
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -140,6 +152,10 @@ pub struct Release {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes_url: Option<String>,
     pub artifacts: Vec<Artifact>,
+    /// Signed end of validity (Unix seconds). Last and omitted when absent,
+    /// so feeds without it keep their exact signed payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_unix: Option<u64>,
 }
 
 impl Release {
@@ -164,6 +180,9 @@ impl Release {
         }
         if self.artifacts.is_empty() {
             return Err("update release must contain at least one artifact".to_owned());
+        }
+        if self.expires_at_unix == Some(0) {
+            return Err("update feed expiry must be a positive Unix time".to_owned());
         }
         let mut targets = HashSet::with_capacity(self.artifacts.len());
         for artifact in &self.artifacts {
@@ -545,8 +564,23 @@ impl Updater {
             .is_ok_and(|snapshot| snapshot.status == Status::Available);
         policy == UpdatePolicy::Automatic
             && available
+            && !self.rejected_here()
             && self.download().is_ok()
             && self.install().is_ok()
+    }
+
+    /// Whether the available release already failed to install over this
+    /// bundle: the `automatic` policy leaves it to the application, which
+    /// can still download and install it on request.
+    fn rejected_here(&self) -> bool {
+        let candidate = self.lock_state().candidate.clone();
+        self.inner
+            .installed
+            .as_ref()
+            .zip(candidate)
+            .is_some_and(|(installed, candidate)| {
+                rejected_release(&installed.root, &candidate.artifact.sha256)
+            })
     }
 
     fn check_inner(&self, config: &UpdateConfig) -> Result<Option<Candidate>, String> {
@@ -569,6 +603,12 @@ impl Updater {
         if feed.release.channel != config.channel {
             return Err("The signed release belongs to a different update channel.".to_owned());
         }
+        let watermark = self
+            .inner
+            .installed
+            .as_ref()
+            .and_then(|installed| feed_watermark_path(&installed.root).ok());
+        check_feed_freshness(&feed.release, unix_now(), watermark.as_deref())?;
         let current_version = self.lock_state().snapshot.current_version.clone();
         if !version_is_newer(&feed.release.version, &current_version) {
             return Ok(None);
@@ -886,6 +926,7 @@ pub struct PublishOptions {
     published_at: String,
     notes_url: Option<String>,
     artifacts: Vec<PublishArtifact>,
+    expires_in_days: Option<u64>,
     force: bool,
 }
 
@@ -911,6 +952,7 @@ impl PublishOptions {
         let mut published_at = None;
         let mut notes_url = None;
         let mut artifacts = Vec::new();
+        let mut expires_in_days = None;
         let mut force = false;
         let mut arguments = arguments.into_iter();
         while let Some(argument) = arguments.next() {
@@ -951,6 +993,14 @@ impl PublishOptions {
                         .ok_or("--artifact requires a target tuple")?;
                     artifacts.push(parse_publish_artifact(&value)?);
                 }
+                Some("--expires-in") => set_once(
+                    &mut expires_in_days,
+                    text_value(arguments.next())
+                        .and_then(|days| days.parse::<u64>().ok())
+                        .filter(|days| (1..=366).contains(days)),
+                    "--expires-in",
+                    "a number of days from 1 to 366",
+                )?,
                 Some("--force") => force = true,
                 Some(value) => return Err(format!("unknown publish-update option {value:?}")),
                 None => return Err("publish-update options must be valid UTF-8".to_owned()),
@@ -966,6 +1016,7 @@ impl PublishOptions {
             published_at: published_at.ok_or("--published-at is required")?,
             notes_url,
             artifacts,
+            expires_in_days,
             force,
         })
     }
@@ -1102,6 +1153,9 @@ pub fn publish_feed(application: &Application, options: PublishOptions) -> Resul
         published_at: options.published_at,
         notes_url: options.notes_url,
         artifacts,
+        expires_at_unix: options
+            .expires_in_days
+            .map(|days| unix_now() + days * 24 * 60 * 60),
     };
     release.validate()?;
     let signature = hex(&signing_key.sign(&release.signed_payload()?).to_bytes());
@@ -1270,6 +1324,132 @@ impl ApplyOptions {
 /// extraction, bundle verification or the swap fails; a failed swap is
 /// rolled back.
 pub fn apply(options: ApplyOptions) -> Result<(), String> {
+    let (parent_pid, configured, archive, sha256, launcher) = (
+        options.parent_pid,
+        options.bundle.clone(),
+        options.archive.clone(),
+        options.sha256.clone(),
+        options.launcher.clone(),
+    );
+    apply_release(options).inspect_err(|_| {
+        recover_from_failed_apply(
+            parent_pid,
+            &configured,
+            &archive,
+            &sha256,
+            launcher.as_deref(),
+        );
+    })
+}
+
+/// The application closed for an update that did not install: what is in
+/// place (the installed bundle, or the one a rollback restored) stays, so it
+/// starts again. The release is remembered as rejected, so that the
+/// `automatic` policy does not download it and close the application at
+/// every start, and the staged archive and extraction are removed.
+fn recover_from_failed_apply(
+    parent_pid: u32,
+    configured: &Path,
+    archive: &Path,
+    sha256: &str,
+    launcher: Option<&Path>,
+) {
+    let Ok(bundle) = resolve_bundle_target(configured) else {
+        return;
+    };
+    if let Ok(marker) = rejected_release_path(&bundle) {
+        let _ = fs::write(marker, sha256);
+    }
+    let _ = cleanup_update_stage(archive);
+    // Started while the application still runs, the launch would only hand
+    // itself to it.
+    if bundle.is_dir() && wait_for_parent(parent_pid).is_ok() {
+        let _ = relaunch(&bundle, launcher);
+    }
+}
+
+/// Beside the bundle: the SHA-256 of the last release its installation
+/// refused.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+fn feed_watermark_path(bundle: &Path) -> Result<PathBuf, String> {
+    let parent = bundle
+        .parent()
+        .ok_or("the installed bundle has no parent")?;
+    let name = bundle
+        .file_name()
+        .ok_or("the installed bundle has no file name")?
+        .to_string_lossy();
+    Ok(parent.join(format!(".{name}.update-feed-seen")))
+}
+
+/// Refuses an expired feed and, with a `watermark` file, a feed whose
+/// version is older than one a verified feed of the same channel already
+/// offered (a replayed or rolled back feed); then raises the watermark.
+fn check_feed_freshness(
+    release: &Release,
+    now: u64,
+    watermark: Option<&Path>,
+) -> Result<(), String> {
+    if let Some(expires) = release.expires_at_unix
+        && expires <= now
+    {
+        return Err(format!(
+            "The update feed expired (expiresAtUnix {expires}); the server is serving an outdated feed."
+        ));
+    }
+    let Some(watermark) = watermark else {
+        return Ok(());
+    };
+    let recorded = fs::read_to_string(watermark).ok();
+    let seen = recorded.as_deref().and_then(|text| {
+        let (channel, version) = text.trim_end().split_once('\n')?;
+        (channel == release.channel && validate_version(version).is_ok()).then_some(version)
+    });
+    if let Some(seen) = seen {
+        match compare_versions(&release.version, seen) {
+            Ordering::Less => {
+                return Err(format!(
+                    "The update feed offers {}, older than {seen} offered before; refusing a replayed feed.",
+                    release.version
+                ));
+            }
+            Ordering::Equal => return Ok(()),
+            Ordering::Greater => {}
+        }
+    }
+    // Best effort: a read-only installation still gets the expiry check.
+    let _ = atomic_write(
+        watermark,
+        format!("{}\n{}\n", release.channel, release.version).as_bytes(),
+        true,
+    );
+    Ok(())
+}
+
+fn rejected_release_path(bundle: &Path) -> Result<PathBuf, String> {
+    let parent = bundle
+        .parent()
+        .ok_or("the installed bundle has no parent")?;
+    let name = bundle
+        .file_name()
+        .ok_or("the installed bundle has no file name")?
+        .to_string_lossy();
+    Ok(parent.join(format!(".{name}.rejected-update")))
+}
+
+/// Whether the installation of this exact archive already failed here.
+fn rejected_release(bundle: &Path, sha256: &str) -> bool {
+    rejected_release_path(bundle)
+        .and_then(|path| fs::read(path).map_err(|error| error.to_string()))
+        .is_ok_and(|recorded| recorded == sha256.as_bytes())
+}
+
+fn apply_release(options: ApplyOptions) -> Result<(), String> {
     let ApplyOptions {
         parent_pid,
         bundle: configured_bundle,
@@ -1348,6 +1528,9 @@ pub fn apply(options: ApplyOptions) -> Result<(), String> {
     fs::remove_file(&transaction).map_err(|error| {
         format!("update installed but the transaction could not be removed: {error}")
     })?;
+    if let Ok(marker) = rejected_release_path(&bundle) {
+        let _ = fs::remove_file(marker);
+    }
     cleanup_update_stage(&archive)?;
     relaunch(&bundle, launcher.as_deref())
 }
@@ -1572,7 +1755,7 @@ fn verify_replacement(root: &Path) -> Result<bundle::BundleManifest, String> {
                 "macOS application updates cannot be installed on this platform".to_owned(),
             );
         }
-        let status = Command::new("codesign")
+        let status = Command::new("/usr/bin/codesign")
             .args(["--verify", "--deep", "--strict"])
             .arg(root)
             .status()
@@ -1599,13 +1782,13 @@ fn wait_for_parent(parent_pid: u32) -> Result<(), String> {
 
 fn process_exists(pid: u32) -> Result<bool, String> {
     if cfg!(windows) {
-        let output = crate::console::hidden(&mut Command::new("tasklist"))
+        let output = crate::console::hidden(&mut Command::new(system32().join("tasklist.exe")))
             .args(["/FI", &format!("PID eq {pid}"), "/NH"])
             .output()
             .map_err(|error| format!("cannot inspect the parent process with tasklist: {error}"))?;
         Ok(String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()))
     } else {
-        let status = Command::new("ps")
+        let status = Command::new("/bin/ps")
             .args(["-p", &pid.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1615,35 +1798,36 @@ fn process_exists(pid: u32) -> Result<bool, String> {
     }
 }
 
+/// `%SystemRoot%\\System32`, where Windows keeps the programs used here.
+fn system32() -> PathBuf {
+    std::env::var_os("SystemRoot")
+        .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from)
+        .join("System32")
+}
+
 fn extract_archive(archive: &Path, destination: &Path) -> Result<(), String> {
-    let status = if cfg!(target_os = "linux") {
-        Command::new("tar")
-            .arg("-xzf")
-            .arg(archive)
-            .arg("-C")
-            .arg(destination)
-            .args(["--no-same-owner", "--no-same-permissions"])
-            .status()
-    } else if cfg!(target_os = "macos") {
-        Command::new("ditto")
+    if cfg!(target_os = "linux") {
+        return extract_tar_gz(archive, destination);
+    }
+    let status = if cfg!(target_os = "macos") {
+        Command::new("/usr/bin/ditto")
             .args(["-x", "-k"])
             .arg(archive)
             .arg(destination)
             .status()
     } else if cfg!(windows) {
-        crate::console::hidden(&mut Command::new("powershell.exe"))
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Expand-Archive",
-                "-LiteralPath",
-            ])
-            .arg(archive)
-            .arg("-DestinationPath")
-            .arg(destination)
-            .arg("-Force")
-            .status()
+        crate::console::hidden(&mut Command::new(
+            system32().join(r"WindowsPowerShell\v1.0\powershell.exe"),
+        ))
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Expand-Archive -LiteralPath $env:PAM_UPDATE_ARCHIVE -DestinationPath $env:PAM_UPDATE_DESTINATION -Force",
+        ])
+        .env("PAM_UPDATE_ARCHIVE", archive)
+        .env("PAM_UPDATE_DESTINATION", destination)
+        .status()
     } else {
         return Err("portable update extraction is unsupported on this platform".to_owned());
     }
@@ -1652,6 +1836,79 @@ fn extract_archive(archive: &Path, destination: &Path) -> Result<(), String> {
         return Err(format!(
             "portable archive extraction failed with status {status}"
         ));
+    }
+    Ok(())
+}
+
+/// Unpacks a portable Linux archive in Rust: regular files, folders and
+/// relative symlinks that stay inside the archive; never owners, setuid
+/// bits, extended attributes, hard links or device files.
+fn extract_tar_gz(archive: &Path, destination: &Path) -> Result<(), String> {
+    use std::path::Component;
+    let file =
+        File::open(archive).map_err(|error| format!("cannot read the update archive: {error}"))?;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
+    archive.set_preserve_permissions(false);
+    archive.set_preserve_ownerships(false);
+    archive.set_unpack_xattrs(false);
+    archive.set_overwrite(false);
+    let entries = archive
+        .entries()
+        .map_err(|error| format!("the update archive is unreadable: {error}"))?;
+    for entry in entries {
+        let mut entry =
+            entry.map_err(|error| format!("the update archive is unreadable: {error}"))?;
+        let path = entry
+            .path()
+            .map_err(|error| format!("the update archive has an unreadable path: {error}"))?
+            .into_owned();
+        if path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
+        {
+            return Err(format!(
+                "the update archive has a path outside its folder: {}",
+                path.display()
+            ));
+        }
+        let kind = entry.header().entry_type();
+        if kind.is_symlink() {
+            let target = entry
+                .link_name()
+                .ok()
+                .flatten()
+                .ok_or("the update archive has a symlink without a target")?;
+            // Depth of the link's folder; `..` may climb at most that far.
+            let mut depth = path.components().count().saturating_sub(1) as isize;
+            for component in target.components() {
+                match component {
+                    Component::Normal(_) => depth += 1,
+                    Component::CurDir => {}
+                    Component::ParentDir => depth -= 1,
+                    _ => depth = -1,
+                }
+                if depth < 0 {
+                    return Err(format!(
+                        "the update archive has a symlink leaving it: {}",
+                        path.display()
+                    ));
+                }
+            }
+        } else if !kind.is_file() && !kind.is_dir() {
+            return Err(format!(
+                "the update archive has an unexpected special entry: {}",
+                path.display()
+            ));
+        }
+        if !entry
+            .unpack_in(destination)
+            .map_err(|error| format!("cannot unpack {}: {error}", path.display()))?
+        {
+            return Err(format!(
+                "the update archive escapes its folder: {}",
+                path.display()
+            ));
+        }
     }
     Ok(())
 }
@@ -1698,6 +1955,7 @@ mod tests {
                 bytes: artifact.len() as u64,
                 sha256: hex(&Sha256::digest(artifact)),
             }],
+            expires_at_unix: None,
         }
     }
 
@@ -2157,6 +2415,96 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_refused_update_restarts_the_installed_bundle_and_is_not_retried_automatically() {
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+        let root = temporary_directory("update-refused-relaunch");
+        let installed = root.join("application");
+        write_bundle(&installed, APPLICATION, "0.5.0", b"old");
+        fs::create_dir_all(installed.join("bin")).unwrap();
+        let launcher = installed.join("bin/app");
+        fs::write(&launcher, "#!/bin/sh\necho started > \"$0.started\"\n").unwrap();
+        fs::set_permissions(
+            &launcher,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        let staged_root = root.join("staged");
+        write_bundle(
+            &staged_root.join("replacement"),
+            APPLICATION,
+            "0.5.1",
+            b"new",
+        );
+        fs::write(staged_root.join("replacement/app/payload.txt"), b"evil").unwrap();
+        let stage = root.join(".pam-update-stage");
+        fs::create_dir(&stage).unwrap();
+        let archive = stage.join("update.tar.gz");
+        let sha256 = archive_of(&staged_root, "replacement", &archive);
+
+        let error = apply(ApplyOptions {
+            parent_pid: u32::MAX,
+            bundle: installed.clone(),
+            archive: archive.clone(),
+            sha256: sha256.clone(),
+            launcher: Some(PathBuf::from("bin/app")),
+        })
+        .unwrap_err();
+        assert!(error.contains("mismatch"), "{error}");
+        // The application that closed for the update starts again, unchanged.
+        let started = installed.join("bin/app.started");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !started.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(started.exists(), "the installed bundle was not relaunched");
+        assert_eq!(fs::read(installed.join("app/payload.txt")).unwrap(), b"old");
+        assert!(!archive.exists() && !stage.join("expanded").exists());
+        assert!(rejected_release(&installed, &sha256));
+        assert!(!rejected_release(&installed, &"e".repeat(64)));
+
+        // The automatic policy finds the same release and leaves it alone.
+        let artifact = b"refused release".to_vec();
+        let signing_key = SigningKey::from_bytes(&[13_u8; 32]);
+        let served = artifact.clone();
+        let downloads = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&downloads);
+        let feed = Arc::new(Mutex::new(Vec::new()));
+        let served_feed = Arc::clone(&feed);
+        let server = TestServer::start(move |request| match request.path.as_str() {
+            "/feed" => Served::ok(served_feed.lock().unwrap().clone()),
+            "/artifact" => {
+                counted.fetch_add(1, AtomicOrdering::SeqCst);
+                Served::ok(served.clone())
+            }
+            _ => Served::status(404, ""),
+        });
+        *feed.lock().unwrap() = serde_json::to_vec(&sign(
+            &signing_key,
+            release("0.5.1", &server.url("/artifact"), &artifact),
+        ))
+        .unwrap();
+        fs::write(
+            rejected_release_path(&installed).unwrap(),
+            hex(&Sha256::digest(&artifact)),
+        )
+        .unwrap();
+        let (updater, _) = updater(
+            server.url("/feed"),
+            public_key(&signing_key),
+            UpdatePolicy::Automatic,
+            Some(Installed {
+                root: installed.clone(),
+                launcher: Some(PathBuf::from("bin/app")),
+            }),
+        );
+        assert!(!updater.run_policy());
+        assert_eq!(updater.snapshot().status, Status::Available);
+        assert_eq!(downloads.load(AtomicOrdering::SeqCst), 0);
+        let _ = fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn recovers_every_interrupted_swap_state_idempotently() {
         let digest = "b".repeat(64);
@@ -2453,5 +2801,164 @@ mod tests {
             redirect_target("https://a.example/feed", "//evil.example/feed"),
             None
         );
+    }
+
+    #[test]
+    fn feeds_without_an_expiry_keep_their_signed_payload_and_new_ones_sign_it() {
+        let signing_key = SigningKey::from_bytes(&[21_u8; 32]);
+        let key = public_key(&signing_key);
+        let plain = release("1.0.0", "https://example.com/a", b"a");
+        let payload = String::from_utf8(plain.signed_payload().unwrap()).unwrap();
+        assert!(!payload.contains("expiresAtUnix"));
+        assert!(payload.ends_with("}]}"), "{payload}");
+        let legacy = format!(
+            r#"{{"release":{payload},"signature":"{}"}}"#,
+            hex(&signing_key.sign(payload.as_bytes()).to_bytes())
+        );
+        let legacy: SignedRelease = serde_json::from_str(&legacy).unwrap();
+        assert!(verify_signed_feed(&legacy, &key).is_ok());
+
+        let mut expiring = plain.clone();
+        expiring.expires_at_unix = Some(2_000_000_000);
+        let mut signed = sign(&signing_key, expiring);
+        assert!(verify_signed_feed(&signed, &key).is_ok());
+        signed.release.expires_at_unix = Some(4_000_000_000);
+        assert!(
+            verify_signed_feed(&signed, &key).is_err(),
+            "the expiry is signed"
+        );
+        signed.release.expires_at_unix = Some(0);
+        assert!(verify_signed_feed(&signed, &key).is_err());
+    }
+
+    #[test]
+    fn refuses_expired_and_rolled_back_feeds() {
+        let directory = std::env::temp_dir().join(format!("pam-feed-seen-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let watermark = directory.join(".app.update-feed-seen");
+        let at = |version: &str, expires: Option<u64>| {
+            let mut release = release(version, "https://example.com/a", b"a");
+            release.expires_at_unix = expires;
+            release
+        };
+        assert!(
+            check_feed_freshness(&at("1.0.0", Some(100)), 100, None)
+                .unwrap_err()
+                .contains("expired")
+        );
+        assert!(check_feed_freshness(&at("1.0.0", Some(101)), 100, None).is_ok());
+        assert!(check_feed_freshness(&at("1.0.0", None), u64::MAX, None).is_ok());
+
+        assert!(check_feed_freshness(&at("1.2.0", None), 0, Some(&watermark)).is_ok());
+        assert_eq!(fs::read_to_string(&watermark).unwrap(), "stable\n1.2.0\n");
+        assert!(check_feed_freshness(&at("1.2.0", None), 0, Some(&watermark)).is_ok());
+        assert!(
+            check_feed_freshness(&at("1.1.9", None), 0, Some(&watermark))
+                .unwrap_err()
+                .contains("replayed")
+        );
+        assert!(check_feed_freshness(&at("1.3.0", None), 0, Some(&watermark)).is_ok());
+        assert!(check_feed_freshness(&at("1.2.0", None), 0, Some(&watermark)).is_err());
+        // Another channel starts its own watermark.
+        let mut beta = at("0.9.0", None);
+        beta.channel = "beta".to_owned();
+        assert!(check_feed_freshness(&beta, 0, Some(&watermark)).is_ok());
+        // A damaged watermark is ignored, not trusted.
+        fs::write(&watermark, "stable\nnot a version\n").unwrap();
+        assert!(check_feed_freshness(&at("0.1.0", None), 0, Some(&watermark)).is_ok());
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn publish_accepts_a_bounded_expiry() {
+        let parse = |days: &str| {
+            PublishOptions::parse(
+                [
+                    "--key",
+                    "k",
+                    "--output",
+                    "o",
+                    "--published-at",
+                    "t",
+                    "--expires-in",
+                    days,
+                    "--artifact",
+                    "linux,x86_64,portable,a,https://example.com/a",
+                ]
+                .iter()
+                .map(OsString::from),
+            )
+        };
+        assert_eq!(parse("30").unwrap().expires_in_days, Some(30));
+        for invalid in ["0", "367", "-1", "x"] {
+            assert!(parse(invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn linux_archives_unpack_in_rust_and_refuse_escapes() {
+        let directory =
+            std::env::temp_dir().join(format!("pam-update-untar-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let archive = directory.join("update.tar.gz");
+        let write = |entries: &[(&str, tar::EntryType, &str)]| {
+            let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+                Vec::new(),
+                flate2::Compression::fast(),
+            ));
+            for (path, kind, value) in entries {
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(*kind);
+                header.set_mode(0o755);
+                let contents: &[u8] = if kind.is_file() {
+                    value.as_bytes()
+                } else {
+                    &[]
+                };
+                header.set_size(contents.len() as u64);
+                if kind.is_symlink() || *kind == tar::EntryType::Link {
+                    header.set_link_name(value).unwrap();
+                }
+                let name = path.as_bytes();
+                header.as_old_mut().name[..name.len()].copy_from_slice(name);
+                header.set_cksum();
+                builder.append(&header, contents).unwrap();
+            }
+            fs::write(&archive, builder.into_inner().unwrap().finish().unwrap()).unwrap();
+        };
+        write(&[
+            ("App/", tar::EntryType::Directory, ""),
+            ("App/lib/", tar::EntryType::Directory, ""),
+            ("App/lib/libx.so.1", tar::EntryType::Regular, "x"),
+            ("App/lib/libx.so", tar::EntryType::Symlink, "libx.so.1"),
+            ("App/up", tar::EntryType::Symlink, "lib/../lib/libx.so.1"),
+        ]);
+        let out = directory.join("ok");
+        fs::create_dir(&out).unwrap();
+        extract_tar_gz(&archive, &out).unwrap();
+        assert_eq!(
+            fs::read_to_string(out.join("App/lib/libx.so")).unwrap(),
+            "x"
+        );
+        for (index, entries) in [
+            vec![("App/../../evil", tar::EntryType::Regular, "x")],
+            vec![("/abs", tar::EntryType::Regular, "x")],
+            vec![("App/l", tar::EntryType::Symlink, "/etc")],
+            vec![("App/l", tar::EntryType::Symlink, "../../etc")],
+            vec![("App/h", tar::EntryType::Link, "App/x")],
+            vec![("App/f", tar::EntryType::Fifo, "")],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write(&entries);
+            let out = directory.join(format!("bad-{index}"));
+            fs::create_dir(&out).unwrap();
+            assert!(extract_tar_gz(&archive, &out).is_err(), "{index}");
+        }
+        assert!(!directory.join("evil").exists());
+        fs::remove_dir_all(&directory).unwrap();
     }
 }

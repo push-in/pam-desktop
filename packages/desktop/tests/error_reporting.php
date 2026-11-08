@@ -221,3 +221,43 @@ Runtime::shutdown();
 TestDiagnostics::$messages = [];
 TestDiagnostics::$moduleCall = null;
 TestDiagnostics::$typedCall = null;
+
+// An error raised inside a template keeps its own type, message and origin;
+// the template is one frame of its stack. A template error of its own points
+// at the template, with a message free of the location.
+$inner = new DomainException('Total is not ready.');
+$report = RuntimeError::from(
+    new \Pam\Desktop\TemplateException($inner->getMessage(), __FILE__, 7, 3, $inner),
+    RuntimeErrorPhase::Render,
+);
+$templateFrames = array_values(array_filter($report->frames, static fn (StackFrame $frame): bool => $frame->call === 'template'));
+$assert(
+    $report->type === DomainException::class
+        && $report->message === 'Total is not ready.'
+        && $report->file === $thisFile
+        && $report->line === $inner->getLine()
+        && count($templateFrames) === 1
+        && $templateFrames[0]->line === 7,
+    'A template must report the error raised inside it, with the template as a frame.',
+);
+$report = RuntimeError::from(new \Pam\Desktop\TemplateException('Unknown variable $total', __FILE__, 7, 3), RuntimeErrorPhase::Render);
+$assert(
+    $report->type === \Pam\Desktop\TemplateException::class
+        && $report->message === 'Unknown variable $total'
+        && $report->line === 7
+        && $report->column === 3
+        && $report->frames[$report->appFrame]->call === 'template'
+        && ($report->snippet['line'] ?? null) === 7,
+    'A template error must point at the template line and column.',
+);
+
+// A PHP fatal error has no stack: the report is where it stopped.
+$report = RuntimeError::from(new ErrorException('Allowed memory size exhausted', 0, E_ERROR, __FILE__, 3), RuntimeErrorPhase::Worker);
+$assert(
+    $report->fatal()
+        && count($report->frames) === 1
+        && $report->frames[0]->call === 'fatal error'
+        && $report->file === $thisFile
+        && $report->line === 3,
+    'A fatal error must be reported at the line where PHP stopped.',
+);

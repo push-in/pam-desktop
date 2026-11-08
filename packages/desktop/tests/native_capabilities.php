@@ -399,6 +399,26 @@ $assert(
     'App::onStateChange must deliver foreground/background transitions until unsubscribed.',
 );
 
+$networkScope = \Pam\Desktop\effectScope(static fn (): \Pam\Desktop\Composables\NetworkState => \Pam\Desktop\useNetwork());
+$networkWatch = $lastCall();
+$assert($networkWatch['module'] === 'device' && $networkWatch['method'] === 'watch', 'The shared network source must observe device status while foregrounded.');
+Runtime::dispatchModuleResult($networkWatch['requestId'], ModuleResultStatus::Success->value, Wire::map(['subscription' => 71]));
+$networkNext = $lastCall();
+$assert($networkNext['module'] === 'device' && $networkNext['method'] === 'next', 'Foreground network state must receive host updates.');
+Runtime::dispatchEvent(0, \Pam\Desktop\EventKind::AppState->value, (string) \Pam\Desktop\AppState::Background->value);
+$networkStop = $lastCall();
+$assert($networkStop['module'] === 'device' && $networkStop['method'] === 'stop', 'The shared network source must stop host sampling while hidden or minimized.');
+Runtime::dispatchModuleResult($networkNext['requestId'], ModuleResultStatus::Failure->value, 'stopped');
+Runtime::dispatchEvent(0, \Pam\Desktop\EventKind::AppState->value, (string) \Pam\Desktop\AppState::Active->value);
+$networkResume = $lastCall();
+$assert($networkResume['module'] === 'device' && $networkResume['method'] === 'watch', 'The shared network source must resume when the app returns to the foreground.');
+Runtime::dispatchModuleResult($networkResume['requestId'], ModuleResultStatus::Success->value, Wire::map(['subscription' => 72]));
+$networkNext = $lastCall();
+$networkScope->dispose();
+$networkStop = $lastCall();
+$assert($networkStop['module'] === 'device' && $networkStop['method'] === 'stop', 'Releasing the last network consumer must stop host sampling.');
+Runtime::dispatchModuleResult($networkNext['requestId'], ModuleResultStatus::Failure->value, 'stopped');
+
 // ScrollView end reached.
 $scroll = \Pam\Desktop\UI\ScrollView::make(Text::make('Feed'))->onEndReached(static fn () => null, 0.25)->toElement();
 $assert(

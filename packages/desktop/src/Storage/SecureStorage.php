@@ -26,11 +26,13 @@ final class SecureStorage
     {
     }
 
-    /** @param Closure(?string): void $callback null when the key has no value (or could not be read) */
-    public static function get(string $key, Closure $callback): int
+    /** @param Closure(?string): void $callback null when absent (or unreadable without failure callback)
+     * @param null|Closure(string): void $failure */
+    public static function get(string $key, Closure $callback, ?Closure $failure = null): int
     {
-        return NativeModules::call('secure-storage', 'get', ['key' => self::key($key)], static function ($result) use ($callback): void {
+        return NativeModules::call('secure-storage', 'get', ['key' => self::key($key)], static function ($result) use ($callback, $failure): void {
             if ($result->status === ModuleResultStatus::Failure) {
+                if ($failure !== null) { $failure($result->payload); return; }
                 $callback(null);
 
                 return;

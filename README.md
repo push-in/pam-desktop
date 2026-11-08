@@ -11,7 +11,7 @@ Components, state and styles in PHP; a Rust host that lays the tree out and driv
 ![Rust](https://img.shields.io/badge/Rust-1.92-000000?style=flat-square&logo=rust&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
-**[Getting started](docs/getting-started.md) · [Components](docs/components.md) · [Architecture](docs/architecture.md) · [Platforms](docs/platforms.md) · [Issues](https://github.com/push-in/pam-desktop/issues)**
+**[Getting started](docs/getting-started.md) · [Components](docs/components.md) · [Templates](docs/templates.md) · [Styling](docs/styling.md) · [Platforms](docs/platforms.md) · [Issues](https://github.com/push-in/pam-desktop/issues)**
 
 </div>
 
@@ -37,10 +37,13 @@ A PHP developer should be able to ship a desktop application whose interface is 
 ## Quick start
 
 ```bash
+mkdir my-app && cd my-app
 composer require pushinbr/pam-desktop
 vendor/bin/pam-desktop init
-vendor/bin/pam-desktop dev
+pam desktop dev          # or: vendor/bin/pam-desktop dev, or: composer dev
 ```
+
+`init` writes a small application: a router, a home screen as a `.pam.php` template with scoped CSS, design tokens, a service and a test. `dev` needs no argument (it finds the nearest `pam-desktop.json`), reloads the window about 0.3 s after a save and keeps `#[State]` values. `pam desktop dev` is the same command through the [PAM CLI](https://github.com/push-in/pam). Without PHP on the machine, the host installs it (the PAM runtime on Linux and macOS, the official windows.php.net build on Windows).
 
 `vendor/bin/pam-desktop` downloads the native host of the installed version for the current system, verifies its SHA-256 and runs it. Version 2.0.0 is not released yet: there is no `v2.0.0` tag for Composer to install and no host archive to download. Until there is, work from a checkout (see below); `PAM_DESKTOP_HOST` points the launcher at a host built from source.
 
@@ -108,7 +111,7 @@ Assigning to a `#[State]` property schedules a render. The host receives a patch
 
 | Requirement | Notes |
 | --- | --- |
-| PHP 8.5 | The `php` executable on `PATH`, or `pam` (the host then runs `pam exec`), or the path in `PAM_DESKTOP_PHP`. |
+| PHP 8.5 | The `php` executable on `PATH`, or `pam` (the host then runs `pam exec`), or the path in `PAM_DESKTOP_PHP`. On Linux and macOS without any of them, the host installs the PAM runtime, which embeds PHP; on Windows it downloads the official PHP 8.5 build from windows.php.net (not run on Windows yet). |
 | Composer | To install the `pushinbr/pam-desktop` package. |
 | Linux, to run a released host | glibc 2.39 or newer, GTK 4.14 or newer and the GStreamer plugins for media. WebKitGTK 6 (`libwebkitgtk-6.0-4`) only for applications that show a `WebView`. The released host is built on Ubuntu 24.04. |
 | Rust 1.92 or newer | Only to build the host from a checkout. `rust-toolchain.toml` selects the stable channel. |
@@ -149,32 +152,38 @@ Every directory under `examples/` is a runnable application that exercises one f
 | `modules` | Timers, storage, alerts, clipboard, device information, appearance |
 | `links` | A URL scheme, a single instance that receives the link of every later launch, a screen reader announcement |
 | `toast`, `errors` | Toasts; the development error overlay |
+| `web-defaults` | Web semantics: a content-sized list, CSS font stacks, thin classic scrollbars, value methods in templates, Chart.js value axes |
 
 ## Platforms
 
 | System | Backend | Status |
 | --- | --- | --- |
-| Linux | GTK 4 (`pam-desktop-gtk`) | The reference backend. Every example above was run and checked on Linux. |
-| macOS | AppKit (`pam-desktop-appkit`) | Written against the same `Backend` contract and type-checked by cross compilation. Not yet run on a real machine: first runs are expected to need fixes. |
-| Windows | Win32 + Direct2D/DirectWrite (`pam-desktop-win32`) | Same as macOS: written and type-checked, not yet run on a real machine. |
+| Linux | GTK 4 (`pam-desktop-gtk`) | The reference backend. Every example above, and every feature below, was run and checked on Linux. |
+| macOS | AppKit (`pam-desktop-appkit`) | Run on macOS 26 (x86_64) in a virtual machine without a GPU: the core examples, hot reload, keyboard and pointer input, a real application and a DMG from `pam-desktop build`. Not run on Apple Silicon; blur, media, web views, notifications, printing and drag and drop not verified. |
+| Windows | Win32 + Direct2D/DirectWrite (`pam-desktop-win32`) | Written against the same `Backend` contract and type-checked by cross compilation. Not run on Windows yet: first runs are expected to need fixes. |
 
 The host starts the backend of the system it was built for. Two things were not verified on Linux either: the accessibility tree with a real screen reader, and global shortcuts through the Wayland portal (X11 key grabs were verified).
 
-Details, dependencies and the commands that cross-check the macOS and Windows backends from Linux are in [Platforms](docs/platforms.md). [First run on macOS and Windows](docs/first-run-macos-windows.md) is the checklist for the first run on those systems and the list of known differences from the GTK backend.
+Details, a per-feature status table, dependencies and the commands that cross-check the macOS and Windows backends from Linux are in [Platforms](docs/platforms.md). [First run on macOS and Windows](docs/first-run-macos-windows.md) is the checklist for the first run on those systems and the list of known differences from the GTK backend.
 
 ## Features
 
 | Area | What you get | Document |
 | --- | --- | --- |
-| Components | Layout, text, buttons, inputs, switches, lists, scroll views, modals, bottom sheets, stack navigation with a header, tabs | [Components](docs/components.md) |
-| Styling | `Style`, pressed/hover/focus styles, cursors, tooltips, dark mode, text scale | [Styling](docs/styling.md) |
-| Desktop shell | Main window control, secondary windows, menu bar, context menus, tray, local and global shortcuts, file dialogs, notifications, drag and drop, clipboard | [Desktop shell](docs/desktop-shell.md) |
+| Components | Layout, text with inline boxes, buttons, inputs (masks, currency, decimal), switches, content-sized lists, scroll views, modals with backdrop blur, bottom sheets, stack navigation with a header, tabs | [Components](docs/components.md) |
+| Templates | `.pam.php` single-file components: expressions with enums, constants and value methods, `<Slot :content>`, per-component error isolation | [Templates](docs/templates.md) |
+| Styling | `Style` and scoped CSS: state selectors with `:focus-within`, `@media`, font stacks and packaged fonts, line breaking, `white-space`, styled scrollbars, `backdrop-filter`, fractional grid tracks, dark mode, text scale | [Styling](docs/styling.md), [Grid tracks](docs/grid-tracks.md) |
+| Controls | Select, Autocomplete, MultiSelect, DatePicker, Toast and the window toast service, Checkbox, ProgressButton (`pushinbr/pam-desktop-ui`) | [DesktopUI](docs/desktop-ui.md) |
+| Internationalization | Framework defaults in English, Portuguese and Spanish, following the system or `I18n::use()`, overridable per app and per component | [Internationalization](docs/i18n.md) |
+| Charts | Line, area, bar, donut, sparkline, progress ring on the native canvas (`pushinbr/pam-desktop-charts`) | [Charts](docs/charts.md) |
+| Desktop shell | Main window control, secondary windows, menu bar, context menus, tray, local and global shortcuts, key capture, file dialogs, notifications, typed drag and drop, clipboard | [Desktop shell](docs/desktop-shell.md) |
 | Media and web | Images with a disk cache, video and audio, embedded web pages, vector and freehand canvases | [Media and web](docs/media-and-web.md) |
 | Motion | Transitions, presets, animation programs, gesture detectors, drag contracts, swipeable rows, native pan and zoom | [Animation and gestures](docs/animation-and-gestures.md) |
-| Modules | Key/value storage, file sandbox, HTTP, SQLite, secure storage, timers, device information and status, links and deep links with a single instance, toasts, alerts | [Modules](docs/modules.md) |
+| Modules | Key/value storage, file sandbox and save dialog, HTTP, WebSocket, SQLite with guarded transactions, secure storage, printing, timers, device information and status, links and deep links with a single instance, toasts, alerts | [Modules](docs/modules.md) |
 | Accessibility | Roles, labels, states and actions mapped to AT-SPI, NSAccessibility and UI Automation; announcements; text selection; keyboard navigation | [Accessibility](docs/accessibility.md) |
 | Development | Hot reload with state preservation, the error overlay, screenshots on a virtual display, test suites, static analysis, CI | [Development](docs/development.md) |
 | Internals | Processes, the frame protocol, the render core, the `Backend` contract, threading | [Architecture](docs/architecture.md) |
+| Compatibility | Host and SDK versions, the property table and what an older host refuses | [Compatibility](docs/compatibility.md) |
 | Shipping | Packaging and installers | [Distribution](docs/distribution.md) |
 | Updates | Application updates | [Updates](docs/updates.md) |
 
@@ -191,7 +200,10 @@ crates/
   pam-desktop-appkit   macOS backend (AppKit)
   pam-desktop-win32    Windows backend (Win32, Direct2D, DirectWrite)
   pam-desktop-host     the pam-desktop binary; SQLite, secure storage, packaging and updates
-packages/desktop/      the PHP package (Pam\Desktop), the Composer launcher, the worker bootstrap and tests
+packages/desktop/      the PHP package (Pam\Desktop), the Composer launcher, the worker bootstrap, the init skeleton and tests
+packages/desktop-ui/   ready controls (Pam\DesktopUi)
+packages/charts/       charts (Pam\Desktop\Charts), drawn with packages/canvas/
+packages/desktop-printing/  native printing of text documents and receipts
 examples/              one runnable application per feature
 scripts/               shot.sh captures an example on a virtual display; visual.sh compares the examples with a baseline; package-host.sh packs a release archive
 .github/workflows/     ci.yml (checks) and release.yml (host archives of a tag)
@@ -202,7 +214,11 @@ docs/                  this documentation
 
 - [Getting started](docs/getting-started.md)
 - [Components](docs/components.md)
+- [Templates](docs/templates.md)
 - [Styling](docs/styling.md)
+- [Grid tracks](docs/grid-tracks.md)
+- [DesktopUI](docs/desktop-ui.md)
+- [Charts](docs/charts.md)
 - [Desktop shell](docs/desktop-shell.md)
 - [Media and web](docs/media-and-web.md)
 - [Animation and gestures](docs/animation-and-gestures.md)
@@ -210,6 +226,7 @@ docs/                  this documentation
 - [Accessibility](docs/accessibility.md)
 - [Development](docs/development.md)
 - [Architecture](docs/architecture.md)
+- [Compatibility](docs/compatibility.md)
 - [Platforms](docs/platforms.md)
 - [First run on macOS and Windows](docs/first-run-macos-windows.md)
 - [Distribution](docs/distribution.md)

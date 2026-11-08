@@ -27,27 +27,10 @@ enum MenuRole: string
     case HideOthers = 'hideOthers';
     case ShowAll = 'showAll';
 
-    /** The label used when the application gives none. */
+    /** The label used when the application gives none, in the framework language (FrameworkText). */
     public function label(): string
     {
-        return match ($this) {
-            self::Quit => 'Quit',
-            self::About => 'About',
-            self::Preferences => 'Preferences…',
-            self::Undo => 'Undo',
-            self::Redo => 'Redo',
-            self::Cut => 'Cut',
-            self::Copy => 'Copy',
-            self::Paste => 'Paste',
-            self::SelectAll => 'Select All',
-            self::Minimize => 'Minimize',
-            self::Zoom => 'Zoom',
-            self::ToggleFullScreen => 'Toggle Full Screen',
-            self::CloseWindow => 'Close Window',
-            self::Hide => 'Hide',
-            self::HideOthers => 'Hide Others',
-            self::ShowAll => 'Show All',
-        };
+        return \Pam\Desktop\I18n\FrameworkText::get('menu.'.$this->value);
     }
 
     /** The conventional shortcut of the role, portable across systems. */

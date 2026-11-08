@@ -15,4 +15,5 @@ enum StyleInteractionState: int
     case Active = 7;
     case Loading = 8;
     case Error = 9;
+    case FocusWithin = 10;
 }

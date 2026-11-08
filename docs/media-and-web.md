@@ -293,6 +293,8 @@ $chart->style(new Style(width: 380, height: 200));
 
 A canvas holds at most 10,000 commands and one mebibyte of encoded commands. The drawing is rebuilt from state on each render, like any element; the host only rasterises it.
 
+The host also draws vector paths (absolute `M`, `L`, `C`, `Q` and `Z`, at most 4096 characters) filled with a colour or a linear gradient or stroked, single lines of text, and reports pointer down, move, up and leave over a canvas. Those commands are used through `pushinbr/pam-desktop-canvas` (`Canvas`, `Path`, `CanvasView`), the library the [charts](charts.md#the-canvas-library) are drawn with. GTK, AppKit and Win32 implement them; they were checked on Linux.
+
 ## DrawingCanvas
 
 `DrawingCanvas` is a freehand surface over a picture. The user draws with the pointer; the strokes are a JSON document that PHP keeps in state.

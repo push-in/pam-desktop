@@ -6,7 +6,7 @@
 
 use pam_desktop_wire::{NodeKind, PropKey};
 
-use crate::backend::{DrawCommand, NodeId, PointerButton, PointerEvent, PointerPhase};
+use crate::backend::{DrawCommand, DrawPaint, NodeId, PointerButton, PointerEvent, PointerPhase};
 use crate::color::Color;
 use crate::context::{Ctx, HostCommand, event_kind};
 use crate::geometry::{Point, Rect, Size};
@@ -27,8 +27,9 @@ const MAX_EVENT_BYTES: usize = 1024 * 1024;
 fn number(value: Option<&serde_json::Value>) -> f32 {
     value
         .and_then(serde_json::Value::as_f64)
-        .filter(|number| number.is_finite())
-        .map_or(0.0, |number| number as f32)
+        .map(|number| number as f32)
+        .filter(|number| number.is_finite() && number.abs() <= 10_000_000.0)
+        .unwrap_or(0.0)
 }
 
 fn color(value: Option<&serde_json::Value>) -> Option<Color> {
@@ -44,6 +45,9 @@ fn color(value: Option<&serde_json::Value>) -> Option<Color> {
 /// circles and lines. Anything malformed is skipped.
 #[must_use]
 pub fn parse_canvas(json: &str) -> Vec<DrawCommand> {
+    if json.len() > 1_000_000 {
+        return Vec::new();
+    }
     let Ok(serde_json::Value::Array(entries)) = serde_json::from_str::<serde_json::Value>(json)
     else {
         return Vec::new();
@@ -87,6 +91,71 @@ pub fn parse_canvas(json: &str) -> Vec<DrawCommand> {
                 width: field("width").max(0.0),
                 color: paint,
             },
+            5 => {
+                let Some(segments) = object
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(crate::canvas_path::parse)
+                else {
+                    continue;
+                };
+                let fill = if let Some(gradient) = object
+                    .get("gradient")
+                    .and_then(serde_json::Value::as_object)
+                {
+                    let Some(start) = color(gradient.get("start")) else {
+                        continue;
+                    };
+                    let Some(end) = color(gradient.get("end")) else {
+                        continue;
+                    };
+                    Some(DrawPaint::LinearGradient {
+                        from: Point::new(number(gradient.get("x0")), number(gradient.get("y0"))),
+                        to: Point::new(number(gradient.get("x1")), number(gradient.get("y1"))),
+                        start,
+                        end,
+                    })
+                } else {
+                    color(object.get("fill")).map(DrawPaint::Solid)
+                };
+                DrawCommand::Path {
+                    segments,
+                    fill,
+                    stroke: color(object.get("stroke")),
+                    width: field("width").clamp(0.0, 4096.0),
+                }
+            }
+            6 => {
+                let Some(text) = object.get("text").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                if text.len() > 4096 || text.contains('\0') {
+                    continue;
+                }
+                let family = object
+                    .get("family")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                if family.len() > 256 {
+                    continue;
+                }
+                DrawCommand::Text {
+                    text: text.to_owned(),
+                    baseline: Point::new(field("x"), field("y")),
+                    color: paint,
+                    font: crate::text::FontSpec {
+                        family: family.to_owned(),
+                        size: field("size").clamp(1.0, 512.0),
+                        weight: field("weight").clamp(1.0, 1000.0) as u16,
+                        ..Default::default()
+                    },
+                    align: match field("align") as i32 {
+                        2 => crate::text::TextAlign::Center,
+                        3 => crate::text::TextAlign::End,
+                        _ => crate::text::TextAlign::Start,
+                    },
+                }
+            }
             _ => continue,
         };
         commands.push(command);
@@ -234,6 +303,8 @@ pub struct Drawings {
     sketches: IdMap<Sketch>,
     /// The sketch that owns the pointer until it is released.
     capture: Option<NodeId>,
+    hovered_canvas: Option<NodeId>,
+    canvas_move: Option<(NodeId, Vec<u8>)>,
     dirty: bool,
 }
 
@@ -256,6 +327,16 @@ impl Drawings {
             }
             Change::Removed(id, NodeKind::Canvas) => {
                 self.canvases.remove(&id);
+                if self.hovered_canvas == Some(id) {
+                    self.hovered_canvas = None;
+                }
+                if self
+                    .canvas_move
+                    .as_ref()
+                    .is_some_and(|(node, _)| *node == id)
+                {
+                    self.canvas_move = None;
+                }
             }
             Change::Removed(id, NodeKind::DrawingCanvas) => {
                 self.sketches.remove(&id);
@@ -446,6 +527,7 @@ impl Drawings {
     /// Feeds a pointer event to the sketches. `true` means a sketch consumed
     /// it and nothing else should react.
     pub fn on_pointer(&mut self, ctx: &mut Ctx<'_>, pointer: PointerEvent) -> bool {
+        self.canvas_pointer(ctx, pointer);
         if let Some(id) = self.capture {
             let Some(content) = self.content(ctx, id) else {
                 self.capture = None;
@@ -521,8 +603,79 @@ impl Drawings {
         true
     }
 
-    /// Drops the stroke in progress (Escape, lost pointer).
+    /// Native canvas hover/press events. Motion is coalesced per runtime drain.
+    fn canvas_pointer(&mut self, ctx: &mut Ctx<'_>, pointer: PointerEvent) {
+        let hit = if pointer.phase == PointerPhase::Cancel {
+            None
+        } else {
+            ctx.scene.hit_test(pointer.position).filter(|id| {
+                self.canvases.contains_key(id)
+                    && ctx.scene.node(*id).is_some_and(|node| {
+                        node.handles(PropKey::OnNativeEvent)
+                            && node.props().flag_or(PropKey::Enabled, true)
+                    })
+            })
+        };
+        if self.hovered_canvas != hit {
+            self.canvas_move = None;
+            if let Some(previous) = self.hovered_canvas {
+                ctx.emit_if(
+                    previous,
+                    PropKey::OnNativeEvent,
+                    event_kind::NATIVE,
+                    crate::wiremap::WireMap::new()
+                        .with("event", 4_i64)
+                        .with("x", 0.0_f32)
+                        .with("y", 0.0_f32)
+                        .encode(),
+                );
+            }
+            self.hovered_canvas = hit;
+        }
+        let Some(id) = hit else {
+            return;
+        };
+        let kind = match pointer.phase {
+            PointerPhase::Down if pointer.button == PointerButton::Primary => 1_i64,
+            PointerPhase::Move => 2,
+            PointerPhase::Up if pointer.button == PointerButton::Primary => 3,
+            _ => return,
+        };
+        let origin = ctx.scene.window_origin(id);
+        let payload = crate::wiremap::WireMap::new()
+            .with("event", kind)
+            .with("x", pointer.position.x - origin.x)
+            .with("y", pointer.position.y - origin.y)
+            .encode();
+        if pointer.phase == PointerPhase::Move {
+            self.canvas_move = Some((id, payload));
+        } else {
+            self.flush(ctx);
+            ctx.emit(id, event_kind::NATIVE, payload);
+        }
+    }
+
+    pub fn flush(&mut self, ctx: &mut Ctx<'_>) {
+        if let Some((id, payload)) = self.canvas_move.take() {
+            ctx.emit_if(id, PropKey::OnNativeEvent, event_kind::NATIVE, payload);
+        }
+    }
+
+    /// Drops the stroke and canvas hover in progress (Escape, lost pointer).
     pub fn cancel(&mut self, ctx: &mut Ctx<'_>) -> bool {
+        self.canvas_move = None;
+        if let Some(id) = self.hovered_canvas.take() {
+            ctx.emit_if(
+                id,
+                PropKey::OnNativeEvent,
+                event_kind::NATIVE,
+                crate::wiremap::WireMap::new()
+                    .with("event", 4_i64)
+                    .with("x", 0.0_f32)
+                    .with("y", 0.0_f32)
+                    .encode(),
+            );
+        }
         let Some(id) = self.capture.take() else {
             return false;
         };

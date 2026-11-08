@@ -392,7 +392,8 @@ fn build_menu(
                         checked: *checked,
                     });
                     let command = items.len();
-                    let mut text = menu_label(label);
+                    let mut text =
+                        menu_label(&pam_desktop_ui::i18n::menu_label(label, *role, None));
                     if let Some(accelerator) = accelerator {
                         text.push('\t');
                         text.push_str(&events::accelerator_label(accelerator));

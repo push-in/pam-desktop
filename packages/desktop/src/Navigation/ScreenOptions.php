@@ -28,7 +28,8 @@ final readonly class ScreenOptions
         public ?Renderable $headerTitle = null,
         public ?Renderable $headerLeft = null,
         public ?Renderable $headerRight = null,
-        public string $headerSearchPlaceholder = 'Search',
+        /** null: the framework default ("Search", localized). */
+        public ?string $headerSearchPlaceholder = null,
         public ?Closure $onHeaderSearchChange = null,
         public NavigationPresentation $presentation = NavigationPresentation::Card,
         public NavigationOrientation $orientation = NavigationOrientation::PlatformDefault,
@@ -49,7 +50,7 @@ final readonly class ScreenOptions
         if ($title !== null && strlen($title) > 512) {
             throw new InvalidArgumentException('Navigation titles cannot exceed 512 bytes.');
         }
-        if (strlen($headerSearchPlaceholder) > 256) {
+        if ($headerSearchPlaceholder !== null && strlen($headerSearchPlaceholder) > 256) {
             throw new InvalidArgumentException('Header search placeholders cannot exceed 256 bytes.');
         }
         if ($animationDurationMs !== null && ($animationDurationMs < 0 || $animationDurationMs > 2_000)) {
@@ -73,6 +74,12 @@ final readonly class ScreenOptions
     }
 
     /** @return array<string, mixed> */
+    /** The search field placeholder: the given one, else the localized framework default. */
+    public function searchPlaceholder(): string
+    {
+        return $this->headerSearchPlaceholder ?? \Pam\Desktop\I18n\FrameworkText::get('navigation.search');
+    }
+
     public function toArray(): array
     {
         return [
@@ -87,7 +94,7 @@ final readonly class ScreenOptions
             'hasCustomHeaderTitle' => $this->headerTitle !== null,
             'hasHeaderLeft' => $this->headerLeft !== null,
             'hasHeaderRight' => $this->headerRight !== null,
-            'headerSearchPlaceholder' => $this->headerSearchPlaceholder,
+            'headerSearchPlaceholder' => $this->searchPlaceholder(),
             'presentation' => $this->presentation->value,
             'orientation' => $this->orientation->value,
             'animation' => $this->animation->value,

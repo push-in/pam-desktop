@@ -35,6 +35,7 @@ use objc2_user_notifications::{
 };
 use pam_desktop_ui::backend::{AlertButtonStyle, AlertConfig, BackendEvent, Modifiers};
 use pam_desktop_ui::geometry::{Point, Size};
+use pam_desktop_ui::i18n;
 use pam_desktop_ui::shell::{
     Accelerator, Cursor, FileDialogConfig, FileDialogKind, MenuNode, MenuRole, NotificationConfig,
     Shortcut, TrayConfig, WindowCommand,
@@ -462,6 +463,15 @@ fn add_node(mtm: MainThreadMarker, menu: &NSMenu, node: &MenuNode, target: &Menu
         } => {
             let default_accelerator = role.and_then(role_accelerator);
             let accelerator = accelerator.as_ref().or(default_accelerator.as_ref());
+            // A role item without a label gets the platform's, translated.
+            let named;
+            let label = match role {
+                Some(role) if label.trim().is_empty() => {
+                    named = i18n::menu_role(*role, Some(&application_name()));
+                    named.as_str()
+                }
+                _ => label.as_str(),
+            };
             let item = match role.and_then(role_selector) {
                 // Sent to the first responder that implements it; a
                 // disabled role item simply has no action.
@@ -518,13 +528,16 @@ fn application_menu(name: &str) -> MenuNode {
         label: name.to_owned(),
         enabled: true,
         children: vec![
-            role_item(&format!("About {name}"), MenuRole::About),
+            role_item(
+                &i18n::menu_role(MenuRole::About, Some(name)),
+                MenuRole::About,
+            ),
             MenuNode::Separator,
-            role_item(&format!("Hide {name}"), MenuRole::Hide),
-            role_item("Hide Others", MenuRole::HideOthers),
-            role_item("Show All", MenuRole::ShowAll),
+            role_item(&i18n::menu_role(MenuRole::Hide, Some(name)), MenuRole::Hide),
+            role_item(i18n::text(i18n::Text::HideOthers), MenuRole::HideOthers),
+            role_item(i18n::text(i18n::Text::ShowAll), MenuRole::ShowAll),
             MenuNode::Separator,
-            role_item(&format!("Quit {name}"), MenuRole::Quit),
+            role_item(&i18n::menu_role(MenuRole::Quit, Some(name)), MenuRole::Quit),
         ],
     }
 }
@@ -534,27 +547,30 @@ fn application_menu(name: &str) -> MenuNode {
 fn default_menus() -> Vec<MenuNode> {
     vec![
         MenuNode::Submenu {
-            label: String::from("Edit"),
+            label: i18n::text(i18n::Text::Edit).to_owned(),
             enabled: true,
             children: vec![
-                role_item("Undo", MenuRole::Undo),
-                role_item("Redo", MenuRole::Redo),
+                role_item(i18n::text(i18n::Text::Undo), MenuRole::Undo),
+                role_item(i18n::text(i18n::Text::Redo), MenuRole::Redo),
                 MenuNode::Separator,
-                role_item("Cut", MenuRole::Cut),
-                role_item("Copy", MenuRole::Copy),
-                role_item("Paste", MenuRole::Paste),
-                role_item("Select All", MenuRole::SelectAll),
+                role_item(i18n::text(i18n::Text::Cut), MenuRole::Cut),
+                role_item(i18n::text(i18n::Text::Copy), MenuRole::Copy),
+                role_item(i18n::text(i18n::Text::Paste), MenuRole::Paste),
+                role_item(i18n::text(i18n::Text::SelectAll), MenuRole::SelectAll),
             ],
         },
         MenuNode::Submenu {
-            label: String::from("Window"),
+            label: i18n::text(i18n::Text::Window).to_owned(),
             enabled: true,
             children: vec![
-                role_item("Minimize", MenuRole::Minimize),
-                role_item("Zoom", MenuRole::Zoom),
-                role_item("Enter Full Screen", MenuRole::ToggleFullScreen),
+                role_item(i18n::text(i18n::Text::Minimize), MenuRole::Minimize),
+                role_item(i18n::text(i18n::Text::Zoom), MenuRole::Zoom),
+                role_item(
+                    i18n::text(i18n::Text::EnterFullScreen),
+                    MenuRole::ToggleFullScreen,
+                ),
                 MenuNode::Separator,
-                role_item("Close", MenuRole::CloseWindow),
+                role_item(i18n::text(i18n::Text::Close), MenuRole::CloseWindow),
             ],
         },
     ]
@@ -841,7 +857,7 @@ impl Shell {
         alert.setInformativeText(&ns_string(&config.message));
         let count = config.buttons.len().max(1);
         if config.buttons.is_empty() {
-            alert.addButtonWithTitle(&ns_string("OK"));
+            alert.addButtonWithTitle(&ns_string(i18n::text(i18n::Text::Ok)));
         }
         // The first button that is not Cancel answers to Return; AppKit
         // gives Return to the first one added.

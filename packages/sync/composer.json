@@ -1,0 +1,22 @@
+{
+    "name": "pushinbr/pam-desktop-sync",
+    "description": "Durable SQLite outbox and bounded dispatcher for native PAM Desktop applications.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.5",
+        "pushinbr/pam-desktop": "^2.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pam\\Desktop\\Sync\\Durable\\": "src/"
+        }
+    },
+    "scripts": {
+        "test": "php tests/run.php"
+    },
+    "config": {
+        "platform-check": true,
+        "sort-packages": true
+    }
+}

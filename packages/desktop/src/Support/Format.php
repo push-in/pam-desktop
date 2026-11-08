@@ -23,7 +23,8 @@ use function is_string;
  *     Format::time($sentAt, 'America/Sao_Paulo'); // "14:05"  (en: "2:05 PM")
  *     Format::date($sentAt, DateStyle::Medium);   // "12 de out." (en: "Oct 12")
  *
- * The locale defaults to pt-BR; set it once with Format::useLocale('en') or
+ * The locale follows the framework locale (I18n::use(), else the system
+ * locale; see FrameworkText); set it once with Format::useLocale('en') or
  * pass it per call. Any "pt…" tag selects Portuguese, anything else English.
  */
 final class Format
@@ -33,7 +34,7 @@ final class Format
     private const EN_MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     private const EN_MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
-    private static string $locale = 'pt-BR';
+    private static ?string $locale = null;
 
     private function __construct()
     {
@@ -49,7 +50,7 @@ final class Format
 
     public static function locale(): string
     {
-        return self::$locale;
+        return self::$locale ?? \Pam\Desktop\I18n\FrameworkText::locale();
     }
 
     /** Integer with thousands separators: "12.345" / "12,345". */
@@ -345,6 +346,6 @@ final class Format
 
     private static function portuguese(?string $locale): bool
     {
-        return str_starts_with(strtolower($locale ?? self::$locale), 'pt');
+        return str_starts_with(strtolower($locale ?? self::locale()), 'pt');
     }
 }

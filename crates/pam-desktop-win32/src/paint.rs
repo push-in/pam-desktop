@@ -4,14 +4,16 @@
 use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 
-use pam_desktop_ui::backend::{DrawCommand, ImageContent, ImageFit};
+use pam_desktop_ui::backend::{DrawCommand, DrawPaint, DrawPathSegment, ImageContent, ImageFit};
 use pam_desktop_ui::color::Color;
 use pam_desktop_ui::geometry::{Insets, Point, Rect, Size};
 use pam_desktop_ui::style::{BorderStyle, Decoration, Gradient, GradientShape, Radii, Shadow};
+use pam_desktop_ui::text::{TextAlign, TextBlock, TextRun};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_RECT_F, D2D_RECT_U, D2D_SIZE_F, D2D_SIZE_U, D2D1_COMPOSITE_MODE_SOURCE_OVER,
-    D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_CLOSED,
-    D2D1_FIGURE_END_OPEN, D2D1_FILL_MODE_ALTERNATE, D2D1_GRADIENT_STOP,
+    D2D_RECT_F, D2D_RECT_U, D2D_SIZE_F, D2D_SIZE_U, D2D1_BEZIER_SEGMENT,
+    D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_BEGIN_HOLLOW,
+    D2D1_FIGURE_END_CLOSED, D2D1_FIGURE_END_OPEN, D2D1_FILL_MODE_ALTERNATE, D2D1_FILL_MODE_WINDING,
+    D2D1_GRADIENT_STOP,
 };
 use windows::Win32::Graphics::Direct2D::{
     CLSID_D2D1ColorMatrix, CLSID_D2D1GaussianBlur, CLSID_D2D1Shadow, D2D1_ANTIALIAS_MODE_ALIASED,
@@ -20,10 +22,11 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_BRUSH_PROPERTIES, D2D1_BUFFER_PRECISION_8BPC_UNORM, D2D1_CAP_STYLE_FLAT,
     D2D1_CAP_STYLE_ROUND, D2D1_COLOR_INTERPOLATION_MODE_PREMULTIPLIED, D2D1_COLOR_SPACE_SRGB,
     D2D1_COLORMATRIX_PROP_COLOR_MATRIX, D2D1_COMBINE_MODE_INTERSECT, D2D1_DASH_STYLE_CUSTOM,
-    D2D1_ELLIPSE, D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_WRAP,
-    D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
-    D2D1_INTERPOLATION_MODE_LINEAR, D2D1_LAYER_OPTIONS1_NONE, D2D1_LAYER_PARAMETERS1,
-    D2D1_LINE_JOIN_MITER, D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_PRIMITIVE_BLEND_COPY,
+    D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, D2D1_ELLIPSE, D2D1_EXTEND_MODE_CLAMP,
+    D2D1_EXTEND_MODE_WRAP, D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
+    D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, D2D1_INTERPOLATION_MODE_LINEAR,
+    D2D1_LAYER_OPTIONS1_NONE, D2D1_LAYER_PARAMETERS1, D2D1_LINE_JOIN_MITER,
+    D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES, D2D1_PRIMITIVE_BLEND_COPY,
     D2D1_PRIMITIVE_BLEND_SOURCE_OVER, D2D1_PROPERTY_TYPE_FLOAT, D2D1_PROPERTY_TYPE_MATRIX_5X4,
     D2D1_PROPERTY_TYPE_VECTOR4, D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES, D2D1_ROUNDED_RECT,
     D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, D2D1_SHADOW_PROP_COLOR, D2D1_STROKE_STYLE_PROPERTIES,
@@ -1355,6 +1358,90 @@ fn polyline(factory: &ID2D1Factory1, points: &[Point]) -> Option<ID2D1Geometry> 
     }
 }
 
+fn vector_path(factory: &ID2D1Factory1, segments: &[DrawPathSegment]) -> Option<ID2D1Geometry> {
+    // SAFETY: the sink is live and each figure is ended before closing it.
+    unsafe {
+        let path = factory.CreatePathGeometry().ok()?;
+        let sink = path.Open().ok()?;
+        sink.SetFillMode(D2D1_FILL_MODE_WINDING);
+        let mut open = false;
+        for segment in segments {
+            match segment {
+                DrawPathSegment::Move(point) => {
+                    if open {
+                        sink.EndFigure(D2D1_FIGURE_END_OPEN);
+                    }
+                    sink.BeginFigure(point_vec(*point), D2D1_FIGURE_BEGIN_FILLED);
+                    open = true;
+                }
+                DrawPathSegment::Line(point) if open => sink.AddLine(point_vec(*point)),
+                DrawPathSegment::Cubic {
+                    control1,
+                    control2,
+                    to,
+                } if open => sink.AddBezier(&D2D1_BEZIER_SEGMENT {
+                    point1: point_vec(*control1),
+                    point2: point_vec(*control2),
+                    point3: point_vec(*to),
+                }),
+                DrawPathSegment::Close if open => {
+                    sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+                    open = false;
+                }
+                _ => {}
+            }
+        }
+        if open {
+            sink.EndFigure(D2D1_FIGURE_END_OPEN);
+        }
+        sink.Close().ok()?;
+        path.cast().ok()
+    }
+}
+
+fn canvas_gradient(
+    context: &ID2D1DeviceContext,
+    from: Point,
+    to: Point,
+    start: Color,
+    end: Color,
+) -> Option<ID2D1Brush> {
+    // SAFETY: stop data and brush properties outlive their copying COM calls.
+    unsafe {
+        let collection = context
+            .CreateGradientStopCollection(
+                &[
+                    D2D1_GRADIENT_STOP {
+                        position: 0.0,
+                        color: color_f(start),
+                    },
+                    D2D1_GRADIENT_STOP {
+                        position: 1.0,
+                        color: color_f(end),
+                    },
+                ],
+                D2D1_COLOR_SPACE_SRGB,
+                D2D1_COLOR_SPACE_SRGB,
+                D2D1_BUFFER_PRECISION_8BPC_UNORM,
+                D2D1_EXTEND_MODE_CLAMP,
+                D2D1_COLOR_INTERPOLATION_MODE_PREMULTIPLIED,
+            )
+            .ok()?;
+        context
+            .CreateLinearGradientBrush(
+                &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                    startPoint: point_vec(from),
+                    endPoint: point_vec(to),
+                },
+                None,
+                &collection,
+            )
+            .ok()?
+            .cast()
+            .ok()
+    }
+}
+
 /// Whether a drawing list erases at its top level, which needs a surface
 /// of its own so the erasing never reaches what is under the view.
 pub fn drawing_needs_surface(commands: &[DrawCommand]) -> bool {
@@ -1369,6 +1456,7 @@ pub fn paint_drawing(
     context: &ID2D1DeviceContext,
     device: &Device,
     graphics: &Graphics,
+    text_engine: &crate::text::TextEngine,
     commands: &[DrawCommand],
     hairline: f32,
     isolated: bool,
@@ -1381,6 +1469,80 @@ pub fn paint_drawing(
     unsafe {
         for (index, command) in commands.iter().enumerate() {
             match command {
+                DrawCommand::Path {
+                    segments,
+                    fill,
+                    stroke,
+                    width,
+                } => {
+                    if let Some(path) = vector_path(&graphics.factory, segments) {
+                        if let Some(fill) = fill {
+                            match fill {
+                                DrawPaint::Solid(color) => context.FillGeometry(
+                                    &path,
+                                    device.solid(*color),
+                                    None::<&ID2D1Brush>,
+                                ),
+                                DrawPaint::LinearGradient {
+                                    from,
+                                    to,
+                                    start,
+                                    end,
+                                } => {
+                                    if let Some(brush) =
+                                        canvas_gradient(context, *from, *to, *start, *end)
+                                    {
+                                        context.FillGeometry(&path, &brush, None::<&ID2D1Brush>);
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(color) = stroke {
+                            context.DrawGeometry(
+                                &path,
+                                device.solid(*color),
+                                if *width > 0.0 { *width } else { hairline },
+                                &graphics.path_stroke,
+                            );
+                        }
+                    }
+                }
+                DrawCommand::Text {
+                    text,
+                    baseline,
+                    font,
+                    color,
+                    align,
+                } => {
+                    let block = TextBlock {
+                        runs: vec![TextRun {
+                            text: text.clone(),
+                            font: font.clone(),
+                            color: None,
+                            background: None,
+                            underline: false,
+                            strikethrough: false,
+                            letter_spacing: 0.0,
+                            press: None,
+                        }],
+                        max_lines: 1,
+                        ..TextBlock::default()
+                    };
+                    if let Some(layout) = text_engine.build(&graphics.dwrite, &block, f32::INFINITY)
+                    {
+                        let offset = match align {
+                            TextAlign::Center => layout.width / 2.0,
+                            TextAlign::End => layout.width,
+                            _ => 0.0,
+                        };
+                        context.DrawTextLayout(
+                            vec2(baseline.x - offset, baseline.y - layout.first_baseline),
+                            &layout.layout,
+                            device.solid(*color),
+                            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
+                        );
+                    }
+                }
                 DrawCommand::Rect {
                     rect,
                     radius,

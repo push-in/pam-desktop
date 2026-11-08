@@ -25,6 +25,9 @@ pub struct PamTextMeasureRequest {
     pub text_length: usize,
     pub spans: *const u8,
     pub spans_length: usize,
+    /// `TextSpanBoxes`: inline boxes whose edges take horizontal space.
+    pub span_boxes: *const u8,
+    pub span_boxes_length: usize,
     pub font_family: *const u8,
     pub font_family_length: usize,
     pub font_features: *const u8,
@@ -279,6 +282,7 @@ pub(crate) fn measure(
     let measurer = unsafe { &*pointer };
     let text = string(node, PropKey::Text);
     let spans = string(node, PropKey::TextSpans);
+    let boxes = string(node, PropKey::TextSpanBoxes);
     let family = string(node, PropKey::FontFamily);
     let features = string(node, PropKey::FontFeatureSettings);
     let available_width = if available_width.is_finite() && available_width > 0.0 {
@@ -296,6 +300,8 @@ pub(crate) fn measure(
         text_length: text.len(),
         spans: spans.as_ptr(),
         spans_length: spans.len(),
+        span_boxes: boxes.as_ptr(),
+        span_boxes_length: boxes.len(),
         font_family: family.as_ptr(),
         font_family_length: family.len(),
         font_features: features.as_ptr(),
@@ -332,7 +338,7 @@ pub(crate) fn measure(
                 .map_or(0, |lines| lines.min(i64::from(u32::MAX)) as u32)
         },
     };
-    let key = cache_key(&request, text, spans, family, features);
+    let key = cache_key(&request, text, &[spans, boxes, family, features]);
     if let Some(hit) = measurer.cache.borrow().get(&key) {
         return Some(*hit);
     }
@@ -360,18 +366,10 @@ pub(crate) fn measure(
     Some(result)
 }
 
-fn cache_key(
-    request: &PamTextMeasureRequest,
-    text: &str,
-    spans: &str,
-    family: &str,
-    features: &str,
-) -> u64 {
+fn cache_key(request: &PamTextMeasureRequest, text: &str, strings: &[&str]) -> u64 {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
-    spans.hash(&mut hasher);
-    family.hash(&mut hasher);
-    features.hash(&mut hasher);
+    strings.hash(&mut hasher);
     for value in [
         request.font_size,
         request.font_scale,

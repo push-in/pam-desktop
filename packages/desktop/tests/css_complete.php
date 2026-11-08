@@ -9,11 +9,12 @@ use Pam\Desktop\Internal\StyleQueryCompiler;
 use Pam\Desktop\Internal\StyleSelectorCompiler;
 use Pam\Desktop\Internal\TemplateCompiler;
 use Pam\Desktop\Internal\TemplateRenderer;
-use Pam\Desktop\PropKey;
+use Pam\Desktop\{PropKey, WindowMetrics};
+use Pam\Desktop\Internal\Runtime;
 
 /**
  * Complete CSS-to-native contract: flexbox, box model, borders, typography,
- * transforms, units, colors, selectors and at-rules. See docs/css.md.
+ * transforms, units, colors, selectors and at-rules. See docs/styling.md.
  *
  * @var Closure(bool, string): void $assert
  */
@@ -106,7 +107,7 @@ $assert($css('line-height: 1.25;') === ['lineHeightMultiplier' => '1.25'], 'Unit
 $assert($css('line-height: 120%; font-size: 10px;')['lineHeightMultiplier'] === '1.2', 'Percentage line-height must become a multiplier.');
 $assert(
     $css('font: italic 600 16px/24px "Space Grotesk", sans-serif;') === [
-        'fontStyle' => 'italic', 'fontWeight' => '600', 'fontSize' => '16', 'lineHeight' => '24', 'fontFamily' => 'Space Grotesk',
+        'fontStyle' => 'italic', 'fontWeight' => '600', 'fontSize' => '16', 'lineHeight' => '24', 'fontFamily' => 'Space Grotesk, sans-serif',
     ],
     'font shorthand must expand.',
 );
@@ -229,6 +230,8 @@ $sheet = ScopedStyleCompiler::compile(
     'CssCompleteSheet.pam.php',
 );
 $assert($sheet['classes']['field']['placeholderColor'] === 0xFF1B7A4E, '::placeholder color must compile with variables.');
+$shorthand = ScopedStyleCompiler::compile('.search { placeholder-color: #627184; } .soft { placeholder-color: rgba(255, 255, 255, 0.5); }', 'CssPlaceholderShorthand.pam.php');
+$assert(($shorthand['classes']['search']['placeholderColor'] ?? null) === 0xFF627184 && ($shorthand['classes']['soft']['placeholderColor'] ?? null) === 0x80FFFFFF, 'placeholder-color must compile to the same input property as ::placeholder.');
 $assert(isset($sheet['states']['.a']['pressed'], $sheet['states']['.b']['pressed']), 'Comma-separated state selectors must compile.');
 $assert(($sheet['classes']['grid']['gap'] ?? null) === '4' && !isset($sheet['classes']['glass']), '@supports must be evaluated against the native compiler.');
 $assert($sheet['queries'][0]['styles']['classes']['card']['backgroundColor'] === 0xFF1B7A4E, ':root variables must resolve inside @media.');
@@ -285,3 +288,35 @@ $assert(
         && $flexLabel->properties()[PropKey::FontFeatureSettings->value] === "'tnum' 1",
     'Line-height multipliers, side colors, text shadows and font features must reach native properties.',
 );
+
+// Responsive declarations replace earlier values even when native layout
+// needs a different wire property for percentages or content flex-basis.
+$responsiveCss = ScopedStyleCompiler::compile(
+    '.aside { width: 350px; flex-basis: 0; }'
+        .' @media (max-width: 1280px) { .aside { width: 100%; flex-basis: auto; } }',
+    'CssResponsiveAliases.pam.php',
+);
+$responsiveTemplate = TemplateCompiler::compile('<Column class="aside"><Text>Responsive</Text></Column>');
+$responsiveStyled = new CompiledTemplateNode(
+    kind: $responsiveTemplate->kind,
+    name: $responsiveTemplate->name,
+    attributes: [...$responsiveTemplate->attributes, '__pamStyles' => json_encode($responsiveCss, JSON_THROW_ON_ERROR)],
+    source: $responsiveTemplate->source,
+    line: $responsiveTemplate->line,
+    column: $responsiveTemplate->column,
+    value: $responsiveTemplate->value,
+);
+$responsiveStyled->children = $responsiveTemplate->children;
+Runtime::shutdown();
+$previousMetrics = Runtime::windowMetrics();
+Runtime::replaceWindowMetrics(new WindowMetrics(1200, 800, 1));
+$responsive = TemplateRenderer::render($responsiveStyled, null, []);
+$responsiveProperties = $responsive->properties();
+$assert(
+    ($responsiveProperties[PropKey::WidthPercent->value] ?? null) == 100
+        && !array_key_exists(PropKey::Width->value, $responsiveProperties)
+        && ($responsiveProperties[PropKey::FlexBasisContent->value] ?? null) === true
+        && !array_key_exists(PropKey::FlexBasis->value, $responsiveProperties),
+    'A matching media query must replace point width and zero flex-basis with percentage width and auto basis.',
+);
+Runtime::replaceWindowMetrics($previousMetrics);

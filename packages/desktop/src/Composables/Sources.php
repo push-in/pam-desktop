@@ -98,13 +98,41 @@ final class Sources
             'network',
             static fn (): ?DeviceStatus => self::$lastStatus,
             static function (\Closure $push): \Closure {
-                // The host pushes only changes (network, metered, battery...).
-                $id = DeviceStatusModule::watch(static function (DeviceStatus $status) use ($push): void {
-                    self::$lastStatus = $status;
-                    $push($status);
-                }, 2_000);
+                // DeviceStatus samples network/power state on the host interval.
+                // Keep that subscription only while the app is visible.
+                $watch = null;
+                $start = static function () use (&$watch, $push): void {
+                    if ($watch !== null) {
+                        return;
+                    }
+                    $watch = DeviceStatusModule::watch(static function (DeviceStatus $status) use ($push): void {
+                        self::$lastStatus = $status;
+                        $push($status);
+                    }, 2_000);
+                };
+                $stop = static function () use (&$watch): void {
+                    if ($watch === null) {
+                        return;
+                    }
+                    DeviceStatusModule::unwatch($watch);
+                    $watch = null;
+                };
+                $state = App::state() ?? ComponentLifecycle::currentAppState();
+                if ($state !== AppState::Background) {
+                    $start();
+                }
+                $stateSubscription = App::onStateChange(static function (AppState $state) use ($start, $stop): void {
+                    if ($state === AppState::Background) {
+                        $stop();
+                    } else {
+                        $start();
+                    }
+                });
 
-                return static fn () => DeviceStatusModule::unwatch($id);
+                return static function () use ($stop, $stateSubscription): void {
+                    $stop();
+                    App::offStateChange($stateSubscription);
+                };
             },
         );
     }
@@ -162,6 +190,12 @@ final class Sources
         if (self::$deviceAsked || self::$askDevice === null) return;
         self::$deviceAsked = true;
         (self::$askDevice)();
+    }
+
+    /** @internal The last system info the host reported (FrameworkText reads its locale), null before any. */
+    public static function lastDevice(): ?DeviceInfo
+    {
+        return self::$lastDevice;
     }
 
     /** @internal Tests: the system locale and time zone as if the host reported them. */

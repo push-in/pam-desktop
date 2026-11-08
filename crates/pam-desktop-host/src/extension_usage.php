@@ -19,8 +19,11 @@ error_reporting(0);
 ini_set('memory_limit', '-1');
 set_time_limit(0);
 
-$root = $argv[1] ?? '';
-$candidates = array_map('strtolower', array_slice($argv, 2));
+// Runtimes that keep the `--` separator in $argv (the PAM CLI) pass it on.
+$arguments = array_slice($argv, 1);
+if (($arguments[0] ?? null) === '--') array_shift($arguments);
+$root = $arguments[0] ?? '';
+$candidates = array_map('strtolower', array_slice($arguments, 1));
 if ($root === '' || !is_dir($root) || !function_exists('token_get_all')) {
     echo json_encode(['all' => true]);
     exit(0);

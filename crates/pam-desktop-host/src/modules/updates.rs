@@ -21,6 +21,23 @@ use crate::updater::{Snapshot, Updater};
 /// Time the reply of `install` has to reach PHP before the host exits.
 const EXIT_DELAY: Duration = Duration::from_millis(150);
 
+/// Ends the host once the update helper started. It runs on the updates
+/// worker: `exit` would run the exit handlers of the C libraries (GTK, the
+/// GL driver) while the interface thread still draws, and the process could
+/// crash on its way out. The helper only waits for it to be gone.
+pub fn exit_for_update() {
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            fn _exit(status: std::ffi::c_int) -> !;
+        }
+        // SAFETY: `_exit` takes no pointer and ends the process at once.
+        unsafe { _exit(0) }
+    }
+    #[cfg(not(unix))]
+    std::process::exit(0);
+}
+
 /// The channel of the current PHP worker. A worker that restarts gets a
 /// fresh one, so a read parked by the previous worker cannot swallow an
 /// event meant for the new one.

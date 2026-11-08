@@ -15,7 +15,7 @@ use function is_string;
 final readonly class Required implements ValidationRule
 {
     public function __construct(
-        public string $message = 'This field is required.',
+        public ?string $message = null,
     ) {
     }
 
@@ -26,7 +26,7 @@ final readonly class Required implements ValidationRule
         return $value === null
             || is_string($value) && trim($value) === ''
             || is_array($value) && $value === []
-                ? $this->message
+                ? ($this->message ?? \Pam\Desktop\I18n\FrameworkText::get('form.required'))
                 : null;
     }
 }

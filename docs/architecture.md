@@ -119,14 +119,20 @@ The desktop table:
 
 | Id | Property | | Id | Property |
 | --- | --- | --- | --- | --- |
-| 2001 | `Cursor` | | 2009 | `OnFilesDrop` |
-| 2002 | `Tooltip` | | 2010 | `WindowSurface` |
-| 2003 | `WindowTitle` | | 2011 | `WindowWidth` |
-| 2004 | `WindowDrag` | | 2012 | `WindowHeight` |
-| 2005 | `OnHoverIn` | | 2013 | `WindowResizable` |
-| 2006 | `OnHoverOut` | | 2014 | `WindowModal` |
-| 2007 | `OnKeyDown` | | 2015 | `WindowMinWidth` |
-| 2008 | `OnKeyUp` | | 2016 | `WindowMinHeight` |
+| 2001 | `Cursor` | | 2015 | `WindowMinWidth` |
+| 2002 | `Tooltip` | | 2016 | `WindowMinHeight` |
+| 2003 | `WindowTitle` | | 2017 | `CaptureKeys` |
+| 2004 | `WindowDrag` | | 2018 | `DragType` |
+| 2005 | `OnHoverIn` | | 2019 | `DropType` |
+| 2006 | `OnHoverOut` | | 2020 | `OnDragEnter` |
+| 2007 | `OnKeyDown` | | 2021 | `OnDragLeave` |
+| 2008 | `OnKeyUp` | | 2022 | `GridTracks` |
+| 2009 | `OnFilesDrop` | | 2023 | `InputFormatDecimalMinDigits` |
+| 2010 | `WindowSurface` | | 2024 | `ScrollbarGutter` |
+| 2011 | `WindowWidth` | | 2025 | `ScrollbarWidth` |
+| 2012 | `WindowHeight` | | 2026 | `ScrollbarThickness` |
+| 2013 | `WindowResizable` | | 2027 | `ScrollbarColor` |
+| 2014 | `WindowModal` | | 2028 | `TextSpanBoxes` |
 
 | Id | Event |
 | --- | --- |
@@ -135,8 +141,10 @@ The desktop table:
 | 2003 | `KeyDown` |
 | 2004 | `KeyUp` |
 | 2005 | `FilesDrop` |
+| 2006 | `DragEnter` |
+| 2007 | `DragLeave` |
 
-Before starting the worker the host exports the highest identifiers it implements in `PAM_RENDERER_CONTRACT`. The PHP package never sends an extension identifier that the host did not declare.
+Before starting the worker the host exports the highest identifiers it implements in `PAM_RENDERER_CONTRACT`. The PHP package never sends an extension identifier that the host did not declare; [Compatibility](compatibility.md) says what happens instead and which feature needs which identifier.
 
 ## The crates
 

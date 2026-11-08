@@ -111,6 +111,9 @@ pub struct ViewIvars {
     /// What the layer adds to the frame: scale, rotation, skew.
     kept: KeptTransform,
     focusable: Cell<bool>,
+    capture_keys: RefCell<String>,
+    target_self: Cell<bool>,
+    target_children: Cell<bool>,
     cursor: Cell<Cursor>,
     /// Assistive technology may press the view.
     pressable: Cell<bool>,
@@ -406,11 +409,20 @@ define_class!(
         /// core does its own hit testing of pointer events.
         #[unsafe(method_id(hitTest:))]
         fn hit_test(&self, point: CGPoint) -> Option<Retained<NSView>> {
-            // SAFETY: forwards the same selector and argument to `NSView`.
-            let hit: Option<Retained<NSView>> = unsafe { msg_send![super(self), hitTest: point] };
             let ivars = self.ivars();
-            let own = hit.as_deref().is_some_and(|view| std::ptr::eq(view, &**self));
-            hit.filter(|_| !own || ivars.solid.get() || ivars.focusable.get())
+            if !ivars.target_self.get() && !ivars.target_children.get() {
+                None
+            } else {
+                // SAFETY: forwards the same selector and argument to `NSView`.
+                let hit: Option<Retained<NSView>> = unsafe { msg_send![super(self), hitTest: point] };
+                let own = hit.as_deref().is_some_and(|view| std::ptr::eq(view, &**self));
+                if !ivars.target_children.get() && hit.is_some() {
+                    // SAFETY: PamView is an NSView subclass.
+                    Some(unsafe { Retained::cast_unchecked(self.retain()) })
+                } else {
+                    hit.filter(|_| !own || (ivars.target_self.get() && (ivars.solid.get() || ivars.focusable.get())))
+                }
+            }
         }
 
         /// A press focuses native controls only; boxes are reached with Tab.
@@ -426,9 +438,13 @@ define_class!(
             false
         }
 
-        /// The focus ring follows the rounded outline of the box.
+        /// The focus ring follows the rounded outline of the box, after a
+        /// keyboard focus change only.
         #[unsafe(method(drawFocusRingMask))]
         fn draw_focus_ring_mask(&self) {
+            if !self.ivars().events.focus_visible.get() {
+                return;
+            }
             let Some(graphics) = NSGraphicsContext::currentContext() else { return };
             let context = graphics.CGContext();
             let size = util::size(self.bounds().size);
@@ -512,6 +528,9 @@ impl PamView {
             solid: Cell::new(false),
             kept: KeptTransform::new(),
             focusable: Cell::new(false),
+            capture_keys: RefCell::new(String::new()),
+            target_self: Cell::new(true),
+            target_children: Cell::new(true),
             cursor: Cell::new(Cursor::Default),
             pressable: Cell::new(false),
             focus_listener: RefCell::new(None),
@@ -529,6 +548,11 @@ impl PamView {
     /// A strong reference to the view.
     pub fn retain_view(&self) -> Retained<Self> {
         self.retain()
+    }
+
+    pub fn set_pointer_events(&self, target_self: bool, target_children: bool) {
+        self.ivars().target_self.set(target_self);
+        self.ivars().target_children.set(target_children);
     }
 
     /// The node this view belongs to.
@@ -659,6 +683,19 @@ impl PamView {
     /// Releases what the view registered outside itself.
     pub fn retire(&self) {
         self.ivars().kept.forget(self);
+    }
+
+    pub fn set_key_capture(&self, keys: &str) {
+        *self.ivars().capture_keys.borrow_mut() = keys.to_owned();
+    }
+
+    pub fn captures_key(&self, key: &str) -> bool {
+        let wanted = if key == " " { "Space" } else { key };
+        self.ivars()
+            .capture_keys
+            .borrow()
+            .split(',')
+            .any(|candidate| candidate.trim() == wanted)
     }
 
     pub fn set_focusable(&self, focusable: bool) {
@@ -862,6 +899,21 @@ fn filter(name: &str, values: &[(&str, &AnyObject)]) -> Option<Retained<CIFilter
         }
         Some(filter)
     }
+}
+
+#[link(name = "Metal", kind = "framework")]
+unsafe extern "C" {
+    fn MTLCreateSystemDefaultDevice() -> *mut AnyObject;
+}
+
+/// Whether the system has a Metal device, checked once.
+fn gpu_filters_available() -> bool {
+    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        // SAFETY: the function takes no arguments and returns a +1
+        // reference (or nil), released right away by `Retained`.
+        unsafe { Retained::from_raw(MTLCreateSystemDefaultDevice()) }.is_some()
+    })
 }
 
 fn gaussian_blur(radius: f32) -> Option<Retained<CIFilter>> {
@@ -1105,10 +1157,18 @@ impl NodeView {
     }
 
     fn apply_filters(&mut self, decoration: &Decoration) {
-        let filters = Filters {
-            blur: decoration.blur,
-            backdrop_blur: decoration.backdrop_blur,
-            color_matrix: decoration.color_matrix,
+        // Core Animation runs Core Image layer filters on the GPU. Without a
+        // Metal device (a virtual machine, a remote session) a filtered
+        // layer, and everything a backdrop filter covers, renders empty:
+        // the view is shown unfiltered instead.
+        let filters = if gpu_filters_available() {
+            Filters {
+                blur: decoration.blur,
+                backdrop_blur: decoration.backdrop_blur,
+                color_matrix: decoration.color_matrix,
+            }
+        } else {
+            Filters::default()
         };
         if filters == self.filters {
             return;

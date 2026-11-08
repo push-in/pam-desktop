@@ -28,6 +28,9 @@ use crate::text;
 use crate::view::{self, ImageState, PamView};
 
 struct ViewEntry {
+    parent: NodeId,
+    target_self: bool,
+    target_children: bool,
     /// The widget placed in the parent.
     widget: gtk::Widget,
     /// Where child node widgets are added.
@@ -63,9 +66,12 @@ pub struct GtkBackend {
     application: gtk::Application,
     events: Rc<EventQueue>,
     views: IdMap<ViewEntry>,
+    key_captures: Rc<RefCell<HashMap<usize, String>>>,
     windows: HashMap<WindowId, WindowEntry>,
     measure_layout: Option<pango::Layout>,
     frame_requested: Rc<Cell<bool>>,
+    /// A tick callback is installed on the main window's frame clock.
+    frame_ticking: Rc<Cell<bool>>,
     textures: Rc<RefCell<HashMap<ImageKey, gdk::Texture>>>,
     wake_source: Option<glib::SourceId>,
     /// Set when the pending wake already ran (its source id is then stale).
@@ -92,9 +98,11 @@ impl GtkBackend {
             application,
             events,
             views: IdMap::default(),
+            key_captures: Rc::new(RefCell::new(HashMap::new())),
             windows: HashMap::new(),
             measure_layout: None,
             frame_requested: Rc::new(Cell::new(false)),
+            frame_ticking: Rc::new(Cell::new(false)),
             textures: Rc::new(RefCell::new(HashMap::new())),
             wake_source: None,
             wake_fired: Rc::new(Cell::new(false)),
@@ -240,6 +248,43 @@ impl GtkBackend {
 
     /// Keys nobody consumed (bubble phase), as W3C `key` values.
     fn install_key_events(&self, window: WindowId, native: &gtk::ApplicationWindow) {
+        let capture = gtk::EventControllerKey::new();
+        capture.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let captures = Rc::clone(&self.key_captures);
+        let events = Rc::clone(&self.events);
+        let host = native.downgrade();
+        capture.connect_key_pressed(move |_, key, _, state| {
+            let modifiers = GtkBackend::modifiers(state);
+            if modifiers.control || modifiers.alt || modifiers.meta {
+                return glib::Propagation::Proceed;
+            }
+            let name = key_name(key);
+            let wanted = if name == " " { "Space" } else { name.as_str() };
+            let mut widget = host
+                .upgrade()
+                .and_then(|window| gtk::prelude::GtkWindowExt::focus(&window));
+            while let Some(target) = widget {
+                let owned = captures
+                    .borrow()
+                    .get(&(target.as_ptr() as usize))
+                    .is_some_and(|keys| {
+                        keys.split(',').any(|candidate| candidate.trim() == wanted)
+                    });
+                if owned {
+                    events.push(BackendEvent::Key(KeyEvent {
+                        window,
+                        pressed: true,
+                        key: name,
+                        modifiers,
+                        repeat: false,
+                    }));
+                    return glib::Propagation::Stop;
+                }
+                widget = target.parent();
+            }
+            glib::Propagation::Proceed
+        });
+        native.add_controller(capture);
         let controller = gtk::EventControllerKey::new();
         controller.set_propagation_phase(gtk::PropagationPhase::Bubble);
         let events = Rc::clone(&self.events);
@@ -399,6 +444,10 @@ impl GtkBackend {
 }
 
 impl Backend for GtkBackend {
+    fn set_asset_root(&mut self, root: &std::path::Path) {
+        crate::fonts::set_root(root);
+    }
+
     fn open_window(&mut self, window: WindowId, config: &WindowConfig) {
         if let Some(entry) = self.windows.get(&window) {
             entry.window.set_title(Some(&config.title));
@@ -466,6 +515,7 @@ impl Backend for GtkBackend {
         self.install_pointer_events(window, &host);
         self.install_gesture_events(window, &host);
         self.install_key_events(window, &native);
+        crate::trim::watch(&native);
         shell::accept_file_drops(&host, window, &self.events);
         shell::accept_text_drops(&host, window, &self.events);
         shell::watch_window_state(&native, window, &self.events);
@@ -493,7 +543,9 @@ impl Backend for GtkBackend {
         });
 
         if self.measure_layout.is_none() {
-            self.measure_layout = Some(host.create_pango_layout(None));
+            let layout = host.create_pango_layout(None);
+            text::use_subpixel_positions(&layout);
+            self.measure_layout = Some(layout);
         }
         self.windows.insert(
             window,
@@ -553,20 +605,38 @@ impl Backend for GtkBackend {
         };
         entry.overlays = overlays.to_vec();
         Self::arrange_window(entry, &self.views);
+        // A boot failure can produce host chrome before any application root.
+        if !overlays.is_empty() && !entry.presented {
+            entry.presented = true;
+            entry.window.present();
+        }
     }
 
     fn create_view(&mut self, id: NodeId, class: ViewClass) {
         let container = PamView::new();
         {
             let focus = gtk::EventControllerFocus::new();
-            let events = Rc::clone(&self.events);
-            focus.connect_enter(move |_| {
-                events.push(BackendEvent::FocusChanged { id, focused: true })
-            });
-            let events = Rc::clone(&self.events);
-            focus.connect_leave(move |_| {
-                events.push(BackendEvent::FocusChanged { id, focused: false })
-            });
+            if matches!(class, ViewClass::Input | ViewClass::TextArea) {
+                // Text focus belongs to GTK's inner editor, represented by this input node.
+                let events = Rc::clone(&self.events);
+                focus.connect_enter(move |_| {
+                    events.push(BackendEvent::FocusChanged { id, focused: true })
+                });
+                let events = Rc::clone(&self.events);
+                focus.connect_leave(move |_| {
+                    events.push(BackendEvent::FocusChanged { id, focused: false })
+                });
+            } else {
+                // `enter` includes descendants: reporting every ancestor steals the
+                // focused node from pressables and sends keys to unrelated controls.
+                let events = Rc::clone(&self.events);
+                focus.connect_is_focus_notify(move |controller| {
+                    events.push(BackendEvent::FocusChanged {
+                        id,
+                        focused: controller.is_focus(),
+                    })
+                });
+            }
             container.add_controller(focus);
         }
         let pending_scroll: Rc<Cell<Option<Point>>> = Rc::new(Cell::new(None));
@@ -609,6 +679,7 @@ impl Backend for GtkBackend {
                 scrolled.set_propagate_natural_width(false);
                 scrolled.set_propagate_natural_height(false);
                 scrolled.set_child(Some(&container));
+                container.cache_rows(&scrolled);
                 let report = {
                     let events = Rc::clone(&self.events);
                     let weak = scrolled.downgrade();
@@ -646,6 +717,9 @@ impl Backend for GtkBackend {
         self.views.insert(
             id,
             ViewEntry {
+                parent: 0,
+                target_self: true,
+                target_children: true,
                 widget,
                 container,
                 class,
@@ -662,6 +736,9 @@ impl Backend for GtkBackend {
 
     fn destroy_view(&mut self, id: NodeId) {
         if let Some(mut entry) = self.views.remove(&id) {
+            self.key_captures
+                .borrow_mut()
+                .remove(&(entry.container.as_ptr() as usize));
             if let Some(input) = &entry.input {
                 input.destroy();
             }
@@ -683,11 +760,16 @@ impl Backend for GtkBackend {
             return;
         };
         let container = parent_entry.container.clone();
+        let target_children = parent_entry.target_children;
         let mut previous: Option<gtk::Widget> = None;
         for child in children {
-            let Some(entry) = self.views.get(child) else {
+            let Some(entry) = self.views.get_mut(child) else {
                 continue;
             };
+            entry.parent = parent;
+            entry
+                .widget
+                .set_can_target(target_children && (entry.target_self || entry.target_children));
             let widget = &entry.widget;
             let owned = widget
                 .parent()
@@ -723,9 +805,43 @@ impl Backend for GtkBackend {
         }
     }
 
+    fn set_pointer_events(&mut self, id: NodeId, target_self: bool, target_children: bool) {
+        let parent_allows = self
+            .views
+            .get(&id)
+            .and_then(|entry| self.views.get(&entry.parent))
+            .is_none_or(|parent| parent.target_children);
+        let Some(entry) = self.views.get_mut(&id) else {
+            return;
+        };
+        entry.target_self = target_self;
+        entry.target_children = target_children;
+        view::set_layout(&entry.widget, |layout| {
+            layout.pointer_targetable = target_self || target_children
+        });
+        entry
+            .widget
+            .set_can_target(parent_allows && (target_self || target_children));
+        entry
+            .container
+            .with_state(|state| state.pointer_passthrough = !target_self);
+        // Internal native input widgets also obey box-only/none. PAM children
+        // retain their own policy when re-enabled by a changed parent policy.
+        let mut child = entry.container.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            let own_allows =
+                view::layout_of(&widget).is_none_or(|layout| layout.pointer_targetable);
+            widget.set_can_target(target_children && own_allows);
+        }
+    }
+
     fn set_decoration(&mut self, id: NodeId, decoration: &Decoration) {
         if let Some(entry) = self.views.get(&id) {
             entry.container.set_decoration(decoration);
+            if let Some(scrolled) = entry.widget.downcast_ref::<gtk::ScrolledWindow>() {
+                style_gutter(scrolled, decoration);
+            }
         }
     }
 
@@ -733,7 +849,13 @@ impl Backend for GtkBackend {
         let Some(entry) = self.views.get(&id) else {
             return;
         };
-        entry.widget.set_opacity(f64::from(layer.opacity));
+        // GTK does not pick fully transparent widgets, but CSS keeps an
+        // `opacity: 0` element clickable (hover-revealed actions). GTK stores
+        // opacity as an 8-bit alpha: the lowest step (1/255) is invisible in
+        // practice and keeps the hit target.
+        entry
+            .widget
+            .set_opacity(f64::from(pickable_opacity(layer.opacity)));
         entry.widget.set_visible(layer.visible);
         view::set_layout(&entry.widget, |layout| layout.transform = layer.transform);
         if let Some(parent) = entry.widget.parent() {
@@ -792,6 +914,19 @@ impl Backend for GtkBackend {
                 entry.container.add_css_class("pam-focusable");
             } else {
                 entry.container.remove_css_class("pam-focusable");
+            }
+        }
+    }
+
+    fn set_key_capture(&mut self, id: NodeId, keys: &str) {
+        if let Some(entry) = self.views.get(&id) {
+            let pointer = entry.container.as_ptr() as usize;
+            if keys.is_empty() {
+                self.key_captures.borrow_mut().remove(&pointer);
+            } else {
+                self.key_captures
+                    .borrow_mut()
+                    .insert(pointer, keys.to_owned());
             }
         }
     }
@@ -917,6 +1052,19 @@ impl Backend for GtkBackend {
         if let Some(entry) = self.views.get(&id) {
             entry.container.set_text_selection(range);
         }
+    }
+
+    fn print_document(
+        &mut self,
+        window: WindowId,
+        document: pam_desktop_ui::printing::Document,
+        complete: pam_desktop_ui::printing::PrintCompletion,
+    ) {
+        crate::printing::print(
+            self.windows.get(&window).map(|entry| &entry.window),
+            document,
+            complete,
+        );
     }
 
     fn announce(&mut self, message: &str, assertive: bool) -> bool {
@@ -1053,6 +1201,7 @@ impl Backend for GtkBackend {
         } else {
             scrolled.set_policy(gtk::PolicyType::External, scrolling);
         }
+        style_scrollbar(scrolled, config);
         scrolled.set_kinetic_scrolling(config.enabled);
     }
 
@@ -1083,21 +1232,32 @@ impl Backend for GtkBackend {
     }
 
     fn request_frame(&mut self) {
-        if self.frame_requested.replace(true) {
+        self.frame_requested.set(true);
+        if self.frame_ticking.get() {
             return;
         }
         let Some(entry) = self.windows.values().next() else {
             self.frame_requested.set(false);
             return;
         };
+        // One tick callback stays installed while frames keep being asked
+        // for. Installing one per frame put the frame clock back into its
+        // "first frame of an animation" state each time: every frame was
+        // timed from the late start of the previous one, and the cadence
+        // slipped from 16.7 ms to 18-19 ms (about 53 frames per second).
+        self.frame_ticking.set(true);
         let events = Rc::clone(&self.events);
         let requested = Rc::clone(&self.frame_requested);
+        let ticking = Rc::clone(&self.frame_ticking);
         entry.host.add_tick_callback(move |_, clock| {
-            requested.set(false);
+            if !requested.replace(false) {
+                ticking.set(false);
+                return glib::ControlFlow::Break;
+            }
             events.push(BackendEvent::Frame {
                 time_ms: u64::try_from(clock.frame_time() / 1000).unwrap_or(0),
             });
-            glib::ControlFlow::Break
+            glib::ControlFlow::Continue
         });
     }
 
@@ -1125,7 +1285,7 @@ impl Backend for GtkBackend {
         done: Box<dyn FnOnce(Option<usize>)>,
     ) {
         let labels: Vec<&str> = if alert.buttons.is_empty() {
-            vec!["OK"]
+            vec![pam_desktop_ui::i18n::text(pam_desktop_ui::i18n::Text::Ok)]
         } else {
             alert
                 .buttons
@@ -1383,6 +1543,7 @@ const STYLESHEET: &str = "
 
 /// Runs a PAM Desktop application on GTK until its window closes.
 pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
+    skip_gl_without_gpu();
     // One instance per application: a second launch hands its URL over.
     let flags = if config.single_instance {
         gio::ApplicationFlags::HANDLES_OPEN
@@ -1556,4 +1717,242 @@ mod tests {
         assert_eq!(decode_side(100, Some(100), true), None);
         assert_eq!(decode_side(3000, None, true), Some(VECTOR_LIMIT));
     }
+}
+
+/// The widget opacity for a layer: CSS hit-testing ignores opacity, GTK picking
+/// skips widgets whose 8-bit alpha is 0, so 0 becomes the lowest alpha step.
+#[must_use]
+pub(crate) fn pickable_opacity(opacity: f32) -> f32 {
+    if opacity * 255.0 < 1.0 {
+        1.0 / 255.0
+    } else {
+        opacity.min(1.0)
+    }
+}
+
+thread_local! {
+    /// One display-wide stylesheet holding a rule per distinct scrollbar
+    /// style (thickness, colour); classes are reused across scroll views.
+    static SCROLLBAR_STYLES: std::cell::RefCell<(Option<gtk::CssProvider>, Vec<String>, String)> =
+        const { std::cell::RefCell::new((None, Vec::new(), String::new())) };
+}
+
+/// CSS `scrollbar-width`/`scrollbar-color`: the bar is drawn at the authored
+/// thickness and exact colour (no theme tint, fade or transition). With a
+/// reserved gutter the bar is classic: GTK shows it only while the content
+/// overflows (the gutter stays reserved by the layout, as in Chromium);
+/// otherwise it stays an overlay. `thin` draws Chromium's thumb, inset 2px
+/// across its 10px track.
+fn style_scrollbar(scrolled: &gtk::ScrolledWindow, config: &ScrollConfig) {
+    for class in scrolled.css_classes() {
+        if class.starts_with("pam-scrollbar-") {
+            scrolled.remove_css_class(&class);
+        }
+    }
+    let styled = config.scrollbar_thickness.is_some() || config.scrollbar_color.is_some();
+    scrolled.set_overlay_scrolling(!(config.reserved_gutter && styled));
+    if !styled {
+        return;
+    }
+    let thickness = config.scrollbar_thickness.unwrap_or(10.0).clamp(0.0, 64.0);
+    let inset = config.thumb_inset.clamp(0.0, thickness / 4.0);
+    let thumb = thickness - 2.0 * inset;
+    let color = config.scrollbar_color.map_or_else(
+        || "alpha(currentColor, 0.35)".to_owned(),
+        |c| {
+            format!(
+                "rgba({},{},{},{:.4})",
+                c.r,
+                c.g,
+                c.b,
+                f32::from(c.a) / 255.0
+            )
+        },
+    );
+    let class = format!(
+        "pam-scrollbar-{}-{}-{}",
+        (thickness * 100.0).round() as u32,
+        (inset * 100.0).round() as u32,
+        config
+            .scrollbar_color
+            .map_or(0, |c| u32::from_be_bytes([c.a, c.r, c.g, c.b]))
+    );
+    let rule = || {
+        format!(
+            ".{class} > scrollbar {{ background: transparent; border: none; padding: 0; margin: 0; min-width: {thickness}px; min-height: {thickness}px; opacity: 1; transition: none; }}\n\
+                 .{class} > scrollbar trough {{ background: transparent; border: none; padding: 0; margin: 0; }}\n\
+                 .{class} > scrollbar slider {{ min-width: {thumb}px; min-height: {thumb}px; margin: 0; padding: 0; border: none; border-radius: {radius}px; background-clip: border-box; background-color: {color}; opacity: 1; transition: none; }}\n\
+                 .{class} > scrollbar.vertical slider {{ margin: 0 {inset}px; min-height: 40px; }}\n\
+                 .{class} > scrollbar.horizontal slider {{ margin: {inset}px 0; min-width: 40px; }}\n",
+            radius = thumb / 2.0,
+        )
+    };
+    add_scrollbar_rule(&class, rule);
+    scrolled.add_css_class(&class);
+}
+
+/// Adds `class`'s rule (built once) to the display-wide scrollbar stylesheet.
+fn add_scrollbar_rule(class: &str, rule: impl FnOnce() -> String) {
+    SCROLLBAR_STYLES.with(|styles| {
+        let mut styles = styles.borrow_mut();
+        if !styles.1.iter().any(|known| known == class) {
+            let rule = rule();
+            styles.1.push(class.to_owned());
+            styles.2.push_str(&rule);
+            if styles.0.is_none() {
+                let provider = gtk::CssProvider::new();
+                if let Some(display) = gtk::gdk::Display::default() {
+                    gtk::style_context_add_provider_for_display(
+                        &display,
+                        &provider,
+                        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                    );
+                }
+                styles.0 = Some(provider);
+            }
+            let css = styles.2.clone();
+            if let Some(provider) = styles.0.as_ref() {
+                provider.load_from_string(&css);
+            }
+        }
+    });
+}
+
+/// The reserved gutter of a classic bar shows the scroll element's own
+/// background, as in Chromium: the content view stops at the bar, so without
+/// this the (transparent) track showed whatever is behind the element (the
+/// window). The track follows the element's outer corner radii. Overlay bars
+/// float over the content and stay transparent.
+fn style_gutter(scrolled: &gtk::ScrolledWindow, decoration: &Decoration) {
+    for class in scrolled.css_classes() {
+        if class.starts_with("pam-gutter") {
+            scrolled.remove_css_class(&class);
+        }
+    }
+    let c = decoration.background;
+    if c.is_transparent() {
+        return;
+    }
+    let r = decoration.radii;
+    let class = format!(
+        "pam-gutter-{}-{}-{}-{}",
+        u32::from_be_bytes([c.a, c.r, c.g, c.b]),
+        (r.top_right * 100.0).round() as u32,
+        (r.bottom_right * 100.0).round() as u32,
+        (r.bottom_left * 100.0).round() as u32,
+    );
+    let rule = || {
+        let color = format!(
+            "rgba({},{},{},{:.4})",
+            c.r,
+            c.g,
+            c.b,
+            f32::from(c.a) / 255.0
+        );
+        format!(
+            ".pam-gutter.{class} > scrollbar:not(.overlay-indicator) {{ background-color: {color}; }}\n\
+             .pam-gutter.{class} > scrollbar.vertical:not(.overlay-indicator) {{ border-radius: 0 {tr}px {br}px 0; }}\n\
+             .pam-gutter.{class} > scrollbar.horizontal:not(.overlay-indicator) {{ border-radius: 0 0 {br}px {bl}px; }}\n",
+            tr = r.top_right,
+            br = r.bottom_right,
+            bl = r.bottom_left,
+        )
+    };
+    add_scrollbar_rule(&class, rule);
+    scrolled.add_css_class("pam-gutter");
+    scrolled.add_css_class(&class);
+}
+
+/// GTK test thread: a classic (reserved-gutter) thin bar is shown only while
+/// its content overflows, at Chromium's thin metrics.
+#[cfg(test)]
+pub(crate) fn assert_classic_scrollbar() {
+    use gtk::prelude::*;
+    let config = ScrollConfig {
+        scrollbar_thickness: Some(10.0),
+        scrollbar_color: Some(pam_desktop_ui::color::Color::rgba(255, 255, 255, 20)),
+        reserved_gutter: true,
+        thumb_inset: 2.0,
+        ..ScrollConfig::default()
+    };
+    let scrolled = gtk::ScrolledWindow::new();
+    scrolled.set_policy(gtk::PolicyType::External, gtk::PolicyType::Automatic);
+    style_scrollbar(&scrolled, &config);
+    assert!(
+        !scrolled.is_overlay_scrolling(),
+        "a reserved gutter holds a classic bar"
+    );
+    let content = crate::view::PamView::new();
+    scrolled.set_child(Some(&content));
+    let window = gtk::Window::new();
+    window.set_child(Some(&scrolled));
+    for (height, overflows) in [(100.0, false), (1000.0, true)] {
+        content.set_content_size(Some(pam_desktop_ui::geometry::Size::new(190.0, height)));
+        scrolled.measure(gtk::Orientation::Vertical, 200);
+        scrolled.allocate(200, 300, -1, None);
+        let bar = scrolled.vscrollbar();
+        assert_eq!(bar.is_child_visible(), overflows, "content {height}");
+        if overflows {
+            assert_eq!(bar.width(), 10, "thin track");
+            let slider = bar
+                .first_child()
+                .and_then(|range| range.first_child())
+                .and_then(|trough| trough.first_child())
+                .expect("slider");
+            assert_eq!(slider.width(), 6, "Chromium's thin thumb");
+            let bounds = slider.compute_bounds(&bar).expect("slider bounds");
+            assert!(
+                (bounds.x() - 2.0).abs() < 0.01,
+                "thumb inset {}",
+                bounds.x()
+            );
+        }
+    }
+    let overlay = ScrollConfig {
+        reserved_gutter: false,
+        ..config
+    };
+    style_scrollbar(&scrolled, &overlay);
+    assert!(
+        scrolled.is_overlay_scrolling(),
+        "scrollbar-gutter: auto overlays the bar"
+    );
+}
+
+/// Without a GPU device (a virtual machine, a container, a remote or
+/// headless session) GTK still loads the system OpenGL stack to probe it
+/// (Mesa's llvmpipe: about 60 MB of the host's memory) and then draws with
+/// Cairo all the same. There the probe is skipped. A GL setting or a GPU
+/// renderer the user chose (`GDK_DISABLE`, `GDK_DEBUG=gl-…`, `GSK_RENDERER`
+/// other than `cairo`) is kept.
+fn skip_gl_without_gpu() {
+    // GSK_RENDERER=cairo alone does not stop the probe.
+    let chosen = std::env::var("GSK_RENDERER").is_ok_and(|renderer| renderer != "cairo")
+        || std::env::var_os("GDK_DISABLE").is_some()
+        || std::env::var("GDK_DEBUG").is_ok_and(|debug| debug.contains("gl"));
+    if chosen || gpu_device() {
+        return;
+    }
+    let debug = match std::env::var("GDK_DEBUG") {
+        Ok(debug) if !debug.is_empty() => format!("{debug},gl-disable"),
+        _ => "gl-disable".to_owned(),
+    };
+    // SAFETY: called first in `run`, before GTK or any other thread starts.
+    unsafe {
+        // GTK 4.14 reads GDK_DEBUG; GTK 4.16 and later read GDK_DISABLE.
+        std::env::set_var("GDK_DEBUG", debug);
+        std::env::set_var("GDK_DISABLE", "gl");
+    }
+}
+
+/// A DRM device (Mesa, the open drivers, nvidia-drm) or the NVIDIA device.
+fn gpu_device() -> bool {
+    let drm = std::fs::read_dir("/dev/dri").is_ok_and(|entries| {
+        entries.filter_map(Result::ok).any(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("renderD") || name.starts_with("card")
+        })
+    });
+    drm || std::path::Path::new("/dev/nvidia0").exists()
 }

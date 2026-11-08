@@ -79,6 +79,9 @@ fn decode(
     source: &ImageSource,
     max_dimension: Option<u32>,
 ) -> Result<Pixels, String> {
+    if crate::svg::is_svg(source) {
+        return crate::svg::rasterize(factory, &crate::svg::read(source)?, max_dimension);
+    }
     let failed =
         |error: windows::core::Error| format!("Image could not be decoded ({})", error.message());
     // SAFETY: COM calls on objects created in this function. The memory

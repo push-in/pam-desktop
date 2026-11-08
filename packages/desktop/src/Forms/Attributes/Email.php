@@ -14,7 +14,7 @@ use function is_string;
 final readonly class Email implements ValidationRule
 {
     public function __construct(
-        public string $message = 'Enter a valid email address.',
+        public ?string $message = null,
     ) {
     }
 
@@ -28,6 +28,6 @@ final readonly class Email implements ValidationRule
 
         return is_string($value) && filter_var($value, FILTER_VALIDATE_EMAIL) !== false
             ? null
-            : $this->message;
+            : ($this->message ?? \Pam\Desktop\I18n\FrameworkText::get('form.email'));
     }
 }

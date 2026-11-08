@@ -38,6 +38,6 @@ final readonly class MaxLength implements ValidationRule
 
         return $length !== null && $length <= $this->length
             ? null
-            : ($this->message ?? "Use no more than {$this->length} characters.");
+            : ($this->message ?? \Pam\Desktop\I18n\FrameworkText::get('form.maxLength', ['length' => $this->length]));
     }
 }

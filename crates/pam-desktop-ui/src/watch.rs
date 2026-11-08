@@ -14,7 +14,13 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use crate::runtime::{Inbound, Inbox};
 
-const POLL_INTERVAL: Duration = Duration::from_millis(350);
+/// A save reaches the window in about a quarter of a second: half a poll on
+/// average, the settle delay and the worker restart. A scan of a few hundred
+/// files costs well under a millisecond.
+const POLL_INTERVAL: Duration = Duration::from_millis(150);
+/// How long the tree must stay unchanged before the reload: editors write in
+/// several steps (temporary file, rename, formatter).
+const SETTLE_INTERVAL: Duration = Duration::from_millis(80);
 const IGNORED_DIRECTORIES: [&str; 8] = [
     "vendor",
     "node_modules",
@@ -96,7 +102,7 @@ pub fn watch(roots: Vec<PathBuf>, inbox: Arc<Inbox>) {
                 // Editors write in several steps: wait until the tree is quiet.
                 let mut settled = next;
                 loop {
-                    thread::sleep(Duration::from_millis(120));
+                    thread::sleep(SETTLE_INTERVAL);
                     let again = fingerprint(&roots);
                     if again == settled {
                         break;

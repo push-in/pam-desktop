@@ -309,9 +309,15 @@ pub fn open_url(url: &str) -> Result<(), String> {
         command.args(["url.dll,FileProtocolHandler", url]);
         command
     } else {
-        let mut command = std::process::Command::new("xdg-open");
-        command.arg(url);
-        command
+        match std::process::Command::new("xdg-open").arg(url).spawn() {
+            Ok(_) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let mut fallback = std::process::Command::new("gio");
+                fallback.args(["open", url]).env("GIO_USE_PORTALS", "1");
+                fallback
+            }
+            Err(error) => return Err(error.to_string()),
+        }
     };
     command
         .stdin(std::process::Stdio::null())

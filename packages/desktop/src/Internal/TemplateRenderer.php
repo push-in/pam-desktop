@@ -304,7 +304,12 @@ final class TemplateRenderer
         'inputFormatPrefix' => PropKey::InputFormatPrefix,
         'inputFormatSuffix' => PropKey::InputFormatSuffix,
         'inputFormatDecimalDigits' => PropKey::InputFormatDecimalDigits,
+        'inputFormatDecimalMinDigits' => PropKey::InputFormatDecimalMinDigits,
         'inputFormatLocale' => PropKey::InputFormatLocale,
+        'scrollbarGutter' => PropKey::ScrollbarGutter,
+        'scrollbarWidth' => PropKey::ScrollbarWidth,
+        'scrollbarThickness' => PropKey::ScrollbarThickness,
+        'scrollbarColor' => PropKey::ScrollbarColor,
         'textColor' => PropKey::TextColor,
         'fontSize' => PropKey::FontSize,
         'borderRadius' => PropKey::BorderRadius,
@@ -394,6 +399,8 @@ final class TemplateRenderer
         'mediaProgress' => PropKey::MediaProgress,
         'draggable' => PropKey::Draggable,
         'dragData' => PropKey::DragData,
+        'dragType' => PropKey::DragType,
+        'dropType' => PropKey::DropType,
         'dropEnabled' => PropKey::DropEnabled,
         'statusBarColor' => PropKey::StatusBarColor,
         'statusBarStyle' => PropKey::StatusBarStyle,
@@ -605,6 +612,7 @@ final class TemplateRenderer
         'maxWidthPercent' => PropKey::MaxWidthPercent,
         'maxHeightPercent' => PropKey::MaxHeightPercent,
         'pointerEvents' => PropKey::PointerEvents,
+        'captureKeys' => PropKey::CaptureKeys,
         'cursor' => PropKey::Cursor,
         'tooltip' => PropKey::Tooltip,
         'windowDrag' => PropKey::WindowDrag,
@@ -633,6 +641,7 @@ final class TemplateRenderer
         'keyboardVerticalOffset' => PropKey::KeyboardVerticalOffset,
         'keyboardAvoidingEnabled' => PropKey::KeyboardAvoidingEnabled,
         'columns' => PropKey::GridColumns,
+        'gridTracks' => PropKey::GridTracks,
         'gridMinColumnWidth' => PropKey::GridMinColumnWidth,
         'gridTemplate' => PropKey::GridTemplate,
         'span2xl' => PropKey::GridSpan2xl,
@@ -780,6 +789,8 @@ final class TemplateRenderer
         'on:keyDown' => EventKind::KeyDown,
         'on:keyUp' => EventKind::KeyUp,
         'on:filesDrop' => EventKind::FilesDrop,
+        'on:dragEnter' => EventKind::DragEnter,
+        'on:dragLeave' => EventKind::DragLeave,
         'on:textLayout' => EventKind::TextLayout,
         'on:cacheHit' => EventKind::MediaCacheHit,
         'on:cacheMiss' => EventKind::MediaCacheMiss,
@@ -941,6 +952,7 @@ final class TemplateRenderer
                     $node->source,
                     $node->line,
                     $node->column,
+                    $error,
                 );
             }
         }
@@ -1380,7 +1392,10 @@ final class TemplateRenderer
 
         // Slot
         $name = (string) ($attributes['name'] ?? 'slot');
-        $slotContent = $nodeData[$name] ?? [];
+        $slotContent = array_key_exists(':content', $attributes)
+            ? TemplateExpression::evaluate((string) $attributes[':content'], $scope, $nodeData)
+            : ($nodeData[$name] ?? []);
+        $slotContent ??= [];
         if ($slotContent instanceof Renderable) {
             $slotContent = [$slotContent];
         }
@@ -2168,6 +2183,8 @@ final class TemplateRenderer
                     $values['playbackRate'] ?? 1.0,
                     'Media playbackRate',
                 )),
+            'DragSource' => \Pam\Desktop\UI\DragSource::make(...$children)->payload(self::intValue($values['dragType'] ?? 0, 'DragSource dragType'), self::stringValue($values['dragData'] ?? '', 'DragSource dragData')),
+            'DropTarget' => \Pam\Desktop\UI\DropTarget::make(...$children)->accepts(self::intValue($values['dropType'] ?? 0, 'DropTarget dropType')),
             'InteractionRegion' => InteractionRegion::make(...$children)
                 ->draggable(
                     self::stringValue($values['dragData'] ?? '', 'Interaction dragData'),
@@ -2593,6 +2610,12 @@ final class TemplateRenderer
         $dynamic = [];
         $seen = [];
         foreach ($attributePlan['properties'] as [$name, $key]) {
+            // A bound dimension may switch units between renders. The
+            // general attribute path resolves its native property key too.
+            if (isset(self::PERCENT_DIMENSIONS[$name])
+                && (isset($dynamicNames[$name]) || (is_string($template[$name] ?? null) && str_ends_with(trim($template[$name]), '%')))) {
+                return null;
+            }
             if (isset($seen[$key->value])) {
                 // Aliases of one native property keep the general path.
                 return null;
@@ -4096,7 +4119,17 @@ final class TemplateRenderer
         }
         $batch = [];
         foreach ($plan['properties'] as [$name, $key]) {
-            $value = self::propertyValue($key, $attributes[$name]);
+            $raw = $attributes[$name];
+            if (isset(self::PERCENT_DIMENSIONS[$name]) && is_string($raw) && str_ends_with(trim($raw), '%')) {
+                $raw = trim($raw);
+                if (preg_match('/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))%$/D', $raw, $match) !== 1) {
+                    throw new RuntimeException("Template {$name} must contain a valid percentage.");
+                }
+                $element = $element->domWithoutProperty($key);
+                $key = self::PERCENT_DIMENSIONS[$name];
+                $raw = max(0.0, (float) $match[1]);
+            }
+            $value = self::propertyValue($key, $raw);
 
             if ($value !== null) {
                 $batch[$key->value] = $value;
@@ -4105,6 +4138,15 @@ final class TemplateRenderer
 
         return $batch === [] ? $element : $element->__pamWithProperties($batch);
     }
+
+    private const PERCENT_DIMENSIONS = [
+        'width' => PropKey::WidthPercent,
+        'height' => PropKey::HeightPercent,
+        'minWidth' => PropKey::MinWidthPercent,
+        'minHeight' => PropKey::MinHeightPercent,
+        'maxWidth' => PropKey::MaxWidthPercent,
+        'maxHeight' => PropKey::MaxHeightPercent,
+    ];
 
     /**
      * @param array<string, mixed> $attributes
@@ -4528,8 +4570,14 @@ final class TemplateRenderer
             PropKey::InputFormatPrefix,
             PropKey::InputFormatSuffix,
             PropKey::InputFormatDecimalDigits,
+            PropKey::InputFormatDecimalMinDigits,
             PropKey::InputFormatLocale,
             => $kind === NodeKind::Input,
+            PropKey::ScrollbarGutter,
+            PropKey::ScrollbarWidth,
+            PropKey::ScrollbarThickness,
+            PropKey::ScrollbarColor,
+            => $kind === NodeKind::Scroll || $kind === NodeKind::VirtualList,
             default => true,
         };
     }
@@ -4800,7 +4848,7 @@ final class TemplateRenderer
                 'none' => ImageCachePolicy::None->value,
             ]),
             PropKey::ModalPresentation => self::named($value, [
-                'fullScreen' => 1, 'dialog' => 2, 'sheet' => 3,
+                'fullScreen' => 1, 'dialog' => 2, 'sheet' => 3, 'overlay' => 4,
             ]),
             PropKey::ModalAnimationType => self::named($value, [
                 'none' => ModalAnimationType::None->value,
@@ -4963,6 +5011,7 @@ final class TemplateRenderer
                 'pattern' => InputFormat::Pattern->value,
                 'mask' => InputFormat::Pattern->value,
                 'currency' => InputFormat::Currency->value,
+                'decimal' => InputFormat::Decimal->value,
             ]),
             PropKey::SafeAreaMode => self::named($value, [
                 'padding' => SafeAreaMode::Padding->value,
@@ -5059,6 +5108,9 @@ final class TemplateRenderer
                 'none' => AnimationKind::None->value,
                 'pulse' => AnimationKind::Pulse->value,
             ]),
+            PropKey::GridTracks => ($value instanceof \Pam\Desktop\GridTracks
+                ? $value
+                : \Pam\Desktop\GridTracks::fromWire(is_string($value) ? $value : throw new InvalidArgumentException('gridTracks requires GridTracks or a serialized string.')))->toWire(),
             PropKey::GridTemplate => ($value instanceof \Pam\Desktop\GridTemplate
                 ? $value
                 : \Pam\Desktop\GridTemplate::fromWire(is_string($value)
@@ -5491,15 +5543,11 @@ final class TemplateRenderer
             'recipes' => self::safeStyleMetadata($decoded['recipes'] ?? [], $tree->source),
             'queries' => self::safeStyleMetadata($decoded['queries'] ?? [], $tree->source),
             'keyframes' => self::safeStyleMetadata($decoded['keyframes'] ?? [], $tree->source),
-            'styleIr' => self::safeStyleMetadata($decoded['styleIr'] ?? [], $tree->source),
-            'styleBytecode' => is_string($decoded['styleBytecode'] ?? null)
-                ? $decoded['styleBytecode']
-                : '',
+            // Compiler-only output (style IR, bytecode, source map,
+            // compatibility report) is not kept: rendering never reads it.
             'styleFingerprint' => is_string($decoded['styleFingerprint'] ?? null)
                 ? $decoded['styleFingerprint']
                 : '',
-            'styleSourceMap' => self::safeStyleMetadata($decoded['styleSourceMap'] ?? [], $tree->source),
-            'styleCompatibility' => self::safeStyleMetadata($decoded['styleCompatibility'] ?? [], $tree->source),
             '__pamSheetId' => ++self::$styleSheetSequence,
         ];
         if (count(self::$styleSheets) >= 256) {
@@ -5555,6 +5603,17 @@ final class TemplateRenderer
                             $known[$class] ??= [];
                         }
                     }
+                }
+            }
+        }
+        // A class may be declared only inside @media/@container: it is a
+        // known class whose properties apply while the query matches.
+        $queries = is_array($sheet) ? ($sheet['queries'] ?? []) : [];
+        foreach (is_array($queries) ? $queries : [] as $query) {
+            $queryClasses = is_array($query) && is_array($query['styles']['classes'] ?? null) ? $query['styles']['classes'] : [];
+            foreach (array_keys($queryClasses) as $class) {
+                if (is_string($class) && $class !== '') {
+                    $known[$class] ??= [];
                 }
             }
         }
@@ -5732,6 +5791,7 @@ final class TemplateRenderer
             $stateKind = match ($state) {
                 'pressed', 'active' => StyleInteractionState::Pressed,
                 'focus', 'focus-visible' => StyleInteractionState::Focused,
+                'focus-within' => StyleInteractionState::FocusWithin,
                 'hover' => StyleInteractionState::Hovered,
                 'disabled' => StyleInteractionState::Disabled,
                 'checked' => StyleInteractionState::Checked,
@@ -5755,6 +5815,10 @@ final class TemplateRenderer
                     PropKey::BackgroundColor,
                     PropKey::TextColor,
                     PropKey::BorderColor,
+                    PropKey::BorderTopColor,
+                    PropKey::BorderRightColor,
+                    PropKey::BorderBottomColor,
+                    PropKey::BorderLeftColor,
                     PropKey::Elevation,
                 ], true)) {
                     $nativeStates[$stateKind->value][$property->value] = $value;
@@ -6120,7 +6184,7 @@ final class TemplateRenderer
             if (!is_string($class)) return null;
         }
         foreach ($pseudos as $pseudo) {
-            if (!is_string($pseudo) || in_array($pseudo, ['pressed', 'hover', 'focus', 'focus-visible', 'first-child', 'last-child'], true)) {
+            if (!is_string($pseudo) || in_array($pseudo, ['pressed', 'hover', 'focus', 'focus-visible', 'focus-within', 'first-child', 'last-child'], true)) {
                 return null;
             }
         }
@@ -6245,14 +6309,15 @@ final class TemplateRenderer
                 throw new RuntimeException($rule['error']);
             }
             foreach ($rule['declarations'] as [$attribute, $value, $rank]) {
-                if (!isset($winners[$attribute]) || $rank >= $winners[$attribute][0]) {
-                    $winners[$attribute] = [$rank, $value];
+                $property = self::styleCascadeProperty($attribute);
+                if (!isset($winners[$property]) || $rank >= $winners[$property][0]) {
+                    $winners[$property] = [$rank, $value, $attribute];
                 }
             }
         }
         $attributes = [];
-        foreach ($winners as $attribute => $winner) {
-            $attributes[$attribute] = $winner[1];
+        foreach ($winners as $winner) {
+            $attributes[$winner[2]] = $winner[1];
         }
 
         return $attributes;
@@ -6656,7 +6721,16 @@ final class TemplateRenderer
                 $incoming = self::validatedStyleRules($queryStyles[$group] ?? [], '<responsive-style>');
                 $base = self::validatedStyleRules($sheet[$group] ?? [], '<base-style>');
                 foreach ($incoming as $selector => $styles) {
-                    $base[$selector] = [...($base[$selector] ?? []), ...$styles];
+                    $existing = $base[$selector] ?? [];
+                    foreach (array_keys($styles) as $attribute) {
+                        $property = self::styleCascadeProperty((string) $attribute);
+                        foreach (array_keys($existing) as $previous) {
+                            if ($previous !== $attribute && self::styleCascadeProperty((string) $previous) === $property) {
+                                unset($existing[$previous]);
+                            }
+                        }
+                    }
+                    $base[$selector] = [...$existing, ...$styles];
                 }
                 $sheet[$group] = $base;
             }
@@ -6691,6 +6765,25 @@ final class TemplateRenderer
             $sheet['classCascade'] = [];
         }
         return $sheet;
+    }
+
+    /** CSS aliases such as width/widthPercent remain one cascade property. */
+    private static function styleCascadeProperty(string $attribute): string
+    {
+        return match ($attribute) {
+            'widthPercent' => 'width',
+            'heightPercent' => 'height',
+            'minWidthPercent' => 'minWidth',
+            'minHeightPercent' => 'minHeight',
+            'maxWidthPercent' => 'maxWidth',
+            'maxHeightPercent' => 'maxHeight',
+            'leftPercent' => 'left',
+            'rightPercent' => 'right',
+            'topPercent' => 'top',
+            'bottomPercent' => 'bottom',
+            'flexBasisPercent', 'flexBasisContent' => 'flexBasis',
+            default => $attribute,
+        };
     }
 
     /** @return array<string, string|int|float|bool> */
@@ -6779,15 +6872,53 @@ final class TemplateRenderer
     private static function resolveScopedFont(array $attributes, array $fonts): array
     {
         $family = $attributes['fontFamily'] ?? null;
-        if (!is_string($family) || !isset($fonts[$family])) {
+        if (!is_string($family) || $fonts === []) {
             return $attributes;
         }
+        // A font-family list: each family declared by @font-face becomes the
+        // face that best matches the weight and style; the others stay as
+        // fallbacks for the backend.
+        $entries = array_map('trim', explode(',', $family));
+        $resolved = false;
+        $exactFirst = false;
+        foreach ($entries as $index => $entry) {
+            if (!isset($fonts[$entry])) {
+                continue;
+            }
+            [$source, $exact] = self::bestFontFace($fonts[$entry], $attributes);
+            if ($source === null) {
+                continue;
+            }
+            $entries[$index] = $source;
+            $resolved = true;
+            if ($index === 0) {
+                $exactFirst = $exact;
+            }
+        }
+        if (!$resolved) {
+            return $attributes;
+        }
+        $attributes['fontFamily'] = implode(', ', $entries);
+        if ($exactFirst) {
+            unset($attributes['fontWeight'], $attributes['fontStyle']);
+        }
+
+        return $attributes;
+    }
+
+    /**
+     * @param list<array{source: string, weight: string, style: string}> $faces
+     * @param array<string, string|int|float|bool> $attributes
+     * @return array{0: string|null, 1: bool}
+     */
+    private static function bestFontFace(array $faces, array $attributes): array
+    {
         $wantedWeight = (int) ($attributes['fontWeight'] ?? '400');
         $wantedStyle = (string) ($attributes['fontStyle'] ?? 'normal');
         $best = null;
         $bestScore = PHP_INT_MAX;
         $exact = false;
-        foreach ($fonts[$family] as $face) {
+        foreach ($faces as $face) {
             $weight = (int) $face['weight'];
             $stylePenalty = $face['style'] === $wantedStyle ? 0 : 10_000;
             $score = $stylePenalty + abs($weight - $wantedWeight);
@@ -6800,15 +6931,7 @@ final class TemplateRenderer
                 break;
             }
         }
-        if ($best === null) {
-            return $attributes;
-        }
-        $attributes['fontFamily'] = $best['source'];
-        if ($exact) {
-            unset($attributes['fontWeight'], $attributes['fontStyle']);
-        }
-
-        return $attributes;
+        return [$best['source'] ?? null, $exact];
     }
 
     /**
@@ -7840,6 +7963,7 @@ final class TemplateRenderer
         return match ($value) {
             1, 'fullScreen' => ModalPresentation::FullScreen,
             3, 'sheet' => ModalPresentation::Sheet,
+            4, 'overlay' => ModalPresentation::Overlay,
             default => ModalPresentation::Dialog,
         };
     }

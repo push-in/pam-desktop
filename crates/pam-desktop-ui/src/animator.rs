@@ -472,6 +472,8 @@ impl Animator {
 /// Deadlines the core waits for (long press, delayed press, debounces).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Timer {
+    /// A native typed drag held near a scroll viewport edge.
+    DragScroll,
     LongPress(NodeId),
     /// A single press held back while a double tap is still possible.
     DeferredPress(NodeId),

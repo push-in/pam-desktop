@@ -380,7 +380,9 @@ impl InputHost {
         if !config.font.family.is_empty() {
             rules.push_str(&format!(
                 " font-family: \"{}\";",
-                config.font.family.replace(['"', '\\', ';', '{', '}'], "")
+                crate::fonts::family(&config.font.family)
+                    .0
+                    .replace(['"', '\\', ';', '{', '}'], "")
             ));
         }
         if let Some(color) = config.color {
@@ -440,6 +442,18 @@ impl InputHost {
                 text.set_placeholder_text(
                     (!config.placeholder.is_empty()).then_some(config.placeholder.as_str()),
                 );
+                // Chromium clips a long placeholder at the field edge; GTK's
+                // placeholder label ellipsizes by default.
+                let mut child = text.first_child();
+                while let Some(current) = child {
+                    if let Some(label) = current.downcast_ref::<gtk::Label>() {
+                        label.set_ellipsize(gtk::pango::EllipsizeMode::None);
+                    }
+                    child = current.next_sibling();
+                }
+                // Use the standard password bullet rather than the theme-dependent
+                // oversized black circle; the actual text remains in GtkText secure mode.
+                text.set_invisible_char('\u{2022}');
                 text.set_visibility(!config.secure);
                 text.set_input_purpose(if config.secure {
                     gtk::InputPurpose::Password
@@ -469,6 +483,24 @@ impl InputHost {
                 view.set_editable(config.editable);
                 view.set_sensitive(config.enabled);
                 view.set_cursor_visible(!config.caret_hidden);
+                // A CSS line box: the half-leading of `line-height` sits above
+                // and below each line, so the first line starts where a
+                // browser textarea starts it.
+                let leading = config.line_height.map_or(0, |line_height| {
+                    let mut description = gtk::pango::FontDescription::new();
+                    if !config.font.family.is_empty() {
+                        description.set_family(&config.font.family);
+                    }
+                    description.set_absolute_size(
+                        f64::from(config.font.size) * f64::from(gtk::pango::SCALE),
+                    );
+                    let metrics = view.pango_context().metrics(Some(&description), None);
+                    let natural =
+                        (metrics.ascent() + metrics.descent()) as f32 / gtk::pango::SCALE as f32;
+                    ((line_height - natural) / 2.0).max(0.0).round() as i32
+                });
+                view.set_pixels_above_lines(leading);
+                view.set_pixels_below_lines(leading);
                 view.set_justification(match config.align {
                     TextAlign::Start => gtk::Justification::Left,
                     TextAlign::Center => gtk::Justification::Center,
@@ -536,6 +568,14 @@ impl InputHost {
     /// Detaches the control and its stylesheet.
     pub fn destroy(&self) {
         let widget = self.widget();
+        if let Some(window) = widget.root().and_downcast::<gtk::Window>()
+            && let Some(focused) = gtk::prelude::GtkWindowExt::focus(&window)
+            && (focused == widget || focused.is_ancestor(&widget))
+        {
+            // Deliver focus-out while the GtkText is still attached. Removing
+            // a focused modal otherwise leaves GTK's native text focus stale.
+            gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
+        }
         view::forget_layout(&widget);
         if widget.parent().is_some() {
             widget.unparent();
@@ -553,9 +593,13 @@ fn show_placeholder(container: &PamView, config: &InputConfig, empty: bool) {
         container.set_text(None);
         return;
     }
-    let color = config
-        .placeholder_color
-        .unwrap_or(Color::rgba(128, 128, 128, 200));
+    // Same fallback as the single-line entry and AppKit: the text colour at 45%.
+    let color = config.placeholder_color.unwrap_or_else(|| {
+        config
+            .color
+            .unwrap_or(Color::rgba(128, 128, 128, 255))
+            .with_alpha(0.45)
+    });
     container.set_text(Some(&TextContent {
         block: TextBlock {
             runs: vec![TextRun {
@@ -574,4 +618,35 @@ fn show_placeholder(container: &PamView, config: &InputConfig, empty: bool) {
         insets: config.insets,
         vertical: VerticalAlign::Top,
     }));
+}
+
+/// Placeholder fallback check, run from the GTK test thread.
+#[cfg(test)]
+pub(crate) fn assert_placeholder_fallback() {
+    let container = PamView::new();
+    let config = InputConfig {
+        placeholder: "Buscar".to_owned(),
+        color: Some(Color::rgba(255, 255, 255, 255)),
+        ..InputConfig::default()
+    };
+    show_placeholder(&container, &config, true);
+    let color = container.with_state(|state| {
+        state
+            .text
+            .as_ref()
+            .and_then(|text| text.content.block.runs[0].color)
+    });
+    assert_eq!(color, Some(Color::rgba(255, 255, 255, 115)));
+    let authored = InputConfig {
+        placeholder_color: Some(Color::rgba(98, 113, 132, 255)),
+        ..config
+    };
+    show_placeholder(&container, &authored, true);
+    let color = container.with_state(|state| {
+        state
+            .text
+            .as_ref()
+            .and_then(|text| text.content.block.runs[0].color)
+    });
+    assert_eq!(color, Some(Color::rgba(98, 113, 132, 255)));
 }

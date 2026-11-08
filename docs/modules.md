@@ -65,7 +65,9 @@ SecureStorage::set('api-token', $token, function (bool $stored): void {
 });
 
 SecureStorage::get('api-token', function (?string $token): void {
-    $this->token = $token;
+    $this->token = $token; // null means the key is absent
+}, function (string $error): void {
+    $this->error = 'The system keychain is unavailable.';
 });
 ```
 
@@ -75,11 +77,11 @@ SecureStorage::get('api-token', function (?string $token): void {
 
 | Call | Success | Failure |
 | --- | --- | --- |
-| `get($key, $callback)` | `?string`; `null` when the key has no value | Quiet: `null` |
+| `get($key, $callback, $failure = null)` | `?string`; `null` when the key has no value | Calls `$failure(string)` when supplied; otherwise `null` for compatibility |
 | `set($key, $value, $callback)` | `true` | Quiet: `false` |
 | `delete($key, $callback)` | `true` | Quiet: `false` |
 
-Because `get` reports `null` both for "no value" and for "keychain unavailable", treat `null` as "ask the user again", not as proof that nothing was stored.
+Provide the optional failure callback when restoration must distinguish an unavailable keychain from an absent session. Existing two-argument callers continue to receive `null` for both cases.
 
 ## Files
 
@@ -121,6 +123,24 @@ File contents cross the bridge only in `read` and `write`, one mebibyte at most.
 | `open($path, $mimeType, $callback, $failure)` | `$callback()` once the file opened in its default application | Failure closure |
 
 Typical failure messages are "File does not exist", "Destination already exists" and "Source does not exist".
+
+### Saving a file chosen by the user
+
+`Files::save($contents, $defaultName, $completed, $failure, $title)` opens the native save dialog and writes `$contents` (at most 1 MiB) where the user chose. It is the one call that writes outside the sandbox, and only to the path picked in the dialog.
+
+```php
+Files::save($csv, 'report.csv', function (bool $saved): void {
+    $this->status = $saved ? 'Saved.' : 'Cancelled.';
+}, function (string $error): void {
+    $this->status = $error;
+});
+```
+
+- `$completed(false)` means the user cancelled.
+- `$defaultName` is at most 255 bytes, without `/`, `\` or control characters.
+- The file is written to a temporary file next to the destination and moved over it, so a failed write never leaves half a file. A destination that is a symbolic link or not a regular file is refused.
+- Only one save dialog can be open at a time; a second call throws.
+- `$title` is the title of the dialog. Without one it is the localized default ("Save file", "Salvar arquivo", "Guardar archivo"; see [Internationalization](i18n.md)).
 
 ### Downloads
 
@@ -260,6 +280,24 @@ SQLite::query(
 | `query($database, $sql, $arguments, $callback, $onError)` | Rows as a list of associative arrays. |
 | `executeMany($database, $sql, $argumentSets, $callback, $onError)` | One prepared statement for every argument set, in one transaction. |
 | `transaction($database, $statements, $callback, $onError)` | Several statements atomically. |
+| `transactionIf($database, $guardSql, $guardArguments, $statements, $callback, $onError)` | Several statements atomically, only when a guard query says so. |
+
+`transactionIf` opens a `BEGIN IMMEDIATE` transaction, runs `$guardSql`, a read-only query that must return one row with one integer column of 0 or 1, and runs `$statements` only when it is 1. `$callback(bool)` receives whether they were applied; with 0 nothing is committed. Because the guard and the writes share the transaction, nothing can change the guarded rows between the two:
+
+```php
+SQLite::transactionIf(
+    'app.db',
+    'SELECT COUNT(*) = 0 FROM payments WHERE order_id = ?',
+    [$orderId],
+    [
+        ['sql' => 'INSERT INTO payments (order_id, amount) VALUES (?, ?)', 'arguments' => [$orderId, $amount]],
+        ['sql' => 'UPDATE orders SET paid = 1 WHERE id = ?', 'arguments' => [$orderId]],
+    ],
+    function (bool $applied): void {
+        $this->message = $applied ? 'Paid.' : 'This order was already paid.';
+    },
+);
+```
 
 - A database name matches `[A-Za-z0-9_.-]{1,128}`. Arguments are scalars or `null` and are bound with their types.
 - A query returns at most 1000 rows, 256 columns and about one mebibyte. Beyond that the call fails with a message that tells you to paginate. Use `LIMIT` and `OFFSET`.
@@ -268,6 +306,48 @@ SQLite::query(
 **Failure: failure closure.** `$onError` receives a `NativeModuleException` whose message is the SQLite error. Without `$onError` the exception is thrown. Invalid arguments throw `InvalidArgumentException` before the call.
 
 The module is the `sqlite` cargo feature of the host, on by default.
+
+## WebSocket
+
+`Pam\Desktop\Network\WebSocket` keeps a text WebSocket open in the host. A native reader waits for messages; PHP does not poll.
+
+```php
+use Pam\Desktop\Network\WebSocket;
+use Pam\Desktop\Network\WebSocketEvent;
+
+$this->socket = WebSocket::connect(
+    'wss://example.com/live',
+    function (WebSocketEvent $event, string $text): void {
+        match ($event) {
+            WebSocketEvent::Open => $this->online = true,
+            WebSocketEvent::Text => $this->messages[] = $text,
+            WebSocketEvent::Closed, WebSocketEvent::Failed => $this->online = false,
+        };
+    },
+    function (NativeModuleException $error): void {
+        $this->error = $error->getMessage();
+    },
+    owner: $this,
+);
+
+$this->socket->send('{"type":"ping"}');
+$this->socket->close();
+```
+
+| Call | Meaning |
+| --- | --- |
+| `connect($url, $event, $failed, $owner)` | Opens the connection. With an `$owner` component, the socket is disposed when the component unmounts. |
+| `send($text, $queued, $failed)` | Sends a UTF-8 text message of at most 64 KiB. `$queued` means the host queued it, not that the server received it. Throws when the socket is not open. |
+| `isOpen()`, `close()`, `dispose()` | State; close the connection; close and release it. |
+
+- Only `wss://` is allowed, except `ws://` to a loopback address or in `pam-desktop dev`. URLs with credentials or a fragment are refused; at most 2048 bytes.
+- At most 4 connections at a time. Incoming messages are at most 64 KiB, and at most 32 events or 256 KiB wait for PHP: a client that cannot keep up gets a `Failed` event instead of losing messages silently.
+- Text messages only. Reconnection is left to the application.
+- TLS uses rustls with the root certificates of the system.
+
+## Printing
+
+The `printing` module prints text documents through the print dialog of the system (GTK with Cairo and Pango, `NSPrintOperation` on macOS, the Windows print dialog with GDI spooling on a worker thread). The PHP API is the package `pushinbr/pam-desktop-printing`; see its [README](../packages/desktop-printing/README.md). Verified on Linux with Print to File; not run on macOS or Windows, and not tested on a physical printer.
 
 ## Timers
 

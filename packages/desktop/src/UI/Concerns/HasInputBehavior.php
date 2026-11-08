@@ -67,6 +67,28 @@ trait HasInputBehavior
             : $input->withProperty(PropKey::InputFormatLocale, substr(trim($locale), 0, 35));
     }
 
+    public function decimal(
+        int $minimumFractionDigits = 0,
+        int $maximumFractionDigits = 6,
+        string $prefix = '',
+        string $suffix = '',
+        ?string $locale = null,
+    ): static {
+        $maximumFractionDigits = min(6, max(0, $maximumFractionDigits));
+        $minimumFractionDigits = min($maximumFractionDigits, max(0, $minimumFractionDigits));
+        $input = $this
+            ->format(InputFormat::Decimal)
+            ->withProperty(PropKey::InputMode, InputMode::Decimal->value)
+            ->withProperty(PropKey::InputFormatDecimalMinDigits, $minimumFractionDigits)
+            ->withProperty(PropKey::InputFormatDecimalDigits, $maximumFractionDigits)
+            ->withProperty(PropKey::InputFormatPrefix, substr($prefix, 0, 16))
+            ->withProperty(PropKey::InputFormatSuffix, substr($suffix, 0, 16));
+
+        return $locale === null || trim($locale) === ''
+            ? $input
+            : $input->withProperty(PropKey::InputFormatLocale, substr(trim($locale), 0, 35));
+    }
+
     public function editable(bool $editable = true): static
     {
         return $this->withProperty(PropKey::InputEditable, $editable);

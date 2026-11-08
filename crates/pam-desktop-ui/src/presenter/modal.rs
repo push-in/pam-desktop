@@ -16,6 +16,10 @@ use crate::wiremap::WireMap;
 
 const PRESENTATION_FULL_SCREEN: i64 = 1;
 const PRESENTATION_SHEET: i64 = 3;
+/// A window layer (the toast stack): above every other modal, no backdrop,
+/// never closed by Escape or the backdrop, presses outside its content pass
+/// through.
+const PRESENTATION_OVERLAY: i64 = 4;
 
 const ANIMATION_NONE: i64 = 1;
 const ANIMATION_SLIDE: i64 = 2;
@@ -44,6 +48,7 @@ struct Modal {
     /// Animation style in use for the running entrance or exit.
     animation: i64,
     sheet: bool,
+    overlay: bool,
 }
 
 /// A bottom sheet being dragged by its top edge.
@@ -122,6 +127,7 @@ impl Modals {
                         restyle: false,
                         animation: ANIMATION_NONE,
                         sheet: false,
+                        overlay: false,
                     },
                 );
                 self.dirty = true;
@@ -140,6 +146,7 @@ impl Modals {
                 match key {
                     PropKey::Visible => modal.sync = true,
                     PropKey::ModalBackdropColor
+                    | PropKey::BackdropBlurRadius
                     | PropKey::ModalTransparent
                     | PropKey::ModalPresentation
                     | PropKey::BottomSheetCornerRadius
@@ -203,10 +210,24 @@ impl Modals {
         }
     }
 
-    /// The topmost presented modal.
+    /// The topmost presented modal (window layers do not count).
     #[must_use]
     pub fn top(&self) -> Option<NodeId> {
-        self.stack.last().copied()
+        self.stack
+            .iter()
+            .rev()
+            .find(|id| self.modals.get(id).is_none_or(|modal| !modal.overlay))
+            .copied()
+    }
+
+    /// Presents the stack: window layers stay above the other modals.
+    fn publish(&mut self, ctx: &mut Ctx<'_>) {
+        let modals = &self.modals;
+        let overlay = |id: &NodeId| modals.get(id).is_some_and(|modal| modal.overlay);
+        self.stack.sort_by_key(overlay);
+        let passive = self.stack.iter().copied().filter(overlay).collect();
+        ctx.scene.set_overlays(self.stack.clone());
+        ctx.scene.set_passive_overlays(passive);
     }
 
     #[must_use]
@@ -219,17 +240,20 @@ impl Modals {
             return;
         };
         let props = node.props();
-        let sheet = props.integer_or(PropKey::ModalPresentation, 2) == PRESENTATION_SHEET;
+        let presentation = props.integer_or(PropKey::ModalPresentation, 2);
+        let sheet = presentation == PRESENTATION_SHEET;
+        let overlay = presentation == PRESENTATION_OVERLAY;
         let animation = props.integer_or(PropKey::ModalAnimationType, ANIMATION_NONE);
         let Some(modal) = self.modals.get_mut(&id) else {
             return;
         };
+        modal.overlay = overlay;
         ctx.animator.cancel(Owner::ModalBackdrop(id), ctx.now_ms);
         ctx.animator.cancel(Owner::ModalContent(id), ctx.now_ms);
         modal.sheet = sheet;
         modal.animation = animation;
         modal.phase = Phase::Entering;
-        if modal.backdrop.is_none() {
+        if modal.backdrop.is_none() && !overlay {
             let mut backdrop = PropMap::new();
             // Below the content, whatever its index.
             backdrop.insert(PropKey::ZIndex, PropValue::Integer(-1));
@@ -245,7 +269,7 @@ impl Modals {
         if !self.stack.contains(&id) {
             self.stack.push(id);
         }
-        ctx.scene.set_overlays(self.stack.clone());
+        self.publish(ctx);
         ctx.scene
             .set_layer_override(id, LayerSlot::Presenter, LayerOverride::NONE);
         self.style(ctx, id);
@@ -329,7 +353,7 @@ impl Modals {
             ctx.scene.remove_synthetic(node);
         }
         self.stack.retain(|presented| *presented != id);
-        ctx.scene.set_overlays(self.stack.clone());
+        self.publish(ctx);
         if let Some(content) = content_of(ctx, id) {
             ctx.scene
                 .set_layer_override(content, LayerSlot::Presenter, LayerOverride::NONE);
@@ -357,6 +381,13 @@ impl Modals {
         } else {
             props.integer_or(PropKey::ModalBackdropColor, DEFAULT_BACKDROP)
         };
+        // `backdropBlurRadius` on a Modal frosts what is behind it, like a
+        // CSS `backdrop-filter: blur()` mask.
+        let blur = if transparent {
+            0.0
+        } else {
+            props.number_or(PropKey::BackdropBlurRadius, 0.0).max(0.0)
+        };
         let sheet = props.integer_or(PropKey::ModalPresentation, 2) == PRESENTATION_SHEET;
         let radius = props
             .number_or(PropKey::BottomSheetCornerRadius, 20.0)
@@ -376,6 +407,11 @@ impl Modals {
                 backdrop,
                 PropKey::BackgroundColor,
                 Some(PropValue::Integer(color)),
+            );
+            ctx.scene.set_prop(
+                backdrop,
+                PropKey::BackdropBlurRadius,
+                (blur > 0.0).then_some(PropValue::Float(f64::from(blur))),
             );
         }
         if let Some(content) = content {

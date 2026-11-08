@@ -421,6 +421,7 @@ pub fn dirty_for(key: PropKey) -> Dirty {
         | K::TextDecoration
         | K::TextTransform
         | K::TextSpans
+        | K::TextSpanBoxes
         | K::TextEllipsizeMode
         | K::TextShadowOffsetX
         | K::TextShadowOffsetY
@@ -475,6 +476,9 @@ pub struct Scene {
     scroll_offsets: IdMap<Point>,
     /// Views stacked above the root, back to front (presented modals).
     overlays: Vec<NodeId>,
+    /// Overlays that do not take every hit (a window toast layer): a press
+    /// outside their content reaches the modal or the window below.
+    passive_overlays: Vec<NodeId>,
     /// Host chrome above everything (error reports, toasts): parentless
     /// synthetic nodes placed by their own frame.
     host_overlays: Vec<NodeId>,
@@ -575,6 +579,7 @@ impl Scene {
         self.style_overlays.clear();
         self.scroll_offsets.clear();
         self.overlays.clear();
+        self.passive_overlays.clear();
         self.host_overlays.clear();
         self.window_roots.clear();
         self.pointer_root = None;
@@ -702,6 +707,7 @@ impl Scene {
                 self.overlays.remove(position);
                 self.overlays_dirty = true;
             }
+            self.passive_overlays.retain(|overlay| *overlay != removed);
             if let Some(position) = self
                 .host_overlays
                 .iter()
@@ -958,6 +964,11 @@ impl Scene {
         &self.overlays
     }
 
+    /// Which of the overlays let presses outside their content through.
+    pub fn set_passive_overlays(&mut self, passive: Vec<NodeId>) {
+        self.passive_overlays = passive;
+    }
+
     /// The modal nodes presented as roots of windows of their own.
     pub fn set_window_roots(&mut self, roots: Vec<NodeId>) {
         self.window_roots = roots;
@@ -1136,8 +1147,14 @@ impl Scene {
                 return Some(hit);
             }
         }
-        if let Some(top) = self.overlays.last() {
-            return self.hit_test_node(*top, point).or(Some(*top));
+        for overlay in self.overlays.iter().rev() {
+            if self.passive_overlays.contains(overlay) {
+                if let Some(hit) = self.hit_test_node(*overlay, point) {
+                    return Some(hit);
+                }
+                continue;
+            }
+            return self.hit_test_node(*overlay, point).or(Some(*overlay));
         }
         self.hit_test_node(self.root, point)
     }
@@ -1346,12 +1363,16 @@ impl Scene {
         let shadow_color = props
             .color(PropKey::TextShadowColor)
             .unwrap_or(Color::TRANSPARENT);
+        let (runs, boxes) = source.styled(
+            props.color(PropKey::TextColor),
+            props.integer_or(PropKey::TextDecoration, 1),
+        );
         let block = TextBlock {
-            runs: source.runs(
-                props.color(PropKey::TextColor),
-                props.integer_or(PropKey::TextDecoration, 1),
-            ),
+            runs,
+            boxes,
             align: self.text_align(node, props),
+            wrap: crate::text::TextWrap::from_break_strategy(source.break_strategy),
+            hyphens: source.hyphenation > 1,
             max_lines: source.max_lines,
             ellipsize: match props.integer(PropKey::TextEllipsizeMode) {
                 Some(2) => Ellipsize::Head,
@@ -1551,6 +1572,21 @@ impl Scene {
             }
             if dirty.contains(Dirty::CONFIG) {
                 commands += self.push_accessibility(backend, *id);
+                if let Some(node) = self.nodes.get(id) {
+                    let keys = if node.handles(PropKey::OnKeyDown)
+                        && node.props().flag_or(PropKey::Enabled, true)
+                    {
+                        node.props()
+                            .text(PropKey::CaptureKeys)
+                            .filter(|keys| keys.len() <= 512)
+                            .unwrap_or("")
+                    } else {
+                        ""
+                    };
+                    backend.set_key_capture(*id, keys);
+                    let mode = node.props().integer_or(PropKey::PointerEvents, 1);
+                    backend.set_pointer_events(*id, !matches!(mode, 2 | 3), !matches!(mode, 2 | 4));
+                }
             }
             if dirty.contains(Dirty::TEXT) {
                 // A pressable is named after the text inside it.
@@ -1657,6 +1693,22 @@ impl Scene {
                     || props.flag_or(PropKey::ListHorizontal, false),
                 enabled: props.flag_or(PropKey::ScrollEnabled, true),
                 shows_indicators: props.flag_or(PropKey::ShowsScrollIndicator, true),
+                scrollbar_thickness: props.number(PropKey::ScrollbarThickness).or_else(|| {
+                    match props.integer(PropKey::ScrollbarWidth) {
+                        Some(2) => Some(10.0),
+                        Some(3) => Some(0.0),
+                        _ => None,
+                    }
+                }),
+                scrollbar_color: props.color(PropKey::ScrollbarColor),
+                reserved_gutter: props.integer(PropKey::ScrollbarGutter).unwrap_or(1) >= 2,
+                thumb_inset: if props.number(PropKey::ScrollbarThickness).is_none()
+                    && props.integer(PropKey::ScrollbarWidth) == Some(2)
+                {
+                    2.0
+                } else {
+                    0.0
+                },
             };
             let content = self.content_size(id);
             let (pushed_scroll, pushed_content) = (node.pushed_scroll, node.pushed_content);
@@ -2057,6 +2109,34 @@ mod tests {
         scene.apply(vec![Mutation::Remove { id: 9 }]);
         scene.flush(&mut backend, MAIN_WINDOW);
         assert!(scene.overlays().is_empty());
+    }
+
+    #[test]
+    fn pointer_events_updates_reach_native_targeting() {
+        let (mut scene, mut backend) = mounted();
+        for (mode, target_self, target_children) in [
+            (1, true, true),
+            (2, false, false),
+            (3, false, true),
+            (4, true, false),
+        ] {
+            scene.set_prop(3, PropKey::PointerEvents, Some(PropValue::Integer(mode)));
+            backend.commands.clear();
+            scene.flush(&mut backend, MAIN_WINDOW);
+            assert!(backend.commands.contains(&Command::PointerEvents(
+                3,
+                target_self,
+                target_children
+            )));
+        }
+        scene.set_prop(3, PropKey::PointerEvents, None);
+        backend.commands.clear();
+        scene.flush(&mut backend, MAIN_WINDOW);
+        assert!(
+            backend
+                .commands
+                .contains(&Command::PointerEvents(3, true, true))
+        );
     }
 
     #[test]

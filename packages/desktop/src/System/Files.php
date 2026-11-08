@@ -67,6 +67,41 @@ final class Files
         }, $failure);
     }
 
+    private static bool $saveOpen = false;
+
+    /** Save up to 1 MiB through the native save dialog. No arbitrary external path is accepted.
+     * @param Closure(bool):void $completed False when the user cancels.
+     * @param null|Closure(string):void $failure
+     * @param ?string $title Dialog title; null uses the localized default ("Save file").
+     */
+    public static function save(string $contents, string $defaultName, Closure $completed, ?Closure $failure = null, ?string $title = null): int
+    {
+        $title ??= \Pam\Desktop\I18n\FrameworkText::get('files.saveTitle');
+        if (strlen($title) > 512 || preg_match('/[\x00-\x1f]/', $title)) {
+            throw new InvalidArgumentException('Invalid save dialog title.');
+        }
+        if (strlen($contents) > 1_048_576 || $defaultName === '' || strlen($defaultName) > 255
+            || preg_match('/[\\\\\/\x00-\x1f]/', $defaultName)) {
+            throw new InvalidArgumentException('Invalid save payload or filename.');
+        }
+        if (self::$saveOpen) throw new RuntimeException('A save dialog is already open.');
+        self::$saveOpen = true;
+        try {
+            return self::invokeOptionalFailure('save', ['data' => base64_encode($contents), 'defaultName' => $defaultName, 'title' => $title],
+                static function (array $values) use ($completed): void {
+                    self::$saveOpen = false;
+                    $completed(($values['saved'] ?? false) === true);
+                }, static function (string $message) use ($failure): void {
+                    self::$saveOpen = false;
+                    if ($failure !== null) { $failure($message); return; }
+                    throw new RuntimeException($message);
+                });
+        } catch (\Throwable $error) {
+            self::$saveOpen = false;
+            throw $error;
+        }
+    }
+
     public static function write(string $path, string $contents, ?Closure $callback = null): int
     {
         return self::invoke(

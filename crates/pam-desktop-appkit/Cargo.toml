@@ -75,6 +75,8 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "NSOpenPanel",
     "NSPanel",
     "NSParagraphStyle",
+    "NSPrintInfo",
+    "NSPrintOperation",
     "NSPasteboard",
     "NSResponder",
     "NSRunningApplication",
@@ -138,6 +140,9 @@ objc2-core-graphics = { version = "0.3.2", default-features = false, features = 
 ] }
 objc2-core-text = { version = "0.3.2", default-features = false, features = [
     "CTFont",
+    "CTFontDescriptor",
+    "CTFontManager",
+    "objc2-core-graphics",
     "std",
 ] }
 objc2-core-media = { version = "0.3.2", default-features = false, features = [

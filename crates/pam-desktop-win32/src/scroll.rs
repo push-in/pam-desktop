@@ -98,6 +98,21 @@ impl ScrollState {
         if !self.config.shows_indicators || !self.config.enabled {
             return None;
         }
+        // CSS `scrollbar-width`: `none` (0) hides the bar, a length or
+        // `thin` sets its thickness. A reserved gutter holds the bar flush
+        // with the edge, like the classic bar of a browser.
+        let thickness = self
+            .config
+            .scrollbar_thickness
+            .map_or(BAR_THICKNESS, |thickness| thickness.clamp(0.0, 64.0));
+        if thickness < 0.5 {
+            return None;
+        }
+        let edge = if self.config.reserved_gutter && self.config.scrollbar_thickness.is_some() {
+            0.0
+        } else {
+            BAR_MARGIN
+        };
         let (extent, content, offset) = if vertical {
             (viewport.height, self.content.height, self.offset.y)
         } else {
@@ -117,38 +132,37 @@ impl ScrollState {
             } else {
                 0.0
             };
+        // `thin`: the thumb sits inset across its track (Chromium 6 in 10).
+        let inset = self.config.thumb_inset.clamp(0.0, thickness / 4.0);
+        let thumb = thickness - 2.0 * inset;
         Some(if vertical {
-            let x = viewport.width - BAR_THICKNESS - BAR_MARGIN;
+            let x = viewport.width - thickness - edge;
             (
-                Rect::new(x, BAR_MARGIN, BAR_THICKNESS, track_length),
-                Rect::new(x, position, BAR_THICKNESS, thumb_length),
+                Rect::new(x, BAR_MARGIN, thickness, track_length),
+                Rect::new(x + inset, position, thumb, thumb_length),
             )
         } else {
-            let y = viewport.height - BAR_THICKNESS - BAR_MARGIN;
+            let y = viewport.height - thickness - edge;
             (
-                Rect::new(BAR_MARGIN, y, track_length, BAR_THICKNESS),
-                Rect::new(position, y, thumb_length, BAR_THICKNESS),
+                Rect::new(BAR_MARGIN, y, track_length, thickness),
+                Rect::new(position, y + inset, thumb_length, thumb),
             )
         })
     }
 
     /// The strip along the edge where the pointer can grab a bar.
     fn grab_zone(&self, viewport: Size, vertical: bool) -> Option<Rect> {
-        self.bar(viewport, vertical)?;
-        Some(if vertical {
-            Rect::new(
-                viewport.width - BAR_GRAB_EXTENT,
-                0.0,
-                BAR_GRAB_EXTENT,
-                viewport.height,
-            )
+        let (track, _) = self.bar(viewport, vertical)?;
+        // A thick authored bar is grabbed over its whole width.
+        let extent = BAR_GRAB_EXTENT.max(if vertical {
+            viewport.width - track.x
         } else {
-            Rect::new(
-                0.0,
-                viewport.height - BAR_GRAB_EXTENT,
-                viewport.width,
-                BAR_GRAB_EXTENT,
-            )
+            viewport.height - track.y
+        });
+        Some(if vertical {
+            Rect::new(viewport.width - extent, 0.0, extent, viewport.height)
+        } else {
+            Rect::new(0.0, viewport.height - extent, viewport.width, extent)
         })
     }
 }

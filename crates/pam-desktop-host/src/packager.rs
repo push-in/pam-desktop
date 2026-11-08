@@ -121,7 +121,7 @@ impl BuildOptions {
             }
         }
         Ok(BuildCommand::Build(Self {
-            project: project.unwrap_or_else(|| PathBuf::from(".")),
+            project: project.unwrap_or_else(crate::manifest::current_project),
             output,
             formats,
             force,
@@ -221,7 +221,7 @@ fn build_with(options: &BuildOptions, toolchain: &Toolchain) -> Result<BuildResu
     let project = Project::discover(&options.project)?;
     let application = &project.application;
     let host = validated_binary(&toolchain.host, "PAM Desktop host")?;
-    let php = validated_binary(&toolchain.php, "PHP runtime")?;
+    let php = pam_binary(validated_binary(&toolchain.php, "PHP runtime")?);
     let output = output_directory(&project, options)?;
     let names = ArtifactNames::new(application)?;
     let destinations = ArtifactDestinations::new(&output, &names, &options.formats);
@@ -235,8 +235,14 @@ fn build_with(options: &BuildOptions, toolchain: &Toolchain) -> Result<BuildResu
         .file_name()
         .and_then(OsStr::to_str)
         .ok_or("the PHP runtime name must be valid UTF-8")?;
+    // The `pam` binary itself, found on `PATH` inside its installation, sets
+    // up nothing: its `pam-run` launcher does.
+    let launcher = Some(toolchain.php.with_file_name("pam-run"))
+        .filter(|run| toolchain.php.file_name().is_some_and(|name| name == "pam") && run.is_file())
+        .unwrap_or_else(|| toolchain.php.clone());
     let runtime = PhpRuntime::probe(
         &php,
+        &launcher,
         php_name,
         &toolchain.php_arguments,
         ExtensionChoice::of(application.extensions.as_deref()),
@@ -810,11 +816,15 @@ impl<'a> ExtensionChoice<'a> {
 
 /// Finds the extensions an application refers to; see the file.
 const EXTENSION_USAGE: &str = include_str!("extension_usage.php");
+const PREBUILD_COMPONENTS: &str = include_str!("prebuild_components.php");
 
 /// The PHP that runs the application and the shared extensions it ships with.
 #[derive(Clone)]
 struct PhpRuntime {
     binary: PathBuf,
+    /// How PHP was found (`php`, or the `pam` launcher script that sets up
+    /// the environment of its runtime): what answers the build's questions.
+    launcher: PathBuf,
     /// `php`, `php.exe` or `pam`: the name of the binary inside the bundle.
     file_name: String,
     arguments: Vec<OsString>,
@@ -831,6 +841,7 @@ impl PhpRuntime {
     /// not answer (`pam`, a static build) is shipped as a single binary.
     fn probe(
         binary: &Path,
+        launcher: &Path,
         file_name: &str,
         arguments: &[OsString],
         choice: ExtensionChoice<'_>,
@@ -843,6 +854,7 @@ impl PhpRuntime {
         }
         let mut runtime = Self {
             binary: binary.to_path_buf(),
+            launcher: launcher.to_path_buf(),
             file_name: file_name.to_owned(),
             arguments: arguments.to_vec(),
             version: String::from("unknown"),
@@ -853,11 +865,31 @@ impl PhpRuntime {
             },
         };
         let probe = "echo json_encode(['version' => PHP_VERSION, 'extensionDir' => ini_get('extension_dir'), 'extensions' => get_loaded_extensions()]);";
-        let answer = if arguments.is_empty() {
-            Command::new(binary).args(["-r", probe]).output().ok()
-        } else {
-            None
-        };
+        // Asked through the launcher, from a neutral directory: the PAM
+        // runtime loads its shared extensions from the configuration its
+        // launcher points at, and reads the project of its working directory.
+        let answer = crate::console::hidden(&mut Command::new(launcher))
+            .args(["-r", probe])
+            .current_dir(std::env::temp_dir())
+            .output()
+            .ok();
+        // On Windows PHP is always the official php.exe, which answers; when
+        // it does not (an old Visual C++ runtime, a missing DLL) the bundle
+        // could not start it either.
+        if cfg!(windows)
+            && let Some(output) = answer.as_ref().filter(|output| !output.status.success())
+        {
+            return Err(format!(
+                "{} does not start: {}. Install the Visual C++ Redistributable 2015-2022 (x64), https://aka.ms/vs/17/release/vc_redist.x64.exe",
+                binary.display(),
+                String::from_utf8_lossy(&output.stderr)
+                    .lines()
+                    .chain(String::from_utf8_lossy(&output.stdout).lines())
+                    .find(|line| !line.trim().is_empty())
+                    .unwrap_or("no output")
+                    .trim()
+            ));
+        }
         let answer = answer
             .filter(|output| output.status.success())
             .and_then(|output| serde_json::from_slice::<serde_json::Value>(&output.stdout).ok());
@@ -895,8 +927,15 @@ impl PhpRuntime {
             } else {
                 format!("{name}.so")
             };
-            Some(directory.join(file))
+            // A PAM runtime keeps its shared extensions in `lib/php/extensions`
+            // and loads them by full path, whatever `extension_dir` says.
+            let pam = binary
+                .parent()
+                .and_then(Path::parent)
+                .map(|root| root.join("lib/php/extensions").join(&file));
+            Some(directory.join(&file))
                 .filter(|path| !directory.as_os_str().is_empty() && path.is_file())
+                .or_else(|| pam.filter(|path| path.is_file()))
         };
         // Loaded extensions first, in the order PHP sorted their dependencies.
         let exact = matches!(choice, ExtensionChoice::Listed(_));
@@ -929,6 +968,28 @@ impl PhpRuntime {
     /// The runtime with only the extensions the application in `app` refers
     /// to, and a note about the ones left out. Nothing changes when the
     /// manifest chose the extensions, or when PHP cannot tell.
+    /// Precompiles the components of the bundled project into its prebuilt
+    /// pack, so the installed application neither compiles them at its first
+    /// launch nor needs to write next to itself. A note says why not, if not.
+    fn prebuild_components(&self, project: &Path) -> Option<String> {
+        let script = PREBUILD_COMPONENTS.trim_start_matches("<?php");
+        let output = crate::console::hidden(&mut Command::new(&self.launcher))
+            .args(["-r", script, "--"])
+            .arg(crate::plain_path(project.to_path_buf()))
+            .current_dir(std::env::temp_dir())
+            .output();
+        match output {
+            Ok(output) if output.status.success() => None,
+            Ok(output) => Some(format!(
+                "components were not precompiled; they compile at the first launch: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+            Err(error) => Some(format!(
+                "components were not precompiled; they compile at the first launch: {error}"
+            )),
+        }
+    }
+
     fn for_application(&self, app: &Path) -> (Self, Option<String>) {
         let Some(pinned) = &self.pinned else {
             return (self.clone(), None);
@@ -937,9 +998,10 @@ impl PhpRuntime {
             return (self.clone(), None);
         }
         let script = EXTENSION_USAGE.trim_start_matches("<?php");
-        let answer = Command::new(&self.binary)
+        let answer = crate::console::hidden(&mut Command::new(&self.launcher))
             .args(["-r", script, "--"])
-            .arg(app)
+            .current_dir(std::env::temp_dir())
+            .arg(crate::plain_path(app.to_path_buf()))
             .args(self.extensions.iter().map(|(name, _)| name))
             .output()
             .ok()
@@ -1001,7 +1063,7 @@ impl PhpRuntime {
 
 /// The last word `--version` prints, as `pam` reports its version.
 fn binary_version(binary: &Path) -> Option<String> {
-    let output = Command::new(binary)
+    let output = crate::console::hidden(&mut Command::new(binary))
         .arg("--version")
         .output()
         .ok()
@@ -1063,6 +1125,7 @@ fn materialize_bundle(context: &BundleContext<'_>, bundle: &Path) -> Result<Mate
     let (runtime, note) = context.runtime.for_application(&app);
     let runtime = &runtime;
     let mut notes: Vec<String> = note.into_iter().collect();
+    notes.extend(context.runtime.prebuild_components(&bundled_project));
 
     let exe = std::env::consts::EXE_SUFFIX;
     copy_binary(context.host, &bin.join(format!("pam-desktop{exe}")))?;
@@ -1089,8 +1152,19 @@ fn materialize_bundle(context: &BundleContext<'_>, bundle: &Path) -> Result<Mate
     if cfg!(target_os = "linux") {
         let php_objects =
             std::iter::once(runtime.binary.as_path()).chain(extension_sources.iter().copied());
-        copy_libraries(&linux_libraries(php_objects)?, &bundle.join(PHP_LIB))?;
-        let host_libraries = linux_libraries([context.host])?;
+        // A runtime whose extensions link against the libraries of its own
+        // `lib` directory (the PAM runtime) resolves them there.
+        let runtime_lib = runtime
+            .binary
+            .parent()
+            .and_then(Path::parent)
+            .map(|root| root.join("lib"))
+            .filter(|lib| lib.is_dir());
+        copy_libraries(
+            &linux_libraries(php_objects, runtime_lib.as_deref())?,
+            &bundle.join(PHP_LIB),
+        )?;
+        let host_libraries = linux_libraries([context.host], None)?;
         let platform = platform_libraries(&host_libraries)?;
         system = system_dependencies(host_libraries.keys(), uses_web_view(&bundled_project));
         let own: BTreeMap<OsString, PathBuf> = host_libraries
@@ -1100,11 +1174,16 @@ fn materialize_bundle(context: &BundleContext<'_>, bundle: &Path) -> Result<Mate
         copy_libraries(&own, &bundle.join("lib"))?;
     } else if cfg!(target_os = "macos") {
         copy_adjacent_libraries(context.host, &bundle.join("lib"), "dylib")?;
-        copy_adjacent_libraries(&runtime.binary, &bundle.join(PHP_LIB), "dylib")?;
+        copy_runtime_libraries(&runtime.binary, &bundle.join(PHP_LIB))?;
     } else {
-        // Windows finds the DLLs of an executable beside it.
-        copy_adjacent_libraries(context.host, &bin, "dll")?;
-        copy_adjacent_libraries(&runtime.binary, &php_bin, "dll")?;
+        // Windows finds the DLLs of an executable beside it: the ones the
+        // host, PHP and the shipped extensions load (all of them when an
+        // image cannot be read).
+        copy_windows_libraries(&[context.host], &bin)?;
+        let php_images: Vec<&Path> = std::iter::once(runtime.binary.as_path())
+            .chain(extension_sources.iter().copied())
+            .collect();
+        copy_windows_libraries(&php_images, &php_bin)?;
     }
     let bundled_project_path = project.bundle_project()?;
     if cfg!(windows) {
@@ -1236,8 +1315,12 @@ fn complete_bundled_manifest(project: &Project, bundled_project: &Path) -> Resul
 }
 
 struct CopyContext<'a> {
-    /// Links may not leave this directory, except below `vendor`.
+    /// Links may not leave this directory, except from `vendor/` into a
+    /// package Composer installed there (`composer_packages`).
     source_root: &'a Path,
+    /// Canonical locations of the packages `vendor/composer/installed.json`
+    /// lists below `vendor/` (path repositories resolve outside the project).
+    composer_packages: Vec<PathBuf>,
     build_output: &'a Path,
     /// Relative to `source_root`.
     excludes: Vec<PathBuf>,
@@ -1246,6 +1329,7 @@ struct CopyContext<'a> {
 fn copy_project(project: &Project, output: &Path, app: &Path) -> Result<(), String> {
     let context = CopyContext {
         source_root: &project.source_root,
+        composer_packages: composer_package_roots(&project.source_root),
         build_output: output,
         excludes: project
             .application
@@ -1267,7 +1351,10 @@ fn copy_project(project: &Project, output: &Path, app: &Path) -> Result<(), Stri
     for relative in include {
         let source = project.source_root.join(relative);
         let destination = app.join(relative);
-        if excluded_path(relative, &context.excludes) || !source.exists() {
+        if excluded_path(relative, &context.excludes)
+            || !source.exists()
+            || cache_directory(&source)
+        {
             continue;
         }
         if let Some(parent) = destination.parent() {
@@ -1324,7 +1411,7 @@ fn copy_directory(
                 let canonical = path
                     .canonicalize()
                     .map_err(|error| format!("cannot resolve {}: {error}", path.display()))?;
-                if canonical.starts_with(context.build_output) {
+                if canonical.starts_with(context.build_output) || cache_directory(&path) {
                     continue;
                 }
                 fs::create_dir(&target)
@@ -1345,9 +1432,51 @@ fn copy_directory(
     result
 }
 
+/// Where the packages of `vendor/composer/installed.json` (Composer 1 or 2)
+/// really are: each `install-path` must name a folder below the project's
+/// `vendor/`, which for a path repository is a link to the package outside.
+/// Unreadable metadata allows nothing outside the project.
+fn composer_package_roots(source_root: &Path) -> Vec<PathBuf> {
+    let vendor = source_root.join("vendor");
+    let composer = vendor.join("composer");
+    let Some(document) = fs::read(composer.join("installed.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    else {
+        return Vec::new();
+    };
+    let packages = document
+        .get("packages")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| document.as_array());
+    packages
+        .into_iter()
+        .flatten()
+        .filter_map(|package| package.get("install-path")?.as_str())
+        .filter_map(|install_path| {
+            let mut location = composer.clone();
+            for component in Path::new(install_path).components() {
+                match component {
+                    Component::Normal(name) => location.push(name),
+                    Component::ParentDir => {
+                        location.pop();
+                    }
+                    Component::CurDir => {}
+                    _ => return None,
+                }
+            }
+            // `vendor/<vendor>/<package>`, never `vendor/` itself or above.
+            let below = location.strip_prefix(&vendor).ok()?;
+            (below.components().count() >= 2 && !below.starts_with("composer")).then_some(location)
+        })
+        .filter_map(|location| location.canonicalize().ok())
+        .collect()
+}
+
 /// A bundle has no links: what a link points at is copied in its place.
-/// Composer links path packages from outside the project into `vendor`;
-/// anywhere else a link that leaves the project is refused.
+/// A link that leaves the project is refused unless it sits below the
+/// project's own `vendor/` and resolves into a package Composer installed
+/// (a path repository); links inside such a package follow the same rule.
 fn copy_project_symlink(
     context: &CopyContext<'_>,
     source: &Path,
@@ -1358,13 +1487,17 @@ fn copy_project_symlink(
     let canonical = source
         .canonicalize()
         .map_err(|error| format!("cannot resolve symlink {}: {error}", source.display()))?;
-    let vendored = relative
-        .components()
-        .any(|component| component.as_os_str() == "vendor");
-    if !canonical.starts_with(context.source_root) && !vendored {
+    let composer_package = relative.starts_with("vendor")
+        && context
+            .composer_packages
+            .iter()
+            .any(|package| canonical.starts_with(package));
+    if !canonical.starts_with(context.source_root) && !composer_package {
         return Err(format!(
-            "bundle symlink escapes the project outside vendor: {}",
-            source.display()
+            "bundle symlink escapes the project: {} -> {}; only links below vendor/ into a \
+             package listed in vendor/composer/installed.json may point outside it",
+            source.display(),
+            canonical.display()
         ));
     }
     if canonical.starts_with(context.build_output) {
@@ -1451,7 +1584,7 @@ fn write_json_object(
 }
 
 /// Whether a path stays out of the bundle: version control, build output,
-/// secrets, the host's development state, the development dependencies of
+/// secrets, the host's development state, development-only trees inside
 /// vendored packages, and what the manifest excludes.
 fn excluded_path(relative: &Path, configured: &[PathBuf]) -> bool {
     let names = || {
@@ -1466,6 +1599,14 @@ fn excluded_path(relative: &Path, configured: &[PathBuf]) -> bool {
     let vendor_depth = names().position(|name| name == "vendor");
     let nested_package_vendor =
         vendor_depth.is_some_and(|depth| names().skip(depth + 1).any(|name| name == "vendor"));
+    let vendored_development_tree = vendor_depth.is_some_and(|depth| {
+        names().skip(depth + 1).any(|name| {
+            matches!(
+                name.to_string_lossy().as_ref(),
+                "benches" | "benchmarks" | "crates" | "docs" | "examples" | "tests"
+            )
+        })
+    });
     let default = names().any(|name| {
         let name = name.to_string_lossy();
         matches!(
@@ -1477,14 +1618,39 @@ fn excluded_path(relative: &Path, configured: &[PathBuf]) -> bool {
                 | "dist"
                 | "node_modules"
                 | "target"
+                | "target-hostnative"
                 | ".env"
+                | ".ssh"
+                | ".aws"
+                | ".gnupg"
+                | ".netrc"
+                | ".npmrc"
+                | ".pypirc"
         ) || name.starts_with(".env.")
     });
+    // Composer's credentials (`auth.json` beside composer.json: GitHub
+    // tokens, private repository passwords) never ship.
+    let composer_credentials =
+        vendor_depth.is_none() && relative.file_name().is_some_and(|name| name == "auth.json");
     default
+        || composer_credentials
         || nested_package_vendor
+        || vendored_development_tree
         || configured
             .iter()
             .any(|excluded| relative.starts_with(excluded))
+}
+
+/// A directory a tool marked as disposable cache with a `CACHEDIR.TAG`
+/// (<https://bford.info/cachedir/>): Cargo targets under any name, ccache,
+/// pip, Gradle. It is build output, never something the application runs.
+fn cache_directory(directory: &Path) -> bool {
+    use std::io::Read;
+    const SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
+    let mut head = [0u8; SIGNATURE.len()];
+    fs::File::open(directory.join("CACHEDIR.TAG"))
+        .and_then(|mut file| file.read_exact(&mut head))
+        .is_ok_and(|()| head == *SIGNATURE)
 }
 
 fn copy_binary(source: &Path, destination: &Path) -> Result<(), String> {
@@ -1501,10 +1667,11 @@ fn copy_binary(source: &Path, destination: &Path) -> Result<(), String> {
 /// The shared libraries of `objects` outside the base system ABI, by file name.
 fn linux_libraries<'a>(
     objects: impl IntoIterator<Item = &'a Path>,
+    search: Option<&Path>,
 ) -> Result<BTreeMap<OsString, PathBuf>, String> {
     let mut libraries = BTreeMap::<OsString, PathBuf>::new();
     for object in objects {
-        for library in runtime_libraries(object)? {
+        for library in runtime_libraries_in(object, search)? {
             let name = library
                 .file_name()
                 .ok_or_else(|| format!("runtime library has no file name: {}", library.display()))?
@@ -1540,15 +1707,93 @@ fn copy_libraries(
     Ok(())
 }
 
+/// A PAM installation links `pam` to `pam-run`, and ships `bin/php`, the same
+/// script under the name PHP tools expect: both start its `bin/pam` with the
+/// libraries of its `lib` directory. The bundle ships the binary, and `libphp`
+/// from `lib` (see `copy_runtime_libraries`).
+fn pam_binary(php: PathBuf) -> PathBuf {
+    let real = php.with_file_name("pam");
+    let launcher = php
+        .file_name()
+        .is_some_and(|name| name == "pam-run" || name == "php")
+        && fs::read(&php).is_ok_and(|script| {
+            script.starts_with(b"#!") && script.windows(8).any(|window| window == b"bin/pam\"")
+        });
+    if launcher && real.is_file() {
+        real
+    } else {
+        php
+    }
+}
+
 /// The libraries that ship beside a binary (macOS and Windows builds).
 fn copy_adjacent_libraries(
     binary: &Path,
     destination: &Path,
     extension: &str,
 ) -> Result<(), String> {
-    let Some(parent) = binary.parent() else {
+    match binary.parent() {
+        Some(parent) => copy_libraries_in(parent, destination, extension),
+        None => Ok(()),
+    }
+}
+
+/// The DLLs beside `images[0]` that the images load, directly or through
+/// one another.
+fn copy_windows_libraries(images: &[&Path], destination: &Path) -> Result<(), String> {
+    let Some(parent) = images.first().and_then(|image| image.parent()) else {
         return Ok(());
     };
+    let Some(needed) = crate::pe::needed_libraries(parent, images) else {
+        return copy_libraries_in(parent, destination, "dll");
+    };
+    // A host built with the GNU toolchain loads the WebView2 loader as a
+    // DLL (MSVC links it statically); without it the host cannot start.
+    if crate::pe::misses(parent, images, "WebView2Loader.dll") {
+        return Err(format!(
+            "{} loads WebView2Loader.dll, which is not beside it: build the host with the MSVC toolchain, or copy WebView2Loader.dll (webview2-com-sys, x64) next to it",
+            images[0].display()
+        ));
+    }
+    for library in needed {
+        let name = library.file_name().ok_or("a library has no file name")?;
+        copy_binary(&library, &destination.join(name))?;
+    }
+    // The Visual C++ runtime the official PHP is built with is not part of
+    // Windows: it ships beside PHP (app-local), from the build machine.
+    let system = std::env::var_os("SystemRoot")
+        .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from)
+        .join("System32");
+    for name in crate::pe::missing_vc_runtime(parent, images) {
+        let source = system.join(&name);
+        if !source.is_file() {
+            return Err(format!(
+                "{} needs {name}, which is neither beside it nor in {}: install the Visual C++ Redistributable 2015-2022 (x64) on the build machine",
+                images[0].display(),
+                system.display()
+            ));
+        }
+        copy_binary(&source, &destination.join(&name))?;
+    }
+    Ok(())
+}
+
+/// The libraries of a PHP runtime: beside the binary, and in the `lib`
+/// directory next to its `bin` (a PAM installation, linked through
+/// `@loader_path/../lib`), which the bundle reproduces.
+fn copy_runtime_libraries(binary: &Path, destination: &Path) -> Result<(), String> {
+    copy_adjacent_libraries(binary, destination, "dylib")?;
+    match binary
+        .parent()
+        .and_then(Path::parent)
+        .map(|root| root.join("lib"))
+    {
+        Some(lib) if lib.is_dir() => copy_libraries_in(&lib, destination, "dylib"),
+        _ => Ok(()),
+    }
+}
+
+fn copy_libraries_in(parent: &Path, destination: &Path, extension: &str) -> Result<(), String> {
     for entry in fs::read_dir(parent).map_err(|error| {
         format!(
             "cannot inspect the runtime directory {}: {error}",
@@ -1572,7 +1817,25 @@ fn copy_adjacent_libraries(
 }
 
 fn runtime_libraries(binary: &Path) -> Result<Vec<PathBuf>, String> {
-    let output = Command::new("ldd")
+    runtime_libraries_in(binary, None)
+}
+
+/// `runtime_libraries`, also looking in `search` before the system paths.
+fn runtime_libraries_in(binary: &Path, search: Option<&Path>) -> Result<Vec<PathBuf>, String> {
+    let mut command = Command::new("ldd");
+    if let Some(search) = search {
+        let mut paths = vec![search.to_path_buf()];
+        paths.extend(
+            std::env::var_os("LD_LIBRARY_PATH")
+                .iter()
+                .flat_map(std::env::split_paths),
+        );
+        command.env(
+            "LD_LIBRARY_PATH",
+            std::env::join_paths(paths).map_err(|error| error.to_string())?,
+        );
+    }
+    let output = command
         .arg(binary)
         .output()
         .map_err(|error| format!("cannot inspect {} with ldd: {error}", binary.display()))?;
@@ -2531,7 +2794,13 @@ fn set_launcher_icon(
     let rendered = workspace.join("launcher-icon");
     fs::create_dir_all(&rendered)
         .map_err(|error| format!("cannot create {}: {error}", rendered.display()))?;
-    render_windows_icons(icon, &rendered, &LAUNCHER_ICON_SIZES)?;
+    // PowerShell may be missing or blocked by policy: the bundle is still
+    // made, with the host's own icon on the launcher.
+    if let Err(error) = render_windows_icons(icon, &rendered, &LAUNCHER_ICON_SIZES) {
+        return Ok(Some(format!(
+            "the launcher has no icon of its own: rendering the application icon failed ({error})"
+        )));
+    }
     let images = LAUNCHER_ICON_SIZES
         .iter()
         .map(|(name, _)| {
@@ -3045,7 +3314,7 @@ mod tests {
         assert!(options.force && !options.sign);
 
         let defaults = parse(&[]).unwrap();
-        assert_eq!(defaults.project, PathBuf::from("."));
+        assert_eq!(defaults.project, crate::manifest::current_project());
         assert_eq!(
             defaults.formats,
             BTreeSet::from([PackageFormat::Directory, PackageFormat::Portable])
@@ -3160,6 +3429,25 @@ mod tests {
     }
 
     #[test]
+    fn leaves_tagged_cache_directories_out() {
+        let root = std::env::temp_dir().join(format!("pam-cachedir-{}", std::process::id()));
+        let tagged = root.join("build-cache");
+        let plain = root.join("assets");
+        fs::create_dir_all(&tagged).unwrap();
+        fs::create_dir_all(&plain).unwrap();
+        fs::write(
+            tagged.join("CACHEDIR.TAG"),
+            "Signature: 8a477f597d28d172789f06886806bc55\n# cache\n",
+        )
+        .unwrap();
+        fs::write(plain.join("CACHEDIR.TAG"), "not a signature\n").unwrap();
+        assert!(cache_directory(&tagged));
+        assert!(!cache_directory(&plain));
+        assert!(!cache_directory(&root));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn leaves_development_files_out() {
         for path in [
             ".git/config",
@@ -3169,11 +3457,21 @@ mod tests {
             "node_modules/left-pad/index.js",
             "dist/app.tar.gz",
             "target/debug/app",
+            "vendor/pushinbr/pam-desktop/target-hostnative/debug/deps/vcpkg-abcdef.d",
+            "vendor/pushinbr/pam-desktop/crates/pam-desktop-engine/src/lib.rs",
+            "vendor/pushinbr/pam-desktop/packages/desktop/tests/run.php",
+            "vendor/acme/package/examples/demo.php",
+            "vendor/acme/package/docs/README.md",
+            "vendor/acme/package/benches/bench.php",
             ".pam-desktop/state/navigation.json",
             ".pam/cache",
             ".pamignore",
             "vendor/acme/package/vendor/dev-only.php",
             "examples/app/vendor/acme/package/vendor/dev-only.php",
+            "auth.json",
+            "app/auth.json",
+            ".ssh/id_ed25519",
+            ".npmrc",
         ] {
             assert!(excluded_path(Path::new(path), &[]), "{path}");
         }
@@ -3181,9 +3479,13 @@ mod tests {
             "index.php",
             "vendor/autoload.php",
             "vendor/acme/package/src/Vendor.php",
+            "vendor/acme/package/src/examples.php",
+            "vendor/acme/package/src/tests.php",
             "environment.php",
             "src/target.php",
+            "src/target-hostnative.php",
             "plugins/system/src/main.rs",
+            "vendor/acme/package/resources/auth.json",
         ] {
             assert!(!excluded_path(Path::new(path), &[]), "{path}");
         }
@@ -3490,7 +3792,10 @@ mod tests {
             assert_eq!(mode("bin/hello"), 0o755);
             assert_eq!(mode("bin/pam-desktop"), 0o755);
             assert_eq!(mode("runtime/php/bin/php"), 0o755);
-            assert_eq!(mode("install.sh"), 0o755);
+            // The portable installer is the Linux bundle's.
+            if cfg!(target_os = "linux") {
+                assert_eq!(mode("install.sh"), 0o755);
+            }
             assert_eq!(mode("app/index.php"), 0o644);
             assert_eq!(mode("app/secret-mode.txt"), 0o644);
             assert_eq!(mode("manifest.json"), 0o644);
@@ -3754,6 +4059,12 @@ mod tests {
         fs::write(package.join("src/Linked.php"), "<?php\n").unwrap();
         fs::write(package.join("vendor/dev/only.php"), "<?php\n").unwrap();
         fs::create_dir_all(fixture.project.join("vendor/acme")).unwrap();
+        fs::create_dir_all(fixture.project.join("vendor/composer")).unwrap();
+        fs::write(
+            fixture.project.join("vendor/composer/installed.json"),
+            r#"{"packages": [{"name": "acme/linked", "install-path": "../acme/linked"}]}"#,
+        )
+        .unwrap();
         symlink(&package, fixture.project.join("vendor/acme/linked")).unwrap();
         symlink(
             fixture.project.join("index.php"),
@@ -3789,6 +4100,26 @@ mod tests {
             .expect("a link out of the project stops the build");
         assert!(error.contains("escapes the project"), "{error}");
         fs::remove_file(fixture.project.join("outside")).unwrap();
+        // A folder named `vendor` that is not the project's, a package
+        // Composer did not install, and a link inside a linked package that
+        // leaves it are all refused.
+        let secret = fixture.root.join("secret");
+        fs::create_dir_all(&secret).unwrap();
+        fs::write(secret.join("id_rsa"), "key").unwrap();
+        fs::create_dir_all(fixture.project.join("x/vendor")).unwrap();
+        for link in [
+            fixture.project.join("x/vendor/l"),
+            fixture.project.join("vendor/acme/undeclared"),
+            package.join("src/home"),
+        ] {
+            symlink(&secret, &link).unwrap();
+            let error = fixture
+                .build(&["--format", "directory", "--force"])
+                .err()
+                .unwrap_or_else(|| panic!("{} must stop the build", link.display()));
+            assert!(error.contains("escapes the project"), "{error}");
+            fs::remove_file(&link).unwrap();
+        }
         symlink(&fixture.project, fixture.project.join("storage/loop")).unwrap();
         let error = fixture
             .build(&["--format", "directory", "--force"])

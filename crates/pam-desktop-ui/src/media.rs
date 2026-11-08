@@ -684,7 +684,8 @@ impl Media {
         } else if lower.starts_with("asset://") {
             let relative = &source[8..];
             let valid = !relative.is_empty()
-                && !relative.contains(['\\', '\0', '?', '#'])
+                // `:` too: on Windows `C:` or `file:stream` would leave the bundle.
+                && !relative.contains(['\\', '\0', '?', '#', ':'])
                 && relative
                     .split('/')
                     .all(|segment| !segment.is_empty() && segment != "." && segment != "..");

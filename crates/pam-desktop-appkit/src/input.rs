@@ -72,6 +72,9 @@ struct Shared {
     /// Size of the editor's text last reported.
     content_size: Cell<Size>,
     editor_style: RefCell<Option<EditorStyle>>,
+    /// The field was swapped (password shown or hidden) while focused: the
+    /// next focus keeps the caret instead of `selectOnFocus`, like GTK.
+    keep_selection: Cell<bool>,
 }
 
 impl Shared {
@@ -238,9 +241,7 @@ impl Shared {
             container.set_text(None);
             return;
         }
-        let color = config
-            .placeholder_color
-            .unwrap_or(Color::rgba(128, 128, 128, 200));
+        let color = placeholder_color(&config).unwrap_or(Color::rgba(128, 128, 128, 200));
         container.set_text(Some(&TextContent {
             block: TextBlock {
                 runs: vec![TextRun {
@@ -413,7 +414,8 @@ impl Shared {
                 spelling: editor.isContinuousSpellCheckingEnabled(),
             });
             self.style_editor(&editor);
-            if self.config.borrow().select_on_focus {
+            let keep = self.keep_selection.replace(false);
+            if self.config.borrow().select_on_focus && !keep {
                 // After AppKit placed the caret for the click that focused it.
                 let field = Weak::from_retained(&field);
                 self.events.defer(move || {
@@ -584,6 +586,7 @@ impl InputHost {
             container: Weak::from_retained(&container.retain_view()),
             content_size: Cell::new(Size::ZERO),
             editor_style: RefCell::new(None),
+            keep_selection: Cell::new(false),
         });
         let this = InputDelegate::alloc(mtm).set_ivars(Rc::clone(&shared));
         // SAFETY: `init` is the designated initializer of `NSObject`.
@@ -653,7 +656,15 @@ impl InputHost {
                 // delegate; the observer is removed in `destroy`.
                 unsafe {
                     let center = NSNotificationCenter::defaultCenter();
-                    center.removeObserver(&self.delegate);
+                    // Only this registration: `setDelegate:` just registered
+                    // the delegate for the control's own notifications
+                    // (`controlTextDidChange:`), which a plain
+                    // `removeObserver:` would drop.
+                    center.removeObserver_name_object(
+                        &self.delegate,
+                        Some(NSTextViewDidChangeSelectionNotification),
+                        None,
+                    );
                     center.addObserver_selector_name_object(
                         &self.delegate,
                         sel!(editorSelectionChanged:),
@@ -783,16 +794,41 @@ impl InputHost {
             && config.secure != self.secure
         {
             let value = field.stringValue();
-            let focused = field.currentEditor().is_some();
+            // The caret (or selection) of a focused field survives the swap.
+            let selection = field.currentEditor().map(|editor| editor.selectedRange());
             let replacement = make_line(self.mtm, config.secure);
             replacement.setStringValue(&value);
             parent.addSubview(&replacement);
             field.removeFromSuperview();
-            self.control = Control::Line(replacement);
+            self.control = Control::Line(replacement.clone());
             self.secure = config.secure;
             self.attach(container);
-            if focused {
+            if let Some(range) = selection {
+                self.shared.keep_selection.set(true);
                 self.focus();
+                let restore = move |field: &NSTextField| {
+                    let Some(editor) = field.currentEditor() else {
+                        return false;
+                    };
+                    let length = editor.string().length();
+                    let start = range.location.min(length);
+                    let end = (range.location + range.length).min(length);
+                    editor.setSelectedRange(NSRange::new(start, end - start));
+                    true
+                };
+                if restore(&replacement) {
+                    // AppKit selects the whole value of a field that takes
+                    // focus once the current event is done: put the caret
+                    // back after that too.
+                    let field = Weak::from_retained(&replacement);
+                    self.shared.events.defer(move || {
+                        if let Some(field) = field.load() {
+                            restore(&field);
+                        }
+                    });
+                } else {
+                    self.shared.keep_selection.set(false);
+                }
             }
         }
 
@@ -812,12 +848,11 @@ impl InputHost {
                     field.setPlaceholderAttributedString(None);
                 } else {
                     // Without an authored colour the hint is the system's.
-                    let attributes = self.shared.text_attributes(Some(
-                        config
-                            .placeholder_color
-                            .unwrap_or(Color::rgba(128, 128, 128, 200)),
-                    ));
-                    if config.placeholder_color.is_none() {
+                    let hint = placeholder_color(config);
+                    let attributes = self
+                        .shared
+                        .text_attributes(Some(hint.unwrap_or(Color::rgba(128, 128, 128, 200))));
+                    if hint.is_none() {
                         // SAFETY: the attribute name is an immutable string
                         // exported by AppKit and its value is a color.
                         unsafe {
@@ -951,4 +986,12 @@ impl InputHost {
         }
         self.view().removeFromSuperview();
     }
+}
+
+/// The colour of the hint: the authored one, else the text colour at 45%,
+/// like the GTK backend; `None` leaves it to the system.
+fn placeholder_color(config: &InputConfig) -> Option<Color> {
+    config
+        .placeholder_color
+        .or_else(|| config.color.map(|color| color.with_alpha(0.45)))
 }

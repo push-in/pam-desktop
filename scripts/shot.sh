@@ -27,9 +27,15 @@ log=$(mktemp)
 # Every capture starts from a clean application state.
 state=$(mktemp -d)
 export PAM_DESKTOP_STATE_DIR=$state PAM_DESKTOP_DATA_DIR=$state/data PAM_DESKTOP_CACHE_DIR=$state/cache
-PAM_DESKTOP_WINDOW=$size timeout $(( seconds + 30 )) "$root/target/debug/pam-desktop" "${PAM_SHOT_MODE:-run}" "$app" >"$log" 2>&1 &
+PAM_DESKTOP_WINDOW=$size timeout $(( seconds + 30 )) "${PAM_DESKTOP_HOST:-$root/target/debug/pam-desktop}" "${PAM_SHOT_MODE:-run}" "$app" >"$log" 2>&1 &
 host=$!
 sleep "$seconds"
+if ! kill -0 "$host" 2>/dev/null; then
+    cat "$log" >&2
+    wait "$host" 2>/dev/null || true
+    rm -rf "$log" "$state"
+    exit 1
+fi
 # The xdotool arguments may hold several commands separated by a literal
 # "then" (needed after `type`, which consumes every following argument).
 step=()

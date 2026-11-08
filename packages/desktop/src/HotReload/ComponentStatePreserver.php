@@ -253,6 +253,8 @@ final class ComponentStatePreserver
                 ) {
                     continue;
                 }
+                $attribute = $property->getAttributes(StateAttribute::class)[0]->newInstance();
+                if (!$attribute->hotReload) continue;
                 $properties[$property->getName()] ??= $property;
             }
             $reflection = $reflection->getParentClass();

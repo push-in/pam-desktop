@@ -4,7 +4,8 @@
     "type": "library",
     "license": "MIT",
     "require": {
-        "php": "^8.5"
+        "php": "^8.5",
+        "symfony/polyfill-intl-normalizer": "^1.43"
     },
     "autoload": {
         "files": [

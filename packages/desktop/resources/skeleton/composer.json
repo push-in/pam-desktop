@@ -1,0 +1,25 @@
+{
+    "name": "app/@SLUG@",
+    "description": "@NAME@, a PAM Desktop application",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.5",
+        "pushinbr/pam-desktop": "^@VERSION@"
+    },
+    "autoload": {
+        "psr-4": {
+            "App\\": "src/"
+        }
+    },
+    "scripts": {
+        "dev": ["Composer\\Config::disableProcessTimeout", "pam-desktop dev"],
+        "start": "pam-desktop run",
+        "build": "pam-desktop build",
+        "test": "php tests/HomeScreenTest.php"
+    },
+    "config": {
+        "platform-check": true,
+        "sort-packages": true
+    }
+}

@@ -81,6 +81,10 @@ define_class!(
         #[unsafe(method(sendEvent:))]
         fn send_event(&self, event: &NSEvent) {
             let kind = event.r#type();
+            self.track_focus_visible(kind);
+            if (kind == NSEventType::KeyDown || kind == NSEventType::KeyUp) && self.capture_key(event) {
+                return;
+            }
             if kind == NSEventType::LeftMouseDown || kind == NSEventType::RightMouseDown || kind == NSEventType::OtherMouseDown {
                 self.mouse_down(event);
             } else if kind == NSEventType::LeftMouseUp || kind == NSEventType::RightMouseUp || kind == NSEventType::OtherMouseUp {
@@ -566,6 +570,53 @@ impl PamWindow {
         self.ivars().last_press.borrow().clone()
     }
 
+    /// The keyboard makes the focus ring of a box visible and the pointer
+    /// hides it again, like `:focus-visible` in GTK.
+    fn track_focus_visible(&self, kind: NSEventType) {
+        let visible = if kind == NSEventType::KeyDown {
+            true
+        } else if kind == NSEventType::LeftMouseDown || kind == NSEventType::RightMouseDown {
+            false
+        } else {
+            return;
+        };
+        if self.ivars().events.focus_visible.replace(visible) != visible
+            && let Some(view) = self
+                .firstResponder()
+                .and_then(|responder| responder_view(&responder))
+        {
+            view.noteFocusRingMaskChanged();
+        }
+    }
+
+    /// A composite's keys must be intercepted before NSTextField/NSTextView submits or edits.
+    fn capture_key(&self, event: &NSEvent) -> bool {
+        let modifiers = events::modifiers(event.modifierFlags());
+        if modifiers.control || modifiers.alt || modifiers.meta {
+            return false;
+        }
+        let key = events::key_name(event);
+        let mut node = self
+            .firstResponder()
+            .and_then(|responder| responder_view(&responder))
+            .and_then(|view| node_view_of(&view));
+        while let Some(current) = node {
+            if current.captures_key(&key) {
+                self.ivars().events.push(BackendEvent::Key(KeyEvent {
+                    window: self.ivars().id,
+                    pressed: event.r#type() == NSEventType::KeyDown,
+                    key,
+                    modifiers,
+                    repeat: event.r#type() == NSEventType::KeyDown && event.isARepeat(),
+                }));
+                return true;
+            }
+            // SAFETY: the hierarchy is read on the AppKit main thread.
+            node = unsafe { current.superview() }.and_then(|view| node_view_of(&view));
+        }
+        false
+    }
+
     fn focus_moved(&self) {
         let ivars = self.ivars();
         let node = self
@@ -804,12 +855,19 @@ define_class!(
     unsafe impl NSDraggingDestination for HostView {
         #[unsafe(method(draggingEntered:))]
         fn dragging_entered(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
+            self.ivars().events.push(BackendEvent::DragMotion{window:self.ivars().window,position:Some(util::point(self.convertPoint_fromView(sender.draggingLocation(),None)))});
             Self::drop_operation(sender)
         }
 
         #[unsafe(method(draggingUpdated:))]
         fn dragging_updated(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
+            self.ivars().events.push(BackendEvent::DragMotion{window:self.ivars().window,position:Some(util::point(self.convertPoint_fromView(sender.draggingLocation(),None)))});
             Self::drop_operation(sender)
+        }
+
+        #[unsafe(method(draggingExited:))]
+        fn dragging_exited(&self, _sender: Option<&ProtocolObject<dyn NSDraggingInfo>>) {
+            self.ivars().events.push(BackendEvent::DragMotion{window:self.ivars().window,position:None});
         }
 
         #[unsafe(method(performDragOperation:))]

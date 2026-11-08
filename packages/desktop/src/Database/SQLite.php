@@ -89,6 +89,67 @@ final class SQLite
         ?Closure $onError = null,
     ): int {
         self::validateName($database);
+        $normalized = self::normalizeStatements($statements);
+        try {
+            $encoded = json_encode(
+                $normalized,
+                JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE,
+            );
+        } catch (JsonException $error) {
+            throw new InvalidArgumentException(
+                'SQLite transaction arguments must be JSON scalars.',
+                0,
+                $error,
+            );
+        }
+
+        return NativeModules::call(
+            'sqlite',
+            'transaction',
+            [
+                'database' => $database,
+                'sql' => '',
+                'arguments' => $encoded,
+            ],
+            static function ($result) use ($callback): void {
+                if ($result->status === ModuleResultStatus::Failure) {
+                    throw new NativeModuleException('sqlite', 'transaction', $result->payload);
+                }
+                $callback?->__invoke();
+            },
+            $onError,
+        );
+    }
+
+    /**
+     * Checks a readonly single integer boolean inside BEGIN IMMEDIATE before
+     * executing the statements. False commits no changes and returns false.
+     * @param list<string|int|float|bool|null> $guardArguments
+     * @param list<array{sql:string,arguments?:list<string|int|float|bool|null>,argumentSets?:list<list<string|int|float|bool|null>>}> $statements
+     * @param Closure(bool): void $callback
+     * @param (Closure(NativeModuleException): void)|null $onError
+     */
+    public static function transactionIf(string $database, string $guardSql, array $guardArguments, array $statements, Closure $callback, ?Closure $onError = null): int
+    {
+        self::validateName($database);
+        if ($guardSql === '' || strlen($guardSql) > 1_048_576) throw new InvalidArgumentException('SQLite guard SQL exceeds its bounds.');
+        $encoded = json_encode(['guardArguments' => $guardArguments, 'statements' => self::normalizeStatements($statements)], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+        return NativeModules::call('sqlite', 'transactionIf', ['database' => $database, 'sql' => $guardSql, 'arguments' => $encoded],
+            static function ($result) use ($callback): void {
+                if ($result->status === ModuleResultStatus::Failure) throw new NativeModuleException('sqlite', 'transactionIf', $result->payload);
+                $values = Wire::decodeMap($result->payload);
+                $applied = $values['applied'] ?? null;
+                if ($applied !== '0' && $applied !== '1') throw new NativeModuleException('sqlite', 'transactionIf', 'Invalid conditional transaction result.');
+                $callback($applied === '1');
+            }, $onError);
+    }
+
+    /**
+     * @param list<array{sql:string,arguments?:list<string|int|float|bool|null>,argumentSets?:list<list<string|int|float|bool|null>>}> $statements
+     * @return list<array{sql:string,arguments:list<string|int|float|bool|null>,argumentSets?:list<list<string|int|float|bool|null>>}>
+     */
+    private static function normalizeStatements(array $statements): array
+    {
         if ($statements === [] || count($statements) > 10_000) {
             throw new InvalidArgumentException(
                 'SQLite transaction requires between 1 and 10000 statements.',
@@ -125,35 +186,7 @@ final class SQLite
                     : ['argumentSets' => array_values($argumentSets)]),
             ];
         }
-        try {
-            $encoded = json_encode(
-                $normalized,
-                JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE,
-            );
-        } catch (JsonException $error) {
-            throw new InvalidArgumentException(
-                'SQLite transaction arguments must be JSON scalars.',
-                0,
-                $error,
-            );
-        }
-
-        return NativeModules::call(
-            'sqlite',
-            'transaction',
-            [
-                'database' => $database,
-                'sql' => '',
-                'arguments' => $encoded,
-            ],
-            static function ($result) use ($callback): void {
-                if ($result->status === ModuleResultStatus::Failure) {
-                    throw new NativeModuleException('sqlite', 'transaction', $result->payload);
-                }
-                $callback?->__invoke();
-            },
-            $onError,
-        );
+        return $normalized;
     }
 
     /**

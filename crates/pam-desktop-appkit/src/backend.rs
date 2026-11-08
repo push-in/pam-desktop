@@ -151,7 +151,10 @@ impl AppKitBackend {
     /// The window host holds the root view and, above it, the overlays.
     fn arrange_window(entry: &WindowEntry, views: &IdMap<ViewEntry>) {
         let mut wanted = Vec::new();
-        for id in entry.root.iter().chain(entry.overlays.iter()) {
+        // The root may also be an overlay (a modal that is the whole
+        // application): it is stacked once, where the overlays go.
+        let root = entry.root.filter(|root| !entry.overlays.contains(root));
+        for id in root.iter().chain(entry.overlays.iter()) {
             if let Some(view) = views.get(id) {
                 view.node.stack(&mut wanted);
             }
@@ -222,6 +225,10 @@ impl AppKitBackend {
 }
 
 impl Backend for AppKitBackend {
+    fn set_asset_root(&mut self, root: &std::path::Path) {
+        crate::fonts::set_root(root);
+    }
+
     fn open_window(&mut self, window: WindowId, config: &WindowConfig) {
         if let Some(entry) = self.windows.get(&window) {
             entry.window.setTitle(&ns_string(&config.title));
@@ -365,6 +372,11 @@ impl Backend for AppKitBackend {
         };
         entry.overlays = overlays.to_vec();
         Self::arrange_window(entry, &self.views);
+        // A boot failure can produce host chrome before any application root.
+        if !overlays.is_empty() && !entry.presented {
+            entry.presented = true;
+            self.present(window);
+        }
     }
 
     fn create_view(&mut self, id: NodeId, class: ViewClass) {
@@ -477,6 +489,21 @@ impl Backend for AppKitBackend {
         entry.apply_accessibility(&self.events);
     }
 
+    fn set_key_capture(&mut self, id: NodeId, keys: &str) {
+        if let Some(entry) = self.views.get(&id) {
+            entry.node.view.set_key_capture(keys);
+        }
+    }
+
+    fn set_pointer_events(&mut self, id: NodeId, target_self: bool, target_children: bool) {
+        if let Some(entry) = self.views.get(&id) {
+            entry
+                .node
+                .view
+                .set_pointer_events(target_self, target_children);
+        }
+    }
+
     fn set_focusable(&mut self, id: NodeId, focusable: bool) {
         if let Some(entry) = self.views.get(&id) {
             entry.node.view.set_focusable(focusable);
@@ -560,6 +587,15 @@ impl Backend for AppKitBackend {
         if let Some(entry) = self.views.get(&id) {
             entry.node.view.set_text_selection(range);
         }
+    }
+
+    fn print_document(
+        &mut self,
+        _window: WindowId,
+        document: pam_desktop_ui::printing::Document,
+        complete: pam_desktop_ui::printing::PrintCompletion,
+    ) {
+        crate::printing::print(document, complete);
     }
 
     fn announce(&mut self, message: &str, assertive: bool) -> bool {
@@ -964,6 +1000,7 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
             .is_none_or(|shared| shared.with(|_| ()).is_none())
     });
     runtime::pump();
+    crate::capture::schedule(mtm);
 
     application.run();
 

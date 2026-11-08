@@ -37,8 +37,52 @@ fn switch_extent(axis: Axis) -> f32 {
     let host = f32::from_bits(cell.load(std::sync::atomic::Ordering::Relaxed));
     if host > 0.0 { host } else { default }
 }
+/// Width CSS `scrollbar-gutter: stable` reserves, by `scrollbar-width`:
+/// Chromium's classic scrollbar (15) and its measured thin variant (10).
+const SCROLLBAR_GUTTER_AUTO: f32 = 15.0;
+const SCROLLBAR_GUTTER_THIN: f32 = 10.0;
+
+/// `(start, end)` space a vertical scroller reserves for its scrollbar so
+/// content keeps the same width whether or not it overflows. Platforms with
+/// overlay scrollbars draw their indicator inside this gutter.
+fn scrollbar_gutter(node: &Node) -> (f32, f32) {
+    let mode = integer(node, PropKey::ScrollbarGutter).unwrap_or(1);
+    if mode < 2
+        || boolean(node, PropKey::ScrollHorizontal)
+        || boolean(node, PropKey::ListHorizontal)
+    {
+        return (0.0, 0.0);
+    }
+    let thickness = match number(node, PropKey::ScrollbarThickness) {
+        Some(px) => px.clamp(0.0, 64.0),
+        None => match integer(node, PropKey::ScrollbarWidth).unwrap_or(1) {
+            2 => SCROLLBAR_GUTTER_THIN,
+            3 => 0.0,
+            _ => SCROLLBAR_GUTTER_AUTO,
+        },
+    };
+    (if mode == 3 { thickness } else { 0.0 }, thickness)
+}
+
 const DEFAULT_IMAGE_HEIGHT: f32 = 160.0;
 const DEFAULT_LIST_HEIGHT: f32 = 240.0;
+
+thread_local! {
+    /// Height of the window being laid out: the most a content-sized
+    /// vertical `VirtualizedList` without a numeric `max-height` grows to.
+    static WINDOW_HEIGHT: Cell<f32> = const { Cell::new(f32::INFINITY) };
+}
+
+/// A vertical `VirtualizedList` sizes its height by its rows (React Native
+/// FlatList, a CSS block with `overflow: auto`): the sum of the measured
+/// rows and the estimate of the rows not built yet, limited by a numeric
+/// `max-height` or, without one, by the window height. Only the rows inside
+/// that height are materialized.
+fn content_sized_list(node: &Node, axis: Axis) -> bool {
+    axis == Axis::Vertical
+        && node.kind == NodeKind::VirtualList
+        && !boolean(node, PropKey::ListHorizontal)
+}
 const MAX_LAYOUT_DEPTH: usize = 512;
 
 #[derive(Clone, Copy, Debug)]
@@ -116,6 +160,7 @@ pub fn calculate_with_text_metrics(
     {
         return Err(LayoutError::InvalidDimension);
     }
+    WINDOW_HEIGHT.with(|height| height.set(viewport.height));
     let children = child_index(tree);
     let context = LayoutContext {
         tree,
@@ -169,6 +214,7 @@ pub fn calculate_incremental_with_text_metrics(
     {
         return Err(LayoutError::InvalidDimension);
     }
+    WINDOW_HEIGHT.with(|height| height.set(viewport.height));
     let children = child_index(tree);
     let mut dirty_path = BTreeSet::new();
     for dirty in dirty_nodes {
@@ -763,6 +809,12 @@ fn layout_node(
         height: (frame.height - padding_top - padding_bottom).max(0.0),
     };
     if node.kind == NodeKind::Scroll {
+        let (gutter_start, gutter_end) = scrollbar_gutter(node);
+        let inner = Layout {
+            x: inner.x + gutter_start,
+            width: (inner.width - gutter_start - gutter_end).max(0.0),
+            ..inner
+        };
         let axis = if boolean(node, PropKey::ScrollHorizontal) {
             Axis::Horizontal
         } else {
@@ -1061,6 +1113,12 @@ fn layout_node(
         return Ok(());
     }
     if node.kind == NodeKind::VirtualList {
+        let (gutter_start, gutter_end) = scrollbar_gutter(node);
+        let inner = Layout {
+            x: inner.x + gutter_start,
+            width: (inner.width - gutter_start - gutter_end).max(0.0),
+            ..inner
+        };
         let horizontal = boolean(node, PropKey::ListHorizontal);
         let columns = if horizontal {
             1
@@ -1074,10 +1132,23 @@ fn layout_node(
         // horizontal cells, which are otherwise content-sized too.
         let authored_row = number(node, PropKey::ListRowHeight).map(|height| height.max(1.0));
         let row_height = authored_row.unwrap_or(DEFAULT_CONTROL_HEIGHT);
+        // CSS column-gap/row-gap (GridColumnGap/GridRowGap) separate the
+        // cells of a vertical list, like a CSS grid of cards. Without them
+        // cells touch, as in a React Native FlatList.
+        let column_gap = if horizontal || columns < 2 {
+            0.0
+        } else {
+            number(node, PropKey::GridColumnGap).unwrap_or(0.0).max(0.0)
+        };
+        let row_gap = if horizontal {
+            0.0
+        } else {
+            number(node, PropKey::GridRowGap).unwrap_or(0.0).max(0.0)
+        };
         let cell_width = if horizontal {
             row_height
         } else {
-            inner.width / columns as f32
+            ((inner.width - column_gap * (columns - 1) as f32) / columns as f32).max(0.0)
         };
         let visible_children = node_children
             .iter()
@@ -1167,7 +1238,10 @@ fn layout_node(
             if !pending.is_empty() {
                 rows.push(pending);
             }
-            for row in &rows {
+            for (row_index, row) in rows.iter().enumerate() {
+                if row_index > 0 {
+                    cursor += row_gap;
+                }
                 let section = section_key(row[0], PropKey::ListSection);
                 let start = sections.start(section, cursor, active_section);
                 if section.is_none() {
@@ -1256,7 +1330,7 @@ fn layout_node(
                 for (column, child) in row.iter().copied().enumerate() {
                     let margins = cell_margins(child);
                     let item_frame = Layout {
-                        x: inner.x + column as f32 * cell_width + margins.left,
+                        x: inner.x + column as f32 * (cell_width + column_gap) + margins.left,
                         y: start + margins.top,
                         width: (cell_width - margins.left - margins.right).max(0.0),
                         height: (item_height - margins.top - margins.bottom).max(0.0),
@@ -1982,6 +2056,7 @@ fn layout_wrapped_children(
 fn is_grid(node: &Node) -> bool {
     integer(node, PropKey::GridColumns).unwrap_or(0) > 0
         || node.properties.contains_key(&PropKey::GridTemplate)
+        || node.properties.contains_key(&PropKey::GridTracks)
 }
 
 fn resolved_grid_plan(
@@ -2000,9 +2075,17 @@ fn resolved_grid_plan(
         }
         Some(_) => return Err(LayoutError::InvalidGridTemplate),
         None => (
-            integer(node, PropKey::GridColumns)
-                .unwrap_or(12)
-                .clamp(1, 64) as usize,
+            match node.properties.get(&PropKey::GridTracks) {
+                Some(pam_desktop_wire::PropValue::String(wire)) => {
+                    crate::grid_tracks::GridTracks::parse(wire)
+                        .map_err(|_| LayoutError::InvalidGridTemplate)?
+                        .len()
+                }
+                Some(_) => return Err(LayoutError::InvalidGridTemplate),
+                None => integer(node, PropKey::GridColumns)
+                    .unwrap_or(12)
+                    .clamp(1, 64) as usize,
+            },
             finite_non_negative(number(node, PropKey::GridColumnGap).unwrap_or(fallback_gap))?,
             finite_non_negative(number(node, PropKey::GridRowGap).unwrap_or(fallback_gap))?,
             None,
@@ -2015,6 +2098,29 @@ fn resolved_grid_plan(
     // A narrower container still gets one column; never force horizontal overflow.
     let fitting = ((width.max(0.0) + gap) / (minimum + gap)).floor() as usize;
     Ok((fitting.clamp(1, maximum), gap, row_gap, level))
+}
+
+fn resolved_grid_widths(
+    node: &Node,
+    columns: usize,
+    available: f32,
+    responsive: bool,
+) -> Result<Vec<f32>, LayoutError> {
+    if !responsive && let Some(value) = node.properties.get(&PropKey::GridTracks) {
+        let pam_desktop_wire::PropValue::String(wire) = value else {
+            return Err(LayoutError::InvalidGridTemplate);
+        };
+        let tracks = crate::grid_tracks::GridTracks::parse(wire)
+            .map_err(|_| LayoutError::InvalidGridTemplate)?;
+        if tracks.len() == columns {
+            return Ok(tracks.widths(available));
+        }
+        // GridMinColumnWidth may reduce the original count at a smaller viewport.
+        if number(node, PropKey::GridMinColumnWidth).unwrap_or(0.0) <= 0.0 {
+            return Err(LayoutError::InvalidGridTemplate);
+        }
+    }
+    Ok(vec![available.max(0.0) / columns as f32; columns])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2030,8 +2136,12 @@ fn layout_grid(
 ) -> Result<(), LayoutError> {
     let (columns, column_gap, row_gap, level) =
         resolved_grid_plan(node, inner.width, fallback_gap)?;
-    let unit =
-        ((inner.width - column_gap * columns.saturating_sub(1) as f32).max(0.0)) / columns as f32;
+    let track_widths = resolved_grid_widths(
+        node,
+        columns,
+        inner.width - column_gap * columns.saturating_sub(1) as f32,
+        level.is_some(),
+    )?;
     let mut children = node_children
         .iter()
         .copied()
@@ -2058,7 +2168,8 @@ fn layout_grid(
             cursor = 0;
         }
         let column = (cursor + offset).min(columns.saturating_sub(span));
-        let width = unit * span as f32 + column_gap * span.saturating_sub(1) as f32;
+        let width = track_widths[column..column + span].iter().sum::<f32>()
+            + column_gap * span.saturating_sub(1) as f32;
         let (margin_top, margin_bottom) = margin_main(child, Axis::Vertical);
         let (margin_left, margin_right) = margin_cross(child, Axis::Vertical);
         let content_width = (width - margin_left - margin_right).max(0.0);
@@ -2135,7 +2246,10 @@ fn layout_grid(
             _ => margin_top,
         }
         .max(0.0);
-        let x = inner.x + placement.column as f32 * (unit + column_gap) + margin_left;
+        let x = inner.x
+            + track_widths[..placement.column].iter().sum::<f32>()
+            + placement.column as f32 * column_gap
+            + margin_left;
         let frame = Layout {
             x,
             y: inner.y + row_offsets[placement.row] + offset,
@@ -2608,7 +2722,9 @@ fn intrinsic_extent(
         // min/max-width), breaking the line after too few items.
         return Ok(0.0);
     }
-    if node_children.is_empty() && empty_container_is_box(node) {
+    if node_children.is_empty()
+        && (empty_container_is_box(node) || content_sized_list(node, requested_axis))
+    {
         // Yoga: a View without children has no measure function, so its
         // content size is its padding and border alone (0 when it has none).
         // The 48/100 control placeholder made an empty row (every child
@@ -2633,7 +2749,21 @@ fn intrinsic_extent(
         };
         return finite_non_negative(extent);
     }
-    if node_children.is_empty() || (!content_sized(node) && !horizontal_scroll_height) {
+    // CSS `max-height` on a vertical scroller (ScrollView, VirtualizedList):
+    // the box follows its content and only scrolls past the maximum.
+    let window_capped_list =
+        content_sized_list(node, requested_axis) && number(node, PropKey::MaxHeight).is_none();
+    let max_height_scroller = window_capped_list
+        || (requested_axis == Axis::Vertical
+            && number(node, PropKey::MaxHeight).is_some()
+            && match node.kind {
+                NodeKind::Scroll => !boolean(node, PropKey::ScrollHorizontal),
+                NodeKind::VirtualList => !boolean(node, PropKey::ListHorizontal),
+                _ => false,
+            });
+    if node_children.is_empty()
+        || (!content_sized(node) && !horizontal_scroll_height && !max_height_scroller)
+    {
         return finite_non_negative(leaf_intrinsic(
             node,
             requested_axis,
@@ -2717,6 +2847,64 @@ fn intrinsic_extent(
             )?);
         }
         return finite_non_negative(height + padding_top + padding_bottom);
+    }
+    if max_height_scroller {
+        let columns = if node.kind == NodeKind::VirtualList {
+            integer(node, PropKey::ListNumColumns)
+                .unwrap_or(1)
+                .clamp(1, 64) as usize
+        } else {
+            1
+        };
+        let estimate = number(node, PropKey::ListRowHeight).unwrap_or(DEFAULT_CONTROL_HEIGHT);
+        let row_gap = if node.kind == NodeKind::VirtualList {
+            number(node, PropKey::GridRowGap).unwrap_or(0.0).max(0.0)
+        } else {
+            0.0
+        };
+        let (gutter_start, gutter_end) = scrollbar_gutter(node);
+        let width = ((inner_width - gutter_start - gutter_end) / columns as f32).max(0.0);
+        let visible = node_children
+            .iter()
+            .copied()
+            .filter(|child| visible(child))
+            .collect::<Vec<_>>();
+        let mut content = 0.0_f32;
+        for (index, row) in visible.chunks(columns).enumerate() {
+            let mut tallest = 0.0_f32;
+            for child in row {
+                let extent = if node.kind == NodeKind::VirtualList
+                    && children.get(&child.id).is_none_or(|cells| cells.is_empty())
+                    && number(child, PropKey::Height).is_none()
+                {
+                    estimate
+                } else {
+                    constrained_intrinsic_extent(
+                        children,
+                        child,
+                        Axis::Vertical,
+                        width,
+                        f32::INFINITY,
+                        text_scale,
+                        text_metrics,
+                        depth + 1,
+                    )?
+                };
+                tallest = tallest.max(extent);
+            }
+            content += tallest + if index > 0 { row_gap } else { 0.0 };
+            if window_capped_list && content >= WINDOW_HEIGHT.with(Cell::get) {
+                // Rows past the window cannot change the height.
+                break;
+            }
+        }
+        let extent = content + padding_top + padding_bottom;
+        let extent = if window_capped_list {
+            extent.min(WINDOW_HEIGHT.with(Cell::get))
+        } else {
+            extent
+        };
+        return finite_non_negative(extent);
     }
     if is_grid(node) {
         let content = match requested_axis {
@@ -3024,7 +3212,12 @@ fn grid_intrinsic_height(
 ) -> Result<f32, LayoutError> {
     let fallback_gap = finite(number(node, PropKey::Gap).unwrap_or(0.0))?;
     let (columns, column_gap, row_gap, level) = resolved_grid_plan(node, width, fallback_gap)?;
-    let unit = ((width - column_gap * columns.saturating_sub(1) as f32).max(0.0)) / columns as f32;
+    let track_widths = resolved_grid_widths(
+        node,
+        columns,
+        width - column_gap * columns.saturating_sub(1) as f32,
+        level.is_some(),
+    )?;
     let mut flow = node_children
         .iter()
         .copied()
@@ -3049,7 +3242,8 @@ fn grid_intrinsic_height(
             cursor = 0;
         }
         let column = (cursor + offset).min(columns.saturating_sub(span));
-        let cell_width = unit * span as f32 + column_gap * span.saturating_sub(1) as f32;
+        let cell_width = track_widths[column..column + span].iter().sum::<f32>()
+            + column_gap * span.saturating_sub(1) as f32;
         let (margin_left, margin_right) = margin_cross(child, Axis::Vertical);
         let (margin_top, margin_bottom) = margin_main(child, Axis::Vertical);
         let child_height = child_main(
@@ -3180,6 +3374,24 @@ fn leaf_intrinsic(
     match (axis, node.kind) {
         (Axis::Horizontal, NodeKind::Text) => {
             text_extent(node, axis, f32::INFINITY, text_scale, glyph_advances)
+        }
+        (Axis::Horizontal, NodeKind::Button) => {
+            let padding = number(node, PropKey::PaddingHorizontal)
+                .or_else(|| number(node, PropKey::Padding))
+                .unwrap_or(0.0);
+            let left = number(node, PropKey::PaddingLeft)
+                .unwrap_or(padding)
+                .max(0.0);
+            let right = number(node, PropKey::PaddingRight)
+                .unwrap_or(padding)
+                .max(0.0);
+            let (border_left, _, border_right, _) = border_edges(node);
+            (text_extent(node, axis, f32::INFINITY, text_scale, glyph_advances)
+                + left
+                + right
+                + border_left
+                + border_right)
+                .max(100.0)
         }
         (Axis::Horizontal, NodeKind::Switch) => switch_extent(Axis::Horizontal),
         (Axis::Horizontal, NodeKind::ActivityIndicator) => DEFAULT_CONTROL_HEIGHT,
@@ -3542,9 +3754,17 @@ fn flex_grow(node: &Node) -> f32 {
 }
 
 fn flex_shrink(node: &Node) -> f32 {
+    // A VirtualizedList shrinks by default (React Native ScrollView and
+    // FlatList, CSS scroll containers): its content-sized height gives way
+    // to the space its parent has.
+    let default = if node.kind == NodeKind::VirtualList {
+        1.0
+    } else {
+        0.0
+    };
     number(node, PropKey::FlexShrink)
         .filter(|value| value.is_finite())
-        .unwrap_or(0.0)
+        .unwrap_or(default)
         .max(0.0)
 }
 
@@ -8221,6 +8441,29 @@ mod tests {
     }
 
     #[test]
+    fn intrinsic_button_fits_its_label_and_horizontal_insets() {
+        let button = node(
+            1,
+            0,
+            0,
+            NodeKind::Button,
+            [
+                (
+                    PropKey::Text,
+                    PropValue::String("Try an interaction".into()),
+                ),
+                (PropKey::PaddingLeft, PropValue::Float(18.0)),
+                (PropKey::PaddingRight, PropValue::Float(18.0)),
+            ],
+        );
+        let text_width = text_extent(&button, Axis::Horizontal, f32::INFINITY, 1.0, None);
+        let width = leaf_intrinsic(&button, Axis::Horizontal, 1.0, None);
+        assert!(width >= text_width + 36.0);
+        assert!(width > 100.0);
+        assert!(leaf_intrinsic(&button, Axis::Horizontal, 2.0, None) > width);
+    }
+
+    #[test]
     fn intrinsic_switch_matches_react_native_geometry() {
         let switch = node(1, 0, 0, NodeKind::Switch, []);
 
@@ -8307,6 +8550,83 @@ mod tests {
         assert_eq!(tablet[&3].x, 304.0);
         assert_eq!(tablet[&4].x, 608.0);
         assert_eq!(tablet[&4].y, 0.0);
+    }
+
+    #[test]
+    fn grid_fractional_tracks_apply_to_frames_intrinsic_height_and_responsive_override() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(100, node(100, 0, 0, NodeKind::Column, []));
+        nodes.insert(
+            1,
+            node(
+                1,
+                100,
+                0,
+                NodeKind::Column,
+                [
+                    (PropKey::GridColumns, PropValue::Integer(2)),
+                    (PropKey::GridColumnGap, PropValue::Float(12.0)),
+                    (PropKey::GridRowGap, PropValue::Float(10.0)),
+                    (
+                        PropKey::GridTracks,
+                        PropValue::String("0,1.8;300,0.9".into()),
+                    ),
+                ],
+            ),
+        );
+        for id in 2..=4 {
+            nodes.insert(
+                id,
+                node(
+                    id,
+                    1,
+                    (id - 2) as u32,
+                    NodeKind::View,
+                    [
+                        (PropKey::GridSpan, PropValue::Integer(1)),
+                        (PropKey::Height, PropValue::Float(40.0)),
+                    ],
+                ),
+            );
+        }
+        let mut tree = Tree { root: 100, nodes };
+        let wide = calculate(
+            &tree,
+            Size {
+                width: 1212.0,
+                height: 500.0,
+            },
+        )
+        .unwrap();
+        assert!((wide[&2].width - 800.0).abs() < 0.01);
+        assert!((wide[&3].width - 400.0).abs() < 0.01);
+        assert!((wide[&3].x - 812.0).abs() < 0.01);
+        assert_eq!(wide[&1].height, 90.0);
+        assert_eq!(wide[&4].y, 50.0);
+        let narrow = calculate(
+            &tree,
+            Size {
+                width: 612.0,
+                height: 500.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(narrow[&2].width, 300.0);
+        assert_eq!(narrow[&3].width, 300.0);
+        tree.nodes.get_mut(&1).unwrap().properties.insert(
+            PropKey::GridTemplate,
+            PropValue::String("0,1,0,10;800,2,12,10".into()),
+        );
+        let responsive = calculate(
+            &tree,
+            Size {
+                width: 612.0,
+                height: 500.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(responsive[&2].width, 612.0);
+        assert_eq!(responsive[&1].height, 140.0);
     }
 
     #[test]
@@ -8612,6 +8932,309 @@ mod tests {
         assert_eq!(layout[&3].y, 0.0);
         assert_eq!(layout[&4].x, 0.0);
         assert_eq!(layout[&4].y, 160.0);
+    }
+
+    #[test]
+    fn stable_scrollbar_gutter_reserves_the_scrollbar_width() {
+        for (gutter, width, x, expected) in [
+            (2, 2, 0.0, 350.0),
+            (2, 1, 0.0, 345.0),
+            (3, 2, 10.0, 340.0),
+            (2, 3, 0.0, 360.0),
+            (1, 2, 0.0, 360.0),
+        ] {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                1,
+                node(
+                    1,
+                    0,
+                    0,
+                    NodeKind::Scroll,
+                    [
+                        (PropKey::ScrollbarGutter, PropValue::Integer(gutter)),
+                        (PropKey::ScrollbarWidth, PropValue::Integer(width)),
+                    ],
+                ),
+            );
+            nodes.insert(2, node(2, 1, 0, NodeKind::Column, []));
+            let tree = Tree { root: 1, nodes };
+            let layout = calculate(
+                &tree,
+                Size {
+                    width: 360.0,
+                    height: 640.0,
+                },
+            )
+            .expect("scroll with gutter");
+            assert_eq!(layout[&2].x, x, "gutter {gutter} width {width}");
+            assert_eq!(layout[&2].width, expected, "gutter {gutter} width {width}");
+        }
+    }
+
+    #[test]
+    fn max_height_scrollers_follow_their_content() {
+        for kind in [NodeKind::Scroll, NodeKind::VirtualList] {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(1, node(1, 0, 0, NodeKind::Column, []));
+            nodes.insert(
+                2,
+                node(
+                    2,
+                    1,
+                    0,
+                    kind,
+                    [(PropKey::MaxHeight, PropValue::Float(300.0))],
+                ),
+            );
+            for (index, id) in [3_u64, 4].into_iter().enumerate() {
+                nodes.insert(
+                    id,
+                    node(
+                        id,
+                        2,
+                        index as u32,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(50.0))],
+                    ),
+                );
+            }
+            let tree = Tree { root: 1, nodes };
+            let layout = calculate(
+                &tree,
+                Size {
+                    width: 360.0,
+                    height: 640.0,
+                },
+            )
+            .expect("max-height scroller");
+            assert_eq!(layout[&2].height, 100.0, "{kind:?} shrinks to its content");
+
+            let mut nodes = tree.nodes.clone();
+            for id in 5_u64..15 {
+                nodes.insert(
+                    id,
+                    node(
+                        id,
+                        2,
+                        id as u32,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(50.0))],
+                    ),
+                );
+            }
+            let tall = Tree { root: 1, nodes };
+            let layout = calculate(
+                &tall,
+                Size {
+                    width: 360.0,
+                    height: 640.0,
+                },
+            )
+            .expect("tall max-height scroller");
+            assert_eq!(layout[&2].height, 300.0, "{kind:?} stops at max-height");
+        }
+    }
+
+    #[test]
+    fn virtual_lists_without_a_numeric_max_height_follow_their_rows() {
+        let rows = |nodes: &mut BTreeMap<u64, Node>, parent: u64, count: u64| {
+            for index in 0..count {
+                let id = 100 + index;
+                nodes.insert(
+                    id,
+                    node(
+                        id,
+                        parent,
+                        index as u32,
+                        NodeKind::View,
+                        [(PropKey::Height, PropValue::Float(56.0))],
+                    ),
+                );
+            }
+        };
+        let window = Size {
+            width: 360.0,
+            height: 640.0,
+        };
+        // An auto-height card: the list takes its rows' height.
+        let mut nodes = BTreeMap::new();
+        nodes.insert(1, node(1, 0, 0, NodeKind::Column, []));
+        nodes.insert(2, node(2, 1, 0, NodeKind::Column, []));
+        nodes.insert(3, node(3, 2, 0, NodeKind::VirtualList, []));
+        rows(&mut nodes, 3, 3);
+        let layout = calculate(
+            &Tree {
+                root: 1,
+                nodes: nodes.clone(),
+            },
+            window,
+        )
+        .expect("short list");
+        assert_eq!(
+            layout[&3].height, 168.0,
+            "three rows, not the 240 placeholder"
+        );
+        assert_eq!(layout[&2].height, 168.0, "the card follows the list");
+
+        // Many rows and no limit: the window height caps the list.
+        let mut tall = nodes.clone();
+        rows(&mut tall, 3, 400);
+        let layout = calculate(
+            &Tree {
+                root: 1,
+                nodes: tall.clone(),
+            },
+            window,
+        )
+        .expect("tall list");
+        assert_eq!(
+            layout[&3].height, 640.0,
+            "the window caps an unbounded list"
+        );
+
+        // A bounded parent: the list shrinks to the space left (flexShrink 1).
+        let mut bounded = tall.clone();
+        bounded.insert(
+            2,
+            node(
+                2,
+                1,
+                0,
+                NodeKind::Column,
+                [(PropKey::Height, PropValue::Float(400.0))],
+            ),
+        );
+        bounded.insert(
+            4,
+            node(
+                4,
+                2,
+                0,
+                NodeKind::View,
+                [(PropKey::Height, PropValue::Float(40.0))],
+            ),
+        );
+        bounded.insert(3, node(3, 2, 1, NodeKind::VirtualList, []));
+        let layout = calculate(
+            &Tree {
+                root: 1,
+                nodes: bounded.clone(),
+            },
+            window,
+        )
+        .expect("bounded list");
+        assert_eq!(
+            layout[&3].height, 360.0,
+            "the list gives way to its sibling"
+        );
+
+        // max-height as a percentage of a definite parent.
+        let mut percent = bounded.clone();
+        percent.insert(
+            3,
+            node(
+                3,
+                2,
+                1,
+                NodeKind::VirtualList,
+                [(PropKey::MaxHeightPercent, PropValue::Float(50.0))],
+            ),
+        );
+        let layout = calculate(
+            &Tree {
+                root: 1,
+                nodes: percent,
+            },
+            window,
+        )
+        .expect("percent list");
+        assert_eq!(
+            layout[&3].height, 200.0,
+            "max-height: 50% of the 400 parent"
+        );
+
+        // Empty: no placeholder height.
+        let mut empty = BTreeMap::new();
+        empty.insert(1, node(1, 0, 0, NodeKind::Column, []));
+        empty.insert(2, node(2, 1, 0, NodeKind::Column, []));
+        empty.insert(3, node(3, 2, 0, NodeKind::VirtualList, []));
+        let layout = calculate(
+            &Tree {
+                root: 1,
+                nodes: empty,
+            },
+            window,
+        )
+        .expect("empty list");
+        assert_eq!(layout[&3].height, 0.0, "an empty list has no height");
+    }
+
+    #[test]
+    fn scrollbar_gutter_accepts_an_exact_thickness() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::Scroll,
+                [
+                    (PropKey::ScrollbarGutter, PropValue::Integer(2)),
+                    (PropKey::ScrollbarThickness, PropValue::Float(8.0)),
+                ],
+            ),
+        );
+        nodes.insert(2, node(2, 1, 0, NodeKind::Column, []));
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("scroll with 8px gutter");
+        assert_eq!(layout[&2].width, 352.0);
+    }
+
+    #[test]
+    fn virtual_grid_column_and_row_gaps_separate_cells() {
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            node(
+                1,
+                0,
+                0,
+                NodeKind::VirtualList,
+                [
+                    (PropKey::ListNumColumns, PropValue::Integer(2)),
+                    (PropKey::ListRowHeight, PropValue::Float(160.0)),
+                    (PropKey::GridColumnGap, PropValue::Float(12.0)),
+                    (PropKey::GridRowGap, PropValue::Float(12.0)),
+                ],
+            ),
+        );
+        for (index, id) in [2_u64, 3, 4].into_iter().enumerate() {
+            nodes.insert(id, node(id, 1, index as u32, NodeKind::Column, []));
+        }
+        let tree = Tree { root: 1, nodes };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 360.0,
+                height: 640.0,
+            },
+        )
+        .expect("virtual grid with gaps");
+
+        assert_eq!(layout[&2].width, 174.0);
+        assert_eq!(layout[&3].x, 186.0);
+        assert_eq!(layout[&3].width, 174.0);
+        assert_eq!(layout[&4].x, 0.0);
+        assert_eq!(layout[&4].y, 172.0);
     }
 
     #[test]

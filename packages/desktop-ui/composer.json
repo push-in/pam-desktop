@@ -1,0 +1,8 @@
+{
+    "name": "pushinbr/pam-desktop-ui",
+    "description": "Reusable native desktop controls for PAM Desktop.",
+    "type": "library",
+    "license": "MIT",
+    "require": { "php": "^8.5", "pushinbr/pam-desktop": "^2.0" },
+    "autoload": { "psr-4": { "Pam\\DesktopUi\\": "src/" } }
+}

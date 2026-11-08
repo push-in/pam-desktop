@@ -55,8 +55,8 @@ final class ViewRef
     }
 
     /**
-     * Focuses the input (React Native `ref.focus()`); waits for a sheet or
-     * dialog that is still presenting.
+     * Focuses an enabled input or pressable (React Native `ref.focus()`).
+     * A wrapper still targets its first input. Hidden and disabled targets fail.
      *
      * @param (Closure(bool, string): void)|null $done success and error message
      */

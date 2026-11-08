@@ -4,9 +4,16 @@ declare(strict_types=1);
 
 namespace Pam\Desktop\Diagnostics;
 
+use CompileError;
+use ErrorException;
+use Pam\Desktop\Internal\PamPhpRegistry;
 use Pam\Desktop\TemplateException;
 use Throwable;
 
+use function array_any;
+use function array_key_last;
+use function array_splice;
+use function class_exists;
 use function count;
 use function is_array;
 use function is_string;
@@ -52,32 +59,60 @@ final readonly class RuntimeError
         RuntimeErrorPhase $phase,
         bool $withSnippet = true,
     ): self {
-        $template = $error instanceof TemplateException ? $error->template : null;
-        $file = self::shortenPath($template ?? $error->getFile());
-        $line = $error instanceof TemplateException ? $error->templateLine : $error->getLine();
-        $column = $error instanceof TemplateException ? $error->templateColumn : 1;
-        $frames = self::frames($error);
-        if ($template !== null) {
-            array_unshift($frames, new StackFrame($file, $line, 'template', StackFrame::APP));
+        // A template reports where it failed; the error an expression or a
+        // component raised inside it says what failed and where it came from.
+        $template = $error instanceof TemplateException ? $error : null;
+        $origin = $template?->getPrevious() ?? $error;
+        [$frames, $paths] = self::frames($origin, $template);
+        if ($origin instanceof ErrorException && ($origin->getSeverity() & (E_ERROR | E_CORE_ERROR | E_COMPILE_ERROR)) !== 0) {
+            // A PHP fatal error has no stack: only where it stopped.
+            $path = $origin->getFile();
+            $compiled = class_exists(PamPhpRegistry::class, false) ? PamPhpRegistry::sourceOf($path) : null;
+            $path = $compiled !== null && !$compiled[1] ? $compiled[0] : $path;
+            $frames = [self::frame($path, $origin->getLine(), 'fatal error')];
+            $paths = [$path];
+        } elseif ($origin instanceof CompileError && $frames !== []) {
+            // The file that does not compile, not the autoloader that read it.
+            $frames[0] = new StackFrame($frames[0]->file, $frames[0]->line, 'compile', $frames[0]->kind);
+        }
+        // Raised by the framework while reading the template: a template error.
+        $type = $origin::class;
+        if ($template !== null && !array_any($frames, static fn (StackFrame $frame): bool => $frame->call === 'template')) {
+            // A template error starts at the template. An error raised inside
+            // it: after the app frames that raised it, before the renderer.
+            $at = $origin === $error ? 0 : count($frames);
+            foreach ($origin === $error ? [] : $frames as $index => $frame) {
+                if ($frame->kind !== StackFrame::APP) {
+                    $at = $index;
+                    break;
+                }
+            }
+            if ($at === 0) {
+                $type = TemplateException::class;
+            }
+            array_splice($frames, $at, 0, [self::templateFrame($template)]);
+            array_splice($paths, $at, 0, [$template->template]);
         }
         $appFrame = null;
         foreach ($frames as $index => $frame) {
-            if ($frame->kind === StackFrame::APP) {
+            if ($frame->kind === StackFrame::APP && $frame->file !== null) {
                 $appFrame = $index;
                 break;
             }
         }
-        $snippet = null;
-        if ($withSnippet) {
-            $source = $appFrame !== null ? $frames[$appFrame] : null;
-            $snippet = $source !== null && $source->file !== null
-                ? self::snippet($template ?? self::sourcePath($error, $appFrame), $source->file, $source->line)
-                : null;
-        }
+        $location = $appFrame !== null ? $frames[$appFrame] : null;
+        $atTemplate = $template !== null && $location?->call === 'template';
+        $file = $location?->file ?? self::shortenPath($origin->getFile());
+        $line = $location?->line ?? $origin->getLine();
+        $column = $atTemplate ? $template->templateColumn : 1;
+        $message = $origin === $template ? $template->reason : $origin->getMessage();
+        $snippet = $withSnippet && $location !== null && $location->file !== null
+            ? self::snippet($paths[$appFrame] ?? null, $location->file, $location->line)
+            : null;
 
         return new self(
-            type: $error::class,
-            message: $error->getMessage(),
+            type: $type,
+            message: $message,
             file: $file,
             line: $line,
             column: $column,
@@ -85,7 +120,7 @@ final readonly class RuntimeError
             frames: $frames,
             appFrame: $appFrame,
             snippet: $snippet,
-            fingerprint: hash('xxh3', $error::class."\0".$error->getMessage()."\0".$file."\0".$line),
+            fingerprint: hash('xxh3', $type."\0".$message."\0".$file."\0".$line),
         );
     }
 
@@ -138,24 +173,53 @@ final readonly class RuntimeError
         return implode("\n", $lines);
     }
 
-    /** @return list<StackFrame> */
-    private static function frames(Throwable $error): array
+    /** @return array{0: list<StackFrame>, 1: list<?string>} frames and their absolute paths */
+    private static function frames(Throwable $error, ?TemplateException $template): array
     {
-        $trace = $error->getTrace();
         $frames = [];
+        $paths = [];
         $file = $error->getFile();
         $line = $error->getLine();
-        foreach ($trace as $entry) {
-            $frames[] = self::frame($file, $line, self::call($entry));
+        $add = static function (?string $file, int $line, string $call) use (&$frames, &$paths, $template): void {
+            $compiled = $file !== null && class_exists(PamPhpRegistry::class, false)
+                ? PamPhpRegistry::sourceOf($file)
+                : null;
+            if ($compiled !== null) {
+                [$source, $expressions] = $compiled;
+                if ($expressions) {
+                    // Compiled template expressions: one frame for the template.
+                    $last = $frames === [] ? null : $frames[array_key_last($frames)];
+                    if ($last?->call === 'template' && $paths[array_key_last($paths)] === $source) {
+                        return;
+                    }
+                    $frames[] = $template !== null && $template->template === $source
+                        ? self::templateFrame($template)
+                        : new StackFrame(self::shortenPath($source), 0, 'template', StackFrame::APP);
+                    $paths[] = $source;
+
+                    return;
+                }
+                $file = $source;
+            }
+            $frames[] = self::frame($file, $line, $call);
+            $paths[] = $file;
+        };
+        foreach ($error->getTrace() as $entry) {
+            $add($file, $line, self::call($entry));
             if (count($frames) >= self::MAX_FRAMES) {
-                return $frames;
+                return [$frames, $paths];
             }
             $file = isset($entry['file']) ? (string) $entry['file'] : null;
             $line = (int) ($entry['line'] ?? 0);
         }
-        $frames[] = self::frame($file, $line, '{main}');
+        $add($file, $line, '{main}');
 
-        return $frames;
+        return [$frames, $paths];
+    }
+
+    private static function templateFrame(TemplateException $template): StackFrame
+    {
+        return new StackFrame(self::shortenPath($template->template), $template->templateLine, 'template', StackFrame::APP);
     }
 
     private static function frame(?string $file, int $line, string $call): StackFrame
@@ -164,8 +228,10 @@ final readonly class RuntimeError
             return new StackFrame(null, 0, $call, StackFrame::INTERNAL);
         }
         $kind = StackFrame::APP;
-        $framework = dirname(__DIR__);
-        if (str_starts_with($file, $framework.'/') || str_contains($file, '/vendor/pushinbr/pam-desktop')) {
+        // The package: its sources and the worker bootstrap in bin/.
+        $package = dirname(__DIR__, 2);
+        if (str_starts_with($file, $package.'/src/') || str_starts_with($file, $package.'/bin/')
+            || str_contains($file, '/vendor/pushinbr/pam-desktop')) {
             $kind = StackFrame::FRAMEWORK;
         } elseif (str_contains($file, '/vendor/') || str_starts_with($file, 'vendor/')) {
             $kind = StackFrame::VENDOR;
@@ -186,16 +252,6 @@ final readonly class RuntimeError
         $call = preg_replace('/@anonymous\x00[^$]*\$[0-9a-f]+/', '@anonymous', $call) ?? $call;
 
         return preg_replace('/\{closure:[^{}]*\}/', '{closure}', $call) ?? $call;
-    }
-
-    private static function sourcePath(Throwable $error, int $appFrame): ?string
-    {
-        if ($appFrame === 0) {
-            return $error->getFile();
-        }
-        $entry = $error->getTrace()[$appFrame - 1] ?? null;
-
-        return is_array($entry) && isset($entry['file']) ? (string) $entry['file'] : null;
     }
 
     /** @return array{file: string, line: int, start: int, lines: list<string>}|null */

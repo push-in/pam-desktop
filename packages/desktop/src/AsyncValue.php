@@ -46,16 +46,16 @@ final readonly class AsyncValue
 
     public static function offline(
         mixed $cached = null,
-        string $message = 'You are offline.',
+        ?string $message = null,
     ): self {
-        return new self(AsyncStatus::Offline, $cached, $message, true);
+        return new self(AsyncStatus::Offline, $cached, $message ?? \Pam\Desktop\I18n\FrameworkText::get('async.offline'), true);
     }
 
     public static function stale(
         mixed $data,
-        string $message = 'Showing saved content.',
+        ?string $message = null,
     ): self {
-        return new self(AsyncStatus::Stale, $data, $message, true);
+        return new self(AsyncStatus::Stale, $data, $message ?? \Pam\Desktop\I18n\FrameworkText::get('async.stale'), true);
     }
 
     public function hasData(): bool

@@ -39,9 +39,9 @@ final readonly class Menu
     }
 
     /** The standard Edit menu: undo, redo, cut, copy, paste and select all. */
-    public static function edit(string $label = 'Edit'): self
+    public static function edit(?string $label = null): self
     {
-        return new self($label, [
+        return new self($label ?? \Pam\Desktop\I18n\FrameworkText::get('menu.edit'), [
             MenuItem::role(MenuRole::Undo),
             MenuItem::role(MenuRole::Redo),
             MenuItem::separator(),
@@ -53,9 +53,9 @@ final readonly class Menu
     }
 
     /** The standard Window menu: minimize, zoom and full screen. */
-    public static function window(string $label = 'Window'): self
+    public static function window(?string $label = null): self
     {
-        return new self($label, [
+        return new self($label ?? \Pam\Desktop\I18n\FrameworkText::get('menu.window'), [
             MenuItem::role(MenuRole::Minimize),
             MenuItem::role(MenuRole::Zoom),
             MenuItem::separator(),

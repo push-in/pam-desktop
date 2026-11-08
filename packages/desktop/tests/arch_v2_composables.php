@@ -50,6 +50,11 @@ Sources::reset();
 Appearance::resetRuntime();
 Keyboard::resetRuntime();
 TextScalePolicy::reset();
+// Earlier suites may leave the shared app lifecycle in Background. Install
+// the framework dispatcher before setting the visible initial state.
+$stateBootstrap = App::onStateChange(static fn (AppState $state): null => null);
+Runtime::dispatchEvent(0, EventKind::AppState->value, (string) AppState::Active->value);
+App::offStateChange($stateBootstrap);
 $appearanceBaseline = $count(Appearance::class, 'listeners');
 $windowBaseline = Runtime::windowMetricsListeners();
 
@@ -162,6 +167,7 @@ $assert($app->active, 'useAppState() must follow the return to the foreground.')
 // useNetwork(): assumed online until the host pushes a status; pushes go through the device watch.
 $network = $values['network'];
 $assert($network->online && !$network->known && $network->type === null, 'useNetwork() must assume online until the first report.');
+$watchCall = $lastCall(); // Backgrounding cancels the original pending watch; use the resumed one.
 $assert($watchCall !== null && $watchCall[1] === 'device' && $watchCall[2] === 'watch', 'useNetwork() must start one device watch.');
 Runtime::dispatchModuleResult($watchCall[0], ModuleResultStatus::Success->value, Wire::map(['subscription' => 9]));
 $nextCall = $lastCall();

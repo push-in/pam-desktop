@@ -6,12 +6,13 @@ use objc2_core_graphics::{
     CGBlendMode, CGColorSpace, CGContext, CGGradient, CGGradientDrawingOptions, CGImage, CGLineCap,
     CGLineJoin, CGMutablePath, CGPath, kCGColorSpaceSRGB,
 };
-use pam_desktop_ui::backend::{DrawCommand, ImageContent, ImageFit};
+use pam_desktop_ui::backend::{DrawCommand, DrawPaint, DrawPathSegment, ImageContent, ImageFit};
 use pam_desktop_ui::color::Color;
 use pam_desktop_ui::geometry::{Insets, Point, Rect, Size};
 use pam_desktop_ui::style::{
     BorderStyle, Decoration, Gradient, GradientShape, GradientStop, Radii, Shadow,
 };
+use pam_desktop_ui::text::{TextAlign, TextBlock, TextRun};
 
 use crate::util::{cg_color, cg_point, cg_rect};
 
@@ -805,6 +806,120 @@ pub fn paint_drawing(context: &CGContext, commands: &[DrawCommand], hairline: f3
     };
     for command in commands {
         match command {
+            DrawCommand::Path {
+                segments,
+                fill,
+                stroke,
+                width,
+            } => {
+                let append = || {
+                    CGContext::begin_path(Some(context));
+                    let mut path = ContextPath(context);
+                    for segment in segments {
+                        match segment {
+                            DrawPathSegment::Move(point) => path.move_to(point.x, point.y),
+                            DrawPathSegment::Line(point) => path.line_to(point.x, point.y),
+                            DrawPathSegment::Cubic {
+                                control1,
+                                control2,
+                                to,
+                            } => path.curve_to(
+                                (control1.x, control1.y),
+                                (control2.x, control2.y),
+                                (to.x, to.y),
+                            ),
+                            DrawPathSegment::Close => path.close(),
+                        }
+                    }
+                };
+                if let Some(fill) = fill {
+                    append();
+                    match fill {
+                        DrawPaint::Solid(color) => {
+                            set_fill(context, *color);
+                            CGContext::fill_path(Some(context));
+                        }
+                        DrawPaint::LinearGradient {
+                            from,
+                            to,
+                            start,
+                            end,
+                        } => {
+                            CGContext::save_g_state(Some(context));
+                            CGContext::clip(Some(context));
+                            if let Some(gradient) = cg_gradient(&[
+                                GradientStop {
+                                    offset: 0.0,
+                                    color: *start,
+                                },
+                                GradientStop {
+                                    offset: 1.0,
+                                    color: *end,
+                                },
+                            ]) {
+                                CGContext::draw_linear_gradient(
+                                    Some(context),
+                                    Some(&gradient),
+                                    cg_point(*from),
+                                    cg_point(*to),
+                                    CGGradientDrawingOptions::DrawsBeforeStartLocation
+                                        | CGGradientDrawingOptions::DrawsAfterEndLocation,
+                                );
+                            }
+                            CGContext::restore_g_state(Some(context));
+                        }
+                    }
+                }
+                if let Some(color) = stroke {
+                    append();
+                    set_stroke(context, *color);
+                    CGContext::set_line_cap(Some(context), CGLineCap::Butt);
+                    CGContext::set_line_join(Some(context), CGLineJoin::Round);
+                    CGContext::set_line_width(
+                        Some(context),
+                        CGFloat::from(if *width > 0.0 { *width } else { hairline }),
+                    );
+                    CGContext::stroke_path(Some(context));
+                }
+            }
+            DrawCommand::Text {
+                text,
+                baseline,
+                font,
+                color,
+                align,
+            } => {
+                let block = TextBlock {
+                    runs: vec![TextRun {
+                        text: text.clone(),
+                        font: font.clone(),
+                        color: Some(*color),
+                        background: None,
+                        underline: false,
+                        strikethrough: false,
+                        letter_spacing: 0.0,
+                        press: None,
+                    }],
+                    max_lines: 1,
+                    ..TextBlock::default()
+                };
+                let paragraph = crate::text::Paragraph::new(&block);
+                let metrics = paragraph.measure(f32::INFINITY);
+                let offset = match align {
+                    TextAlign::Center => metrics.width / 2.0,
+                    TextAlign::End => metrics.width,
+                    _ => 0.0,
+                };
+                paragraph.draw(
+                    context,
+                    cg_point(Point::new(
+                        baseline.x - offset,
+                        baseline.y - metrics.first_baseline,
+                    )),
+                    f32::INFINITY,
+                    None,
+                );
+            }
             DrawCommand::Rect {
                 rect,
                 radius,

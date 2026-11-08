@@ -21,14 +21,21 @@ use objc2_app_kit::{
     NSParagraphStyleAttributeName, NSStrikethroughStyleAttributeName, NSTextAlignment,
     NSTextContainer, NSTextStorage, NSUnderlineStyleAttributeName,
 };
-use objc2_core_foundation::{CGFloat, CGPoint, CGSize};
+use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGContext;
-use objc2_core_text::{kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue};
+use objc2_core_text::{
+    CTFont, CTFontOrientation, kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue,
+};
 use objc2_foundation::{
     NSArray, NSAttributedString, NSAttributedStringKey, NSDictionary, NSMutableAttributedString,
     NSMutableDictionary, NSNumber, NSRange, NSString,
 };
-use pam_desktop_ui::text::{Ellipsize, FontSpec, TextAlign, TextBlock, TextMetrics, TextShadow};
+use pam_desktop_ui::geometry::Size;
+use pam_desktop_ui::style::{Border, Decoration, Radii};
+use pam_desktop_ui::text::{
+    Ellipsize, FontSpec, InlineBox, SPACER_OPEN, SpacerMap, TextAlign, TextBlock, TextMetrics,
+    TextShadow,
+};
 
 use crate::util::{cg_color, ns_color, ns_string, utf16_len};
 
@@ -55,6 +62,46 @@ pub struct Paragraph {
     length: usize,
     /// The block had no text: a space stands in, so the line has its height.
     empty: bool,
+    /// Paragraph offsets to and from the laid-out string, which holds one
+    /// spacer character per inline box edge.
+    map: SpacerMap,
+    /// UTF-16 length of the laid-out string (text plus spacers).
+    layout_length: usize,
+    /// Inline boxes (`TextSpanBoxes`): the laid-out range from the opening
+    /// spacer through the closing one, and the font of the box's text.
+    boxes: Vec<(NSRange, InlineBox, Retained<NSFont>)>,
+}
+
+/// Closes an inline box in the laid-out string. Like the shared
+/// `SPACER_CLOSE` (WORD JOINER) it never breaks from the text on either
+/// side, but it is a real glyph, so TextKit applies its kern.
+const LAYOUT_SPACER_CLOSE: char = '\u{00A0}';
+
+/// Advance of one BMP character in a font, in points.
+fn advance(font: &NSFont, character: char) -> CGFloat {
+    let mut unit = [0_u16; 2];
+    if character.encode_utf16(&mut unit).len() != 1 {
+        return 0.0;
+    }
+    // SAFETY: `NSFont` is toll-free bridged with `CTFont`; both pointers
+    // are valid for one element during the calls.
+    unsafe {
+        let font = &*std::ptr::from_ref(font).cast::<CTFont>();
+        let mut glyph = 0_u16;
+        if !font.glyphs_for_characters(
+            std::ptr::NonNull::from(&mut unit[0]),
+            std::ptr::NonNull::from(&mut glyph),
+            1,
+        ) {
+            return 0.0;
+        }
+        font.advances_for_glyphs(
+            CTFontOrientation::Horizontal,
+            std::ptr::NonNull::from(&mut glyph),
+            std::ptr::null_mut(),
+            1,
+        )
+    }
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -294,23 +341,17 @@ fn resolve_font(spec: &FontSpec) -> Retained<NSFont> {
     // A CSS family list: the first family that exists wins.
     let mut font = None;
     let mut generic_italic = spec.italic;
-    for family in spec
-        .family
-        .split(',')
-        .map(|family| family.trim().trim_matches(['"', '\'']))
-    {
-        let candidate = match family.to_ascii_lowercase().as_str() {
-            "" | "system" | "system-ui" | "-apple-system" | "sans-serif" | "ui-sans-serif" => {
-                Some(system())
-            }
-            "monospace" | "ui-monospace" => {
-                Some(NSFont::monospacedSystemFontOfSize_weight(size, weight))
-            }
+    for family in pam_desktop_ui::engine::font_family::families(&spec.family) {
+        use pam_desktop_ui::engine::font_family::Family;
+        let candidate = match family {
+            Family::Asset(source) => crate::fonts::font(source, size),
+            Family::SystemUi => Some(system()),
+            Family::Monospace => Some(NSFont::monospacedSystemFontOfSize_weight(size, weight)),
             // SAFETY: the design names are immutable strings exported by AppKit.
-            "serif" | "ui-serif" => designed(unsafe { NSFontDescriptorSystemDesignSerif }),
+            Family::Serif => designed(unsafe { NSFontDescriptorSystemDesignSerif }),
             // SAFETY: as above.
-            "ui-rounded" => designed(unsafe { NSFontDescriptorSystemDesignRounded }),
-            _ => MainThreadMarker::new().and_then(|mtm| {
+            Family::Rounded => designed(unsafe { NSFontDescriptorSystemDesignRounded }),
+            Family::Named(family) => MainThreadMarker::new().and_then(|mtm| {
                 let manager = NSFontManager::sharedFontManager(mtm);
                 let (family, weight) = (ns_string(family), manager_weight(spec.weight));
                 let face = |traits: NSFontTraitMask| {
@@ -435,10 +476,72 @@ impl Paragraph {
             } else {
                 (&block.runs, fonts)
             };
-            for (run, font) in runs.iter().zip(&fonts) {
+            // Inline box edges are characters of the box text's font
+            // (so the line never grows), never drawn, whose advance is the
+            // edge's padding plus border: the line breaker sees them.
+            let spacers = if empty { Vec::new() } else { block.spacers() };
+            let mut next_spacer = 0;
+            let mut layout_length = 0_usize;
+            let mut box_starts = vec![0_usize; block.boxes.len()];
+            let mut box_ranges: Vec<(NSRange, InlineBox, Retained<NSFont>)> = Vec::new();
+            let shift = baseline_shift.as_ref().map_or(0.0, |shift| shift.as_f64());
+            let mut insert_spacers =
+                |string: &NSMutableAttributedString, run: usize, layout_length: &mut usize| {
+                    while let Some(spacer) =
+                        spacers.get(next_spacer).filter(|spacer| spacer.run == run)
+                    {
+                        next_spacer += 1;
+                        let inline = &block.boxes[spacer.box_index];
+                        let Some(font) = fonts.get(inline.runs.start) else {
+                            continue;
+                        };
+                        let character = if spacer.character == SPACER_OPEN {
+                            box_starts[spacer.box_index] = *layout_length;
+                            SPACER_OPEN
+                        } else {
+                            let start = box_starts[spacer.box_index];
+                            box_ranges.push((
+                                NSRange::new(start, *layout_length + 1 - start),
+                                inline.clone(),
+                                font.clone(),
+                            ));
+                            LAYOUT_SPACER_CLOSE
+                        };
+                        let kern = CGFloat::from(spacer.width) - advance(font, character);
+                        let attributes: Retained<
+                            NSMutableDictionary<NSAttributedStringKey, AnyObject>,
+                        > = NSMutableDictionary::new();
+                        // SAFETY: as for the runs below.
+                        unsafe {
+                            attributes.insert(NSFontAttributeName, any(&**font));
+                            attributes.insert(NSParagraphStyleAttributeName, any(&*style));
+                            attributes.insert(
+                                NSForegroundColorAttributeName,
+                                any(&*NSColor::clearColor()),
+                            );
+                            attributes.insert(NSKernAttributeName, any(&*NSNumber::new_f64(kern)));
+                            if shift != 0.0 {
+                                attributes.insert(
+                                    NSBaselineOffsetAttributeName,
+                                    any(&*NSNumber::new_f64(shift)),
+                                );
+                            }
+                            let piece = NSAttributedString::initWithString_attributes(
+                                NSAttributedString::alloc(),
+                                &ns_string(&character.to_string()),
+                                Some(&attributes),
+                            );
+                            string.appendAttributedString(&piece);
+                        }
+                        *layout_length += 1;
+                    }
+                };
+            for (index, (run, font)) in runs.iter().zip(&fonts).enumerate() {
+                insert_spacers(&string, index, &mut layout_length);
                 if run.text.is_empty() {
                     continue;
                 }
+                layout_length += utf16_len(&run.text);
                 if !empty {
                     length += utf16_len(&run.text);
                 }
@@ -482,6 +585,7 @@ impl Paragraph {
                     string.appendAttributedString(&piece);
                 }
             }
+            insert_spacers(&string, runs.len(), &mut layout_length);
             let serial = typesetter.next_serial.get();
             typesetter.next_serial.set(serial + 1);
             Self {
@@ -492,8 +596,62 @@ impl Paragraph {
                 shadow: block.shadow,
                 length,
                 empty,
+                map: if empty {
+                    SpacerMap::default()
+                } else {
+                    block.spacer_map()
+                },
+                layout_length,
+                boxes: box_ranges,
             }
         })
+    }
+
+    /// Paints the inline boxes under the text: one fragment per line a box
+    /// spans, as tall as its font's content area (or its own line height)
+    /// plus vertical padding and border, like CSS. The line never grows.
+    fn draw_boxes(&self, typesetter: &Typesetter, context: &CGContext, origin: CGPoint) {
+        let manager = &typesetter.manager;
+        for (range, inline, font) in &self.boxes {
+            // SAFETY: the range lies inside the loaded string; no actual range is asked for.
+            let glyphs = unsafe {
+                manager
+                    .glyphRangeForCharacterRange_actualCharacterRange(*range, std::ptr::null_mut())
+            };
+            let end = glyphs.location + glyphs.length;
+            let mut index = glyphs.location;
+            let (ascent, descent) = (font.ascender(), -font.descender());
+            let (above, below) = if inline.line_height > 0.0 {
+                let leading = (CGFloat::from(inline.line_height) - ascent - descent) / 2.0;
+                (ascent + leading, descent + leading)
+            } else {
+                (ascent, descent)
+            };
+            while index < end {
+                let mut line = NSRange::new(index, 0);
+                // SAFETY: `index` is a laid-out glyph and `line` outlives the call.
+                let fragment = unsafe {
+                    manager.lineFragmentRectForGlyphAtIndex_effectiveRange(index, &mut line)
+                };
+                let line_end = (line.location + line.length).min(end);
+                if line.length == 0 || line_end <= index {
+                    break;
+                }
+                let piece = NSRange::new(index, line_end - index);
+                let bounds =
+                    manager.boundingRectForGlyphRange_inTextContainer(piece, &typesetter.container);
+                // The glyph location already includes the baseline offset.
+                let baseline = fragment.origin.y + manager.locationForGlyphAtIndex(index).y;
+                let top = baseline - above - CGFloat::from(inline.padding[0] + inline.border[0]);
+                let bottom = baseline + below + CGFloat::from(inline.padding[2] + inline.border[2]);
+                let rect = CGRect::new(
+                    CGPoint::new(origin.x + bounds.origin.x, origin.y + top),
+                    CGSize::new(bounds.size.width, bottom - top),
+                );
+                paint_box(context, rect, inline);
+                index = line_end;
+            }
+        }
     }
 
     /// Size of the paragraph wrapped to `width`.
@@ -522,7 +680,11 @@ impl Paragraph {
             }
             let selected = selection
                 .map(|(start, end)| {
-                    (start as usize).min(self.length)..(end as usize).min(self.length)
+                    let layout = |offset: u32, after: bool| {
+                        (self.map.layout_index(offset.min(self.length as u32), after) as usize)
+                            .min(self.layout_length)
+                    };
+                    layout(start, true)..layout(end, false)
                 })
                 .filter(|range| !self.empty && range.start < range.end)
                 .map(|range| NSRange::new(range.start, range.end - range.start));
@@ -540,6 +702,7 @@ impl Paragraph {
                         )
                 };
             }
+            self.draw_boxes(typesetter, context, origin);
             typesetter
                 .manager
                 .drawBackgroundForGlyphRange_atPoint(glyphs, origin);
@@ -593,14 +756,16 @@ impl Paragraph {
                     &mut fraction,
                 )
             };
-            let mut offset = index.min(self.length);
-            if fraction > 0.5 && offset < self.length {
+            let mut offset = index.min(self.layout_length);
+            if fraction > 0.5 && offset < self.layout_length {
                 // Past the middle of a character: the boundary after it,
                 // never inside a surrogate pair or a composed sequence.
                 let character = typesetter.storage.string().rangeOfComposedCharacterSequenceAtIndex(offset);
                 offset = character.location + character.length;
             }
-            offset.min(self.length) as u32
+            self.map
+                .paragraph_index(offset.min(self.layout_length) as u32)
+                .min(self.length as u32)
         })
     }
 }
@@ -630,4 +795,94 @@ pub fn measure(block: &TextBlock, max_width: f32) -> TextMetrics {
         measured.push_back((key, paragraph));
     });
     metrics
+}
+
+/// One fragment of an inline box: background under the padding and border,
+/// then the border, with the box's corner radius.
+fn paint_box(context: &CGContext, rect: CGRect, inline: &InlineBox) {
+    if rect.size.width <= 0.0 || rect.size.height <= 0.0 {
+        return;
+    }
+    let color = inline.border_color.unwrap_or_default();
+    let [top, right, bottom, left] = inline.border;
+    let decoration = Decoration {
+        background: inline.background.unwrap_or_default(),
+        radii: Radii::all(inline.radius),
+        border: Border {
+            widths: [left, top, right, bottom],
+            colors: [color; 4],
+            ..Border::default()
+        },
+        ..Decoration::default()
+    };
+    let size = Size::new(rect.size.width as f32, rect.size.height as f32);
+    CGContext::save_g_state(Some(context));
+    CGContext::translate_ctm(Some(context), rect.origin.x, rect.origin.y);
+    crate::paint::paint_background(context, size, &decoration);
+    crate::paint::paint_border(context, size, &decoration);
+    CGContext::restore_g_state(Some(context));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pam_desktop_ui::text::TextRun;
+
+    fn run(text: &str) -> TextRun {
+        TextRun {
+            text: text.to_owned(),
+            font: FontSpec {
+                family: "Helvetica".into(),
+                size: 14.0,
+                ..FontSpec::default()
+            },
+            letter_spacing: 0.0,
+            color: None,
+            background: None,
+            underline: false,
+            strikethrough: false,
+            press: None,
+        }
+    }
+
+    /// `a <kbd>Ctrl</kbd> b`: the box's horizontal padding and border push
+    /// the neighbours, keep the line height, and are not characters of the
+    /// paragraph for hit testing.
+    #[test]
+    fn inline_boxes_take_their_edges_in_the_line() {
+        let plain = TextBlock {
+            runs: vec![run("a "), run("Ctrl"), run(" b")],
+            ..TextBlock::default()
+        };
+        let boxed = TextBlock {
+            boxes: vec![InlineBox {
+                runs: 1..2,
+                padding: [1.0, 6.0, 1.0, 6.0],
+                border: [1.0, 1.0, 2.0, 1.0],
+                border_color: Some(pam_desktop_ui::color::Color::WHITE),
+                radius: 4.0,
+                background: Some(pam_desktop_ui::color::Color::BLACK),
+                line_height: 0.0,
+            }],
+            ..plain.clone()
+        };
+        let without = Paragraph::new(&plain).measure(f32::INFINITY);
+        let paragraph = Paragraph::new(&boxed);
+        let with = paragraph.measure(f32::INFINITY);
+        assert!(
+            (with.width - without.width - 14.0).abs() <= 1.0,
+            "{} -> {}",
+            without.width,
+            with.width
+        );
+        assert_eq!(with.height, without.height);
+        assert_eq!(with.line_count, 1);
+        // Far right is the end of the paragraph (8 characters), not of the
+        // laid-out string (10 with the two spacers).
+        assert_eq!(
+            paragraph.index_at(f32::INFINITY, CGPoint::new(1000.0, 5.0)),
+            8
+        );
+        assert_eq!(paragraph.index_at(f32::INFINITY, CGPoint::new(0.0, 5.0)), 0);
+    }
 }

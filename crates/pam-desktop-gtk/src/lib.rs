@@ -10,17 +10,21 @@
 
 mod accessibility;
 mod backend;
+mod fonts;
 #[cfg(feature = "hotkeys")]
 mod hotkeys;
 mod input;
 mod media;
 mod paint;
+mod printing;
+mod raster;
 mod share;
 mod shell;
 mod system;
 mod text;
 #[cfg(feature = "tray")]
 mod tray;
+mod trim;
 mod view;
 mod webview;
 mod x11;
