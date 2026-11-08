@@ -5,7 +5,10 @@ declare(strict_types=1);
 use Pam\Desktop\App;
 use Pam\Desktop\Internal\PamPhpCompiler;
 
-require dirname(__DIR__, 3).'/vendor/autoload.php';
+// Standalone runs use the project autoloader; tests/run.php brings its own.
+if (!class_exists(\Pam\Desktop\Internal\PamPhpCompiler::class)) {
+    require dirname(__DIR__, 3).'/vendor/autoload.php';
+}
 
 $root = sys_get_temp_dir().'/pam-desktop-source-paths-'.bin2hex(random_bytes(6));
 mkdir($root.'/src/Screens', 0700, true);

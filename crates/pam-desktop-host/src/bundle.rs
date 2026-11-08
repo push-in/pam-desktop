@@ -704,7 +704,7 @@ mod tests {
         };
         assert_eq!(
             variable("PAM_DESKTOP_PHP"),
-            Some(root.join("runtime/php/bin/php").into_os_string())
+            Some(root.join(PHP_BIN).join("php").into_os_string())
         );
         assert_eq!(
             variable("PAM_DESKTOP_BUNDLE_ROOT"),

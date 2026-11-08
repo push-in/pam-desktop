@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
-require dirname(__DIR__,3).'/vendor/autoload.php';
+// Standalone runs use the project autoloader; tests/run.php brings its own.
+if (!class_exists(\Pam\Desktop\Internal\PamPhpCompiler::class)) {
+    require dirname(__DIR__, 3).'/vendor/autoload.php';
+}
 use Pam\Desktop\System\Files;use Pam\Desktop\Internal\Wire;use Pam\Desktop\ModuleResultStatus;use Pam\Desktop\Modules\{NativeModules,NativeModuleTransport};
 $done=null;$calls=[];NativeModules::useTransport(new class($done,$calls) implements NativeModuleTransport{
  public function __construct(private ?Closure &$done,private array &$calls){}
