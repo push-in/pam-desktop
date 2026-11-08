@@ -1,7 +1,10 @@
 <?php
 
 declare(strict_types=1);
-require_once dirname(__DIR__, 3).'/vendor/autoload.php';
+// Standalone runs use the project autoloader; tests/run.php brings its own.
+if (!class_exists(\Pam\Desktop\Protocol::class)) {
+    require_once dirname(__DIR__, 3).'/vendor/autoload.php';
+}
 use Pam\Desktop\{DragPayload,EventKind,PropKey};
 use Pam\Desktop\Internal\{TemplateCompiler,TemplateRenderer,Wire};
 use Pam\Desktop\UI\{DragSource};

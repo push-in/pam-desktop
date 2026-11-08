@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 use Pam\Desktop\Internal\TemplateExpression;
 
-require_once dirname(__DIR__, 3).'/vendor/autoload.php';
+// Standalone runs use the project autoloader; tests/run.php brings its own.
+if (!class_exists(\Pam\Desktop\Protocol::class)) {
+    require_once dirname(__DIR__, 3).'/vendor/autoload.php';
+}
 
 foreach ([false, true] as $generated) {
     TemplateExpression::useGeneratedCode($generated);

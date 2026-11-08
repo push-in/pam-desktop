@@ -1,7 +1,10 @@
 <?php
 
 declare(strict_types=1);
-require_once dirname(__DIR__, 3).'/vendor/autoload.php';
+// Standalone runs use the project autoloader; tests/run.php brings its own.
+if (!class_exists(\Pam\Desktop\Protocol::class)) {
+    require_once dirname(__DIR__, 3).'/vendor/autoload.php';
+}
 
 $directory = sys_get_temp_dir().'/pam-text-color-'.bin2hex(random_bytes(6));
 mkdir($directory);
