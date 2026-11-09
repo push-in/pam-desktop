@@ -39,9 +39,13 @@ pub use ffi::{
     pam_desktop_engine_set_text_scale, pam_desktop_engine_set_viewport, pam_desktop_engine_stats,
 };
 pub use layout::set_host_switch_size;
-pub use layout::{TAB_BAR_BOTTOM_HEIGHT, TAB_BAR_RAIL_WIDTH, TAB_BAR_TOP_HEIGHT};
+pub use layout::{
+    SCROLLBAR_GUTTER_THIN, TAB_BAR_BOTTOM_HEIGHT, TAB_BAR_RAIL_WIDTH, TAB_BAR_TOP_HEIGHT,
+};
 pub use surface::{SurfacePolicy, set_surface_size};
-pub use text_measure::{PamTextMeasureCallback, PamTextMeasureRequest, PamTextMeasureResult};
+pub use text_measure::{
+    MEASURE_TEXT_CONTROL, PamTextMeasureCallback, PamTextMeasureRequest, PamTextMeasureResult,
+};
 
 #[derive(Debug)]
 pub struct Engine {

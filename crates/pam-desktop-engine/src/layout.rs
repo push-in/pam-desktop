@@ -5,6 +5,11 @@ use pam_desktop_wire::{Layout, Node, NodeKind, PropKey, Tree};
 
 use crate::font_metrics::TextMetrics;
 
+#[path = "inline.rs"]
+mod inline;
+#[path = "table.rs"]
+mod table;
+
 const DEFAULT_TEXT_HEIGHT: f32 = 28.0;
 const DEFAULT_CONTROL_HEIGHT: f32 = 48.0;
 const DEFAULT_SWITCH_WIDTH: f32 = 46.5;
@@ -38,15 +43,53 @@ fn switch_extent(axis: Axis) -> f32 {
     if host > 0.0 { host } else { default }
 }
 /// Width CSS `scrollbar-gutter: stable` reserves, by `scrollbar-width`:
-/// Chromium's classic scrollbar (15) and its measured thin variant (10).
+/// Chromium's classic scrollbar (15) and its measured thin variant (10 on
+/// Linux and Windows, 11 on macOS: the small `NSScroller`).
 const SCROLLBAR_GUTTER_AUTO: f32 = 15.0;
-const SCROLLBAR_GUTTER_THIN: f32 = 10.0;
+pub const SCROLLBAR_GUTTER_THIN: f32 = if cfg!(target_os = "macos") {
+    11.0
+} else {
+    10.0
+};
 
 /// `(start, end)` space a vertical scroller reserves for its scrollbar so
 /// content keeps the same width whether or not it overflows. Platforms with
 /// overlay scrollbars draw their indicator inside this gutter.
 fn scrollbar_gutter(node: &Node) -> (f32, f32) {
-    let mode = integer(node, PropKey::ScrollbarGutter).unwrap_or(1);
+    scrollbar_gutter_when(node, false)
+}
+
+/// `scrollbar-gutter: auto` with an authored `scrollbar-width` (thin or a
+/// length) or `scrollbar-color`: a classic bar like Chromium's on Linux and
+/// Windows, which takes its width only while the content overflows.
+fn classic_auto_gutter(node: &Node) -> bool {
+    integer(node, PropKey::ScrollbarGutter).unwrap_or(1) < 2
+        && !boolean(node, PropKey::ListHorizontal)
+        && classic_bar_thickness(node) > 0.0
+}
+
+/// Thickness of an authored classic bar: `thin` (10), a length, or the
+/// default 15 px bar a `scrollbar-color` styles.
+fn classic_bar_thickness(node: &Node) -> f32 {
+    match number(node, PropKey::ScrollbarThickness) {
+        Some(px) => px.clamp(0.0, 64.0),
+        None if integer(node, PropKey::ScrollbarWidth) == Some(2) => SCROLLBAR_GUTTER_THIN,
+        None if integer(node, PropKey::ScrollbarWidth).unwrap_or(1) == 1
+            && node.properties.contains_key(&PropKey::ScrollbarColor) =>
+        {
+            SCROLLBAR_GUTTER_AUTO
+        }
+        None => 0.0,
+    }
+}
+
+/// The gutter of `scrollbar_gutter`, plus the classic `auto` bar's width
+/// when `overflowing`.
+fn scrollbar_gutter_when(node: &Node, overflowing: bool) -> (f32, f32) {
+    let mode = match integer(node, PropKey::ScrollbarGutter).unwrap_or(1) {
+        mode if mode < 2 && overflowing && classic_auto_gutter(node) => 2,
+        mode => mode,
+    };
     if mode < 2
         || boolean(node, PropKey::ScrollHorizontal)
         || boolean(node, PropKey::ListHorizontal)
@@ -108,6 +151,8 @@ enum CrossAlignment {
 
 struct LayoutContext<'a> {
     tree: &'a Tree,
+    /// Anonymous block boxes of this pass (`inline::anonymous_blocks`).
+    anonymous: &'a BTreeMap<u64, Node>,
     children: &'a BTreeMap<u64, Vec<&'a Node>>,
     text_scale: f32,
     text_metrics: &'a TextMetrics,
@@ -161,10 +206,15 @@ pub fn calculate_with_text_metrics(
         return Err(LayoutError::InvalidDimension);
     }
     WINDOW_HEIGHT.with(|height| height.set(viewport.height));
+    table::reset();
     let children = child_index(tree);
+    let anonymous = inline::anonymous_blocks(tree, &children);
+    let regrouped = inline::regroup(&children, &anonymous);
+    let children = regrouped.as_ref().unwrap_or(&children);
     let context = LayoutContext {
         tree,
-        children: &children,
+        anonymous: &anonymous.nodes,
+        children,
         text_scale,
         text_metrics,
         previous: None,
@@ -194,6 +244,7 @@ pub fn calculate_with_text_metrics(
     )?;
     layout_modal_surfaces(&context, &mut result)?;
     settle_auto_safe_area(&context, &mut result)?;
+    result.retain(|id, _| *id < inline::ANONYMOUS_BASE);
     Ok(result)
 }
 
@@ -215,7 +266,11 @@ pub fn calculate_incremental_with_text_metrics(
         return Err(LayoutError::InvalidDimension);
     }
     WINDOW_HEIGHT.with(|height| height.set(viewport.height));
+    table::reset();
     let children = child_index(tree);
+    let anonymous = inline::anonymous_blocks(tree, &children);
+    let regrouped = inline::regroup(&children, &anonymous);
+    let children = regrouped.as_ref().unwrap_or(&children);
     let mut dirty_path = BTreeSet::new();
     for dirty in dirty_nodes {
         let mut current = *dirty;
@@ -234,7 +289,8 @@ pub fn calculate_incremental_with_text_metrics(
     }
     let context = LayoutContext {
         tree,
-        children: &children,
+        anonymous: &anonymous.nodes,
+        children,
         text_scale,
         text_metrics,
         previous: Some(previous),
@@ -271,6 +327,7 @@ pub fn calculate_incremental_with_text_metrics(
     )?;
     layout_modal_surfaces(&context, &mut result)?;
     settle_auto_safe_area(&context, &mut result)?;
+    result.retain(|id, _| *id < inline::ANONYMOUS_BASE);
     Ok((result, context.visited_nodes.get()))
 }
 
@@ -370,6 +427,7 @@ fn settle_auto_safe_area(
     // Relayouts start from scratch: no incremental reuse of stale frames.
     let full = LayoutContext {
         tree: context.tree,
+        anonymous: context.anonymous,
         children: context.children,
         text_scale: context.text_scale,
         text_metrics: context.text_metrics,
@@ -668,6 +726,7 @@ fn layout_node(
         .tree
         .nodes
         .get(&id)
+        .or_else(|| context.anonymous.get(&id))
         .ok_or(LayoutError::MissingNode(id))?;
     let frame = if resolve_dimensions {
         let explicit_width = dimension(node, PropKey::Width, PropKey::WidthPercent, bounds.width);
@@ -725,7 +784,20 @@ fn layout_node(
     // Hosts reject a non-finite origin or a negative/non-finite size; a
     // degenerate computation (for example an over-constrained box) must
     // never ship one. Negative origins are valid and kept.
-    .sanitized();
+    .sanitized()
+    .layout_units();
+    // A compositing layer (`will-change: transform`) sits on whole pixels:
+    // Chromium snaps the layer origin and paints its content at the exact
+    // offsets inside it.
+    let frame = if boolean(node, PropKey::CompositedLayer) {
+        Layout {
+            x: frame.x.round(),
+            y: frame.y.round(),
+            ..frame
+        }
+    } else {
+        frame
+    };
     let keyboard = surface_keyboard_avoidance(node, frame)
         .or_else(|| root_keyboard_avoidance(context, node, frame));
     let frame = match keyboard {
@@ -758,6 +830,9 @@ fn layout_node(
     let node_children = context.children.get(&id).map_or(&[][..], Vec::as_slice);
     if node_children.is_empty() {
         return Ok(());
+    }
+    if table::role(node) == Some(table::Role::Table) {
+        return table::layout(context, node, frame, depth, output);
     }
 
     let padding = finite_non_negative(number(node, PropKey::Padding).unwrap_or(0.0))?;
@@ -808,17 +883,31 @@ fn layout_node(
         width: (frame.width - padding_left - padding_right).max(0.0),
         height: (frame.height - padding_top - padding_bottom).max(0.0),
     };
+    if node.kind == NodeKind::Scroll && boolean(node, PropKey::ScrollBothAxes) {
+        return layout_scroll_both_axes(context, node, node_children, inner, depth, output);
+    }
     if node.kind == NodeKind::Scroll {
-        let (gutter_start, gutter_end) = scrollbar_gutter(node);
+        let axis = if boolean(node, PropKey::ScrollHorizontal) {
+            Axis::Horizontal
+        } else {
+            Axis::Vertical
+        };
+        let overflowing = classic_auto_gutter(node)
+            && scroll_overflows(context, node_children, inner, axis, depth)?;
+        let (gutter_start, gutter_end) = scrollbar_gutter_when(node, overflowing);
         let inner = Layout {
             x: inner.x + gutter_start,
             width: (inner.width - gutter_start - gutter_end).max(0.0),
             ..inner
         };
-        let axis = if boolean(node, PropKey::ScrollHorizontal) {
-            Axis::Horizontal
+        // A horizontal classic bar takes its height below the content.
+        let inner = if axis == Axis::Horizontal && overflowing {
+            Layout {
+                height: (inner.height - classic_bar_thickness(node)).max(0.0),
+                ..inner
+            }
         } else {
-            Axis::Vertical
+            inner
         };
         let fill_viewport = !matches!(
             node.properties.get(&PropKey::ScrollFillViewport),
@@ -1113,7 +1202,9 @@ fn layout_node(
         return Ok(());
     }
     if node.kind == NodeKind::VirtualList {
-        let (gutter_start, gutter_end) = scrollbar_gutter(node);
+        let overflowing = classic_auto_gutter(node)
+            && list_overflows(context, node, node_children, inner, depth)?;
+        let (gutter_start, gutter_end) = scrollbar_gutter_when(node, overflowing);
         let inner = Layout {
             x: inner.x + gutter_start,
             width: (inner.width - gutter_start - gutter_end).max(0.0),
@@ -1418,6 +1509,12 @@ fn layout_node(
         flow_children.clear();
         ordered_children.clear();
     }
+    if inline::establishes(node, &flow_children) {
+        let flow = inline::flow(context.children, node);
+        inline::layout(context, node, &flow, inner, depth, output)?;
+        flow_children.clear();
+        ordered_children.clear();
+    }
     let total_gap = main_gap * flow_children.len().saturating_sub(1) as f32;
     let resolved_main = resolved_child_main_sizes(
         context.children,
@@ -1439,7 +1536,8 @@ fn layout_node(
                 resolved_main[&child.id] + before + after
             })
             .sum::<f32>();
-    let free = (available_main - consumed).max(0.0);
+    // Negative when the children overflow (justify-content keeps centring).
+    let free = available_main - consumed;
     let auto_margin_count = flow_children
         .iter()
         .map(|child| {
@@ -1448,18 +1546,18 @@ fn layout_node(
         })
         .sum::<usize>();
     let auto_margin = if auto_margin_count > 0 {
-        free / auto_margin_count as f32
+        free.max(0.0) / auto_margin_count as f32
     } else {
         0.0
     };
-    let justify = integer(node, PropKey::JustifyContent).unwrap_or(1);
+    let justify = justify_content(node, axis);
     let (mut cursor, distributed_gap) = justify_offsets(
         justify,
         if auto_margin_count > 0 { 0.0 } else { free },
         flow_children.len(),
         main_gap,
     );
-    let parent_alignment = cross_alignment(integer(node, PropKey::AlignItems).unwrap_or(4));
+    let parent_alignment = cross_alignment(align_items(node, axis));
 
     let has_baseline_alignment = parent_alignment == CrossAlignment::Baseline
         || flow_children.iter().any(|child| {
@@ -1545,7 +1643,7 @@ fn layout_node(
         let cross_offset = match alignment {
             CrossAlignment::Start | CrossAlignment::Stretch => cross_before,
             CrossAlignment::Center => {
-                ((available_cross - cross + cross_before - cross_after) / 2.0).max(0.0)
+                layout_half(available_cross - cross + cross_before - cross_after).max(0.0)
             }
             CrossAlignment::End => (available_cross - cross - cross_after).max(0.0),
             CrossAlignment::Baseline if axis == Axis::Horizontal => (baseline_target
@@ -1850,8 +1948,8 @@ fn layout_wrapped_children(
         lines.push(line);
     }
 
-    let parent_alignment = cross_alignment(integer(node, PropKey::AlignItems).unwrap_or(4));
-    let justify = integer(node, PropKey::JustifyContent).unwrap_or(1);
+    let parent_alignment = cross_alignment(align_items(node, axis));
+    let justify = justify_content(node, axis);
 
     // Pass 1: resolve every line's main sizes and cross extent.
     let mut resolved_lines = Vec::with_capacity(lines.len());
@@ -1863,6 +1961,7 @@ fn layout_wrapped_children(
             .map(|item| FlexItem {
                 id: item.id,
                 base: item.base,
+                inner_base: item.inner_base,
                 hypothetical: item.hypothetical,
                 minimum: item.minimum,
                 maximum: item.maximum,
@@ -1939,7 +2038,7 @@ fn layout_wrapped_children(
         } else {
             cross_cursor
         };
-        let free = (available_main - consumed_main).max(0.0);
+        let free = available_main - consumed_main;
         let auto_margin_count = line
             .iter()
             .map(|child| {
@@ -1948,7 +2047,7 @@ fn layout_wrapped_children(
             })
             .sum::<usize>();
         let auto_margin = if auto_margin_count > 0 {
-            free / auto_margin_count as f32
+            free.max(0.0) / auto_margin_count as f32
         } else {
             0.0
         };
@@ -2013,7 +2112,7 @@ fn layout_wrapped_children(
             let cross_offset = match alignment {
                 CrossAlignment::Start | CrossAlignment::Stretch => cross_before,
                 CrossAlignment::Center => {
-                    ((line_cross - cross + cross_before - cross_after) / 2.0).max(0.0)
+                    layout_half(line_cross - cross + cross_before - cross_after).max(0.0)
                 }
                 CrossAlignment::End => (line_cross - cross - cross_after).max(0.0),
                 CrossAlignment::Baseline if axis == Axis::Horizontal => (line_baseline
@@ -2375,6 +2474,220 @@ fn child_index(tree: &Tree) -> BTreeMap<u64, Vec<&Node>> {
     children
 }
 
+/// A `ScrollView` with `overflow: auto` (`ScrollBothAxes`): each child is
+/// laid out at its used width (at least the viewport's: a table keeps the
+/// columns its min-content needs) and its natural height, and scrolls on
+/// both axes. A classic bar (`scrollbar-gutter: stable`, an authored
+/// `scrollbar-width` or `scrollbar-color`) takes its thickness on each axis
+/// that overflows, which can make the other axis overflow (CSS 2.1 §11.1.1).
+fn layout_scroll_both_axes(
+    context: &LayoutContext<'_>,
+    node: &Node,
+    node_children: &[&Node],
+    inner: Layout,
+    depth: usize,
+    output: &mut BTreeMap<u64, Layout>,
+) -> Result<(), LayoutError> {
+    let reserved = integer(node, PropKey::ScrollbarGutter).unwrap_or(1) >= 2;
+    let thickness = if reserved {
+        scrollbar_gutter_when(node, true).1
+    } else {
+        classic_bar_thickness(node)
+    };
+    let used_width = |child: &Node, width: f32| -> Result<f32, LayoutError> {
+        let used = if table::role(child) == Some(table::Role::Table) {
+            table::used_width(
+                context.children,
+                child,
+                width,
+                context.text_scale,
+                context.text_metrics,
+                depth + 1,
+            )?
+        } else if let Some(explicit) =
+            dimension(child, PropKey::Width, PropKey::WidthPercent, width)
+        {
+            explicit
+        } else {
+            // A block fills the viewport; what cannot shrink below its
+            // min-content width (a table's columns) overflows it.
+            min_content(|| {
+                intrinsic_extent(
+                    context.children,
+                    child,
+                    Axis::Horizontal,
+                    1.0,
+                    f32::INFINITY,
+                    context.text_scale,
+                    context.text_metrics,
+                    depth + 1,
+                )
+            })?
+        };
+        Ok(used.max(width))
+    };
+    let children = node_children
+        .iter()
+        .copied()
+        .filter(|child| visible(child))
+        .collect::<Vec<_>>();
+    let measure = |width: f32| -> Result<(f32, f32), LayoutError> {
+        let mut extent = (0.0_f32, 0.0_f32);
+        for child in &children {
+            let child_width = used_width(child, width)?;
+            let height = natural_scroll_extent(
+                context.children,
+                child,
+                Axis::Vertical,
+                inner.height,
+                child_width,
+                context.text_scale,
+                context.text_metrics,
+                depth + 1,
+            )?;
+            extent = (extent.0.max(child_width), extent.1.max(height));
+        }
+        Ok(extent)
+    };
+    // A vertical bar narrows the viewport, a horizontal one shortens it;
+    // either can make the other axis overflow.
+    let (mut vertical_bar, mut horizontal_bar) = (reserved, false);
+    for _ in 0..3 {
+        let width = (inner.width - if vertical_bar { thickness } else { 0.0 }).max(0.0);
+        let height = (inner.height - if horizontal_bar { thickness } else { 0.0 }).max(0.0);
+        let extent = measure(width)?;
+        let overflow_x = extent.0 > width + 0.5;
+        let overflow_y = extent.1 > height + 0.5;
+        let next = (
+            reserved || (thickness > 0.0 && overflow_y),
+            thickness > 0.0 && overflow_x,
+        );
+        if next == (vertical_bar, horizontal_bar) {
+            break;
+        }
+        (vertical_bar, horizontal_bar) = next;
+    }
+    let width = (inner.width - if vertical_bar { thickness } else { 0.0 }).max(0.0);
+    let height = (inner.height - if horizontal_bar { thickness } else { 0.0 }).max(0.0);
+    for child in children {
+        let child_width = used_width(child, width)?;
+        let natural = natural_scroll_extent(
+            context.children,
+            child,
+            Axis::Vertical,
+            height,
+            child_width,
+            context.text_scale,
+            context.text_metrics,
+            depth + 1,
+        )?;
+        let frame = Layout {
+            x: inner.x,
+            y: inner.y,
+            width: child_width,
+            height: natural.max(height),
+        };
+        layout_node(context, child.id, frame, false, depth + 1, output)?;
+    }
+    Ok(())
+}
+
+/// Whether a ScrollView's content is longer than its viewport along `axis`
+/// (a classic `auto` scrollbar then takes room).
+fn scroll_overflows(
+    context: &LayoutContext<'_>,
+    node_children: &[&Node],
+    inner: Layout,
+    axis: Axis,
+    depth: usize,
+) -> Result<bool, LayoutError> {
+    let (main, cross) = match axis {
+        Axis::Vertical => (inner.height, inner.width),
+        Axis::Horizontal => (inner.width, inner.height),
+    };
+    for child in node_children.iter().copied().filter(|child| visible(child)) {
+        let natural = natural_scroll_extent(
+            context.children,
+            child,
+            axis,
+            main,
+            cross,
+            context.text_scale,
+            context.text_metrics,
+            depth + 1,
+        )?;
+        if natural > main + 0.5 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether a vertical list's cells, measured at the full width, are taller
+/// than the list. Stops at the first cell past the bottom, so a long list
+/// measures about a viewport of cells.
+fn list_overflows(
+    context: &LayoutContext<'_>,
+    node: &Node,
+    node_children: &[&Node],
+    inner: Layout,
+    depth: usize,
+) -> Result<bool, LayoutError> {
+    let columns = integer(node, PropKey::ListNumColumns)
+        .unwrap_or(1)
+        .clamp(1, 64) as usize;
+    let column_gap = if columns < 2 {
+        0.0
+    } else {
+        number(node, PropKey::GridColumnGap).unwrap_or(0.0).max(0.0)
+    };
+    let row_gap = number(node, PropKey::GridRowGap).unwrap_or(0.0).max(0.0);
+    let cell_width = ((inner.width - column_gap * (columns - 1) as f32) / columns as f32).max(0.0);
+    let estimate = number(node, PropKey::ListRowHeight)
+        .map_or(DEFAULT_CONTROL_HEIGHT, |height| height.max(1.0));
+    let cells = node_children
+        .iter()
+        .copied()
+        .filter(|child| visible(child))
+        .collect::<Vec<_>>();
+    let mut total = 0.0_f32;
+    for (index, row) in cells.chunks(columns).enumerate() {
+        if index > 0 {
+            total += row_gap;
+        }
+        let mut tallest = 0.0_f32;
+        for child in row.iter().copied() {
+            let margins = cell_margins(child);
+            let height = match number(child, PropKey::Height) {
+                Some(height) => height,
+                None if context
+                    .children
+                    .get(&child.id)
+                    .is_some_and(|cell| !cell.is_empty()) =>
+                {
+                    constrained_intrinsic_extent(
+                        context.children,
+                        child,
+                        Axis::Vertical,
+                        (cell_width - margins.left - margins.right).max(0.0),
+                        inner.height,
+                        context.text_scale,
+                        context.text_metrics,
+                        depth + 1,
+                    )?
+                }
+                None => estimate,
+            };
+            tallest = tallest.max(height + margins.top + margins.bottom);
+        }
+        total += tallest;
+        if total > inner.height + 0.5 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Natural extent of scroll content along the scrolling axis, honoring each
 /// node's min/max on that axis like layout does: a row with `minHeight: 52`
 /// whose content is 44 is 52 tall, so the scroll content measured 8 per row
@@ -2573,6 +2886,22 @@ fn unconstrained_natural_scroll_extent(
         )?;
         return finite_non_negative(padding_before + content + padding_after);
     }
+    if axis == Axis::Vertical && node_axis == Axis::Horizontal {
+        // A row in a vertical scroller is as tall as its children at the
+        // widths the row gives them (CSS block layout): measuring each at
+        // the whole row width missed wrapped lines, so the scroll content
+        // came out shorter than what layout then placed.
+        return intrinsic_extent(
+            children,
+            node,
+            axis,
+            available_cross,
+            available_main,
+            text_scale,
+            text_metrics,
+            depth + 1,
+        );
+    }
     let mut extents = Vec::with_capacity(visible_children.len());
     let mut grow_total = 0.0_f32;
     let mut grow_unit = 0.0_f32;
@@ -2641,6 +2970,17 @@ fn intrinsic_extent(
     if let Some(explicit) = explicit {
         return finite_non_negative(explicit);
     }
+    if table::role(node) == Some(table::Role::Table) {
+        return table::intrinsic(
+            children,
+            node,
+            requested_axis,
+            available_width,
+            text_scale,
+            text_metrics,
+            depth,
+        );
+    }
     // Yoga: an aspect-ratio box with a definite cross dimension takes the
     // ratio's extent on this axis, as its final layout will. Callers pass a
     // child's resolved width (point or percentage of the containing block) as
@@ -2661,6 +3001,25 @@ fn intrinsic_extent(
         if let Some(derived) = derived.filter(|value| value.is_finite()) {
             return finite_non_negative(derived);
         }
+    }
+
+    // A single-line input is as wide as Chromium's text field: `size`
+    // characters of the font's average width, plus padding and border.
+    if node.kind == NodeKind::Input
+        && requested_axis == Axis::Horizontal
+        && !boolean(node, PropKey::Multiline)
+        && let Some(field) = text_field_width(node, text_scale)
+    {
+        let padding = number(node, PropKey::Padding).unwrap_or(0.0);
+        let horizontal = number(node, PropKey::PaddingHorizontal).unwrap_or(padding);
+        let left = number(node, PropKey::PaddingLeft)
+            .unwrap_or(horizontal)
+            .max(0.0);
+        let right = number(node, PropKey::PaddingRight)
+            .unwrap_or(horizontal)
+            .max(0.0);
+        let (border_left, _, border_right, _) = border_edges(node);
+        return finite_non_negative(field + left + right + border_left + border_right);
     }
 
     // Inputs contribute their text line box plus authored insets, just like
@@ -2710,6 +3069,19 @@ fn intrinsic_extent(
         .copied()
         .filter(|child| visible(child) && child.kind != NodeKind::Modal && !out_of_flow(child))
         .collect::<Vec<_>>();
+    if inline::establishes(node, &node_children) {
+        let flow = inline::flow(children, node);
+        return inline::intrinsic(
+            children,
+            node,
+            &flow,
+            requested_axis,
+            available_width,
+            text_scale,
+            text_metrics,
+            depth,
+        );
+    }
     let horizontal_scroll_height = node.kind == NodeKind::Scroll
         && boolean(node, PropKey::ScrollHorizontal)
         && requested_axis == Axis::Vertical;
@@ -3386,12 +3758,22 @@ fn leaf_intrinsic(
                 .unwrap_or(padding)
                 .max(0.0);
             let (border_left, _, border_right, _) = border_edges(node);
-            (text_extent(node, axis, f32::INFINITY, text_scale, glyph_advances)
+            let extent = text_extent(node, axis, f32::INFINITY, text_scale, glyph_advances)
                 + left
                 + right
                 + border_left
-                + border_right)
-                .max(100.0)
+                + border_right;
+            // An unstyled button keeps the platform control minimum; one with
+            // authored horizontal padding is a CSS box sized by its label.
+            let styled = [
+                PropKey::PaddingHorizontal,
+                PropKey::Padding,
+                PropKey::PaddingLeft,
+                PropKey::PaddingRight,
+            ]
+            .into_iter()
+            .any(|key| number(node, key).is_some());
+            if styled { extent } else { extent.max(100.0) }
         }
         (Axis::Horizontal, NodeKind::Switch) => switch_extent(Axis::Horizontal),
         (Axis::Horizontal, NodeKind::ActivityIndicator) => DEFAULT_CONTROL_HEIGHT,
@@ -3399,7 +3781,25 @@ fn leaf_intrinsic(
         (Axis::Horizontal, NodeKind::Spacer) => 8.0,
         (Axis::Horizontal, NodeKind::StatusBar) => 0.0,
         (Axis::Horizontal, _) => 100.0,
-        (Axis::Vertical, NodeKind::Button | NodeKind::Pressable | NodeKind::ActivityIndicator) => {
+        (Axis::Vertical, NodeKind::Button) => {
+            // Like its width: an unstyled button keeps the platform control
+            // height; one with authored vertical padding is a CSS box as tall
+            // as its label line plus padding and border.
+            let padding =
+                number(node, PropKey::PaddingVertical).or_else(|| number(node, PropKey::Padding));
+            let top = number(node, PropKey::PaddingTop).or(padding);
+            let bottom = number(node, PropKey::PaddingBottom).or(padding);
+            if top.is_none() && bottom.is_none() {
+                return DEFAULT_CONTROL_HEIGHT;
+            }
+            let (_, border_top, _, border_bottom) = border_edges(node);
+            text_extent(node, axis, f32::INFINITY, text_scale, glyph_advances)
+                + top.unwrap_or(0.0).max(0.0)
+                + bottom.unwrap_or(0.0).max(0.0)
+                + border_top
+                + border_bottom
+        }
+        (Axis::Vertical, NodeKind::Pressable | NodeKind::ActivityIndicator) => {
             DEFAULT_CONTROL_HEIGHT
         }
         (Axis::Vertical, NodeKind::Switch) => switch_extent(Axis::Vertical),
@@ -3418,6 +3818,22 @@ fn leaf_intrinsic(
     }
 }
 
+thread_local! {
+    /// Set while a table measures the min-content width of its cells.
+    static MIN_CONTENT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Runs `measure` as a min-content measurement: a single-line text
+/// (`numberOfLines: 1`, CSS `white-space: nowrap` with an ellipsis) keeps
+/// its whole line, like its CSS min-content contribution, instead of being
+/// ellipsized to the probe width.
+fn min_content<T>(measure: impl FnOnce() -> T) -> T {
+    let previous = MIN_CONTENT.with(|flag| flag.replace(true));
+    let result = measure();
+    MIN_CONTENT.with(|flag| flag.set(previous));
+    result
+}
+
 fn text_extent(
     node: &Node,
     axis: Axis,
@@ -3425,21 +3841,37 @@ fn text_extent(
     device_text_scale: f32,
     glyph_advances: Option<&BTreeMap<char, f32>>,
 ) -> f32 {
-    let allow_scaling = !matches!(
-        node.properties.get(&PropKey::TextAllowFontScaling),
-        Some(pam_desktop_wire::PropValue::Boolean(false))
-    );
-    let maximum_scale = number(node, PropKey::TextMaxFontSizeMultiplier).unwrap_or(0.0);
-    let text_scale = if !allow_scaling {
-        1.0
-    } else if maximum_scale > 0.0 {
-        device_text_scale.min(maximum_scale.max(1.0))
+    let available_width = if axis == Axis::Horizontal
+        && node.kind == NodeKind::Text
+        && integer(node, PropKey::NumberOfLines) == Some(1)
+        && MIN_CONTENT.with(Cell::get)
+    {
+        f32::INFINITY
     } else {
-        device_text_scale
+        available_width
     };
+    let text_scale = node_text_scale(node, device_text_scale);
+    if axis == Axis::Horizontal
+        && let Some(width) = menu_list_width(node, text_scale)
+    {
+        return width;
+    }
+    if axis == Axis::Horizontal
+        && node.kind == NodeKind::Text
+        && MIN_CONTENT.with(Cell::get)
+        && available_width.is_finite()
+        && let Some(width) = longest_word(node, text_scale)
+    {
+        // CSS min-content: the widest unbreakable run (hosts may break a
+        // word anywhere when it does not fit).
+        return width;
+    }
     if let Some(measured) = crate::text_measure::measure(node, available_width, text_scale) {
         return match axis {
             Axis::Vertical => measured.height,
+            // A min-content probe keeps the longest unbreakable run, which
+            // overflows the probe width.
+            Axis::Horizontal if MIN_CONTENT.with(Cell::get) => measured.width,
             Axis::Horizontal => measured.width.min(available_width.max(0.0)),
         };
     }
@@ -3489,6 +3921,152 @@ fn text_extent(
             .fold(0.0, f32::max)
             .min(available_width.max(0.0)),
     }
+}
+
+/// The accessibility text scale a node's text uses: the device scale,
+/// unless `allowFontScaling: false` or capped by `maxFontSizeMultiplier`.
+fn node_text_scale(node: &Node, device_text_scale: f32) -> f32 {
+    let allow_scaling = !matches!(
+        node.properties.get(&PropKey::TextAllowFontScaling),
+        Some(pam_desktop_wire::PropValue::Boolean(false))
+    );
+    let maximum_scale = number(node, PropKey::TextMaxFontSizeMultiplier).unwrap_or(0.0);
+    if !allow_scaling {
+        1.0
+    } else if maximum_scale > 0.0 {
+        device_text_scale.min(maximum_scale.max(1.0))
+    } else {
+        device_text_scale
+    }
+}
+
+/// Families whose average character width Blink does not trust
+/// (`kFontFamiliesWithInvalidCharWidth`): a text field in them is sized by
+/// the width of a `0`.
+const FAMILIES_WITH_INVALID_CHAR_WIDTH: [&str; 34] = [
+    "American Typewriter",
+    "Arial Hebrew",
+    "Chalkboard",
+    "Cochin",
+    "Corsiva Hebrew",
+    "Courier",
+    "Euphemia UCAS",
+    "Geneva",
+    "Gill Sans",
+    "Hei",
+    "Helvetica",
+    "Hoefler Text",
+    "InaiMathi",
+    "Kai",
+    "Lucida Grande",
+    "Marker Felt",
+    "Monaco",
+    "Mshtakan",
+    "New Peninim MT",
+    "Osaka",
+    "Raanana",
+    "STHeiti",
+    "Symbol",
+    "Times",
+    "Apple Braille",
+    "Apple LiGothic",
+    "Apple LiSung",
+    "Apple Symbols",
+    "AppleGothic",
+    "AppleMyungjo",
+    "#GungSeo",
+    "#HeadLineA",
+    "#PCMyungjo",
+    "#PilGi",
+];
+
+/// Content width of a single-line input without an authored width, as
+/// Blink's `TextFieldIntrinsicInlineSize`: `size` (20) characters of the
+/// primary font's average width, plus the maximum character width minus
+/// one average (IE's extra room), rounded up. Fonts Blink does not trust
+/// (internal `.`-prefixed families, the list above, CJK fonts whose average
+/// is a full-width glyph) use the width of a `0` instead. The metrics come
+/// from the host, which computes them like the platform's Skia port; `None`
+/// without a host that reports them.
+fn text_field_width(node: &Node, device_text_scale: f32) -> Option<f32> {
+    let text_scale = node_text_scale(node, device_text_scale);
+    let (average, maximum, zero) = crate::text_measure::text_control_metrics(node, text_scale)?;
+    let factor = integer(node, PropKey::InputSize)
+        .filter(|size| *size > 0)
+        .unwrap_or(20) as f32;
+    // Blink checks the first family of the authored list, as written.
+    let family = match node.properties.get(&PropKey::FontFamily) {
+        Some(pam_desktop_wire::PropValue::String(list)) => list
+            .split(',')
+            .map(|entry| entry.trim().trim_matches(['"', '\'']).trim())
+            .find(|entry| !entry.is_empty())
+            .unwrap_or(""),
+        _ => "",
+    };
+    let letter_spacing = number(node, PropKey::LetterSpacing).unwrap_or(0.0) * text_scale;
+    let zero_glyph = zero - letter_spacing;
+    let trusted = !family.starts_with('.')
+        && !FAMILIES_WITH_INVALID_CHAR_WIDTH.contains(&family)
+        && !(zero_glyph > 0.0 && average > zero_glyph * 1.7);
+    let mut width;
+    if trusted {
+        // `GetAvgCharWidth`: rounded only when that makes it wider.
+        let character = average.max(average.round());
+        width = character * factor;
+        if maximum > character {
+            width += maximum - character;
+        }
+    } else {
+        width = zero * factor;
+    }
+    // Blink computes in float and ceils.
+    Some(width.ceil())
+}
+
+/// The width of a `<select>`'s label box: its widest option in the label's
+/// own font, rounded up to a whole pixel (Blink measures every option with
+/// the select's style). `None` without options or a host measurer.
+fn menu_list_width(node: &Node, text_scale: f32) -> Option<f32> {
+    let Some(pam_desktop_wire::PropValue::String(options)) =
+        node.properties.get(&PropKey::MenuListOptions)
+    else {
+        return None;
+    };
+    let transform = integer(node, PropKey::TextTransform).unwrap_or(1);
+    let mut widest = None::<f32>;
+    for option in options.split('\n') {
+        let text = transformed_text_for_measurement(option, transform);
+        let width = crate::text_measure::measure_string(node, &text, text_scale)?;
+        widest = Some(widest.map_or(width, |widest| widest.max(width)));
+    }
+    widest.map(f32::ceil)
+}
+
+/// The widest whitespace-separated word of a plain text, measured by the
+/// host on one line (`None` for rich text or without a host measurer).
+fn longest_word(node: &Node, text_scale: f32) -> Option<f32> {
+    if node.properties.contains_key(&PropKey::TextSpans)
+        || node.properties.contains_key(&PropKey::TextSpanBoxes)
+    {
+        return None;
+    }
+    let text = match node.properties.get(&PropKey::Text) {
+        Some(pam_desktop_wire::PropValue::String(value)) => value.as_str(),
+        _ => return None,
+    };
+    let mut probe = node.clone();
+    let mut widest = 0.0_f32;
+    for word in text
+        .split([' ', '\t', '\n'])
+        .filter(|word| !word.is_empty())
+    {
+        probe.properties.insert(
+            PropKey::Text,
+            pam_desktop_wire::PropValue::String(word.to_owned()),
+        );
+        widest = widest.max(crate::text_measure::measure(&probe, f32::INFINITY, text_scale)?.width);
+    }
+    Some(widest)
 }
 
 fn transformed_text_for_measurement(text: &str, transform: i64) -> String {
@@ -3848,6 +4426,8 @@ fn relative_offset(node: &Node, frame: Layout, containing: Layout) -> Layout {
 struct FlexItem {
     id: u64,
     base: f32,
+    /// Inner (content-box) flex base size: CSS weighs shrinking by it.
+    inner_base: f32,
     hypothetical: f32,
     minimum: f32,
     maximum: f32,
@@ -3869,7 +4449,27 @@ fn flex_item(
     text_metrics: &TextMetrics,
     depth: usize,
 ) -> Result<FlexItem, LayoutError> {
-    let (minimum, maximum) = flex_main_bounds(child, axis, available_main)?;
+    let (mut minimum, maximum) = flex_main_bounds(child, axis, available_main)?;
+    if axis == Axis::Horizontal && boolean(child, PropKey::MinWidthAuto) {
+        // CSS automatic minimum size of a flex item: its min-content width,
+        // capped by its specified width and its maximum.
+        let content = min_content(|| {
+            intrinsic_extent(
+                children_index,
+                child,
+                Axis::Horizontal,
+                1.0,
+                f32::INFINITY,
+                text_scale,
+                text_metrics,
+                depth + 1,
+            )
+        })?;
+        let specified = dimension(child, PropKey::Width, PropKey::WidthPercent, available_main)
+            .unwrap_or(f32::INFINITY);
+        minimum = minimum.max(content.min(specified).min(maximum));
+    }
+    let maximum = maximum.max(minimum);
     let grow = flex_grow(child);
     let base = match explicit_flex_basis(child, available_main) {
         Some(FlexBasisValue::Points(points)) => points,
@@ -3894,6 +4494,7 @@ fn flex_item(
     Ok(FlexItem {
         id: child.id,
         base,
+        inner_base: (base - padding_border_main(child, axis)).max(0.0),
         hypothetical: base.max(minimum).min(maximum),
         minimum,
         maximum,
@@ -3901,6 +4502,29 @@ fn flex_item(
         shrink: flex_shrink(child),
         margins: before + after,
     })
+}
+
+/// Padding plus border of `node` along `axis`.
+fn padding_border_main(node: &Node, axis: Axis) -> f32 {
+    let length = |key| number(node, key).filter(|value| value.is_finite() && *value >= 0.0);
+    let all = length(PropKey::Padding).unwrap_or(0.0);
+    let (left, top, right, bottom) = border_edges(node);
+    match axis {
+        Axis::Horizontal => {
+            let side = length(PropKey::PaddingHorizontal).unwrap_or(all);
+            length(PropKey::PaddingLeft).unwrap_or(side)
+                + length(PropKey::PaddingRight).unwrap_or(side)
+                + left
+                + right
+        }
+        Axis::Vertical => {
+            let side = length(PropKey::PaddingVertical).unwrap_or(all);
+            length(PropKey::PaddingTop).unwrap_or(side)
+                + length(PropKey::PaddingBottom).unwrap_or(side)
+                + top
+                + bottom
+        }
+    }
 }
 
 /// CSS Flexbox §9.7 "Resolving Flexible Lengths" for one line. `space` is the
@@ -3959,7 +4583,7 @@ fn resolve_flexible_lengths(items: &[FlexItem], space: f32) -> BTreeMap<u64, f32
             .iter()
             .enumerate()
             .filter(|(index, _)| !frozen[*index])
-            .map(|(_, item)| item.shrink * item.base)
+            .map(|(_, item)| item.shrink * item.inner_base)
             .sum::<f32>();
         let mut violation = 0.0_f32;
         let mut clamped = target.clone();
@@ -3974,7 +4598,9 @@ fn resolve_flexible_lengths(items: &[FlexItem], space: f32) -> BTreeMap<u64, f32
                     item.base
                 }
             } else if scaled_shrink > 0.0 {
-                item.base + free * (item.shrink * item.base) / scaled_shrink
+                // CSS §9.7: the scaled flex shrink factor uses the inner
+                // (content-box) base size, so padding and border never shrink.
+                item.base + free * (item.shrink * item.inner_base) / scaled_shrink
             } else {
                 item.base
             };
@@ -4368,6 +4994,30 @@ fn margin_cross(node: &Node, axis: Axis) -> (f32, f32) {
     }
 }
 
+/// `justify-content` of a flex container (1 when unset); a table cell laid
+/// out in a column takes its `vertical-align`.
+fn justify_content(node: &Node, axis: Axis) -> i64 {
+    integer(node, PropKey::JustifyContent)
+        .or_else(|| {
+            (axis == Axis::Vertical)
+                .then(|| table::cell_alignment(node))
+                .flatten()
+        })
+        .unwrap_or(1)
+}
+
+/// `align-items` of a flex container (stretch when unset); a table cell laid
+/// out in a row takes its `vertical-align`.
+fn align_items(node: &Node, axis: Axis) -> i64 {
+    integer(node, PropKey::AlignItems)
+        .or_else(|| {
+            (axis == Axis::Horizontal)
+                .then(|| table::cell_alignment(node))
+                .flatten()
+        })
+        .unwrap_or(4)
+}
+
 fn cross_alignment(value: i64) -> CrossAlignment {
     match value {
         1 => CrossAlignment::Start,
@@ -4496,15 +5146,30 @@ fn absolute_static_offset(
         .map(cross_alignment)
         .unwrap_or_else(|| cross_alignment(integer(parent, PropKey::AlignItems).unwrap_or(4)));
     match alignment {
-        CrossAlignment::Center => free / 2.0,
+        CrossAlignment::Center => layout_half(free),
         CrossAlignment::End => free,
         CrossAlignment::Start | CrossAlignment::Stretch | CrossAlignment::Baseline => 0.0,
     }
 }
 
+/// Half of a free space as Blink centres a box: the space on the LayoutUnit
+/// grid (1/64 px) divided by two with the integer division of LayoutUnit
+/// (toward zero), e.g. 6.703125 / 2 = 3.34375, not 3.3515625.
+fn layout_half(free: f32) -> f32 {
+    ((free * 64.0).round() / 2.0).trunc() / 64.0
+}
+
 fn justify_offsets(value: i64, free: f32, count: usize, gap: f32) -> (f32, f32) {
+    // CSS: overflowing content (negative free space) stays centred or
+    // end-aligned (`center`, `flex-end` are unsafe); the distributed
+    // alignments fall back to the start.
+    let free = if matches!(value, 2 | 3) {
+        free
+    } else {
+        free.max(0.0)
+    };
     match value {
-        2 => (free / 2.0, gap),
+        2 => (layout_half(free), gap),
         3 => (free, gap),
         4 if count > 1 => (0.0, gap + free / (count - 1) as f32),
         5 if count > 0 => {
@@ -4568,6 +5233,13 @@ fn safe_area_padding(node: &Node, frame: Layout, viewport: Layout) -> (f32, f32,
 
 /// Border widths per edge (left, top, right, bottom), Yoga semantics.
 fn border_edges(node: &Node) -> (f32, f32, f32, f32) {
+    // In a collapsing table, cells hold half of each grid line and rows
+    // none (CSS 2.1 §17.6.2).
+    table::collapsed_edges(node).unwrap_or_else(|| border_edges_raw(node))
+}
+
+/// The authored border widths (left, top, right, bottom).
+fn border_edges_raw(node: &Node) -> (f32, f32, f32, f32) {
     let valid = |value: f32| value.is_finite() && value > 0.0;
     let all = number(node, PropKey::BorderWidth)
         .filter(|value| valid(*value))
@@ -4586,9 +5258,106 @@ fn border_edges(node: &Node) -> (f32, f32, f32, f32) {
 }
 
 fn number(node: &Node, key: PropKey) -> Option<f32> {
-    node.properties
+    let value = node
+        .properties
         .get(&key)
+        .and_then(|value| value.as_number())?;
+    match node.properties.get(&PropKey::LengthUnits) {
+        Some(pam_desktop_wire::PropValue::String(units))
+            if length_unit(units, key) == Some("ch") =>
+        {
+            Some(value * ch_width(node))
+        }
+        _ if is_fixed_length(key) => Some(fixed_length(value)),
+        _ => Some(value),
+    }
+}
+
+/// Lengths Blink resolves with `MinimumValueForLength`/`ValueForLength`
+/// (margins, paddings, gaps, sizes and insets): a fixed length becomes
+/// `LayoutUnit(float)`, truncated toward zero on the 1/64 px grid, so
+/// `margin-top: 10.4px` is 10.390625 and a column of such boxes does not
+/// drift 1/64 px per box. Borders snap to device pixels instead.
+fn is_fixed_length(key: PropKey) -> bool {
+    matches!(
+        key,
+        PropKey::Width
+            | PropKey::Height
+            | PropKey::MinWidth
+            | PropKey::MinHeight
+            | PropKey::MaxWidth
+            | PropKey::MaxHeight
+            | PropKey::Padding
+            | PropKey::PaddingHorizontal
+            | PropKey::PaddingVertical
+            | PropKey::PaddingLeft
+            | PropKey::PaddingTop
+            | PropKey::PaddingRight
+            | PropKey::PaddingBottom
+            | PropKey::Margin
+            | PropKey::MarginHorizontal
+            | PropKey::MarginVertical
+            | PropKey::MarginLeft
+            | PropKey::MarginTop
+            | PropKey::MarginRight
+            | PropKey::MarginBottom
+            | PropKey::Gap
+            | PropKey::GridColumnGap
+            | PropKey::GridRowGap
+            | PropKey::Left
+            | PropKey::Top
+            | PropKey::Right
+            | PropKey::Bottom
+    )
+}
+
+/// `LayoutUnit(float)`: toward zero on the 1/64 px grid.
+fn fixed_length(value: f32) -> f32 {
+    if value.is_finite() {
+        (value * 64.0).trunc() / 64.0
+    } else {
+        value
+    }
+}
+
+/// The unit `LengthUnits` gives `key` (`"2003=ch;..."`).
+fn length_unit(units: &str, key: PropKey) -> Option<&str> {
+    let id = (key as u16).to_string();
+    units.split(';').find_map(|pair| {
+        let (property, unit) = pair.split_once('=')?;
+        (property.trim() == id).then_some(unit.trim())
+    })
+}
+
+/// CSS `ch`: the advance of "0" in the node's font, measured by the host
+/// over 64 zeros so the result keeps the font's fractional advance; without
+/// a host measurer CSS's fallback of half an em.
+fn ch_width(node: &Node) -> f32 {
+    const ZEROS: usize = 64;
+    let size = node
+        .properties
+        .get(&PropKey::FontSize)
         .and_then(|value| value.as_number())
+        .filter(|size| size.is_finite() && *size > 0.0)
+        .unwrap_or(14.0);
+    let mut probe = node.clone();
+    probe.id = node.id ^ (1 << 62);
+    for key in [
+        PropKey::TextSpans,
+        PropKey::TextSpanBoxes,
+        PropKey::LengthUnits,
+        PropKey::Padding,
+    ] {
+        probe.properties.remove(&key);
+    }
+    probe.properties.insert(
+        PropKey::Text,
+        pam_desktop_wire::PropValue::String("0".repeat(ZEROS)),
+    );
+    crate::text_measure::measure(&probe, f32::INFINITY, 1.0)
+        .map(|measured| measured.width / ZEROS as f32)
+        .filter(|width| width.is_finite() && *width > 0.0)
+        .unwrap_or(size / 2.0)
 }
 
 fn integer(node: &Node, key: PropKey) -> Option<i64> {
@@ -4608,10 +5377,12 @@ fn restore_previous_subtree(
     };
     let mut pending = vec![id];
     while let Some(current) = pending.pop() {
-        let Some(frame) = previous.get(&current) else {
+        // An anonymous block box has no previous frame; its children do.
+        if let Some(frame) = previous.get(&current) {
+            output.insert(current, *frame);
+        } else if current < inline::ANONYMOUS_BASE {
             continue;
-        };
-        output.insert(current, *frame);
+        }
         if let Some(children) = context.children.get(&current) {
             pending.extend(children.iter().map(|child| child.id));
         }
@@ -7626,8 +8397,8 @@ mod tests {
         .expect("dialog intrinsic layout");
         let card = layouts[&3];
 
-        assert!((card.width - 316.8).abs() < 0.001);
-        assert!((card.x - 21.6).abs() < 0.001);
+        assert!((card.width - 316.8).abs() <= 1.0 / 64.0);
+        assert!((card.x - 21.6).abs() <= 1.0 / 64.0);
         assert_eq!(card.height, 108.0);
         assert_eq!(card.y, 266.0);
     }
@@ -7837,8 +8608,9 @@ mod tests {
         .expect("compound custom view layout");
 
         // 4pt padding + 8pt gaps + two 20pt labels + 19.6pt input.
-        assert_eq!(layouts[&2].height, 71.6);
-        assert_eq!(layouts[&6].y, 71.6);
+        // On the LayoutUnit grid (1/64 px).
+        assert!((layouts[&2].height - 71.6).abs() <= 1.0 / 64.0);
+        assert!((layouts[&6].y - 71.6).abs() <= 1.0 / 64.0);
         assert!(layouts[&5].y >= layouts[&4].y + layouts[&4].height);
     }
 
@@ -8062,7 +8834,7 @@ mod tests {
 
     #[test]
     fn input_intrinsic_height_is_one_line_plus_authored_padding_and_border() {
-        assert!((input_height([]) - 19.6).abs() < 0.001);
+        assert!((input_height([]) - 19.6).abs() <= 1.0 / 64.0);
         assert_eq!(
             input_height([
                 (PropKey::LineHeight, PropValue::Float(22.0)),
@@ -8461,6 +9233,122 @@ mod tests {
         assert!(width >= text_width + 36.0);
         assert!(width > 100.0);
         assert!(leaf_intrinsic(&button, Axis::Horizontal, 2.0, None) > width);
+    }
+
+    #[test]
+    fn composited_layer_lands_on_whole_pixels_and_keeps_content_offsets() {
+        use PropValue::{Boolean as B, Float as F, Integer as I};
+        let tree = |layer: bool| Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (
+                    1,
+                    node(1, 0, 0, NodeKind::Screen, [(PropKey::JustifyContent, I(2))]),
+                ),
+                (
+                    2,
+                    node(
+                        2,
+                        1,
+                        0,
+                        NodeKind::Column,
+                        [
+                            (PropKey::Height, F(536.6875)),
+                            (PropKey::CompositedLayer, B(layer)),
+                        ],
+                    ),
+                ),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::View,
+                        [(PropKey::MarginTop, F(18.25)), (PropKey::Height, F(10.0))],
+                    ),
+                ),
+            ]),
+        };
+        let size = Size {
+            width: 1200.0,
+            height: 800.0,
+        };
+        let plain = calculate(&tree(false), size).expect("layout");
+        let layer = calculate(&tree(true), size).expect("layout");
+        assert_eq!(plain[&2].y, 131.65625);
+        assert_eq!(layer[&2].y, 132.0);
+        // The content keeps its exact offset inside the layer.
+        assert_eq!(layer[&3].y - layer[&2].y, plain[&3].y - plain[&2].y);
+    }
+
+    #[test]
+    fn intrinsic_button_minimum_applies_only_without_authored_padding() {
+        let plain = node(
+            1,
+            0,
+            0,
+            NodeKind::Button,
+            [(PropKey::Text, PropValue::String("Ok".into()))],
+        );
+        assert_eq!(leaf_intrinsic(&plain, Axis::Horizontal, 1.0, None), 100.0);
+        let styled = node(
+            2,
+            0,
+            0,
+            NodeKind::Button,
+            [
+                (PropKey::Text, PropValue::String("Ok".into())),
+                (PropKey::PaddingHorizontal, PropValue::Float(11.0)),
+            ],
+        );
+        let text_width = text_extent(&styled, Axis::Horizontal, f32::INFINITY, 1.0, None);
+        let width = leaf_intrinsic(&styled, Axis::Horizontal, 1.0, None);
+        assert!((width - (text_width + 22.0)).abs() < 0.01 && width < 100.0);
+        // Vertically too: no authored padding keeps the control height, 8px
+        // top and bottom padding make it its 18px label line plus 16px.
+        assert_eq!(
+            leaf_intrinsic(&plain, Axis::Vertical, 1.0, None),
+            DEFAULT_CONTROL_HEIGHT
+        );
+        let padded = node(
+            3,
+            0,
+            0,
+            NodeKind::Button,
+            [
+                (PropKey::Text, PropValue::String("Ok".into())),
+                (PropKey::FontSize, PropValue::Float(12.0)),
+                (PropKey::LineHeight, PropValue::Float(18.0)),
+                (PropKey::PaddingVertical, PropValue::Float(8.0)),
+            ],
+        );
+        let line = text_extent(&padded, Axis::Vertical, f32::INFINITY, 1.0, None);
+        assert_eq!(
+            leaf_intrinsic(&padded, Axis::Vertical, 1.0, None),
+            line + 16.0
+        );
+    }
+
+    #[test]
+    fn centring_halves_free_space_like_blink_layout_units() {
+        // Electron 37, `align-items: center` / `justify-content: center`:
+        // child offset for a free space on the 1/64 px grid (probe table).
+        for (free, offset) in [
+            (29.765625, 14.875),
+            (29.84375, 14.921875),
+            (29.921875, 14.953125),
+            (29.984375, 14.984375),
+            (30.0, 15.0),
+            (30.078125, 15.03125),
+            (30.15625, 15.078125),
+            (30.234375, 15.109375),
+            (30.3125, 15.15625),
+            (30.390625, 15.1875),
+            (30.46875, 15.234375),
+        ] {
+            assert_eq!(layout_half(free), offset, "free {free}");
+        }
     }
 
     #[test]
@@ -8937,9 +9825,14 @@ mod tests {
     #[test]
     fn stable_scrollbar_gutter_reserves_the_scrollbar_width() {
         for (gutter, width, x, expected) in [
-            (2, 2, 0.0, 350.0),
+            (2, 2, 0.0, 360.0 - SCROLLBAR_GUTTER_THIN),
             (2, 1, 0.0, 345.0),
-            (3, 2, 10.0, 340.0),
+            (
+                3,
+                2,
+                SCROLLBAR_GUTTER_THIN,
+                360.0 - 2.0 * SCROLLBAR_GUTTER_THIN,
+            ),
             (2, 3, 0.0, 360.0),
             (1, 2, 0.0, 360.0),
         ] {
@@ -8970,6 +9863,421 @@ mod tests {
             assert_eq!(layout[&2].x, x, "gutter {gutter} width {width}");
             assert_eq!(layout[&2].width, expected, "gutter {gutter} width {width}");
         }
+    }
+
+    /// A table: `rows` lists each row's (row props, cells), each cell holding
+    /// a 20px tall box of the given width.
+    type TableProps = Vec<(PropKey, PropValue)>;
+    type TableRow = (TableProps, Vec<(f64, TableProps)>);
+
+    fn table_tree(table: TableProps, rows: Vec<TableRow>) -> Tree {
+        let display = |role| (PropKey::TableDisplay, PropValue::Integer(role));
+        let mut nodes = BTreeMap::new();
+        let mut props = table;
+        props.push(display(1));
+        nodes.insert(1, node(1, 0, 0, NodeKind::Column, props));
+        let mut next = 2_u64;
+        for (r, (mut row, cells)) in rows.into_iter().enumerate() {
+            row.push(display(3));
+            let row_id = next;
+            next += 1;
+            nodes.insert(row_id, node(row_id, 1, r as u32, NodeKind::Row, row));
+            for (c, (width, mut cell)) in cells.into_iter().enumerate() {
+                cell.push(display(4));
+                let cell_id = next;
+                nodes.insert(
+                    cell_id,
+                    node(cell_id, row_id, c as u32, NodeKind::Column, cell),
+                );
+                nodes.insert(
+                    cell_id + 1,
+                    node(
+                        cell_id + 1,
+                        cell_id,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(width)),
+                            (PropKey::Height, PropValue::Float(20.0)),
+                        ],
+                    ),
+                );
+                next += 2;
+            }
+        }
+        Tree { root: 1, nodes }
+    }
+
+    #[test]
+    fn collapsing_tables_share_each_grid_line_half_and_half() {
+        // Chromium 138 (Electron 37): thead tr { border-bottom: 1px } and
+        // td { border-top: 1px }, 20px cells: thead row 20.5 tall, body rows
+        // 21 and 20.5, the table 62; cell content 0.5px below a row's top.
+        let border = |key| vec![(key, PropValue::Float(1.0))];
+        let tree = table_tree(
+            vec![(PropKey::BorderCollapse, PropValue::Integer(2))],
+            vec![
+                (border(PropKey::BorderBottomWidth), vec![(30.0, vec![])]),
+                (vec![], vec![(30.0, border(PropKey::BorderTopWidth))]),
+                (vec![], vec![(30.0, border(PropKey::BorderTopWidth))]),
+            ],
+        );
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 300.0,
+                height: 400.0,
+            },
+        )
+        .expect("table");
+        let row = |id: u64| (layout[&id].y, layout[&id].height);
+        assert_eq!(row(2), (0.0, 20.5));
+        assert_eq!(row(5), (20.5, 21.0));
+        assert_eq!(row(8), (41.5, 20.5));
+        assert_eq!(layout[&8].y + layout[&8].height, 62.0, "table content");
+        assert_eq!(layout[&7].y, 21.0, "content of the first body cell");
+    }
+
+    #[test]
+    fn automatic_table_columns_share_spare_room_by_max_content() {
+        // Columns of 100 and 50px in a 300px table: the 150px left go to
+        // them in proportion (2:1), like Chromium's auto table layout.
+        let tree = table_tree(
+            vec![],
+            vec![(vec![], vec![(100.0, vec![]), (50.0, vec![])])],
+        );
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 300.0,
+                height: 100.0,
+            },
+        )
+        .expect("table");
+        assert_eq!((layout[&3].x, layout[&3].width), (0.0, 200.0));
+        assert_eq!((layout[&5].x, layout[&5].width), (200.0, 100.0));
+        // Fixed layout: the first row's declared widths, the rest shared.
+        let tree = table_tree(
+            vec![(PropKey::TableLayout, PropValue::Integer(2))],
+            vec![(
+                vec![],
+                vec![
+                    (10.0, vec![(PropKey::Width, PropValue::Float(60.0))]),
+                    (10.0, vec![]),
+                    (10.0, vec![(PropKey::WidthPercent, PropValue::Float(10.0))]),
+                ],
+            )],
+        );
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 300.0,
+                height: 100.0,
+            },
+        )
+        .expect("fixed table");
+        assert_eq!(layout[&3].width, 60.0);
+        assert_eq!(layout[&5].width, 210.0);
+        assert_eq!(layout[&7].width, 30.0);
+    }
+
+    #[test]
+    fn table_cells_centre_their_content_vertically() {
+        // vertical-align: middle (the default of td) in a 40px row.
+        let tree = table_tree(
+            vec![],
+            vec![(
+                vec![(PropKey::Height, PropValue::Float(40.0))],
+                vec![
+                    (10.0, vec![]),
+                    (10.0, vec![(PropKey::VerticalAlign, PropValue::Integer(2))]),
+                ],
+            )],
+        );
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+        )
+        .expect("table");
+        assert_eq!(layout[&4].y, 10.0, "middle");
+        assert_eq!(layout[&6].y, 0.0, "top");
+    }
+
+    #[test]
+    fn shrinking_is_weighted_by_the_inner_base_size() {
+        // CSS §9.7: 100px items in a 100px row, one with 40px of padding.
+        // The scaled shrink factors are the content boxes (60 and 100), so
+        // the padded item gives up 37.5px and the other 62.5px.
+        let mut nodes = BTreeMap::new();
+        nodes.insert(1, node(1, 0, 0, NodeKind::Row, []));
+        for (child, padding) in [(2_u64, 20.0), (3, 0.0)] {
+            nodes.insert(
+                child,
+                node(
+                    child,
+                    1,
+                    (child - 2) as u32,
+                    NodeKind::Column,
+                    [
+                        (PropKey::Width, PropValue::Float(100.0)),
+                        (PropKey::FlexShrink, PropValue::Float(1.0)),
+                        (PropKey::PaddingHorizontal, PropValue::Float(padding)),
+                    ],
+                ),
+            );
+        }
+        let layout = calculate(
+            &Tree { root: 1, nodes },
+            Size {
+                width: 100.0,
+                height: 10.0,
+            },
+        )
+        .expect("shrink");
+        assert_eq!(layout[&2].width, 62.5);
+        assert_eq!(layout[&3].width, 37.5);
+    }
+
+    #[test]
+    fn centred_content_overflows_both_sides() {
+        // justify-content: center with a 120px child in a 100px row: CSS
+        // centres the overflow (-10px), space-between falls back to start.
+        for (justify, x) in [(2, -10.0), (3, -20.0), (4, 0.0)] {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                1,
+                node(
+                    1,
+                    0,
+                    0,
+                    NodeKind::Row,
+                    [(PropKey::JustifyContent, PropValue::Integer(justify))],
+                ),
+            );
+            nodes.insert(
+                2,
+                node(
+                    2,
+                    1,
+                    0,
+                    NodeKind::Column,
+                    [
+                        (PropKey::Width, PropValue::Float(120.0)),
+                        (PropKey::FlexShrink, PropValue::Float(0.0)),
+                    ],
+                ),
+            );
+            let layout = calculate(
+                &Tree { root: 1, nodes },
+                Size {
+                    width: 100.0,
+                    height: 10.0,
+                },
+            )
+            .expect("overflow");
+            assert_eq!(layout[&2].x, x, "justify {justify}");
+        }
+    }
+
+    #[test]
+    fn frames_sit_on_the_layout_unit_grid() {
+        // Three thirds of 100px: Blink keeps each edge on the 1/64 px grid
+        // and adjacent boxes share it, so positions add up exactly.
+        let mut nodes = BTreeMap::new();
+        nodes.insert(1, node(1, 0, 0, NodeKind::Row, []));
+        for child in 2..=4 {
+            nodes.insert(
+                child,
+                node(
+                    child,
+                    1,
+                    (child - 2) as u32,
+                    NodeKind::Column,
+                    [(PropKey::FlexGrow, PropValue::Float(1.0))],
+                ),
+            );
+        }
+        let layout = calculate(
+            &Tree { root: 1, nodes },
+            Size {
+                width: 100.0,
+                height: 10.0,
+            },
+        )
+        .expect("thirds");
+        for child in 2..=4 {
+            let frame = layout[&child];
+            for value in [frame.x, frame.width, frame.x + frame.width] {
+                assert_eq!((value * 64.0).fract(), 0.0, "{frame:?}");
+            }
+        }
+        assert_eq!(layout[&2].x + layout[&2].width, layout[&3].x);
+        assert_eq!(layout[&4].x + layout[&4].width, 100.0);
+    }
+
+    #[test]
+    fn fixed_lengths_truncate_to_layout_units_like_blink() {
+        // LayoutUnit(float): 10.4px is 10.390625 (665.6/64 toward zero), so
+        // three boxes with `margin-top: 10.4px; height: 7.2px` stack at
+        // 3 × (10.390625 + 7.1875) instead of drifting 1/64 px per box.
+        let mut nodes = BTreeMap::new();
+        nodes.insert(1, node(1, 0, 0, NodeKind::Column, []));
+        for child in 2..=4 {
+            nodes.insert(
+                child,
+                node(
+                    child,
+                    1,
+                    (child - 2) as u32,
+                    NodeKind::View,
+                    [
+                        (PropKey::MarginTop, PropValue::Float(10.4)),
+                        (PropKey::Height, PropValue::Float(7.2)),
+                    ],
+                ),
+            );
+        }
+        let layout = calculate(
+            &Tree { root: 1, nodes },
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+        )
+        .expect("column");
+        assert_eq!(layout[&2].y, 10.390625);
+        assert_eq!(layout[&2].height, 7.1875);
+        assert_eq!(layout[&4].y, 2.0 * 17.578125 + 10.390625);
+        assert_eq!(fixed_length(-14.3), -14.296875);
+    }
+
+    #[test]
+    fn classic_auto_gutter_takes_room_only_while_the_content_overflows() {
+        // scrollbar-gutter: auto + scrollbar-width: thin is Chromium's classic
+        // bar (10px on Linux/Windows, 11 on macOS) while the content
+        // overflows, none otherwise.
+        let thin = SCROLLBAR_GUTTER_THIN;
+        for (horizontal, content, expected) in [
+            (false, 600.0, (360.0, 640.0)),
+            (false, 1000.0, (360.0 - thin, 1000.0)),
+            (true, 300.0, (360.0, 640.0)),
+            (true, 900.0, (900.0, 640.0 - thin)),
+        ] {
+            let mut nodes = BTreeMap::new();
+            nodes.insert(
+                1,
+                node(
+                    1,
+                    0,
+                    0,
+                    NodeKind::Scroll,
+                    [
+                        (PropKey::ScrollbarWidth, PropValue::Integer(2)),
+                        (PropKey::ScrollHorizontal, PropValue::Boolean(horizontal)),
+                    ],
+                ),
+            );
+            let size = if horizontal {
+                PropKey::Width
+            } else {
+                PropKey::Height
+            };
+            nodes.insert(
+                2,
+                node(
+                    2,
+                    1,
+                    0,
+                    NodeKind::Column,
+                    [(size, PropValue::Float(content))],
+                ),
+            );
+            let tree = Tree { root: 1, nodes };
+            let layout = calculate(
+                &tree,
+                Size {
+                    width: 360.0,
+                    height: 640.0,
+                },
+            )
+            .expect("classic auto scroll");
+            assert_eq!(
+                (layout[&2].width, layout[&2].height),
+                expected,
+                "horizontal {horizontal} content {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn scroll_content_counts_text_wrapped_inside_a_row() {
+        // Column > Row [ 200px icon, Text ]: the text wraps at the width the
+        // row leaves it, so the scroll content must be as tall as layout.
+        let words = "word ".repeat(40);
+        let tree = Tree {
+            root: 1,
+            nodes: BTreeMap::from([
+                (1, node(1, 0, 0, NodeKind::Scroll, [])),
+                (2, node(2, 1, 0, NodeKind::Column, [])),
+                (
+                    3,
+                    node(
+                        3,
+                        2,
+                        0,
+                        NodeKind::Row,
+                        [(PropKey::AlignItems, PropValue::Integer(1))],
+                    ),
+                ),
+                (
+                    4,
+                    node(
+                        4,
+                        3,
+                        0,
+                        NodeKind::View,
+                        [
+                            (PropKey::Width, PropValue::Float(200.0)),
+                            (PropKey::Height, PropValue::Float(10.0)),
+                        ],
+                    ),
+                ),
+                (
+                    5,
+                    node(
+                        5,
+                        3,
+                        1,
+                        NodeKind::Text,
+                        [
+                            (PropKey::Text, PropValue::String(words)),
+                            (PropKey::FontSize, PropValue::Float(10.0)),
+                            (PropKey::LineHeight, PropValue::Float(14.0)),
+                            (PropKey::FlexShrink, PropValue::Float(1.0)),
+                        ],
+                    ),
+                ),
+            ]),
+        };
+        let layout = calculate(
+            &tree,
+            Size {
+                width: 400.0,
+                height: 20.0,
+            },
+        )
+        .expect("scroll layout");
+        let text = layout[&5];
+        assert!(text.width <= 200.0 + 0.5, "text width {}", text.width);
+        assert!(
+            layout[&2].height + 0.01 >= text.y + text.height - layout[&2].y,
+            "content {} < text bottom {}",
+            layout[&2].height,
+            text.y + text.height - layout[&2].y
+        );
     }
 
     #[test]
@@ -11546,14 +12854,15 @@ mod css_flex_tests {
         let width = (346.0 - 8.0) / 3.0;
         for tile in [2, 4, 6] {
             assert!(
-                (layouts[&tile].width - width).abs() < 0.01,
+                // Frames sit on the LayoutUnit grid (1/64 px).
+                (layouts[&tile].width - width).abs() <= 1.0 / 64.0,
                 "{:?}",
                 layouts[&tile]
             );
             assert_eq!(layouts[&tile].y, 0.0);
-            assert!((layouts[&(tile + 1)].width - width).abs() < 0.01);
+            assert!((layouts[&(tile + 1)].width - width).abs() <= 1.0 / 64.0);
         }
-        assert!((layouts[&6].x - (12.0 + 2.0 * (width + 4.0))).abs() < 0.01);
+        assert!((layouts[&6].x - (12.0 + 2.0 * (width + 4.0))).abs() <= 1.0 / 64.0);
         // The fourth tile wraps alone and grows only up to its max-width.
         assert_eq!(layouts[&8].width, 160.0);
         assert_eq!(layouts[&8].y, 126.0);
