@@ -133,6 +133,83 @@ fn create(
     Ok(())
 }
 
+/// Adds to an existing `composer.json` (the one `composer require
+/// pushinbr/pam-desktop` writes) what the skeleton needs and it lacks: the
+/// `App\` autoload, the `dev`/`start`/`build`/`test` scripts and the PHP
+/// requirement. Nothing it already has is changed. Returns whether it wrote.
+fn merge_composer(
+    directory: &Path,
+    skeleton: &str,
+    report: &mut Vec<String>,
+) -> Result<bool, String> {
+    let path = directory.join("composer.json");
+    let Ok(mut existing) = fs::read_to_string(&path)
+        .map_err(|error| error.to_string())
+        .and_then(|text| {
+            serde_json::from_str::<serde_json::Value>(&text).map_err(|error| error.to_string())
+        })
+    else {
+        report.push(String::from(
+            "[kept] composer.json (not valid JSON; add the App\\ autoload of the skeleton by hand)",
+        ));
+        return Ok(false);
+    };
+    let skeleton: serde_json::Value =
+        serde_json::from_str(skeleton).map_err(|error| error.to_string())?;
+    let mut added = Vec::new();
+    for (section, label) in [
+        ("require", "require"),
+        ("autoload", "autoload"),
+        ("scripts", "scripts"),
+    ] {
+        let Some(wanted) = skeleton.get(section).and_then(serde_json::Value::as_object) else {
+            continue;
+        };
+        let Some(target) = existing.as_object_mut() else {
+            break;
+        };
+        let target = target
+            .entry(section)
+            .or_insert_with(|| serde_json::json!({}));
+        let Some(target) = target.as_object_mut() else {
+            continue;
+        };
+        for (key, value) in wanted {
+            match (target.get_mut(key), value) {
+                (None, _) => {
+                    target.insert(key.clone(), value.clone());
+                    added.push(format!("{label}.{key}"));
+                }
+                // autoload.psr-4: add the namespaces it lacks.
+                (Some(serde_json::Value::Object(present)), serde_json::Value::Object(value)) => {
+                    for (inner, inner_value) in value {
+                        if !present.contains_key(inner) {
+                            present.insert(inner.clone(), inner_value.clone());
+                            added.push(format!("{label}.{key}.{inner}"));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if added.is_empty() {
+        report.push(String::from("[kept] composer.json"));
+        return Ok(false);
+    }
+    let mut text = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"    ");
+    let mut serializer = serde_json::Serializer::with_formatter(&mut text, formatter);
+    serde::Serialize::serialize(&existing, &mut serializer).map_err(|error| error.to_string())?;
+    text.push(b'\n');
+    fs::write(&path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    report.push(format!(
+        "[merged] composer.json: added {}",
+        added.join(", ")
+    ));
+    Ok(true)
+}
+
 /// Creates the starting files in the directory and returns what it did,
 /// one line per file.
 ///
@@ -183,6 +260,7 @@ pub fn init(options: &InitOptions) -> Result<Vec<String>, String> {
     text.push('\n');
 
     let mut report = Vec::new();
+    let mut autoload_changed = false;
     create(&directory, manifest::FILE_NAME, &text, &mut report)?;
     // Preserve Unicode and escape only PHP single-quoted string delimiters.
     let title = name.replace('\\', "\\\\").replace('\'', "\\'");
@@ -197,10 +275,18 @@ pub fn init(options: &InitOptions) -> Result<Vec<String>, String> {
             _ if path.ends_with(".php") => contents.replace("@NAME@", &title),
             _ => contents.replace("@NAME@", &name),
         };
+        if path == "composer.json" && directory.join(path).is_file() {
+            autoload_changed = merge_composer(&directory, &contents, &mut report)?;
+            continue;
+        }
         create(&directory, path, &contents, &mut report)?;
     }
     if !directory.join("vendor/autoload.php").is_file() {
         report.push(String::from("next: composer install, then pam desktop dev"));
+    } else if autoload_changed {
+        report.push(String::from(
+            "next: composer dump-autoload (pam composer dump-autoload without a global Composer), then pam desktop dev",
+        ));
     } else {
         report.push(String::from("next: pam desktop dev"));
     }
@@ -305,6 +391,40 @@ mod tests {
             fs::read_to_string(directory.join("index.php")).unwrap(),
             "<?php // mine"
         );
+
+        // `composer require pushinbr/pam-desktop` first, then `init`: the
+        // minimal composer.json gains the App\ autoload and the scripts.
+        let required = root.join("required");
+        fs::create_dir_all(&required).unwrap();
+        fs::write(
+            required.join("composer.json"),
+            "{\n    \"require\": {\n        \"pushinbr/pam-desktop\": \"^2.1\"\n    }\n}\n",
+        )
+        .unwrap();
+        let merged = init(&InitOptions {
+            directory: required.clone(),
+            name: None,
+            id: None,
+        })
+        .unwrap();
+        assert!(
+            merged
+                .iter()
+                .any(|line| line.starts_with("[merged] composer.json"))
+        );
+        let composer: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(required.join("composer.json")).unwrap())
+                .unwrap();
+        assert_eq!(composer["autoload"]["psr-4"]["App\\"], "src/");
+        assert_eq!(composer["require"]["pushinbr/pam-desktop"], "^2.1");
+        assert_eq!(composer["scripts"]["start"], "pam-desktop run");
+        let again = init(&InitOptions {
+            directory: required,
+            name: None,
+            id: None,
+        })
+        .unwrap();
+        assert!(again.iter().any(|line| line == "[kept] composer.json"));
 
         assert!(
             init(&InitOptions {

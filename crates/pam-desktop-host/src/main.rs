@@ -80,7 +80,18 @@ fn php_command() -> (PathBuf, Vec<OsString>) {
             name.to_owned()
         }
     };
-    let pam = |path: PathBuf| (path, vec![OsString::from("exec")]);
+    // `pam` found on `PATH` inside a PAM installation (`pam desktop dev`
+    // puts the installation's `bin` first) is the bare binary: its `pam-run`
+    // launcher sets up the private libraries it needs, as `build` does.
+    let pam = |path: PathBuf| {
+        let launcher = path.with_file_name("pam-run");
+        let path = if path.file_name().is_some_and(|name| name == "pam") && launcher.is_file() {
+            launcher
+        } else {
+            path
+        };
+        (path, vec![OsString::from("exec")])
+    };
     if cfg!(windows) {
         let checked = |php: PathBuf| {
             if let Some(problem) = windows_php::missing_runtime(&php) {
