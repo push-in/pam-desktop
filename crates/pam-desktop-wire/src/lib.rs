@@ -30,7 +30,7 @@ pub const EXTENSION_BASE: u16 = 1001;
 /// Identifiers that exist only in PAM Desktop start here.
 pub const DESKTOP_BASE: u16 = 2001;
 /// Highest property and event identifiers of the desktop table.
-pub const DESKTOP_PROPERTY_CEILING: u16 = 2028;
+pub const DESKTOP_PROPERTY_CEILING: u16 = 2043;
 pub const DESKTOP_EVENT_CEILING: u16 = 2007;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -781,9 +781,64 @@ pub enum PropKey {
     /// CSS inline boxes of nested texts (padding, border, background):
     /// `start,end,paddingTop,paddingRight,paddingBottom,paddingLeft,
     /// borderTop,borderRight,borderBottom,borderLeft,borderColor,radius,
-    /// background,lineHeight` records separated by `;`, offsets in code
-    /// points of `Text` like `TextSpans`.
+    /// background,lineHeight[,inlineBlock]` records separated by `;`,
+    /// offsets in code points of `Text` like `TextSpans`. `inlineBlock` 1:
+    /// the box is a CSS inline-block, its vertical padding and border take
+    /// room in the line box.
     TextSpanBoxes = 2028,
+    /// CSS `display: inline-block` of a nested `Text` (carried to the
+    /// paragraph in `TextSpanBoxes`; a block-level `Text` ignores it).
+    TextInlineBlock = 2029,
+    /// CSS table boxes: 1 `table`, 2 a row group (`table-header-group`,
+    /// `table-row-group`, `table-footer-group`), 3 `table-row`, 4 `table-cell`.
+    TableDisplay = 2030,
+    /// CSS `table-layout`: 1 auto, 2 fixed.
+    TableLayout = 2031,
+    /// CSS `border-collapse`: 1 separate, 2 collapse.
+    BorderCollapse = 2032,
+    /// CSS `vertical-align`: 1 baseline, 2 top, 3 middle, 4 bottom,
+    /// 5 text-top, 6 text-bottom. A table cell aligns its content (text-top
+    /// and text-bottom act as top and bottom); an inline-level box
+    /// (`InlineLevel`) aligns itself in its line box.
+    VerticalAlign = 2033,
+    /// Lengths of this node in font-relative units: `key=unit` pairs
+    /// separated by `;` (`key` a property id, `unit` `ch`); the number of
+    /// that property is then a count of the unit, resolved with the node's font.
+    LengthUnits = 2034,
+    /// CSS `will-change: transform` (a compositing layer in Chromium): the
+    /// box is placed on whole pixels and its content keeps exact positions
+    /// relative to it.
+    CompositedLayer = 2035,
+    /// CSS `-webkit-font-smoothing` (`antialiased` or `auto`).
+    FontSmoothing = 2036,
+    /// CSS inline-level `display` of a box: 1 `inline`, 2 `inline-block`,
+    /// 3 `inline-flex`/`inline-grid`. A container whose in-flow children
+    /// are all inline-level lays them on line boxes (an inline formatting
+    /// context) that start with its own strut (font and line height).
+    InlineLevel = 2037,
+    /// CSS `overflow: auto` on a `ScrollView`: the content scrolls on both
+    /// axes in the same viewport (a classic bar on each overflowing axis and
+    /// the corner between them, like Chromium).
+    ScrollBothAxes = 2038,
+    /// A canvas drawn like an HTML `<canvas>` bitmap: `floor(size × scale)`
+    /// device pixels, the drawing clipped there and painted into the box's
+    /// pixel-snapped rectangle (1:1 when the snapped size equals the bitmap).
+    CanvasBitmap = 2039,
+    /// The track colour of CSS `scrollbar-color: <thumb> <track>` (a classic
+    /// bar's track and corner; transparent when absent).
+    ScrollbarTrackColor = 2040,
+    /// HTML `<input size>`: the characters a single-line `Input` is sized
+    /// for when it has no width (Blink's text-field intrinsic width; 20 when
+    /// absent or not positive).
+    InputSize = 2041,
+    /// The option labels of an HTML `<select>`, one per line, on its label
+    /// `Text`: the text box is as wide as the widest of them in its own font,
+    /// rounded up to a whole pixel (Blink `MenuListIntrinsicInlineSize`).
+    MenuListOptions = 2042,
+    /// An authored CSS `min-width: auto` on a flex item: its automatic
+    /// minimum size (the min-content width, capped by its specified width
+    /// and `max-width`) instead of 0.
+    MinWidthAuto = 2043,
 }
 
 impl TryFrom<u16> for PropKey {
@@ -1373,6 +1428,21 @@ impl TryFrom<u16> for PropKey {
             2026 => Ok(Self::ScrollbarThickness),
             2027 => Ok(Self::ScrollbarColor),
             2028 => Ok(Self::TextSpanBoxes),
+            2029 => Ok(Self::TextInlineBlock),
+            2030 => Ok(Self::TableDisplay),
+            2031 => Ok(Self::TableLayout),
+            2032 => Ok(Self::BorderCollapse),
+            2033 => Ok(Self::VerticalAlign),
+            2034 => Ok(Self::LengthUnits),
+            2035 => Ok(Self::CompositedLayer),
+            2036 => Ok(Self::FontSmoothing),
+            2037 => Ok(Self::InlineLevel),
+            2038 => Ok(Self::ScrollBothAxes),
+            2039 => Ok(Self::CanvasBitmap),
+            2040 => Ok(Self::ScrollbarTrackColor),
+            2041 => Ok(Self::InputSize),
+            2042 => Ok(Self::MenuListOptions),
+            2043 => Ok(Self::MinWidthAuto),
             other => Err(ProtocolError::UnknownProperty(other)),
         }
     }
@@ -1726,6 +1796,23 @@ impl Layout {
             y: origin(self.y),
             width: extent(self.width),
             height: extent(self.height),
+        }
+    }
+
+    /// The frame on Blink's LayoutUnit grid (1/64 px): each edge is
+    /// rounded to the grid, so the size is the distance between the rounded
+    /// edges and adjacent boxes keep sharing theirs. On the grid every sum of
+    /// positions is exact in `f32`, so a later snap to whole pixels breaks a
+    /// tie (an edge at .5) the way Chromium does instead of by float drift.
+    #[must_use]
+    pub fn layout_units(self) -> Self {
+        let grid = |value: f32| (value * 64.0).round() / 64.0;
+        let (left, top) = (grid(self.x), grid(self.y));
+        Self {
+            x: left,
+            y: top,
+            width: (grid(self.x + self.width) - left).max(0.0),
+            height: (grid(self.y + self.height) - top).max(0.0),
         }
     }
 }
