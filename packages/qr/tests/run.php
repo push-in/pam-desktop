@@ -31,4 +31,9 @@ foreach([['',256],[str_repeat('x',7090),256],['example',20],[str_repeat('x',1000
     try{new QrCode($data,$size);throw new RuntimeException('Invalid QR accepted.');}catch(InvalidArgumentException){}
 }
 qrCheck(array_column(ErrorCorrection::cases(),'value')===[1,2,3,4],'Public error correction enum is sequential.');
+$stretched=QrCode::make('PIX',240,ErrorCorrection::Low,0,true);$plain=QrCode::make('PIX',240,ErrorCorrection::Low);
+qrCheck($stretched->margin===0&&$stretched->stretch&&$plain->margin===QrCode::QUIET_MODULES&&!$plain->stretch,'Margin and stretch are kept.');
+$bitmap=QrCode::make('PIX',240,ErrorCorrection::Low,0,false,224);$info=getimagesizefromstring((string)$bitmap->png);
+qrCheck(is_array($info)&&$info[0]===224&&$info[1]===224&&$plain->png===null,'Image mode draws a PNG of the asked pixels.');
+try{QrCode::make('PIX',240,ErrorCorrection::Low,-1);qrCheck(false,'A negative margin is rejected.');}catch(InvalidArgumentException){}
 echo 'QR matrix, quiet zone, Unicode, version40 and native budgets: passed; max-frame='.strlen($encoded).' bytes, encode-ms='.round((hrtime(true)-$start)/1e6,1).PHP_EOL;

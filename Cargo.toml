@@ -2,6 +2,7 @@
 members = [
     "crates/pam-desktop-wire",
     "crates/pam-desktop-engine",
+    "crates/pam-desktop-pixels",
     "crates/pam-desktop-ui",
     "crates/pam-desktop-gtk",
     "crates/pam-desktop-win32",
@@ -11,7 +12,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "2.0.1"
+version = "2.1.0"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Pushin <engineering@pushin.com.br>"]
@@ -21,6 +22,7 @@ repository = "https://github.com/push-in/pam-desktop"
 [workspace.dependencies]
 pam-desktop-wire = { path = "crates/pam-desktop-wire" }
 pam-desktop-engine = { path = "crates/pam-desktop-engine" }
+pam-desktop-pixels = { path = "crates/pam-desktop-pixels" }
 pam-desktop-ui = { path = "crates/pam-desktop-ui" }
 pam-desktop-gtk = { path = "crates/pam-desktop-gtk" }
 pam-desktop-win32 = { path = "crates/pam-desktop-win32" }
@@ -36,6 +38,10 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 1
 debug = false
+
+# Per-pixel compositing (a whole window per backdrop): optimised in development too.
+[profile.dev.package.pam-desktop-pixels]
+opt-level = 3
 
 [profile.release]
 opt-level = 3

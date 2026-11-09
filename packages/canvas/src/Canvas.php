@@ -21,6 +21,9 @@ final class Canvas
     /** @var list<CanvasCommand> */
     private array $commands = [];
 
+    /** CSS font list of the labels added after {@see fontFamily()}; empty is the platform UI font. */
+    private string $fontFamily = '';
+
     // Filled shapes.
 
     public function fillRect(float $x, float $y, float $width, float $height, string $color): self
@@ -206,6 +209,22 @@ final class Canvas
     }
 
     /**
+     * CSS font list (`"Inter, Arial, sans-serif"`) of the labels added next.
+     * Generic families resolve like text nodes; empty is the platform UI font.
+     */
+    public function fontFamily(string $family): self
+    {
+        $family = trim($family);
+        if (strlen($family) > 256 || str_contains($family, "\0")) {
+            throw new InvalidArgumentException('Canvas font families are limited to 256 bytes.');
+        }
+        $copy = clone $this;
+        $copy->fontFamily = $family;
+
+        return $copy;
+    }
+
+    /**
      * Aligned, weighted text; `$y` is the baseline.
      */
     public function label(
@@ -226,6 +245,7 @@ final class Canvas
             Color::assert($color),
             $align->value,
             $weight->value,
+            ...($this->fontFamily === '' ? [] : [$this->fontFamily]),
         );
     }
 

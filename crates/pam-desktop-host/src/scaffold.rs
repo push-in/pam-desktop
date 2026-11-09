@@ -281,7 +281,10 @@ mod tests {
             composer["description"],
             "Bill's Notes, a PAM Desktop application"
         );
-        assert_eq!(composer["require"]["pushinbr/pam-desktop"], "^2.0");
+        assert_eq!(
+            composer["require"]["pushinbr/pam-desktop"],
+            format!("^{VERSION}").as_str()
+        );
         assert!(directory.join("src/Services/Greeting.php").is_file());
 
         fs::write(directory.join("index.php"), "<?php // mine").unwrap();

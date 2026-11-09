@@ -158,6 +158,9 @@ impl<B: Backend> Runtime<B> {
         if module == "toast" && method == "show" {
             return self.show_toast(payload, reply);
         }
+        if module == "text" && method == "measure" {
+            return self.measure_texts(payload, reply);
+        }
         // Sharing files needs the share sheet of the backend.
         if module == "files" && method == "share" {
             return self.share_files(payload, reply);
@@ -195,6 +198,53 @@ impl<B: Backend> Runtime<B> {
             // Unknown modules fail fast so application callbacks never hang.
             other => reply.failure(format!("Unknown native module {other}")),
         }
+    }
+
+    /// `text.measure`: single-line widths of up to 64 strings in one font, by
+    /// the same measurer that sizes text nodes, so libraries that lay text out
+    /// in PHP (chart axes) place it where the host draws it.
+    fn measure_texts(&mut self, payload: &[u8], reply: Reply) {
+        let Ok(request) = request_map(payload) else {
+            return reply.failure("Invalid text measure request");
+        };
+        let size = request.number("size").unwrap_or(0.0) as f32;
+        if !(1.0..=512.0).contains(&size) {
+            return reply.failure("Text size must be between 1 and 512.");
+        }
+        let family = request.text("family").unwrap_or("");
+        let texts: Vec<&str> = request.text("texts").unwrap_or("").split('\n').collect();
+        if family.len() > 256 || texts.len() > 64 || texts.iter().any(|text| text.len() > 1024) {
+            return reply.failure("At most 64 texts of 1024 bytes in a 256-byte font family.");
+        }
+        let font = crate::text::FontSpec {
+            family: family.to_owned(),
+            size,
+            weight: request.number("weight").unwrap_or(400.0).clamp(1.0, 1000.0) as u16,
+            ..crate::text::FontSpec::default()
+        };
+        let widths: Vec<String> = texts
+            .iter()
+            .map(|text| {
+                let block = crate::text::TextBlock {
+                    runs: vec![crate::text::TextRun {
+                        text: (*text).to_owned(),
+                        font: font.clone(),
+                        color: None,
+                        background: None,
+                        underline: false,
+                        strikethrough: false,
+                        letter_spacing: 0.0,
+                        press: None,
+                    }],
+                    ..crate::text::TextBlock::default()
+                };
+                format!(
+                    "{:.3}",
+                    self.backend.measure_text(&block, f32::INFINITY).width
+                )
+            })
+            .collect();
+        reply.map(&WireMap::new().with("widths", widths.join(",")));
     }
 
     /// `toast.show`: a message over the application, drawn by the host.

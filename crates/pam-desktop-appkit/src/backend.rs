@@ -409,6 +409,7 @@ impl Backend for AppKitBackend {
     }
 
     fn destroy_view(&mut self, id: NodeId) {
+        crate::backdrop::invalidate();
         let Some(mut entry) = self.views.remove(&id) else {
             return;
         };
@@ -432,6 +433,7 @@ impl Backend for AppKitBackend {
     }
 
     fn set_children(&mut self, parent: NodeId, children: &[NodeId]) {
+        crate::backdrop::invalidate();
         let Some((container, mut wanted)) = self.container(parent, !children.is_empty()) else {
             return;
         };
@@ -444,6 +446,7 @@ impl Backend for AppKitBackend {
     }
 
     fn set_frame(&mut self, id: NodeId, frame: Rect) {
+        crate::backdrop::invalidate();
         let Some(entry) = self.views.get_mut(&id) else {
             return;
         };
@@ -468,18 +471,21 @@ impl Backend for AppKitBackend {
     }
 
     fn set_decoration(&mut self, id: NodeId, decoration: &Decoration) {
+        crate::backdrop::invalidate();
         if let Some(entry) = self.views.get_mut(&id) {
             entry.node.set_decoration(decoration);
         }
     }
 
     fn set_layer(&mut self, id: NodeId, layer: &LayerState) {
+        crate::backdrop::invalidate();
         if let Some(entry) = self.views.get_mut(&id) {
             entry.node.set_layer(layer);
         }
     }
 
     fn set_text(&mut self, id: NodeId, text: Option<&TextContent>) {
+        crate::backdrop::invalidate();
         let Some(entry) = self.views.get_mut(&id) else {
             return;
         };
@@ -487,6 +493,12 @@ impl Backend for AppKitBackend {
         // The text is the accessible name unless a label was given.
         entry.plain_text = text.map(|content| content.block.plain_text());
         entry.apply_accessibility(&self.events);
+    }
+
+    fn set_text_geometry(&mut self, id: NodeId, geometry: pam_desktop_ui::backend::TextGeometry) {
+        if let Some(entry) = self.views.get(&id) {
+            entry.node.view.set_text_geometry(geometry);
+        }
     }
 
     fn set_key_capture(&mut self, id: NodeId, keys: &str) {
@@ -547,6 +559,7 @@ impl Backend for AppKitBackend {
     }
 
     fn set_input_text(&mut self, id: NodeId, text: &str, selection: Option<(u32, u32)>) {
+        crate::backdrop::invalidate();
         if let Some(input) = self.views.get(&id).and_then(|entry| entry.input.as_ref()) {
             input.set_text(text, selection);
         }
@@ -567,6 +580,7 @@ impl Backend for AppKitBackend {
     }
 
     fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>) {
+        crate::backdrop::invalidate();
         let Some(entry) = self.views.get(&id) else {
             return;
         };
@@ -612,6 +626,16 @@ impl Backend for AppKitBackend {
 
     fn screen_reader_active(&self) -> bool {
         accessibility::screen_reader_active()
+    }
+
+    fn composites_backdrop_boxes(&self) -> pam_desktop_ui::backend::BackdropBoxes {
+        // Only the CPU backdrop (no Metal device) composites them; it keeps
+        // an image per mask anyway.
+        if crate::view::gpu_filters_available() {
+            pam_desktop_ui::backend::BackdropBoxes::None
+        } else {
+            pam_desktop_ui::backend::BackdropBoxes::All
+        }
     }
 
     fn share(&mut self, window: WindowId, request: &pam_desktop_ui::shell::ShareRequest) -> bool {
@@ -716,12 +740,14 @@ impl Backend for AppKitBackend {
     }
 
     fn set_drawing(&mut self, id: NodeId, commands: &[DrawCommand]) {
+        crate::backdrop::invalidate();
         if let Some(entry) = self.views.get(&id) {
             entry.node.view.set_drawing(commands);
         }
     }
 
     fn set_scroll_content(&mut self, id: NodeId, size: Size) {
+        crate::backdrop::invalidate();
         if let Some(scroll) = self
             .views
             .get_mut(&id)
@@ -742,6 +768,7 @@ impl Backend for AppKitBackend {
     }
 
     fn scroll_to(&mut self, id: NodeId, offset: Point, animated: bool) {
+        crate::backdrop::invalidate();
         if let Some(scroll) = self.views.get(&id).and_then(|entry| entry.scroll.as_ref()) {
             scroll.scroll_to(offset, animated);
         }
@@ -749,6 +776,13 @@ impl Backend for AppKitBackend {
 
     fn measure_text(&mut self, block: &TextBlock, max_width: f32) -> TextMetrics {
         text::measure(block, max_width)
+    }
+
+    fn text_control_metrics(
+        &mut self,
+        block: &TextBlock,
+    ) -> Option<pam_desktop_ui::text::CharMetrics> {
+        text::control_metrics(block)
     }
 
     fn request_frame(&mut self) {

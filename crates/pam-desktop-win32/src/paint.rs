@@ -535,11 +535,7 @@ fn gradient_brush(
                     .cast()
                     .ok()
             }
-            GradientShape::Radial {
-                center,
-                radius_x,
-                radius_y,
-            } => {
+            GradientShape::Radial { center, .. } => {
                 // A repeating radial gradient tiles rings as wide as its last stop.
                 let span = if gradient.repeating && last > 0.0001 {
                     last
@@ -547,9 +543,7 @@ fn gradient_brush(
                     1.0
                 };
                 let collection = collection(&gradient_stops(gradient, 0.0, span))?;
-                // Farthest-corner sizing, like the CSS default.
-                let horizontal = (radius_x * size.width * std::f32::consts::SQRT_2).max(1.0);
-                let vertical = (radius_y * size.height * std::f32::consts::SQRT_2).max(1.0);
+                let (horizontal, vertical) = gradient.radii(size)?;
                 let properties = D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES {
                     center: vec2(center.x * size.width, center.y * size.height),
                     gradientOriginOffset: vec2(0.0, 0.0),
@@ -1463,6 +1457,8 @@ pub fn paint_drawing(
 ) {
     // Open groups: `true` for a layer, `false` for a plain clip.
     let mut groups: Vec<bool> = Vec::new();
+    // The transform before a `Bitmap` command, restored at the end.
+    let mut bitmap: Option<Matrix3x2> = None;
     // SAFETY: COM calls on live objects inside the context's BeginDraw;
     // clips and layers are balanced and the primitive blend is restored
     // after each erase.
@@ -1637,7 +1633,9 @@ pub fn paint_drawing(
                     let painted_before = commands[..index].iter().any(|earlier| {
                         !matches!(
                             earlier,
-                            DrawCommand::PushGroup { .. } | DrawCommand::PopGroup
+                            DrawCommand::PushGroup { .. }
+                                | DrawCommand::PopGroup
+                                | DrawCommand::Bitmap { .. }
                         )
                     });
                     let layer = isolated && painted_before && group_erases(&commands[index + 1..]);
@@ -1654,6 +1652,24 @@ pub fn paint_drawing(
                     Some(false) => context.PopAxisAlignedClip(),
                     None => {}
                 },
+                DrawCommand::Bitmap {
+                    size,
+                    scale_x,
+                    scale_y,
+                } => {
+                    // The rest draws on the canvas bitmap, scaled into the box.
+                    if bitmap.is_some() || !groups.is_empty() {
+                        continue;
+                    }
+                    let mut saved = Matrix3x2::identity();
+                    context.GetTransform(&mut saved);
+                    context.SetTransform(&(Matrix3x2::scale(*scale_x, *scale_y) * saved));
+                    context.PushAxisAlignedClip(
+                        &rect_f(Rect::from_size(*size)),
+                        D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                    );
+                    bitmap = Some(saved);
+                }
             }
         }
         // An unbalanced list must not leave clips open on the shared context.
@@ -1663,6 +1679,10 @@ pub fn paint_drawing(
             } else {
                 context.PopAxisAlignedClip();
             }
+        }
+        if let Some(saved) = bitmap {
+            context.PopAxisAlignedClip();
+            context.SetTransform(&saved);
         }
     }
 }
@@ -1745,6 +1765,7 @@ pub fn backdrop_image(
     generation: u64,
     size: Size,
     sigma: f32,
+    fill: Option<Color>,
 ) -> Option<(ID2D1Image, Point)> {
     // SAFETY: COM calls on live objects inside the context's BeginDraw;
     // every pointer passed refers to a local that outlives the call, and
@@ -1830,9 +1851,48 @@ pub fn backdrop_image(
             D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION.0,
             sigma.max(0.0),
         );
-        let image = effect.GetOutput().ok()?;
+        let mut image = effect.GetOutput().ok()?;
+        if let Some(fill) = fill {
+            // The blur over the copy, then the fill in one color matrix:
+            // Chromium's 8-bit blend `fill + ⌊dst·(256 − α)/256⌋`, rounded
+            // by the 8-bit store (see `skia_over_matrix`).
+            let (composite, matrix) = device.backdrop_fill()?;
+            composite.SetInput(0, bitmap, true);
+            composite.SetInput(1, &image, true);
+            matrix.SetInput(0, &composite.GetOutput().ok()?, true);
+            set_floats(
+                matrix,
+                D2D1_COLORMATRIX_PROP_COLOR_MATRIX.0,
+                D2D1_PROPERTY_TYPE_MATRIX_5X4,
+                &skia_over_matrix(fill),
+            );
+            image = matrix.GetOutput().ok()?;
+        }
         Some((image, Point::new(left / scale, top / scale)))
     }
+}
+
+/// Direct2D 5×4 color matrix (one row per input channel, then offsets in
+/// 0..1) of Chromium's blend of the translucent `fill` over an opaque
+/// destination: the destination scaled by `(256 − α)/256`, plus the
+/// premultiplied fill minus half a level (and 1/512, under the 1/256 steps),
+/// so the 8-bit store's rounding gives Skia's floor. Alpha becomes 1.
+fn skia_over_matrix(fill: Color) -> [f32; 20] {
+    let alpha = u32::from(fill.a);
+    let scale = (256 - alpha) as f32 / 256.0;
+    let offset = |channel: u8| {
+        let premultiplied = (u32::from(channel) * alpha + 127) / 255;
+        (premultiplied as f32 - 0.5 + 1.0 / 512.0) / 255.0
+    };
+    let mut values = [0.0_f32; 20];
+    values[0] = scale;
+    values[5] = scale;
+    values[10] = scale;
+    values[16] = offset(fill.r);
+    values[17] = offset(fill.g);
+    values[18] = offset(fill.b);
+    values[19] = 1.0;
+    values
 }
 
 /// The blurred silhouette of a text layout, for text shadows.

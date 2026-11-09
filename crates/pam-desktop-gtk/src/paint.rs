@@ -15,6 +15,27 @@ unsafe extern "C" {
         context: *mut gtk::cairo::ffi::cairo_t,
         layout: *mut gtk::pango::ffi::PangoLayout,
     );
+    fn pango_cairo_context_set_font_options(
+        context: *mut gtk::pango::ffi::PangoContext,
+        options: *const gtk::cairo::ffi::cairo_font_options_t,
+    );
+}
+
+/// Canvas text options like Chromium's canvas (Skia): grayscale
+/// antialiasing, fractional advances (no hinted metrics) and fontconfig's
+/// default hint style. A Cairo image surface otherwise hints metrics to
+/// whole pixels and uses the surface defaults.
+fn canvas_font_options() -> Option<gtk::cairo::FontOptions> {
+    let mut options = gtk::cairo::FontOptions::new().ok()?;
+    options.set_antialias(gtk::cairo::Antialias::Gray);
+    options.set_hint_metrics(gtk::cairo::HintMetrics::Off);
+    options.set_hint_style(match crate::fonts::default_hint_style() {
+        Some("hintnone") => gtk::cairo::HintStyle::None,
+        Some("hintmedium") => gtk::cairo::HintStyle::Medium,
+        Some("hintfull") => gtk::cairo::HintStyle::Full,
+        _ => gtk::cairo::HintStyle::Slight,
+    });
+    Some(options)
 }
 
 pub fn rgba(color: Color) -> gdk::RGBA {
@@ -47,12 +68,52 @@ pub fn rounded(size: Size, radii: Radii, insets: Insets) -> gsk::RoundedRect {
     )
 }
 
+/// GSK and Cairo interpolate stops unpremultiplied; CSS interpolates with
+/// premultiplied alpha, so a fade to `transparent` keeps its hue instead of
+/// darkening. A transparent stop takes each neighbour's colour on its side
+/// (exact), and a segment between two different partial alphas gets
+/// premultiplied intermediate stops.
 fn stops(gradient: &Gradient) -> Vec<gsk::ColorStop> {
-    let mut stops: Vec<gsk::ColorStop> = gradient
-        .stops
-        .iter()
-        .map(|stop| gsk::ColorStop::new(stop.offset.clamp(0.0, 1.0), rgba(stop.color)))
-        .collect();
+    const STEPS: u8 = 8;
+    let source = &gradient.stops;
+    let mut stops: Vec<gsk::ColorStop> = Vec::with_capacity(source.len() * 2);
+    let mut push = |offset: f32, color: Color| {
+        stops.push(gsk::ColorStop::new(offset.clamp(0.0, 1.0), rgba(color)));
+    };
+    for (index, stop) in source.iter().enumerate() {
+        let previous = index.checked_sub(1).map(|before| &source[before]);
+        if stop.color.a == 0 {
+            let mut neighbours = previous.into_iter().chain(source.get(index + 1)).peekable();
+            if neighbours.peek().is_none() {
+                push(stop.offset, stop.color);
+            }
+            for neighbour in neighbours {
+                push(
+                    stop.offset,
+                    Color {
+                        a: 0,
+                        ..neighbour.color
+                    },
+                );
+            }
+            continue;
+        }
+        if let Some(previous) = previous
+            && previous.color.a != 0
+            && previous.color.a != stop.color.a
+            && (previous.color.r, previous.color.g, previous.color.b)
+                != (stop.color.r, stop.color.g, stop.color.b)
+        {
+            for step in 1..STEPS {
+                let t = f32::from(step) / f32::from(STEPS);
+                push(
+                    previous.offset + (stop.offset - previous.offset) * t,
+                    previous.color.lerp(stop.color, t),
+                );
+            }
+        }
+        push(stop.offset, stop.color);
+    }
     if stops.len() == 1 {
         let color = *stops[0].color();
         stops.push(gsk::ColorStop::new(1.0, color));
@@ -79,15 +140,11 @@ fn append_gradient(snapshot: &gtk::Snapshot, size: Size, gradient: &Gradient) {
                 snapshot.append_linear_gradient(&area, &start, &end, &stops);
             }
         }
-        GradientShape::Radial {
-            center,
-            radius_x,
-            radius_y,
-        } => {
+        GradientShape::Radial { center, .. } => {
             let center = graphene::Point::new(center.x * size.width, center.y * size.height);
-            // Farthest-corner sizing, like the CSS default.
-            let horizontal = (radius_x * size.width * std::f32::consts::SQRT_2).max(1.0);
-            let vertical = (radius_y * size.height * std::f32::consts::SQRT_2).max(1.0);
+            let Some((horizontal, vertical)) = gradient.radii(size) else {
+                return;
+            };
             if gradient.repeating {
                 snapshot.append_repeating_radial_gradient(
                     &area, &center, horizontal, vertical, 0.0, 1.0, &stops,
@@ -104,6 +161,48 @@ fn append_gradient(snapshot: &gtk::Snapshot, size: Size, gradient: &Gradient) {
     }
 }
 
+thread_local! {
+    /// Whether the window's renderer is GTK's GL renderer from before 4.16,
+    /// whose blurred outset shadows read their colour as premultiplied.
+    static PREMULTIPLIED_BLUR_SHADOWS: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Records, once, which renderer draws `widget`'s window (see
+/// [`PREMULTIPLIED_BLUR_SHADOWS`]).
+pub fn note_renderer(widget: &impl IsA<gtk::Widget>) {
+    if PREMULTIPLIED_BLUR_SHADOWS
+        .with(std::cell::Cell::get)
+        .is_some()
+    {
+        return;
+    }
+    let Some(renderer) = widget.native().and_then(|native| native.renderer()) else {
+        return;
+    };
+    let name = renderer.type_().name();
+    let old_gl = gtk::minor_version() < 16 && (name == "GskNglRenderer" || name == "GskGLRenderer");
+    PREMULTIPLIED_BLUR_SHADOWS.with(|flag| flag.set(Some(old_gl)));
+}
+
+/// The colour to hand GSK for an outset shadow: GTK 4.14's GL renderer
+/// blends a blurred shadow's colour as premultiplied (a dark translucent
+/// shadow came out brighter than the surface under it), so it gets the
+/// premultiplied colour there; Cairo and the newer renderers take it as is.
+fn shadow_rgba(color: Color, blur: f32) -> gdk::RGBA {
+    let rgba = rgba(color);
+    if blur > 0.0 && PREMULTIPLIED_BLUR_SHADOWS.with(std::cell::Cell::get) == Some(true) {
+        gdk::RGBA::new(
+            rgba.red() * rgba.alpha(),
+            rgba.green() * rgba.alpha(),
+            rgba.blue() * rgba.alpha(),
+            rgba.alpha(),
+        )
+    } else {
+        rgba
+    }
+}
+
 /// Shadows, background color and gradients, and inset shadows.
 pub fn paint_background(snapshot: &gtk::Snapshot, size: Size, decoration: &Decoration) {
     if size.is_empty() {
@@ -117,7 +216,7 @@ pub fn paint_background(snapshot: &gtk::Snapshot, size: Size, decoration: &Decor
     {
         snapshot.append_outset_shadow(
             &outline,
-            &rgba(shadow.color),
+            &shadow_rgba(shadow.color, shadow.blur),
             shadow.offset.x,
             shadow.offset.y,
             shadow.spread,
@@ -326,17 +425,13 @@ fn cairo_gradient(size: Size, gradient: &Gradient) -> Option<gtk::cairo::Pattern
             add(&pattern);
             Some(gtk::cairo::Pattern::clone(&pattern))
         }
-        GradientShape::Radial {
-            center,
-            radius_x,
-            radius_y,
-        } => {
+        GradientShape::Radial { center, .. } => {
             let (cx, cy) = (
                 f64::from(center.x * size.width),
                 f64::from(center.y * size.height),
             );
-            let horizontal = f64::from((radius_x * size.width * std::f32::consts::SQRT_2).max(1.0));
-            let vertical = f64::from((radius_y * size.height * std::f32::consts::SQRT_2).max(1.0));
+            let (horizontal, vertical) = gradient.radii(size)?;
+            let (horizontal, vertical) = (f64::from(horizontal), f64::from(vertical));
             let pattern = RadialGradient::new(cx, cy, 0.0, cx, cy, horizontal);
             // An ellipse: the circle stretched vertically.
             let ratio = horizontal / vertical;
@@ -422,6 +517,7 @@ pub fn paint_drawing(
         );
     };
     let mut groups = 0_u32;
+    let mut bitmap = false;
     for command in commands {
         // Cairo keeps going after an error; a failed command just draws nothing.
         match command {
@@ -506,32 +602,53 @@ pub fn paint_drawing(
                 // SAFETY: live Cairo context; the returned owned GObject is released by Layout.
                 let layout: gtk::pango::Layout =
                     unsafe { from_glib_full(pango_cairo_create_layout(context.to_raw_none())) };
+                if let Some(options) = canvas_font_options() {
+                    // SAFETY: the layout's context is alive; Pango copies the options.
+                    unsafe {
+                        pango_cairo_context_set_font_options(
+                            layout.context().to_glib_none().0,
+                            options.to_raw_none(),
+                        );
+                    }
+                    layout.context_changed();
+                }
                 let mut description = gtk::pango::FontDescription::new();
-                description.set_family(if font.family.is_empty() {
-                    "Sans"
+                // A CSS font list, resolved like text nodes (generics, packaged fonts).
+                let family = if font.family.is_empty() {
+                    String::from("Sans")
                 } else {
-                    &font.family
-                });
+                    crate::fonts::stack(&font.family).0
+                };
+                description.set_family(&family);
                 description.set_absolute_size(f64::from(font.size) * f64::from(gtk::pango::SCALE));
-                description.set_weight(if font.weight >= 700 {
-                    gtk::pango::Weight::Bold
-                } else if font.weight >= 500 {
-                    gtk::pango::Weight::Medium
-                } else {
-                    gtk::pango::Weight::Normal
-                });
+                // The CSS weight itself, like text nodes: 600 picks a semibold
+                // face or, as in Chromium, the bold one when the family has none.
+                description.set_weight(crate::text::weight(font.weight));
                 layout.set_font_description(Some(&description));
                 layout.set_text(text);
-                let (width, _) = layout.size();
-                let width = f64::from(width) / f64::from(gtk::pango::SCALE);
+                // Canvas 2D aligns text with its fractional (unhinted) width;
+                // whole-pixel advances made a right-aligned label (Chart.js
+                // ticks) up to a pixel wider and drew it that much to the left.
+                crate::text::use_subpixel_positions(&layout);
+                let width = f64::from(layout.size().0) / f64::from(gtk::pango::SCALE);
                 let x = f64::from(baseline.x)
                     - match align {
                         pam_desktop_ui::text::TextAlign::Center => width / 2.0,
                         pam_desktop_ui::text::TextAlign::End => width,
                         _ => 0.0,
                     };
-                let y = f64::from(baseline.y)
-                    - f64::from(layout.baseline()) / f64::from(gtk::pango::SCALE);
+                // Skia positions axis-aligned horizontal glyph runs at a
+                // subpixel x but a whole device-pixel baseline (Chromium's
+                // canvas fillText at y 13.51 draws its glyphs on row 14).
+                let matrix = context.matrix();
+                let mut baseline_y = f64::from(baseline.y);
+                if matrix.xy() == 0.0 && matrix.yx() == 0.0 {
+                    let (device_x, device_y) = context.user_to_device(x, baseline_y);
+                    if let Ok((_, snapped)) = context.device_to_user(device_x, device_y.round()) {
+                        baseline_y = snapped;
+                    }
+                }
+                let y = baseline_y - f64::from(layout.baseline()) / f64::from(gtk::pango::SCALE);
                 source(*color);
                 context.move_to(x, y);
                 // SAFETY: both objects remain alive throughout the native shaping/drawing call.
@@ -658,12 +775,29 @@ pub fn paint_drawing(
                     let _ = context.restore();
                 }
             }
+            DrawCommand::Bitmap {
+                size,
+                scale_x,
+                scale_y,
+            } => {
+                // The rest draws on the canvas bitmap, scaled into the box.
+                if !bitmap {
+                    let _ = context.save();
+                    bitmap = true;
+                }
+                context.scale(f64::from(*scale_x), f64::from(*scale_y));
+                context.rectangle(0.0, 0.0, f64::from(size.width), f64::from(size.height));
+                context.clip();
+            }
         }
     }
     // An unbalanced list must not leave groups open on the shared context.
     for _ in 0..groups {
         let _ = context.pop_group_to_source();
         let _ = context.paint();
+        let _ = context.restore();
+    }
+    if bitmap {
         let _ = context.restore();
     }
 }

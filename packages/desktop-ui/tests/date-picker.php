@@ -17,7 +17,8 @@ echo "Native DatePicker tags, leap dates, reversed range, cancellation, disabled
 $field=new DatePicker(null,static function(?DateSelection $value):void{},placeholder:'mm/dd/yyyy',locale:DatePickerLocale::portuguese(),presentation:Pam\DesktopUi\DatePickerPresentation::Field,accessibilityLabel:'Data inicial',displayFormat:'m/d/Y');
 $mounted=Pam\Desktop\Testing\mount($field);
 try {
- calendarCheck($field->field()&&str_contains($mounted->text(),'mm/dd/yyyy'),'Field trigger renders an explicit empty date mask.');
+ calendarCheck($field->field()&&str_contains($mounted->text(),'yyyy')&&implode('',array_column($field->fieldSegments(),'text'))==='mm/dd/yyyy','Field trigger renders an explicit empty date mask.');
+ calendarCheck(array_column($field->fieldSegments(),'padding')===[1,0,1,0,1],'Field date parts are padded edit fields like Chromium date inputs.');
  $field->triggerKey(Pam\Desktop\Internal\Wire::map(['key'=>'Enter']));$mounted->render();calendarCheck($field->open&&count($field->days)===42,'Field keyboard activation opens the same bounded calendar.');
  calendarCheck($field->locale->apply==='Aplicar'&&$field->locale->cancel==='Cancelar'&&$field->locale->dateFormat==='d/m/Y','Field appearance preserves Portuguese popup labels.');
  $field->dismiss();$field->enabled=false;$field->triggerKey(Pam\Desktop\Internal\Wire::map(['key'=>'Enter']));calendarCheck(!$field->open,'Disabled field cannot open from keyboard.');
@@ -40,3 +41,13 @@ if($range->label()!=='01/11/2026 - 07/11/2026'||$range->showFieldIcon)throw new 
 $default=new DatePicker(new DateSelection(new DateTimeImmutable('2026-11-01'),new DateTimeImmutable('2026-11-07')),static function(?DateSelection $v):void{},DatePickerMode::Range,locale:DatePickerLocale::portuguese());
 if($default->label()!=='01/11/2026 — 07/11/2026'||!$default->showFieldIcon)throw new RuntimeException('Default range separator and icon stay unchanged.');
 echo "DatePicker range separator and optional field icon passed.\n";
+$focus=new DatePicker(null,static function(?DateSelection $v):void{},DatePickerMode::Range,locale:DatePickerLocale::portuguese(),presentation:Pam\DesktopUi\DatePickerPresentation::Field,theme:new Pam\DesktopUi\SelectTheme(border:0x1AFFFFFF,focusBorder:0xFF2563EB,focusRing:0x292563EB));
+$focus->value=new DateSelection(new DateTimeImmutable('2026-11-01'));$focus->show();$focus->select('2026-11-07');
+if($focus->focused||$focus->fieldBorder()!==0x1AFFFFFF||$focus->fieldRing()!==0)throw new RuntimeException('An unfocused field keeps its border and no ring.');
+$focus->apply();
+if(!$focus->focused||$focus->fieldBorder()!==0xFF2563EB||$focus->fieldRing()!==0x292563EB)throw new RuntimeException('Applying returns the focus to the field, which takes the theme focus border and ring.');
+$focus->fieldBlur();if($focus->fieldBorder()!==0x1AFFFFFF)throw new RuntimeException('Blur restores the border.');
+echo "DatePicker focus tokens passed.\n";
+$threw=false;try{new Pam\DesktopUi\AutocompleteInputStyle(42,16,400,12,6,lineHeight:2);}catch(InvalidArgumentException){$threw=true;}
+if(!$threw||(new Pam\DesktopUi\AutocompleteInputStyle(42,16,400,12,6,lineHeight:24))->lineHeight!==24.0)throw new RuntimeException('Field line heights are validated and kept.');
+echo "DatePicker field line height passed.\n";

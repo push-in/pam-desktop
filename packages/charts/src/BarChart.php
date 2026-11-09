@@ -34,6 +34,12 @@ final class BarChart extends CartesianChart
     /** Chart.js bar charts start their value axis at 0 by default. */
     protected bool $beginAtZero = true;
 
+    /** Chart.js bar scales are `offset`: categories centred in equal bands. */
+    protected function categoryOffset(): bool
+    {
+        return true;
+    }
+
     public static function make(float|int $width, float|int $height): self
     {
         return new self((float) $width, (float) $height);
@@ -169,7 +175,7 @@ final class BarChart extends CartesianChart
             ? $this->paintStacked($canvas, $scale, $px, $py, $ph, $slot, $padding)
             : $this->paintGrouped($canvas, $scale, $px, $py, $ph, $slot, $padding);
 
-        return $this->paintLabels($canvas, $centers, $px, $pw, $this->height - self::PADDING
+        return $this->paintLabels($canvas, $centers, $px, $pw, $this->height - $this->theme->axis->paddingBottom
             - ($this->legend === LegendPosition::Bottom ? self::LEGEND_HEIGHT : 0.0) - 4.0);
     }
 
@@ -189,7 +195,15 @@ final class BarChart extends CartesianChart
             foreach ($series->values as $i => $value) {
                 $x = round($px + $slot * $i + $padding + $index * ($barWidth + self::BAR_GAP), 2);
                 $top = round($scale->position($value, $py + $ph, $py), 2);
-                $canvas = $canvas->path(Paths::bar($x, $top, round($barWidth, 2), $baseline, $this->barRadius), $color, 0, PathMode::Fill);
+                // Chart.js `_calculateBarValuePixels`: a bar starting on the
+                // drawn baseline stops half its 1px grid line short of it.
+                $chartJs = $this->theme->axis->fitEdgeLabels;
+                $base = $chartJs && $top !== $baseline ? $baseline + ($top < $baseline ? -0.5 : 0.5) : $baseline;
+                // Chart.js `inflateAmount: 'auto'`: bars of a fixed thickness
+                // grow 0.33px on every side so neighbours leave no AA seam.
+                $inflate = $chartJs && $this->barThickness !== null ? 0.33 : 0.0;
+                $up = $top <= $base ? 1.0 : -1.0;
+                $canvas = $canvas->path(Paths::bar($x - $inflate, $top - $up * $inflate, round($barWidth + 2 * $inflate, 2), $base + $up * $inflate, $this->barRadius), $color, 0, PathMode::Fill);
 
                 if ($this->valueLabels || $this->highlight === $i) {
                     $canvas = $this->paintValueLabel($canvas, $value, $x + $barWidth / 2, min($top, $baseline), $this->highlight === $i);
@@ -251,10 +265,22 @@ final class BarChart extends CartesianChart
                 $start = round($scale->position($from, $py + $ph, $py), 2);
                 $end = round($scale->position($to, $py + $ph, $py), 2);
                 $isEnd = $segmentIndex === ($isPositive ? $topmostPositive : $bottommostNegative);
+                if ($this->theme->axis->fitEdgeLabels) {
+                    // Chart.js: a segment starting on the baseline stops half
+                    // its grid line short; fixed-thickness bars inflate 0.33px.
+                    $up = $end <= $start ? 1.0 : -1.0;
+                    if ($from === 0.0 && $start === $baseline) {
+                        $start -= $up * 0.5;
+                    }
+                    $inflate = $this->barThickness !== null ? 0.33 : 0.0;
+                    [$sx, $sw, $start, $end] = [$x - $inflate, $barWidth + 2 * $inflate, $start + $up * $inflate, $end - $up * $inflate];
+                } else {
+                    [$sx, $sw] = [$x, $barWidth];
+                }
 
                 $canvas = $isEnd
-                    ? $canvas->path(Paths::bar($x, $end, $barWidth, $start, $this->barRadius), $color, 0, PathMode::Fill)
-                    : $canvas->fillRect($x, min($start, $end), $barWidth, abs($end - $start), $color);
+                    ? $canvas->path(Paths::bar($sx, $end, $sw, $start, $this->barRadius), $color, 0, PathMode::Fill)
+                    : $canvas->fillRect($sx, min($start, $end), $sw, abs($end - $start), $color);
             }
 
             if ($segments !== [] && ($this->valueLabels || $this->highlight === $i)) {

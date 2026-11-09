@@ -12,6 +12,7 @@ mod accessibility;
 mod backend;
 mod compat;
 mod fonts;
+mod glyphs;
 #[cfg(feature = "hotkeys")]
 mod hotkeys;
 mod input;

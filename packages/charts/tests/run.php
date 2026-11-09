@@ -466,6 +466,56 @@ $test('value axis fits the data like Chart.js unless it begins at zero', static 
     expect($props->scale()->min === 0.0, 'templates accept beginAtZero');
 });
 
+$test('chart labels carry the theme font family to the desktop canvas', static function (): void {
+    $chart = BarChart::make(300, 200)->series(Series::make('Qtd', [3, 5]))->labels(['A', 'B'])->theme(ChartTheme::dark()->fontFamily("'Inter', Arial, sans-serif"));
+    $json = \Pam\Desktop\Canvas\Internal\DesktopCommands::encode($chart->scene());
+    expect(str_contains($json, '"family":"\'Inter\', Arial, sans-serif"'), 'labels are encoded with the CSS font list');
+    $plain = \Pam\Desktop\Canvas\Internal\DesktopCommands::encode(BarChart::make(300, 200)->series(Series::make('Qtd', [3, 5]))->labels(['A', 'B'])->scene());
+    expect(!str_contains($plain, '"family"'), 'without a family the platform UI font stays implicit');
+    expect(ChartTheme::fromArray(['fontFamily' => 'Inter, sans-serif'])->axisStyle(new \Pam\Desktop\Charts\AxisStyle())->fontFamily === 'Inter, sans-serif', 'template themes set the font family and keep it');
+});
+
+$test('fonts without built-in metrics use the host measurement', static function (): void {
+    $estimate = \Pam\Desktop\Charts\Internal\Text::measure('Ação', 12.0, 400, 'Fira Sans');
+    expect(abs($estimate - \Pam\Desktop\Charts\Internal\Text::width('Ação', 12.0)) < 1e-9, 'without a host the estimate stays');
+    \Pam\Desktop\System\TextMeasure::remember('Ação', 12.0, 400, 'Fira Sans', 25.5);
+    expect(\Pam\Desktop\Charts\Internal\Text::measure('Ação', 12.0, 400, 'Fira Sans') === 25.5, 'a host width replaces the estimate');
+    expect(abs(\Pam\Desktop\Charts\Internal\Text::measure('45', 12.0, 400, 'Arial') - 1139 * 2 / 2048 * 12) < 1e-9, 'known metrics stay exact');
+});
+
+$test('inline donut legends are native text measured by the host', static function (): void {
+    $slices = [Slice::make('Lanches', 70.0), Slice::make('Bebidas', 30.0)];
+    $theme = ChartTheme::dark()->fontFamily('Inter, Arial, sans-serif')->legendStyle(new \Pam\Desktop\Charts\LegendStyle(fontSize: 12.0, markerRadius: 8.49, markerGap: 6.0, itemGap: 20.0, markerBox: 12.0));
+    $chart = DonutChart::make(264)->slices($slices)->legend(LegendPosition::Bottom)->legendInline()->legendValues(false)->legendSpacing(35)->theme($theme);
+    $texts = [];
+    $walk = static function (\Pam\Desktop\Element $element) use (&$walk, &$texts): void {
+        if ($element->kind() === \Pam\Desktop\NodeKind::Text) $texts[] = $element->properties();
+        foreach ($element->children() as $child) if ($child instanceof \Pam\Desktop\Element) $walk($child);
+    };
+    $walk($chart->toElement());
+    expect(count($texts) === 2, 'one native label per slice');
+    expect(in_array('Inter, Arial, sans-serif', array_map('strval', $texts[0]), true), 'labels carry the theme font family');
+    expect(str_contains($chart->scene()->toJson(), 'Lanches'), 'scene() keeps the full drawing for non-native consumers');
+    $texts = [];
+    $walk(DonutChart::make(264)->slices($slices)->legend(LegendPosition::Right)->theme($theme)->toElement());
+    expect($texts === [], 'other legends stay on the canvas');
+});
+
+$test('cartesian axes take their metrics from the theme', static function (): void {
+    $plain = BarChart::make(430, 306)->series(Series::make('Qtd', [42, 31, 25, 18]))->labels(['A', 'B', 'C', 'D']);
+    $kinds = static fn (BarChart $chart): array => array_count_values(array_map(static fn ($c) => $c->kind->name, $chart->scene()->commands));
+    $axis = new \Pam\Desktop\Charts\AxisStyle(fontSize: 12.0, labelGap: 11.0, gridDash: 0.0, paddingRight: 0.0);
+    $chartJs = $plain->theme(ChartTheme::dark()->axisStyle($axis));
+    expect(!isset($kinds($chartJs)['DashedLine']) && isset($kinds($plain)['DashedLine']), 'gridDash 0 draws solid grid lines; the default stays dashed');
+    $labels = array_values(array_filter($chartJs->scene()->commands, static fn ($c) => $c->kind === DisplayCommandKind::Label && $c->arguments[0] === 'A'));
+    expect((float) $labels[0]->arguments[3] === 12.0, 'axis label size comes from the theme');
+    $bars = static fn (BarChart $chart): float => max(array_map(static fn ($c) => (float) $c->arguments[1], array_filter($chart->scene()->commands, static fn ($c) => $c->kind === DisplayCommandKind::Label && $c->arguments[0] === 'D')));
+    expect($bars($chartJs) > $bars($plain), 'a zero right padding lets the plot reach the edge');
+    $fromProps = ChartTheme::fromArray(['axisFontSize' => '12', 'axisGridDash' => 0, 'axisPaddingRight' => 0]);
+    expect($fromProps->axis->fontSize === 12.0 && $fromProps->axis->gridDash === 0.0 && $fromProps->axis->paddingRight === 0.0 && $fromProps->axis->labelGap === 6.0, 'template themes set axis metrics');
+    expect(ChartTheme::dark()->legendStyle(new \Pam\Desktop\Charts\LegendStyle())->axisStyle($axis)->palette(\Pam\Desktop\Charts\ChartPalette::categorical('#6366F1'))->axis === $axis, 'axis metrics survive other theme changes');
+});
+
 $test('donut legends take their metrics from the theme', static function (): void {
     $slices = [Slice::make('Pix', 70.0), Slice::make('Cartão', 30.0), Slice::make('Dinheiro', 10.0)];
     $theme = ChartTheme::dark()->legendStyle(new \Pam\Desktop\Charts\LegendStyle(fontSize: 12.0, markerRadius: 6.0, itemGap: 20.0));
@@ -478,7 +528,60 @@ $test('donut legends take their metrics from the theme', static function (): voi
     expect(DonutChart::make(300)->slices($slices)->legend(LegendPosition::Bottom)->legendInline()->legendValues(false)->theme($narrowTheme)->height() > $chart->height(), 'larger metrics wrap and grow the legend');
     expect(ChartTheme::fromArray(['ink' => '#ffffff'], $theme)->legend->fontSize === 12.0, 'template themes keep the legend metrics');
     $fromProps = ChartTheme::fromArray(['legendFontSize' => 13, 'legendFontWeight' => '400', 'legendItemGap' => '20']);
+    $boxed = DonutChart::make(300)->slices($slices)->legend(LegendPosition::Bottom)->legendInline()->legendValues(false)
+        ->theme(ChartTheme::dark()->legendStyle(new \Pam\Desktop\Charts\LegendStyle(fontSize: 12.0, markerRadius: 8.49, markerGap: 6.0, itemGap: 20.0, markerBox: 12.0)));
+    $boxCircles = array_values(array_filter($boxed->scene()->commands, static fn ($c) => $c->kind === DisplayCommandKind::Circle));
+    $boxLabels = array_values(array_filter($boxed->scene()->commands, static fn ($c) => $c->kind === DisplayCommandKind::Label && $c->arguments[0] === 'Pix'));
+    expect(abs((float) $boxLabels[0]->arguments[1] - (float) $boxCircles[0]->arguments[0] - 12.0) < 1e-6, 'a marker box centres the dot and places the label after box and gap');
+    expect(ChartTheme::fromArray(['legendMarkerBox' => '12'])->legend->markerBox === 12.0 && ChartTheme::fromArray([])->legend->markerBox === null, 'template themes set the marker box');
     expect($fromProps->legend->fontSize === 13.0 && $fromProps->legend->itemGap === 20.0 && $fromProps->legend->fontWeight === \Pam\Desktop\Canvas\FontWeight::Regular, 'template themes set legend metrics');
+});
+
+$test('Chart.js layouts: fitted axes and framed doughnuts', static function (): void {
+    // Chart.js measures with the chart font: Arial 11px values.
+    expect(abs(\Pam\Desktop\Charts\Internal\Text::measure('Aguard. Pagamento', 11, 600, "'Helvetica Neue', Arial") - 103.9038) < 0.001, 'Arial bold advances');
+    expect(abs(\Pam\Desktop\Charts\Internal\Text::measure('R$ 2.200', 11, 400, 'Arial') - 44.6445) < 0.001, 'Arial regular advances');
+    $theme = ChartTheme::fromArray(['fontFamily' => 'Arial', 'axisFontSize' => 11, 'axisFitEdgeLabels' => true, 'axisTickLength' => 8, 'axisTickPadding' => 3,
+        'axisPaddingTop' => 0, 'axisPaddingRight' => 0, 'axisPaddingBottom' => 0, 'axisPaddingLeft' => 0, 'axisXLabelWeight' => 600, 'axisBorderColor' => '#0000001A']);
+    expect($theme->axis->fitEdgeLabels && $theme->axis->xLabelWeight === \Pam\Desktop\Canvas\FontWeight::SemiBold && $theme->axis->borderColor !== null, 'template keys');
+    $chart = \Pam\Desktop\Charts\LineChart::make(920, 236.8)->series(Series::make('Vendas', [980, 1220, 880, 1430, 1630, 2010, 1840]))
+        ->labels(['1 de nov.', '2 de nov.', '3 de nov.', '4 de nov.', '5 de nov.', '6 de nov.', '7 de nov.'])->theme($theme);
+    $labels = array_values(array_filter($chart->scene()->commands, static fn ($c) => $c->kind === DisplayCommandKind::Label && str_ends_with((string) $c->arguments[0], 'nov.')));
+    expect((int) $labels[0]->arguments[5] === \Pam\Desktop\Canvas\TextAlign::Center->value && (int) $labels[6]->arguments[5] === \Pam\Desktop\Canvas\TextAlign::Center->value, 'edge labels stay centred on their points');
+    expect(abs((float) $labels[6]->arguments[1] - (920 - 47.6792 / 2 - 3)) < 0.01, 'the plot ends half the last label (plus padding) before the edge');
+    $donut = DonutChart::make(160)->slices([Slice::make('A', 1.0), Slice::make('B', 1.0)])->legend(LegendPosition::Right)->legendValues(false)
+        ->frame(439, 220.8)->cutout(0.74)->cornerRadius(6)->spacing(2)->border(1, '#0F172A4D')->theme($theme);
+    expect($donut->width() === 439.0 && $donut->height() === 220.8, 'a frame sets the canvas size');
+    $paths = array_values(array_filter($donut->scene()->commands, static fn ($c) => $c->kind === DisplayCommandKind::Path));
+    expect(count($paths) === 4, 'each slice is a filled and an outlined path');
+    expect(str_contains((string) $paths[0]->arguments[0], 'C'), 'rounded slices are curves');
+});
+
+$test('Chart.js layouts: offset bar scales and host-measured labels', static function (): void {
+    // Electron 37 + Chart.js 4.5.1 (Reports.vue, 430x306): chartArea 27.34765625, 10.2, 430, 277.6; bar base 277.1.
+    $theme = ChartTheme::dark()->fontFamily("'Inter', Arial, sans-serif")->axisStyle(new \Pam\Desktop\Charts\AxisStyle(fontSize: 12.0, gridDash: 0.0,
+        paddingTop: 0.0, paddingRight: 0.0, paddingBottom: 0.0, paddingLeft: 0.0, fitEdgeLabels: true, tickLength: 8.0, tickPadding: 3.0));
+    $bar = BarChart::make(430, 306)->series(Series::make('Q', [42, 31, 25, 18]))->labels(['Hambúrguer', 'Suco', 'Batata', 'Brownie'])
+        ->barThickness(40)->barRadius(8)->grid(9)->theme($theme);
+    [$px, $py, $pw, $ph] = (new ReflectionMethod($bar, 'plotRect'))->invoke($bar);
+    expect(abs($px - 27.34765625) < 1e-6 && abs($py - 10.2) < 1e-6 && abs($px + $pw - 430) < 1e-6 && abs($py + $ph - 277.6) < 1e-6, 'chartArea of an offset category scale');
+    $narrow = BarChart::make(120, 100)->series(Series::make('Q', [1, 2]))->labels(['Hambúrguer artesanal', 'X'])->theme($theme);
+    [$nx] = (new ReflectionMethod($narrow, 'plotRect'))->invoke($narrow);
+    expect($nx > 27.0, 'a first label wider than its band pushes the plot right');
+    $path = array_values(array_filter($bar->scene()->commands, static fn ($c) => $c->kind === DisplayCommandKind::Path))[0];
+    expect(str_contains((string) $path->arguments[0], '277.43'), 'bars stop half the baseline grid line short, inflated 0.33px');
+    $stacked = BarChart::make(430, 306)->stacked()->series(Series::make('A', [20, 10]))->series(Series::make('B', [10, 5]))->labels(['a', 'b'])
+        ->barThickness(40)->barRadius(0)->grid(9)->theme($theme);
+    $rects = array_values(array_filter($stacked->scene()->commands, static fn ($c) => in_array($c->kind, [DisplayCommandKind::Path, DisplayCommandKind::FillRect], true)));
+    $first = $rects[1];
+    expect($first->kind === DisplayCommandKind::FillRect && abs((float) $first->arguments[2] - 40.66) < 1e-6, 'stacked segments inflate 0.33px per side');
+    $element = \Pam\Desktop\Charts\LineChart::make(920, 236.8)->series(Series::make('V', [1, 2]))->integerBitmap()->toElement();
+    $props = $element->properties();
+    expect(($props[\Pam\Desktop\PropKey::CanvasBitmap->value] ?? null) === true && ($props[\Pam\Desktop\PropKey::Height->value] ?? null) === 236.8
+        && !isset($props[\Pam\Desktop\PropKey::ScaleY->value]), 'integer bitmaps keep the CSS size and ask the host for a snapped 1:1 bitmap');
+    // The host's shaped width (kerning) wins over the advance table once known.
+    \Pam\Desktop\System\TextMeasure::remember('7 de nov.', 11, 600, 'Arial', 46.86279296875);
+    expect(\Pam\Desktop\Charts\Internal\Text::measure('7 de nov.', 11, 600, 'Arial') === 46.86279296875, 'host width wins');
 });
 
 $failed = 0;

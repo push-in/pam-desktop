@@ -7616,6 +7616,7 @@ require __DIR__.'/expression_value_methods.php';
 
 require __DIR__.'/unicode_normalization.php';
 require __DIR__.'/explicit_text_color.php';
+require __DIR__.'/project_check.php';
 require __DIR__.'/drag_drop.php';
 
 require __DIR__.'/secure_storage_failures.php';

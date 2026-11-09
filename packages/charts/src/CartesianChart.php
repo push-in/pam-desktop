@@ -254,12 +254,22 @@ abstract class CartesianChart extends Chart
      */
     protected function plotRect(): array
     {
-        $left = self::PADDING + $this->axisLabelWidth();
-        $right = self::PADDING;
-        $top = self::PADDING + ($this->legend === LegendPosition::Top ? self::LEGEND_HEIGHT : 0.0);
+        $axis = $this->theme->axis;
+        $left = $axis->paddingLeft + $this->axisLabelWidth();
+        $right = $axis->paddingRight;
+        $top = $axis->paddingTop + ($this->legend === LegendPosition::Top ? self::LEGEND_HEIGHT : 0.0);
+        if ($axis->fitEdgeLabels) {
+            // Chart.js: half a value label above the top tick, the category
+            // band under the plot, and the edge labels centred on their points.
+            $top = max($axis->paddingTop, $this->axis ? 0.6 * $axis->fontSize + $axis->tickPadding : 0.0)
+                + ($this->legend === LegendPosition::Top ? self::LEGEND_HEIGHT : 0.0);
+            if ($this->labels !== []) {
+                [$left, $right] = $this->fitCategoryPadding($left, $right);
+            }
+        }
         $top += $this->valueLabels || ($this->highlight !== null && !$this->tooltip) ? self::VALUE_LABEL_SIZE + 4.0 : 0.0;
-        $bottom = self::PADDING
-            + ($this->labels !== [] ? self::X_LABEL_HEIGHT : 0.0)
+        $bottom = $axis->paddingBottom
+            + ($this->labels !== [] ? ($axis->fitEdgeLabels ? $axis->tickLength + 2 * $axis->tickPadding + 1.2 * $axis->fontSize : $axis->xLabelHeight) : 0.0)
             + ($this->legend === LegendPosition::Bottom ? self::LEGEND_HEIGHT : 0.0);
 
         return [
@@ -270,6 +280,48 @@ abstract class CartesianChart extends Chart
         ];
     }
 
+    /**
+     * Whether categories sit in the middle of equal bands (Chart.js `offset`,
+     * the bar default) instead of on the plot edges.
+     */
+    protected function categoryOffset(): bool
+    {
+        return false;
+    }
+
+    /**
+     * Chart.js `Scale._calculatePadding` + `fitBoxes` for the category axis:
+     * the first and last labels may stick out of the plot by what is left of
+     * half their width (+ `ticks.padding`) after the tick's own offset from
+     * the plot edge, scaled by `width / (width - offset)`. The layout repeats
+     * until the plot width settles, like Chart.js' two fit passes.
+     *
+     * @return array{0: float, 1: float} left and right plot insets
+     */
+    private function fitCategoryPadding(float $left, float $right): array
+    {
+        $axis = $this->theme->axis;
+        $count = count($this->labels);
+        $first = $this->categoryLabelWidth($this->labels[0]) / 2;
+        $last = $this->categoryLabelWidth($this->labels[$count - 1]) / 2;
+        $boxLeft = $left;
+        $boxRight = $right;
+        for ($pass = 0; $pass < 4; $pass++) {
+            $width = max(1.0, $this->width - $left - $right);
+            $offset = $this->categoryOffset() ? $width / $count / 2 : 0.0;
+            $padLeft = max(($first - $offset + $axis->tickPadding) * $width / max(1.0, $width - $offset), 0.0);
+            $padRight = max(($last - $offset + $axis->tickPadding) * $width / max(1.0, $width - $offset), 0.0);
+            $nextLeft = max($boxLeft, $axis->paddingLeft + $padLeft);
+            $nextRight = max($boxRight, $axis->paddingRight + $padRight);
+            if (abs($nextLeft - $left) < 1e-9 && abs($nextRight - $right) < 1e-9) {
+                break;
+            }
+            [$left, $right] = [$nextLeft, $nextRight];
+        }
+
+        return [$left, $right];
+    }
+
     protected function axisLabelWidth(): float
     {
         if (!$this->axis) {
@@ -277,12 +329,28 @@ abstract class CartesianChart extends Chart
         }
 
         $widest = 0.0;
+        $axis = $this->theme->axis;
 
         foreach ($this->scale()->ticks() as $tick) {
-            $widest = max($widest, Text::width($this->format($tick), self::AXIS_LABEL_SIZE));
+            $widest = max($widest, $axis->fitEdgeLabels
+                ? Text::measure($this->format($tick), $axis->fontSize, 400, $this->theme->fontFamily)
+                : Text::width($this->format($tick), $axis->fontSize));
         }
 
-        return $widest + 6.0;
+        return $widest + ($axis->fitEdgeLabels ? $axis->tickLength + 2 * $axis->tickPadding : $axis->labelGap);
+    }
+
+    /** Width of a category label in the chart font (Chart.js measures it). */
+    private function categoryLabelWidth(string $label): float
+    {
+        $axis = $this->theme->axis;
+
+        return Text::measure($label, $axis->fontSize, match ($axis->xLabelWeight) {
+            FontWeight::Bold => 700,
+            FontWeight::SemiBold => 600,
+            FontWeight::Medium => 500,
+            default => 400,
+        }, $this->theme->fontFamily);
     }
 
     protected function hasData(): bool
@@ -299,27 +367,44 @@ abstract class CartesianChart extends Chart
     /** Grid lines, baseline and axis tick labels. */
     protected function paintGrid(Canvas $canvas, LinearScale $scale, float $px, float $py, float $pw, float $ph): Canvas
     {
+        $axis = $this->theme->axis;
         foreach ($scale->ticks() as $tick) {
             $y = round($scale->position($tick, $py + $ph, $py), 2);
 
             // The solid baseline is 0, or the range edge nearest to it.
+            $from = $px - $axis->tickLength;
+            // Chart.js `_alignPixel`: a 1px line on a whole pixel's centre.
+            // Solid (Chart.js-style) grids align too; dashed default grids keep their position.
+            $line = $axis->fitEdgeLabels || $axis->gridDash <= 0.0 ? round($y - 0.5) + 0.5 : $y;
             if ($tick === max($scale->min, min($scale->max, 0.0))) {
-                $canvas = $canvas->line($px, $y, $px + $pw, $y, $this->theme->grid, 1);
+                $canvas = $canvas->line($from, $line, $px + $pw, $line, $this->theme->grid, 1);
             } elseif ($this->grid > 0) {
-                $canvas = $canvas->dashedLine($px, $y, $px + $pw, $y, $this->theme->grid, 1, 3, 3);
+                $canvas = $axis->gridDash > 0.0
+                    ? $canvas->dashedLine($from, $line, $px + $pw, $line, $this->theme->grid, 1, $axis->gridDash, $axis->gridDash)
+                    : $canvas->line($from, $line, $px + $pw, $line, $this->theme->grid, 1);
             }
 
             if ($this->axis) {
                 $canvas = $canvas->label(
                     $this->format($tick),
-                    $px - 6.0,
-                    $y + Text::baselineOffset(self::AXIS_LABEL_SIZE),
-                    self::AXIS_LABEL_SIZE,
+                    $px - ($axis->fitEdgeLabels ? $axis->tickLength + $axis->tickPadding : $axis->labelGap),
+                    // Chart.js value labels: `textBaseline: 'middle'` on the tick.
+                    $y + ($axis->fitEdgeLabels ? Text::middle($axis->fontSize, $this->theme->fontFamily) : Text::baselineOffset($axis->fontSize)),
+                    $axis->fontSize,
                     $this->theme->muted,
                     TextAlign::Right,
                     FontWeight::Regular,
                 );
             }
+        }
+
+        if ($axis->borderColor !== null) {
+            // Chart.js axis borders: the value axis on the left, the category axis below.
+            $x = round($px - 0.5) + 0.5;
+            $bottom = round($py + $ph - 0.5) + 0.5;
+            $canvas = $canvas
+                ->line($x, $py, $x, $py + $ph, $axis->borderColor, 1)
+                ->line($px, $bottom, $px + $pw, $bottom, $axis->borderColor, 1);
         }
 
         return $canvas;
@@ -334,6 +419,13 @@ abstract class CartesianChart extends Chart
     {
         $count = count($centers);
         $last = $count - 1;
+        $axis = $this->theme->axis;
+        if ($axis->fitEdgeLabels) {
+            // Chart.js `_computeLabelItems` (bottom axis): `textBaseline:
+            // 'middle'` half a line (font.lineHeight 1.2) under tick + padding.
+            [, $py, , $ph] = $this->plotRect();
+            $baseline = $py + $ph + $axis->tickLength + $axis->tickPadding + 0.6 * $axis->fontSize + Text::middle($axis->fontSize, $this->theme->fontFamily);
+        }
 
         foreach ($this->labels as $index => $label) {
             if ($index > $last) {
@@ -343,10 +435,12 @@ abstract class CartesianChart extends Chart
             $x = $centers[$index];
             $align = TextAlign::Center;
 
-            if ($count > 1 && $index === 0 && $x - Text::width($label, self::AXIS_LABEL_SIZE) / 2 < $px) {
+            if ($axis->fitEdgeLabels) {
+                // The plot already leaves room for the edge labels.
+            } elseif ($count > 1 && $index === 0 && $x - Text::width($label, $this->theme->axis->fontSize) / 2 < $px) {
                 $align = TextAlign::Left;
                 $x = $px;
-            } elseif ($count > 1 && $index === $last && $x + Text::width($label, self::AXIS_LABEL_SIZE) / 2 > $px + $pw) {
+            } elseif ($count > 1 && $index === $last && $x + Text::width($label, $this->theme->axis->fontSize) / 2 > $px + $pw) {
                 $align = TextAlign::Right;
                 $x = $px + $pw;
             }
@@ -355,10 +449,10 @@ abstract class CartesianChart extends Chart
                 $label,
                 $x,
                 $baseline,
-                self::AXIS_LABEL_SIZE,
+                $this->theme->axis->fontSize,
                 $this->theme->muted,
                 $align,
-                FontWeight::Regular,
+                $axis->xLabelWeight,
             );
         }
 

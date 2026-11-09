@@ -48,6 +48,14 @@ final class Color
         return '#' . str_pad(dechex($rgb), 6, '0', STR_PAD_LEFT) . str_pad(dechex($alpha), 2, '0', STR_PAD_LEFT);
     }
 
+    /** Packed `0xAARRGGBB` integer of a color, the form native view properties take. */
+    public static function toArgb(string $color): int
+    {
+        $hex = substr(self::normalize($color), 1);
+
+        return (int) hexdec(substr($hex, 6, 2) . substr($hex, 0, 6));
+    }
+
     /**
      * Normalizes a color given as a CSS hex string or a packed ARGB integer.
      */

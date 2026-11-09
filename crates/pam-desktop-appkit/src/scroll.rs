@@ -32,18 +32,70 @@ pub struct ScrollIvars {
     applying: Cell<bool>,
     /// An offset asked for before the content was laid out that far.
     pending: Cell<Option<Point>>,
-    /// The classic bar drawn in a reserved gutter (`scrollbar-gutter:
-    /// stable` with `scrollbar-width`/`scrollbar-color`), like GTK.
-    bar: RefCell<Option<Retained<PamScrollBar>>>,
+    /// The classic bars drawn in reserved gutters (`scrollbar-gutter:
+    /// stable`, `scrollbar-width`/`scrollbar-color`), like Chromium's on
+    /// macOS with a mouse: vertical, then horizontal (`overflow: auto`).
+    bars: RefCell<Vec<Retained<PamScrollBar>>>,
+    /// The gutters the shown classic bars take from the clip view: width of
+    /// the vertical one, height of the horizontal one.
+    gutters: Cell<(f64, f64)>,
+    /// The content's size from the engine (the document may be larger).
+    content: Cell<CGSize>,
+}
+
+/// A classic bar's geometry across the bar: the gutter, the thumb inside it
+/// and the thumb's gap to the outer edge (the rest is on the content side),
+/// and the track's margin at both ends.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BarGeometry {
+    pub thickness: f64,
+    pub thumb: f64,
+    pub outer: f64,
+    pub margin: f64,
+}
+
+impl BarGeometry {
+    /// Chromium's classic bars on macOS (measured on Electron 37 with
+    /// legacy scrollers): `scrollbar-color` alone is the regular 15 pt bar
+    /// with an 8 pt thumb 3 pt from the edge, `scrollbar-width: thin` the
+    /// small 11 pt bar with a 6 pt thumb 2 pt from the edge; the track ends
+    /// 3 pt inside the viewport. An authored thickness
+    /// (`::-webkit-scrollbar`) is a thumb `inset` inside its gutter.
+    pub fn for_config(thickness: Option<f32>, inset: f32) -> Self {
+        match thickness {
+            None => Self {
+                thickness: 15.0,
+                thumb: 8.0,
+                outer: 3.0,
+                margin: 3.0,
+            },
+            Some(_) if inset > 0.0 => Self {
+                thickness: f64::from(pam_desktop_ui::engine::SCROLLBAR_GUTTER_THIN),
+                thumb: 6.0,
+                outer: 2.0,
+                margin: 3.0,
+            },
+            Some(thickness) => {
+                let thickness = f64::from(thickness.clamp(0.0, 64.0));
+                let inset = f64::from(inset).clamp(0.0, thickness / 4.0);
+                Self {
+                    thickness,
+                    thumb: thickness - 2.0 * inset,
+                    outer: inset,
+                    margin: inset + 1.0,
+                }
+            }
+        }
+    }
 }
 
 pub struct BarIvars {
     scroll: Weak<PamScrollView>,
-    thickness: Cell<f64>,
-    /// Space between the thumb and the gutter's edges across the bar.
-    inset: Cell<f64>,
+    geometry: Cell<BarGeometry>,
     /// Pointer position along the track and the offset when the thumb was grabbed.
     grab: Cell<Option<(f64, f64)>>,
+    /// A horizontal bar along the bottom edge.
+    horizontal: Cell<bool>,
 }
 
 define_class!(
@@ -52,7 +104,7 @@ define_class!(
     #[unsafe(super(NSView, NSResponder, NSObject))]
     #[thread_kind = MainThreadOnly]
     #[ivars = BarIvars]
-    /// The thumb of a classic vertical scrollbar, painted by its layer.
+    /// The thumb of a classic scrollbar, painted by its layer.
     pub struct PamScrollBar;
 
     impl PamScrollBar {
@@ -75,7 +127,9 @@ define_class!(
         fn mouse_down(&self, event: &NSEvent) {
             if let Some(scroll) = self.ivars().scroll.load() {
                 let along = self.along(event);
-                self.ivars().grab.set(Some((along, scroll.offset().y as f64)));
+                let offset = scroll.offset();
+                let offset = if self.ivars().horizontal.get() { offset.x } else { offset.y };
+                self.ivars().grab.set(Some((along, f64::from(offset))));
             }
         }
 
@@ -84,11 +138,14 @@ define_class!(
             let (Some((start, offset)), Some(scroll)) = (self.ivars().grab.get(), self.ivars().scroll.load()) else {
                 return;
             };
-            let (viewport, content) = scroll.extent();
-            let track = viewport - self.frame().size.height;
+            let horizontal = self.ivars().horizontal.get();
+            let (viewport, content) = scroll.extent(horizontal);
+            let size = self.frame().size;
+            let margin = self.ivars().geometry.get().margin;
+            let track = viewport - 2.0 * margin - if horizontal { size.width } else { size.height };
             if track > 0.0 {
                 let moved = (self.along(event) - start) * (content - viewport) / track;
-                scroll.user_scroll_to(offset + moved);
+                scroll.user_scroll_to(horizontal, offset + moved);
             }
         }
 
@@ -103,9 +160,9 @@ impl PamScrollBar {
     fn new(mtm: MainThreadMarker, scroll: &PamScrollView) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(BarIvars {
             scroll: Weak::from(scroll),
-            thickness: Cell::new(10.0),
-            inset: Cell::new(0.0),
+            geometry: Cell::new(BarGeometry::for_config(None, 0.0)),
             grab: Cell::new(None),
+            horizontal: Cell::new(false),
         });
         // SAFETY: `initWithFrame:` is the designated initializer of `NSView`.
         let bar: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: CGRect::ZERO] };
@@ -119,23 +176,25 @@ impl PamScrollBar {
         match unsafe { self.superview() } {
             Some(parent) => {
                 let point = parent.convertPoint_fromView(event.locationInWindow(), None);
-                if parent.isFlipped() {
+                if self.ivars().horizontal.get() {
+                    point.x
+                } else if parent.isFlipped() {
                     point.y
                 } else {
                     -point.y
                 }
             }
+            None if self.ivars().horizontal.get() => event.locationInWindow().x,
             None => event.locationInWindow().y,
         }
     }
 
-    fn style(&self, thickness: f64, inset: f64, color: Color) {
-        let inset = inset.clamp(0.0, thickness / 4.0);
-        self.ivars().thickness.set(thickness);
-        self.ivars().inset.set(inset);
+    fn style(&self, geometry: BarGeometry, color: Color, horizontal: bool) {
+        self.ivars().horizontal.set(horizontal);
+        self.ivars().geometry.set(geometry);
         if let Some(layer) = self.layer() {
             layer.setBackgroundColor(Some(&cg_color(color)));
-            layer.setCornerRadius((thickness - 2.0 * inset) / 2.0);
+            layer.setCornerRadius(geometry.thumb / 2.0);
         }
     }
 }
@@ -176,6 +235,25 @@ define_class!(
             let _: () = unsafe { msg_send![super(self), setScrollerStyle: NSScrollerStyle::Overlay] };
         }
 
+        /// The clip view leaves the classic bars' gutters to them, like a
+        /// legacy scroller's.
+        #[unsafe(method(tile))]
+        fn tile(&self) {
+            // SAFETY: forwards the same selector to `NSScrollView`.
+            let _: () = unsafe { msg_send![super(self), tile] };
+            let (width, height) = self.ivars().gutters.get();
+            if width > 0.0 || height > 0.0 {
+                let clip = self.contentView();
+                let mut frame = clip.frame();
+                frame.size.width = (frame.size.width - width).max(0.0);
+                frame.size.height = (frame.size.height - height).max(0.0);
+                if !self.isFlipped() {
+                    frame.origin.y += height;
+                }
+                clip.setFrame(frame);
+            }
+        }
+
         /// The clip view moved over the document (user or programmatic).
         #[unsafe(method(clipBoundsChanged:))]
         fn clip_bounds_changed(&self, _notification: &NSNotification) {
@@ -192,6 +270,12 @@ define_class!(
 );
 
 impl PamScrollView {
+    /// Lays the clip view out again for new gutters.
+    fn retile(&self) {
+        // SAFETY: `tile` takes no argument and returns nothing.
+        let _: () = unsafe { msg_send![self, tile] };
+    }
+
     /// The offset inside the scrollable range: the rubber band of an
     /// overscroll is a visual effect, not a position.
     fn offset(&self) -> Point {
@@ -209,53 +293,109 @@ impl PamScrollView {
         )
     }
 
-    /// Viewport and content lengths along the vertical axis.
-    fn extent(&self) -> (f64, f64) {
-        let viewport = self.contentView().bounds().size.height;
+    /// Viewport and content lengths along the scrolling axis.
+    fn extent(&self, horizontal: bool) -> (f64, f64) {
+        let viewport = self.contentView().bounds().size;
         let content = self
             .documentView()
-            .map_or(0.0, |document| document.frame().size.height);
-        (viewport, content)
+            .map_or(CGSize::ZERO, |document| document.frame().size);
+        if horizontal {
+            (viewport.width, content.width)
+        } else {
+            (viewport.height, content.height)
+        }
     }
 
     /// Moves the viewport for the user (the classic bar's thumb).
-    fn user_scroll_to(&self, y: f64) {
+    fn user_scroll_to(&self, horizontal: bool, value: f64) {
         let clip = self.contentView();
         let mut wanted = clip.bounds();
-        wanted.origin.y = y;
+        if horizontal {
+            wanted.origin.x = value;
+        } else {
+            wanted.origin.y = value;
+        }
         let target = clip.constrainBoundsRect(wanted).origin;
         clip.scrollToPoint(target);
         self.reflectScrolledClipView(&clip);
     }
 
-    /// Places the classic bar's thumb in the gutter at the right edge, sized
-    /// like GTK's slider (proportional, at least 40 points long, `inset`
-    /// inside the gutter across the bar); hidden while everything fits, the
-    /// gutter staying reserved.
-    fn update_bar(&self) {
-        let Some(bar) = self.ivars().bar.borrow().clone() else {
-            return;
+    /// Which classic bars show: the content overflows the clip view left
+    /// by the other bar (CSS 2.1 §11.1.1). Returns whether the gutters
+    /// changed.
+    fn update_gutters(&self) -> bool {
+        let bars = self.ivars().bars.borrow();
+        let size = self.frame().size;
+        let content = self.ivars().content.get();
+        let thickness = |horizontal: bool| {
+            bars.iter()
+                .find(|bar| bar.ivars().horizontal.get() == horizontal)
+                .map_or(0.0, |bar| bar.ivars().geometry.get().thickness)
         };
-        let (viewport, content) = self.extent();
-        let (thickness, inset) = (bar.ivars().thickness.get(), bar.ivars().inset.get());
-        if content <= viewport + 0.5 || viewport <= 0.0 || thickness <= 0.0 {
-            bar.setHidden(true);
-            return;
+        let (across, along) = (thickness(false), thickness(true));
+        let mut gutters = (0.0, 0.0);
+        for _ in 0..3 {
+            gutters = (
+                if across > 0.0 && content.height > size.height - gutters.1 + 0.5 {
+                    across
+                } else {
+                    0.0
+                },
+                if along > 0.0 && content.width > size.width - gutters.0 + 0.5 {
+                    along
+                } else {
+                    0.0
+                },
+            );
         }
-        let length = (viewport * viewport / content).max(40.0).min(viewport);
-        let offset = f64::from(self.offset().y);
-        let along = (viewport - length) * offset / (content - viewport);
-        let width = self.frame().size.width;
-        let y = if self.isFlipped() {
-            along
-        } else {
-            viewport - along - length
-        };
-        bar.setFrame(CGRect::new(
-            CGPoint::new(width - thickness + inset, y),
-            CGSize::new(thickness - 2.0 * inset, length),
-        ));
-        bar.setHidden(false);
+        self.ivars().gutters.replace(gutters) != gutters
+    }
+
+    /// Places each classic bar's thumb in its gutter (proportional, at least
+    /// 40 points long); hidden while everything fits, the gutter staying
+    /// reserved by the layout.
+    fn update_bar(&self) {
+        let bars = self.ivars().bars.borrow().clone();
+        let size = self.frame().size;
+        let gutters = self.ivars().gutters.get();
+        for bar in bars {
+            let horizontal = bar.ivars().horizontal.get();
+            let (viewport, content) = self.extent(horizontal);
+            let geometry = bar.ivars().geometry.get();
+            let shown = if horizontal { gutters.1 } else { gutters.0 } > 0.0;
+            if !shown || content <= viewport + 0.5 || viewport <= 0.0 {
+                bar.setHidden(true);
+                continue;
+            }
+            let margin = geometry.margin;
+            let track = (viewport - 2.0 * margin).max(0.0);
+            let length = (track * viewport / content).max(40.0).min(track);
+            let offset = self.offset();
+            let offset = f64::from(if horizontal { offset.x } else { offset.y });
+            let along = margin + (track - length) * offset / (content - viewport);
+            let edge = geometry.thickness - geometry.outer - geometry.thumb;
+            let frame = if horizontal {
+                // Along the bottom edge of the gutter.
+                let y = if self.isFlipped() {
+                    size.height - geometry.thickness + edge
+                } else {
+                    geometry.outer
+                };
+                CGRect::new(CGPoint::new(along, y), CGSize::new(length, geometry.thumb))
+            } else {
+                let y = if self.isFlipped() {
+                    along
+                } else {
+                    size.height - along - length
+                };
+                CGRect::new(
+                    CGPoint::new(size.width - geometry.thickness + edge, y),
+                    CGSize::new(geometry.thumb, length),
+                )
+            };
+            bar.setFrame(frame);
+            bar.setHidden(false);
+        }
     }
 
     fn report_offset(&self) {
@@ -276,7 +416,8 @@ pub struct ScrollHost {
     /// Where the node's children live, in content coordinates.
     pub document: Retained<PlainView>,
     horizontal: bool,
-    viewport: Size,
+    /// `overflow: auto`: the document follows the content on both axes.
+    both: bool,
     content: Size,
 }
 
@@ -289,7 +430,9 @@ impl ScrollHost {
             reported: Cell::new(Point::ZERO),
             applying: Cell::new(false),
             pending: Cell::new(None),
-            bar: RefCell::new(None),
+            bars: RefCell::new(Vec::new()),
+            gutters: Cell::new((0.0, 0.0)),
+            content: Cell::new(CGSize::ZERO),
         });
         // SAFETY: `initWithFrame:` is the designated initializer of `NSScrollView`.
         let scroll: Retained<PamScrollView> =
@@ -323,7 +466,7 @@ impl ScrollHost {
             scroll,
             document,
             horizontal: false,
-            viewport: Size::ZERO,
+            both: false,
             content: Size::ZERO,
         };
         host.configure(&ScrollConfig::default());
@@ -346,18 +489,23 @@ impl ScrollHost {
     }
 
     /// The document is as long as the content along the scrolling axis and
-    /// exactly as wide as the viewport across it, so it only scrolls one way.
+    /// exactly as wide as the clip view across it, so it only scrolls one way.
     fn layout_document(&self) {
-        let size = if self.horizontal {
+        self.scroll.ivars().content.set(cg_size(self.content));
+        if self.scroll.update_gutters() {
+            self.programmatic(|| self.scroll.retile());
+        }
+        let clip = self.scroll.contentView().frame().size;
+        let viewport = Size::new(clip.width as f32, clip.height as f32);
+        let size = if self.both {
             Size::new(
-                self.content.width.max(self.viewport.width),
-                self.viewport.height,
+                self.content.width.max(viewport.width),
+                self.content.height.max(viewport.height),
             )
+        } else if self.horizontal {
+            Size::new(self.content.width.max(viewport.width), viewport.height)
         } else {
-            Size::new(
-                self.viewport.width,
-                self.content.height.max(self.viewport.height),
-            )
+            Size::new(viewport.width, self.content.height.max(viewport.height))
         };
         self.programmatic(|| self.document.setFrameSize(cg_size(size)));
         self.scroll.update_bar();
@@ -372,7 +520,6 @@ impl ScrollHost {
 
     /// The viewport covers the node's box.
     pub fn set_viewport(&mut self, size: Size) {
-        self.viewport = size;
         self.programmatic(|| {
             self.scroll
                 .setFrame(CGRect::new(CGPoint::ZERO, cg_size(size)))
@@ -387,58 +534,78 @@ impl ScrollHost {
 
     pub fn configure(&mut self, config: &ScrollConfig) {
         self.horizontal = config.horizontal;
+        self.both = config.both;
         self.scroll.ivars().enabled.set(config.enabled);
         let indicators = config.enabled
             && config.shows_indicators
             && config
                 .scrollbar_thickness
                 .is_none_or(|thickness| thickness > 0.0);
-        // A styled bar in a reserved gutter is classic, like GTK's (and
-        // Chromium's): always shown at the authored thickness and colour.
-        // Without a gutter the system's overlay scroller stays.
+        // A styled bar in a reserved gutter is classic, like Chromium's with
+        // legacy scrollers: drawn at the authored thickness and colour, on
+        // each scrolling axis. Without a gutter the system's overlay
+        // scroller stays.
         let styled = config.scrollbar_thickness.is_some() || config.scrollbar_color.is_some();
-        let classic = indicators && !config.horizontal && config.reserved_gutter && styled;
-        self.set_classic_bar(classic.then(|| {
+        let classic = indicators && config.reserved_gutter && styled;
+        let style = classic.then(|| {
             (
-                f64::from(config.scrollbar_thickness.unwrap_or(10.0).clamp(0.0, 64.0)),
-                f64::from(config.thumb_inset),
+                BarGeometry::for_config(config.scrollbar_thickness, config.thumb_inset),
                 // Without `scrollbar-color`: a neutral grey that reads on
                 // light and dark pages alike.
                 config
                     .scrollbar_color
                     .unwrap_or(Color::rgba(128, 128, 128, 140)),
             )
-        }));
+        });
+        let axes: &[bool] = if config.both {
+            &[false, true]
+        } else if config.horizontal {
+            &[true]
+        } else {
+            &[false]
+        };
+        self.set_classic_bars(if classic { axes } else { &[] }, style);
         self.scroll
-            .setHasVerticalScroller(indicators && !config.horizontal && !classic);
+            .setHasVerticalScroller(indicators && (config.both || !config.horizontal) && !classic);
         self.scroll
-            .setHasHorizontalScroller(indicators && config.horizontal);
+            .setHasHorizontalScroller(indicators && (config.both || config.horizontal) && !classic);
         let (along, across) = (NSScrollElasticity::Automatic, NSScrollElasticity::None);
         self.scroll
-            .setVerticalScrollElasticity(if config.horizontal { across } else { along });
+            .setVerticalScrollElasticity(if config.horizontal && !config.both {
+                across
+            } else {
+                along
+            });
         self.scroll
-            .setHorizontalScrollElasticity(if config.horizontal { along } else { across });
+            .setHorizontalScrollElasticity(if config.horizontal || config.both {
+                along
+            } else {
+                across
+            });
         self.layout_document();
     }
 
-    fn set_classic_bar(&self, style: Option<(f64, f64, Color)>) {
-        let mut slot = self.scroll.ivars().bar.borrow_mut();
-        match style {
-            Some((thickness, inset, color)) => {
-                let bar = slot.get_or_insert_with(|| {
-                    let bar = PamScrollBar::new(self.scroll.mtm(), &self.scroll);
-                    self.scroll.addSubview(&bar);
-                    bar
-                });
-                bar.style(thickness, inset, color);
-            }
-            None => {
-                if let Some(bar) = slot.take() {
-                    bar.removeFromSuperview();
-                }
+    fn set_classic_bars(&self, axes: &[bool], style: Option<(BarGeometry, Color)>) {
+        let mut bars = self.scroll.ivars().bars.borrow_mut();
+        while bars.len() > axes.len() {
+            if let Some(bar) = bars.pop() {
+                bar.removeFromSuperview();
             }
         }
-        drop(slot);
+        while bars.len() < axes.len() {
+            let bar = PamScrollBar::new(self.scroll.mtm(), &self.scroll);
+            self.scroll.addSubview(&bar);
+            bars.push(bar);
+        }
+        if let Some((geometry, color)) = style {
+            for (bar, &horizontal) in bars.iter().zip(axes) {
+                bar.style(geometry, color, horizontal);
+            }
+        }
+        drop(bars);
+        if self.scroll.update_gutters() {
+            self.programmatic(|| self.scroll.retile());
+        }
         self.scroll.update_bar();
     }
 
@@ -482,7 +649,7 @@ impl ScrollHost {
     pub fn destroy(&self) {
         // SAFETY: removes the registration made in `new`.
         unsafe { NSNotificationCenter::defaultCenter().removeObserver(&self.scroll) };
-        if let Some(bar) = self.scroll.ivars().bar.borrow_mut().take() {
+        for bar in self.scroll.ivars().bars.borrow_mut().drain(..) {
             bar.removeFromSuperview();
         }
         self.scroll.removeFromSuperview();

@@ -151,3 +151,22 @@ pub fn set_always_on_top(window: &gtk::Window, enabled: bool) {
     }
     apply_above(window, enabled);
 }
+
+/// Whether an XSettings manager (a desktop's settings daemon) owns the
+/// display's settings; `None` when the display is not X11.
+pub fn xsettings_managed(display: &gdk::Display) -> Option<bool> {
+    let x11 = glib::Type::from_name("GdkX11Display")?;
+    if !display.type_().is_a(x11) {
+        return None;
+    }
+    let name = display.name();
+    let (connection, screen) = x11rb::connect(Some(name.as_str())).ok()?;
+    let selection = atom(&connection, format!("_XSETTINGS_S{screen}").as_bytes())?;
+    let owner = connection
+        .get_selection_owner(selection)
+        .ok()?
+        .reply()
+        .ok()?
+        .owner;
+    Some(owner != x11rb::NONE)
+}

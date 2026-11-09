@@ -785,7 +785,21 @@ final class TreeEncoder
         if ($encodedProperties !== [] && array_key_last($encodedProperties) >= Protocol::EXTENSION_BASE) {
             $contract = RendererContract::current();
             foreach ($encodedProperties as $property => $_) {
-                if ($property >= Protocol::EXTENSION_BASE) {
+                if (
+                    ($property === PropKey::FontSmoothing->value || $property === PropKey::InlineLevel->value
+                        || $property === PropKey::CanvasBitmap->value || $property === PropKey::ScrollbarTrackColor->value
+                        || $property === PropKey::InputSize->value || $property === PropKey::MenuListOptions->value
+                        || $property === PropKey::MinWidthAuto->value)
+                    && !$contract->supportsProperty($property)
+                ) {
+                    // A rendering hint, inline layout an older renderer
+                    // approximates with its flex layout, or a canvas bitmap
+                    // it draws at the fractional size, a scrollbar track colour
+                    // (transparent before), Chromium form-control sizing and
+                    // automatic minimum sizes (content-sized before): it
+                    // draws as before.
+                    unset($encodedProperties[$property]);
+                } elseif ($property >= Protocol::EXTENSION_BASE) {
                     $contract->requireProperty($property);
                 }
             }

@@ -47,7 +47,7 @@ $assert(
 $local = RendererContract::local();
 $coreMax = max(array_filter(array_map(static fn (PropKey $key): int => $key->value, PropKey::cases()), static fn (int $v): bool => $v < 1001));
 $assert(
-    $local->propertyCeiling === $coreMax && $local->extensionPropertyCeiling === PropKey::TextSpanBoxes->value
+    $local->propertyCeiling === $coreMax && $local->extensionPropertyCeiling === max(array_map(static fn (PropKey $key): int => $key->value, PropKey::cases()))
         && $local->eventCeiling === max(array_filter(array_map(static fn (EventKind $kind): int => $kind->value, EventKind::cases()), static fn (int $v): bool => $v < 1001))
         && $local->extensionEventCeiling === EventKind::DragLeave->value,
     'The local contract declares the highest core and extension identifiers of the SDK tables.',
@@ -125,7 +125,13 @@ try {
         static fn () => (new TreeEncoder())->encode($decimalInput),
         'does not implement property InputFormatDecimalMinDigits (2023)',
     );
+    // A canvas bitmap is dropped for a renderer that predates it (2039).
+    $bitmapCanvas = (fn (): ExtensionView => $this->withProperty(PropKey::CanvasBitmap, true))->call(ExtensionView::make(Text::make('chart')));
+    RendererContract::use(RendererContract::fromJson('{"abi":1,"events":[80,1000],"properties":[543,2038],"protocol":[1,1]}'));
+    $oldFrame = (new TreeEncoder())->encode($bitmapCanvas)['frame'];
+    $assert(is_string($oldFrame) && !str_contains($oldFrame, pack('v', 2039)), 'An older renderer draws a bitmap canvas at its fractional size.');
     RendererContract::use(RendererContract::local());
+    $assert(str_contains((string) (new TreeEncoder())->encode($bitmapCanvas)['frame'], pack('v', 2039)), 'The current renderer receives CanvasBitmap.');
     $decimalFrame = (new TreeEncoder())->encode($decimalInput)['frame'];
     $assert(
         is_string($decimalFrame) && str_contains($decimalFrame, pack('v', 2023)."\x02".pack('q', 2)),

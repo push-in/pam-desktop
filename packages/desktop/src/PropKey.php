@@ -594,4 +594,23 @@ enum PropKey: int
     case ScrollbarThickness = 2026;
     case ScrollbarColor = 2027;
     case TextSpanBoxes = 2028;
+    case TextInlineBlock = 2029;
+    case TableDisplay = 2030;
+    case TableLayout = 2031;
+    case BorderCollapse = 2032;
+    case VerticalAlign = 2033;
+    case LengthUnits = 2034;
+    case CompositedLayer = 2035;
+    case FontSmoothing = 2036;
+    case InlineLevel = 2037;
+    case ScrollBothAxes = 2038;
+    /** A canvas drawn like an HTML `<canvas>` bitmap: floor(size × scale) device pixels, painted into the pixel-snapped box. */
+    case CanvasBitmap = 2039;
+    case ScrollbarTrackColor = 2040;
+    /** HTML `<input size>`: characters a single-line input without a width is sized for (Blink text field; 20 by default). */
+    case InputSize = 2041;
+    /** A `<select>`'s option labels (one per line) on its label Text: as wide as the widest option, rounded up (Blink menulist). */
+    case MenuListOptions = 2042;
+    /** Authored CSS `min-width: auto` on a flex item: its automatic minimum size (min-content). */
+    case MinWidthAuto = 2043;
 }

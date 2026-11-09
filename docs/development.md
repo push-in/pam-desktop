@@ -161,6 +161,36 @@ composer analyse --working-dir=packages/desktop
 
 `composer analyse` runs PHPStan with `packages/desktop/phpstan.neon`: level 9 over the paths that file lists. That is a subset of the package, not all of `src`: the classes written for the desktop (`Window`, `Menu`, `Tray`, `Dialog`, `Shortcut`, `Notification`, `Updates`, `UI\Window`, `UI\WebView`, toasts) and the parts of the shared core that are held to that level.
 
+### Template diagnostics
+
+When a component loads, its template is checked against what the renderer uses. An attribute that a built-in tag (`View`, `Column`, `Row`, `Grid`, `Text`, `Span`, `Pressable`, the `Touchable*` tags, `Icon`, `Image`) does not know is an error with the file, line and the attribute meant, instead of being ignored:
+
+```text
+PAM2401 unknown attribute Text.color, did you mean textColor? at src/Screens/Card.pam.php:12:5.
+```
+
+Common slips are named directly (`color` → `textColor`, `maxLines` → `numberOfLines`, `src` → `source`, `onClick` → `on:press`); other names get the closest known attribute. In `pam-desktop dev` the error overlay shows it at boot, and the PHP tests of an app fail on it. Bindings (`:name`), `p-*`, `on:*`, `@*`, `data-*`, `aria-*` and `variant:*` are not checked here; components with a contract check their own props.
+
+`vendor/bin/pam-desktop check` reports all of these without starting the host or opening a window, and does not stop at the first one. It runs the entry file of the application (the `entry` of `pam-desktop.json`, `index.php` by default) up to `App::run()`, so every `App::components()` root it declares is checked (DesktopUI's too), compiles each component into a private temporary cache (the application's `.pam-desktop` cache is left alone) and prints one line per diagnostic, then a summary:
+
+```text
+$ vendor/bin/pam-desktop check
+src/Screens/Badge.pam.php:21:1 PAM2403 Expected a native numeric CSS value in src/Screens/Badge.pam.php, got banana
+src/Screens/Profile.pam.php:17:9 PAM2401 unknown attribute Text.color, did you mean textColor?
+src/Screens/Profile.pam.php:18:9 PAM2401 action save does not exist on App\Screens\Profile
+pam-desktop check: 3 diagnostics (12 components in 2 roots).
+```
+
+| Code | Diagnostic |
+| --- | --- |
+| `PAM2401` | Template contract: unknown action, prop, event or built-in attribute, missing required prop. A language 1 template may call any method, so there only a missing one is reported; language 2 also needs `#[Action]`. |
+| `PAM2402` | Template or component compile error. |
+| `PAM2403` | Invalid CSS in a `<style>` block, `app.css` or an imported stylesheet (the first one of each component). |
+| `PAM2404` | Route error from `routes.php`: unknown route, missing or mistyped parameter in a literal `navigate()`, `redirect()` or `<Link>`. |
+| `PAM2400` | The entry file failed before `App::run()`. |
+
+It exits 0 when there is nothing to report and 1 otherwise, so a CI step can run it before the slower suites. `--json` prints `{"ok", "components", "roots", "diagnostics": [{"file", "line", "column", "code", "message"}]}` instead; `--src=<dir>` (repeatable) checks those directories instead of the entry's roots, and `--entry=<file>` names another entry file.
+
 ### Formatting and lints
 
 ```bash
@@ -250,10 +280,12 @@ The script writes `pam-desktop-<version>-<target>.tar.gz` and its `.sha256` in t
 | `PAM_DESKTOP_WORKER=/path/to/pam-desktop-worker` | Runs another copy of the worker bootstrap. |
 | `PAM_DESKTOP_STRICT=1` | Makes `BuildConfiguration::strict()` true in development. |
 | `PAM_DESKTOP_FRAME_GC=0` | Leaves PHP's cycle collector on its own schedule. |
+| `PAM_DESKTOP_TEXT_GAMMA=1` | GTK: draws text from the Chromium-gamma glyph atlas (see [Text rendering](text-rendering.md)); `0` forces GSK glyphs. |
 | `PAM_DESKTOP_FULL_PRESENT=1` | Windows backend: presents every frame whole instead of the changed regions. |
 | `PAM_DESKTOP_BACKDROP_BLUR=0` | Windows backend: paints views with `backdropBlur` without the blur. |
 | `GTK_USE_PORTAL=0` | Linux: dark mode is read from the GTK settings instead of the desktop portal. |
 | `PAM_DESKTOP_HOST=/path/to/pam-desktop` | `vendor/bin/pam-desktop` runs that host instead of the downloaded one. |
+| `PAM_DESKTOP_DUMP_FRAMES=/path/frames.json` | Writes every node's frame to a JSON file after each layout change; see [Layout parity with a web build](#layout-parity-with-a-web-build). `{window}` in the path becomes the window id. Off by default, at no cost. |
 
 Other things that help:
 
@@ -261,6 +293,41 @@ Other things that help:
 - **A rejected frame is reported, not fatal.** `[pam-desktop] frame rejected: …` followed by a complete re-render points at an encoding problem.
 - **Development state lives in the project.** Delete `.pam-desktop/` to start from nothing: stored values, databases, caches, the navigation stack and the appearance preference.
 - `pam-desktop --version` prints the version of the host.
+
+## Layout parity with a web build
+
+When a desktop screen reimplements a web or Electron page, a screenshot diff says that pixels differ but not which box moved. Two tools compare the boxes themselves.
+
+1. **Native frames.** Start the application with `PAM_DESKTOP_DUMP_FRAMES=/tmp/frames.json`. After each layout change the host rewrites the file (atomically) with one entry per node:
+
+   ```json
+   {"window": 1, "scale": 1.0, "nodes": [
+     {"id": 7, "parent": 3, "kind": "Text", "testId": "", "label": "", "text": "Clientes",
+      "layout": [245.0, 298.421875, 821.046875, 24.0], "content": [245.0, 298.421875, 821.046875, 24.0],
+      "painted": [245.0, 298.0, 821.0, 24.0]}
+   ]}
+   ```
+
+   `layout` is the frame in window coordinates on the 1/64 px grid Chromium uses (LayoutUnit), `content` the box inside a text's padding and border, and `painted` the frame snapped to device pixels as it is drawn. Scrolled content is in window coordinates at its current offset. Without the variable nothing is written and nothing is computed.
+
+2. **Chromium boxes.** `scripts/parity/electron-dom.cjs` loads a page in Electron and writes the `getBoundingClientRect()` box of every element that holds text (its border box and its content box) with `scripts/parity/dom-rects.js`, which also works in Playwright or Puppeteer:
+
+   ```sh
+   xvfb-run -a npx electron scripts/parity/electron-dom.cjs "http://127.0.0.1:5173/#/orders" /tmp/dom.json --size 1200x800 --wait 3000
+   ```
+
+   Requests outside the page's origin are blocked and the pointer is parked in a corner, so hover styles stay off. Serve the web build with the same data the desktop build uses (a fixture answered by the HTTP layer works well).
+
+3. **Compare.** `scripts/parity/compare_frames.py /tmp/frames.json /tmp/dom.json` matches texts in reading order (case-insensitively, so `text-transform` does not matter) and prints, for each pair, how far every edge is from Chromium's and marks with `*` the edges that land on another device pixel, which is what a screenshot comparison sees. It exits with 1 while any edge is marked, so it can gate a check.
+
+   ```text
+   'Ana Silva'      native y= 401.9219 h= 15.0000  chromium y= 402.4219 h= 15.0000  top=-0.500 bottom=-0.500
+   'RISCO BAIXO'    native y= 657.4219 h= 16.0000  chromium y= 657.9219 h= 16.0000  top*=-0.500 bottom*=-0.500
+   ```
+
+   Useful options: `--x-min 216` ignores a shared sidebar, `--edges top,bottom` checks only vertical edges (a native text often spans its column while the web element is shrink-wrapped, so its left and right edges differ without any pixel moving), `--dom-box border` compares border boxes instead of content boxes, `--all` lists equal pairs too.
+
+   A difference that starts at one text and continues below it points at the box right above: in the example the rows of a `<table>` start half a pixel lower in Chromium because a collapsed border is shared half and half between rows.
 
 ## Related
 

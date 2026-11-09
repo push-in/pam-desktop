@@ -62,6 +62,11 @@ final class Icon
         return Text::make($codepoint === null ? '?' : self::utf8($codepoint))
             ->property(PropKey::FontFamily, $definition['source'])
             ->property(PropKey::FontSize, $size > 0 ? $size : 12.0)
+            // Icon fonts are laid out one em tall, like `.pi`/`.fa` (`line-height: 1`)
+            // on the web, not with the font's own ascent and descent: Blink's
+            // unitless line height (the LayoutUnit-rounded font size, 11.84px:
+            // 11.84375).
+            ->property(PropKey::LineHeight, \Pam\Desktop\Style\LayoutUnit::lineHeight($size > 0 ? $size : 12.0, 1.0))
             ->property(PropKey::TextColor, $color)
             ->property(PropKey::TextAllowFontScaling, false);
     }

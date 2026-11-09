@@ -49,7 +49,9 @@ pub struct PamTextMeasureRequest {
     pub text_transform: u8,
     pub break_strategy: u8,
     pub hyphenation: u8,
-    pub reserved: u8,
+    /// Bit 0 (`MEASURE_TEXT_CONTROL`): also report the text-control font
+    /// metrics of the primary font (`avg_char_width`, `max_char_width`).
+    pub flags: u8,
     /// Maximum rendered lines; 0 means unlimited.
     pub max_lines: u32,
 }
@@ -63,7 +65,15 @@ pub struct PamTextMeasureResult {
     /// Distance from the top of the box to the first baseline, in points.
     pub first_baseline: f32,
     pub line_count: u32,
+    /// Blink's `SimpleFontData::AvgCharWidth()` of the primary font, as the
+    /// platform computes it (0 when not requested or unknown).
+    pub avg_char_width: f32,
+    /// Blink's `SimpleFontData::MaxCharWidth()` of the primary font.
+    pub max_char_width: f32,
 }
+
+/// `PamTextMeasureRequest::flags`: report the text-control font metrics.
+pub const MEASURE_TEXT_CONTROL: u8 = 1;
 
 /// Returns non-zero when `result` was written.
 pub type PamTextMeasureCallback = unsafe extern "C" fn(
@@ -273,6 +283,42 @@ pub(crate) fn measure(
     available_width: f32,
     font_scale: f32,
 ) -> Option<PamTextMeasureResult> {
+    measure_with(node, None, available_width, font_scale, 0)
+}
+
+/// The primary font's text-control metrics of `node` (Blink
+/// `AvgCharWidth`, `MaxCharWidth`) and the width of a `0` in its style, or
+/// `None` without a host measurer that reports them.
+pub(crate) fn text_control_metrics(node: &Node, font_scale: f32) -> Option<(f32, f32, f32)> {
+    let result = measure_with(
+        node,
+        Some("0"),
+        f32::INFINITY,
+        font_scale,
+        MEASURE_TEXT_CONTROL,
+    )?;
+    (result.avg_char_width.is_finite()
+        && result.max_char_width.is_finite()
+        && result.avg_char_width > 0.0)
+        .then_some((
+            result.avg_char_width,
+            result.max_char_width.max(0.0),
+            result.width,
+        ))
+}
+
+/// Width of `text` laid out on one line in `node`'s style.
+pub(crate) fn measure_string(node: &Node, text: &str, font_scale: f32) -> Option<f32> {
+    measure_with(node, Some(text), f32::INFINITY, font_scale, 0).map(|result| result.width)
+}
+
+fn measure_with(
+    node: &Node,
+    text_override: Option<&str>,
+    available_width: f32,
+    font_scale: f32,
+    flags: u8,
+) -> Option<PamTextMeasureResult> {
     let pointer = ACTIVE.with(Cell::get);
     if pointer.is_null() {
         return None;
@@ -280,9 +326,15 @@ pub(crate) fn measure(
     // SAFETY: the pointer was installed by an `ActiveScope` that outlives this
     // call on the current thread.
     let measurer = unsafe { &*pointer };
-    let text = string(node, PropKey::Text);
-    let spans = string(node, PropKey::TextSpans);
-    let boxes = string(node, PropKey::TextSpanBoxes);
+    let text = text_override.unwrap_or_else(|| string(node, PropKey::Text));
+    let (spans, boxes) = if text_override.is_some() {
+        ("", "")
+    } else {
+        (
+            string(node, PropKey::TextSpans),
+            string(node, PropKey::TextSpanBoxes),
+        )
+    };
     let family = string(node, PropKey::FontFamily);
     let features = string(node, PropKey::FontFeatureSettings);
     let available_width = if available_width.is_finite() && available_width > 0.0 {
@@ -325,7 +377,7 @@ pub(crate) fn measure(
         hyphenation: integer(node, PropKey::TextHyphenationFrequency)
             .unwrap_or(0)
             .clamp(0, 255) as u8,
-        reserved: 0,
+        flags,
         max_lines: if node.kind == NodeKind::Input
             && !matches!(
                 node.properties.get(&PropKey::Multiline),
@@ -386,6 +438,7 @@ fn cache_key(request: &PamTextMeasureRequest, text: &str, strings: &[&str]) -> u
         request.text_transform,
         request.break_strategy,
         request.hyphenation,
+        request.flags,
         request.max_lines,
     )
         .hash(&mut hasher);
@@ -433,6 +486,18 @@ pub(crate) mod tests {
                 height: lines * line + padding,
                 first_baseline: 15.0,
                 line_count: lines as u32,
+                // A 10pt-per-character font: Blink's average is the advance,
+                // its maximum a wide 3em bounding box.
+                avg_char_width: if request.flags & MEASURE_TEXT_CONTROL != 0 {
+                    request.font_size * 0.5075
+                } else {
+                    0.0
+                },
+                max_char_width: if request.flags & MEASURE_TEXT_CONTROL != 0 {
+                    (request.font_size * 2.814).round()
+                } else {
+                    0.0
+                },
             };
         }
         1
@@ -524,5 +589,163 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(layouts[&7].width, 60.0);
         assert_eq!(layouts[&7].height, 40.0);
+    }
+
+    fn layout_row(children: Vec<Node>, width: f32) -> BTreeMap<u64, pam_desktop_wire::Layout> {
+        use pam_desktop_wire::{NodeKind, Tree};
+        let mut nodes = BTreeMap::from([(
+            1,
+            Node {
+                id: 1,
+                parent: 0,
+                index: 0,
+                kind: NodeKind::Row,
+                properties: BTreeMap::from([(PropKey::AlignItems, PropValue::Integer(1))]),
+            },
+        )]);
+        for child in children {
+            nodes.insert(child.id, child);
+        }
+        let tree = Tree { root: 1, nodes };
+        let measurer = HostTextMeasurer::new(fake, std::ptr::null_mut());
+        let _scope = ActiveScope::enter(Some(&measurer));
+        crate::layout::calculate_with_text_metrics(
+            &tree,
+            crate::layout::Size {
+                width,
+                height: 400.0,
+            },
+            1.0,
+            &crate::font_metrics::TextMetrics::new(),
+        )
+        .unwrap()
+        .into_iter()
+        .collect()
+    }
+
+    fn input(id: u64, parent: u64, properties: Vec<(PropKey, PropValue)>) -> Node {
+        let mut node = text_node("");
+        node.id = id;
+        node.parent = parent;
+        node.kind = pam_desktop_wire::NodeKind::Input;
+        node.properties.extend(properties);
+        node
+    }
+
+    #[test]
+    fn text_fields_are_as_wide_as_blink_sizes_them() {
+        // 16px: average 8.12 (kept, fraction < .5) x 20 + max 45 - 8.12.
+        let layouts = layout_row(
+            vec![input(
+                2,
+                1,
+                vec![
+                    (PropKey::FontSize, PropValue::Float(16.0)),
+                    (PropKey::PaddingLeft, PropValue::Float(38.0)),
+                    (PropKey::PaddingRight, PropValue::Float(12.0)),
+                    (PropKey::BorderWidth, PropValue::Float(1.0)),
+                ],
+            )],
+            1000.0,
+        );
+        assert_eq!(layouts[&2].width, 200.0 + 38.0 + 12.0 + 2.0);
+        // 13px: average 6.5975 rounds up to 7: 7 x 20 + 37 - 7.
+        let layouts = layout_row(
+            vec![input(
+                2,
+                1,
+                vec![(PropKey::FontSize, PropValue::Float(13.0))],
+            )],
+            1000.0,
+        );
+        assert_eq!(layouts[&2].width, 170.0);
+        // `size="10"`.
+        let layouts = layout_row(
+            vec![input(
+                2,
+                1,
+                vec![
+                    (PropKey::FontSize, PropValue::Float(16.0)),
+                    (PropKey::InputSize, PropValue::Integer(10)),
+                ],
+            )],
+            1000.0,
+        );
+        assert_eq!(layouts[&2].width, 119.0);
+        // A family Blink does not trust: 20 zeros (10pt each in the fake).
+        let layouts = layout_row(
+            vec![input(
+                2,
+                1,
+                vec![
+                    (PropKey::FontSize, PropValue::Float(16.0)),
+                    (
+                        PropKey::FontFamily,
+                        PropValue::String("\"Helvetica\", Arial".into()),
+                    ),
+                ],
+            )],
+            1000.0,
+        );
+        assert_eq!(layouts[&2].width, 200.0);
+        // An authored width wins.
+        let layouts = layout_row(
+            vec![input(
+                2,
+                1,
+                vec![
+                    (PropKey::FontSize, PropValue::Float(16.0)),
+                    (PropKey::Width, PropValue::Float(90.0)),
+                ],
+            )],
+            1000.0,
+        );
+        assert_eq!(layouts[&2].width, 90.0);
+    }
+
+    #[test]
+    fn select_labels_take_the_widest_option_rounded_up() {
+        let mut label = text_node("Livre");
+        label.id = 2;
+        label.parent = 1;
+        label.properties.insert(
+            PropKey::MenuListOptions,
+            PropValue::String("Livre\nIndisponível\nOcupada".into()),
+        );
+        let layouts = layout_row(vec![label], 1000.0);
+        assert_eq!(layouts[&2].width, 120.0);
+    }
+
+    #[test]
+    fn min_width_auto_keeps_a_flex_item_at_its_min_content_width() {
+        let mut search = text_node("");
+        search.id = 2;
+        search.parent = 1;
+        search.kind = pam_desktop_wire::NodeKind::Row;
+        search.properties = BTreeMap::from([
+            (PropKey::FlexGrow, PropValue::Float(1.0)),
+            (PropKey::FlexShrink, PropValue::Float(1.0)),
+            (PropKey::FlexBasis, PropValue::Float(0.0)),
+            (PropKey::PaddingLeft, PropValue::Float(18.0)),
+        ]);
+        let field = input(
+            3,
+            2,
+            vec![
+                (PropKey::FontSize, PropValue::Float(16.0)),
+                (PropKey::FlexGrow, PropValue::Float(1.0)),
+                (PropKey::MinWidth, PropValue::Float(0.0)),
+            ],
+        );
+        let layouts = layout_row(vec![search.clone(), field.clone()], 100.0);
+        assert_eq!(layouts[&2].width, 100.0);
+        search
+            .properties
+            .insert(PropKey::MinWidthAuto, PropValue::Boolean(true));
+        let layouts = layout_row(vec![search.clone(), field.clone()], 100.0);
+        assert_eq!(layouts[&2].width, 218.0);
+        // A wider share keeps growing past the minimum.
+        let layouts = layout_row(vec![search, field], 400.0);
+        assert_eq!(layouts[&2].width, 400.0);
     }
 }

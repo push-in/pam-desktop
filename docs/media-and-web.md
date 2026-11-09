@@ -295,6 +295,10 @@ A canvas holds at most 10,000 commands and one mebibyte of encoded commands. The
 
 The host also draws vector paths (absolute `M`, `L`, `C`, `Q` and `Z`, at most 4096 characters) filled with a colour or a linear gradient or stroked, single lines of text, and reports pointer down, move, up and leave over a canvas. Those commands are used through `pushinbr/pam-desktop-canvas` (`Canvas`, `Path`, `CanvasView`), the library the [charts](charts.md#the-canvas-library) are drawn with. GTK, AppKit and Win32 implement them; they were checked on Linux.
 
+### Bitmap canvases
+
+`PropKey::CanvasBitmap` (property 2039) draws a canvas like an HTML `<canvas>`: the drawing goes on a bitmap of `floor(size × scale)` device pixels, is clipped there and painted into the element's pixel-snapped rectangle. When the snapped rectangle has the bitmap's size (the usual case) the bitmap lands 1:1, so lines and glyphs stay crisp; otherwise it is scaled into it, as Chromium does (a 236.8 px box at y 377.06 shows its 236 px bitmap on 237 rows). Charts set it with `integerBitmap()`. The scale is recomputed when the box moves. Hosts older than the property draw at the fractional size.
+
 ## DrawingCanvas
 
 `DrawingCanvas` is a freehand surface over a picture. The user draws with the pointer; the strokes are a JSON document that PHP keeps in state.

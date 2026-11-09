@@ -20,7 +20,13 @@ final class MediaTile extends Component
         public string $label,
         public bool $primary = false,
         public bool $enabled = true,
+        /** Border and badge colour of the primary image (Tailwind indigo-500 by default). */
+        public int|string $accent = 0xFF6366F1,
     ) {
+        // Templates hand colours over as packed ARGB integers.
+        if (is_string($accent) && preg_match('/^#[0-9A-Fa-f]{6}$/D', $accent) !== 1) {
+            throw new \InvalidArgumentException('MediaTile accent must be #RRGGBB or an ARGB integer.');
+        }
     }
 
     public function enter(): void
@@ -60,9 +66,9 @@ final class MediaTile extends Component
 }
 ?>
 <template>
-    <Pressable aspectRatio="1" width="100%" borderWidth="1" :borderColor="$primary ? '#6366F1' : '#293241'" borderRadius="12" overflow="hidden" :enabled="$enabled" on:hoverIn="enter" on:hoverOut="leave" on:focus="focus" on:press="activate" :accessibilityLabel="$label" backgroundColor="#101827">
+    <Pressable aspectRatio="1" width="100%" borderWidth="1" :borderColor="$primary ? $accent : '#293241'" borderRadius="12" overflow="hidden" :enabled="$enabled" on:hoverIn="enter" on:hoverOut="leave" on:focus="focus" on:press="activate" :accessibilityLabel="$label" backgroundColor="#101827">
         <Image :source="$source" width="100%" height="100%" resizeMode="cover" :accessibilityLabel="$label" />
-        <View p-if="$primary" position="absolute" left="12" top="12" padding="5" borderRadius="6" backgroundColor="#6366F1"><Text textColor="#FFFFFF" fontSize="8" fontWeight="800">PRINCIPAL</Text></View>
+        <View p-if="$primary" position="absolute" left="12" top="12" paddingVertical="4" paddingHorizontal="8" borderRadius="8" :backgroundColor="$accent"><Text textColor="#FFFFFF" fontSize="8" lineHeight="12" fontWeight="900">PRINCIPAL</Text></View>
         <Row p-if="$hovered || $focused" position="absolute" left="0" top="0" width="100%" height="100%" backgroundColor="#99000000" alignItems="center" justifyContent="center" gap="8">
             <Button p-if="!$primary" label="★" accessibilityLabel="Definir imagem principal" on:press="makePrimary" :enabled="$enabled" width="32" height="32" borderRadius="16" backgroundColor="#2563EB" textColor="#FFFFFF" />
             <Button label="×" :accessibilityLabel="uiText('media.remove')" on:press="remove" :enabled="$enabled" width="32" height="32" borderRadius="16" backgroundColor="#F43F5E" textColor="#FFFFFF" />

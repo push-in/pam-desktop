@@ -31,6 +31,8 @@ const STATE_FOCUSED: u8 = 2;
 const STATE_HOVERED: u8 = 3;
 // IDs4–9 are PHP-evaluated states. Keep10 aligned with StyleInteractionState.
 const STATE_FOCUS_WITHIN: u8 = 10;
+/// `:focus-visible`: focused while the last input was the keyboard.
+const STATE_FOCUS_VISIBLE: u8 = 11;
 
 #[derive(Clone, Copy, Debug)]
 struct Press {
@@ -70,7 +72,10 @@ impl StateStyles {
             let (Ok(state), Some(rules)) = (state.parse::<u8>(), rules.as_object()) else {
                 continue;
             };
-            if !(STATE_PRESSED..=STATE_HOVERED).contains(&state) && state != STATE_FOCUS_WITHIN {
+            if !(STATE_PRESSED..=STATE_HOVERED).contains(&state)
+                && state != STATE_FOCUS_WITHIN
+                && state != STATE_FOCUS_VISIBLE
+            {
                 continue;
             }
             let mut props = PropMap::new();
@@ -132,6 +137,10 @@ pub struct Interaction {
     hovered: Vec<NodeId>,
     focused: Option<NodeId>,
     focus_within: Vec<NodeId>,
+    /// The last input was the keyboard (CSS `:focus-visible` heuristics):
+    /// a key press sets it, a pointer press clears it, and focus moved by
+    /// the application (a dialog's autofocus) keeps it as it is.
+    keyboard_modality: bool,
     pointer: Option<Point>,
     /// A pointer move waiting to be reported (one per drain).
     pending_move: Option<(NodeId, Vec<u8>)>,
@@ -332,6 +341,7 @@ impl Interaction {
                 (hovered, STATE_HOVERED),
                 (self.focus_within.contains(&id), STATE_FOCUS_WITHIN),
                 (focused, STATE_FOCUSED),
+                (focused && self.keyboard_modality, STATE_FOCUS_VISIBLE),
                 (pressed, STATE_PRESSED),
             ] {
                 if !active {
@@ -570,6 +580,7 @@ impl Interaction {
         match pointer.phase {
             PointerPhase::Down => {
                 self.pointer = Some(pointer.position);
+                self.set_keyboard_modality(ctx, false);
                 if pointer.button == PointerButton::Primary {
                     self.pointer_down(ctx, pointer.position);
                 }
@@ -893,6 +904,16 @@ impl Interaction {
 
     // ---- keyboard ----------------------------------------------------------
 
+    /// A key press (`true`) or a pointer press (`false`): restyles the
+    /// focused node when its `:focus-visible` state changes.
+    pub fn set_keyboard_modality(&mut self, ctx: &mut Ctx<'_>, keyboard: bool) {
+        if std::mem::replace(&mut self.keyboard_modality, keyboard) != keyboard
+            && let Some(focused) = self.focused
+        {
+            self.restyle(ctx, focused);
+        }
+    }
+
     pub fn on_focus(&mut self, ctx: &mut Ctx<'_>, id: NodeId, focused: bool) {
         let previous = self.focused;
         if focused {
@@ -1067,5 +1088,12 @@ mod tests {
         assert_eq!(styles.get(STATE_HOVERED).expect("hover").len(), 1);
         assert!(styles.get(5).is_none());
         assert!(StateStyles::parse("not json").states.is_empty());
+        let visible = StateStyles::parse(r#"{"11":{"37":4294967295}}"#);
+        assert_eq!(
+            visible
+                .get(STATE_FOCUS_VISIBLE)
+                .and_then(|props| props.get(&PropKey::BorderColor)),
+            Some(&PropValue::Integer(4_294_967_295))
+        );
     }
 }

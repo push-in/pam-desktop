@@ -8,7 +8,7 @@
 
 use pam_desktop_ui::geometry::Rect;
 use pam_desktop_ui::style::{Border, Decoration, Radii};
-use pam_desktop_ui::text::{FontSpec, SPACER_OPEN, Spacer, TextAlign, TextBlock};
+use pam_desktop_ui::text::{FontSpec, InlineBox, SPACER_OPEN, Spacer, TextAlign, TextBlock};
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_BREAK_CONDITION, DWRITE_BREAK_CONDITION_MAY_NOT_BREAK, DWRITE_BREAK_CONDITION_NEUTRAL,
     DWRITE_CLUSTER_METRICS, DWRITE_FONT_METRICS, DWRITE_FONT_STRETCH_NORMAL,
@@ -114,17 +114,115 @@ pub fn font_extents(
     }
 }
 
+/// Blink's text-field metrics of a font (`SimpleFontData::PlatformInit` on
+/// Windows, through Skia's DirectWrite port): the average is the OS/2
+/// `xAvgCharWidth` (the `x` advance when it is 0), the maximum the rounded
+/// width of the head bounding box (twice the rounded ascent without one).
+pub fn control_metrics(
+    collection: Option<&IDWriteFontCollection>,
+    family: &str,
+    font: &FontSpec,
+) -> Option<pam_desktop_ui::text::CharMetrics> {
+    let collection = collection?;
+    let name = wide(family);
+    let style = if font.italic {
+        DWRITE_FONT_STYLE_ITALIC
+    } else {
+        DWRITE_FONT_STYLE_NORMAL
+    };
+    // SAFETY: COM calls on live objects; the name is NUL-terminated, the out
+    // pointers refer to live locals and every table read stays within the
+    // size DirectWrite reports, before the table is released.
+    unsafe {
+        let (mut index, mut exists) = (0_u32, BOOL(0));
+        collection
+            .FindFamilyName(PCWSTR(name.as_ptr()), &mut index, &mut exists)
+            .ok()?;
+        if !exists.as_bool() {
+            return None;
+        }
+        let found = collection
+            .GetFontFamily(index)
+            .and_then(|family| {
+                family.GetFirstMatchingFont(
+                    DWRITE_FONT_WEIGHT(i32::from(font.weight.clamp(1, 999))),
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    style,
+                )
+            })
+            .ok()?;
+        let face = found.CreateFontFace().ok()?;
+        let mut metrics = DWRITE_FONT_METRICS::default();
+        face.GetMetrics(&mut metrics);
+        if metrics.designUnitsPerEm == 0 {
+            return None;
+        }
+        let unit = font.size / f32::from(metrics.designUnitsPerEm);
+        let table_i16 = |tag: &[u8; 4], offset: usize| -> Option<i16> {
+            let (mut data, mut size, mut context, mut exists) =
+                (std::ptr::null_mut(), 0_u32, std::ptr::null_mut(), BOOL(0));
+            face.TryGetFontTable(
+                u32::from_le_bytes(*tag),
+                &mut data,
+                &mut size,
+                &mut context,
+                &mut exists,
+            )
+            .ok()?;
+            if !exists.as_bool() {
+                return None;
+            }
+            let value = (!data.is_null() && size as usize >= offset + 2).then(|| {
+                let bytes = std::slice::from_raw_parts(data.cast::<u8>().add(offset), 2);
+                i16::from_be_bytes([bytes[0], bytes[1]])
+            });
+            face.ReleaseFontTable(context);
+            value
+        };
+        let average = match table_i16(b"OS/2", 2).filter(|value| *value != 0) {
+            Some(average) => f32::from(average) * unit,
+            None => {
+                let mut code = [u32::from(b'x')];
+                let mut glyph = [0_u16];
+                face.GetGlyphIndices(code.as_mut_ptr(), 1, glyph.as_mut_ptr())
+                    .ok()?;
+                let mut advance =
+                    [windows::Win32::Graphics::DirectWrite::DWRITE_GLYPH_METRICS::default()];
+                face.GetDesignGlyphMetrics(glyph.as_ptr(), 1, advance.as_mut_ptr(), false)
+                    .ok()?;
+                advance[0].advanceWidth as f32 * unit
+            }
+        };
+        let maximum = match (table_i16(b"head", 36), table_i16(b"head", 40)) {
+            (Some(x_min), Some(x_max)) => {
+                ((f32::from(x_max) - f32::from(x_min)) * unit + 0.5).floor()
+            }
+            _ => 0.0,
+        };
+        let maximum = if maximum < 1.0 {
+            (f32::from(metrics.ascent) * unit + 0.5).floor() * 2.0
+        } else {
+            maximum
+        };
+        Some(pam_desktop_ui::text::CharMetrics { average, maximum })
+    }
+}
+
 /// The height and baseline an edge takes in its line: nothing, so the line
 /// keeps the height of its text, or the box's own line height around the
-/// content area (CSS half-leading).
+/// content area (CSS half-leading); an inline-block also holds its vertical
+/// padding and border.
 fn edge_metrics(
     width: f32,
-    line_height: f32,
+    inline: &InlineBox,
     (ascent, descent): (f32, f32),
 ) -> DWRITE_INLINE_OBJECT_METRICS {
-    let (height, baseline) = if line_height > 0.0 {
-        let leading = (line_height - ascent - descent) / 2.0;
-        (line_height, ascent + leading)
+    let (height, baseline) = if inline.line_height > 0.0 {
+        let leading = (inline.line_height - ascent - descent) / 2.0;
+        (
+            inline.line_box_height(),
+            inline.edge_above() + ascent + leading,
+        )
     } else {
         (0.0, 0.0)
     };
@@ -214,7 +312,7 @@ pub fn attach(
             .get(inline.runs.start)
             .map_or((0.0, 0.0), |run| extents(&run.font));
         let edge: IDWriteInlineObject = Edge {
-            metrics: edge_metrics(place.spacer.width, inline.line_height, content),
+            metrics: edge_metrics(place.spacer.width, inline, content),
             opens: place.spacer.character == SPACER_OPEN,
         }
         .into();
@@ -405,7 +503,7 @@ mod tests {
     use super::*;
     use pam_desktop_ui::color::Color;
     use pam_desktop_ui::geometry::Point;
-    use pam_desktop_ui::text::{InlineBox, TextRun};
+    use pam_desktop_ui::text::TextRun;
     use windows::Win32::Graphics::DirectWrite::{
         DWRITE_FACTORY_TYPE_SHARED, DWriteCreateFactory, IDWriteFactory,
     };
@@ -437,6 +535,7 @@ mod tests {
                 radius: 4.0,
                 background: Some(Color::rgba(230, 230, 230, 255)),
                 line_height: 0.0,
+                inline_block: false,
             }],
             ..TextBlock::default()
         }

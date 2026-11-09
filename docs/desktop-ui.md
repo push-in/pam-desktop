@@ -143,7 +143,7 @@ Toast::service()->clear();
 ```
 
 - `add()`, `success`, `info`, `warn`, `error`, `remove` and `clear` take the same arguments as on a `<Toast>`; `messages` lists what is shown.
-- `configure(position, limit, width, offset, fontFamily, backdropBlur)` sets the geometry; call it once at boot.
+- `configure(position, limit, width, offset, fontFamily, backdropBlur, theme)` sets the geometry and look; call it once at boot. `ToastTheme` restyles the PrimeVue look for a product design system (surface, border, a severity edge on the left with `edgeWidth`/`edges`, icon colours per severity in `accents`, summary/detail colours and type, padding, radius, shadow, icon sizes, close offset); every token left out keeps the Aura look. A `<Toast>` takes the same `theme:` argument.
 - A dialog that reports an error shows it in the service: the message is drawn above the dialog and stays after the dialog closes.
 - Nothing is mounted while the stack is empty. With messages, the runtime mounts it next to the application root in a window layer: a modal with `ModalPresentation::Overlay`, stacked above every other modal, with no backdrop, that Escape never closes and that lets presses outside its messages through. `Pam\Desktop\UI\WindowLayer::set($key, $renderable)` gives other content the same layer.
 - It belongs to the main window.
@@ -187,7 +187,7 @@ The blur is drawn on GTK; on macOS and Windows see [Platforms](#platforms).
 $this->active = new Checkbox($this->enabled, fn (bool $checked) => $this->enabled = $checked, label: 'Enabled');
 ```
 
-`size` is 24 by default; `theme` takes a `SelectTheme`. Space and Enter toggle it while focused.
+`size` is 24 by default; `theme` takes a `SelectTheme`. Space and Enter toggle it while focused. `boxSize` paints a smaller box at the top-left of the `size` slot (PrimeVue `.p-checkbox` vs `.p-checkbox-box`, e.g. `size: 20, boxSize: 18`) and `radius` sets its corners (5 by default).
 
 ## ProgressButton
 
@@ -218,6 +218,9 @@ $theme = new SelectTheme(
 | --- | --- |
 | Colours | `surface`, `text`, `muted`, `border`, `highlight`, and the optional `inputSurface`, `popupSurface`, `filterSurface`, `optionText`, `popupBorder`, `filterBorder`, `selectedSurface`, `selectedText`, `clearIconColor`, `triggerIconColor` |
 | Type | `optionFontSize` (8 to 32), `optionFontWeight`, `fontFamily` (`'system-ui'`), `iconFont` |
+| Focus | `focusBorder`, `focusRing`, `focusRingWidth` (0 to 8, default 2): border and `box-shadow: 0 0 0 <width>` ring of an open select field and of a focused `DatePicker` field (the picker gives the focus back to its field when it applies). Null keeps the built-in focus style |
+| Placeholder | `placeholderColor` (null: the field text at 45%, the hosts' dimmed default) |
+| Rows | `optionHeight` (16 to 96, null = 36): option height; select mode adds its 2px gap. PrimeVue: 2 × 8 padding + font size × 1.5 |
 | Popup | `popupElevation`, `popupMinWidth` (up to 1024), `popupOffset` (up to 32), `popupShadowColor`, `popupShadowOffsetY` (±64), `popupShadowBlur` (up to 64) |
 
 `AutocompleteInputStyle(height, fontSize, fontWeight, paddingHorizontal, radius)` sets the geometry of the field of `Autocomplete`, `Select` (`fieldStyle`) and `DatePicker`.

@@ -7,11 +7,12 @@
 use pam_desktop_wire::{NodeKind, PropKey, PropValue};
 
 use crate::animator::{Curve, Easing, Owner};
-use crate::backend::{NodeId, PointerButton, PointerEvent, PointerPhase};
+use crate::backend::{BackdropBoxes, NodeId, PointerButton, PointerEvent, PointerPhase};
 use crate::context::{Ctx, event_kind};
-use crate::geometry::{Affine, Rect};
+use crate::geometry::{Affine, Point, Rect};
 use crate::props::PropMap;
 use crate::scene::{Action, Change, IdMap, LayerOverride, LayerSlot, StyleLayer};
+use crate::style::{BackdropBox, Decoration};
 use crate::wiremap::WireMap;
 
 const PRESENTATION_FULL_SCREEN: i64 = 1;
@@ -49,6 +50,10 @@ struct Modal {
     animation: i64,
     sheet: bool,
     overlay: bool,
+    /// The dialog box whose outer shadow the backdrop composites.
+    shadow_box: Option<NodeId>,
+    /// Boxes inside it whose fills the backdrop composites too.
+    inner_fills: Vec<NodeId>,
 }
 
 /// A bottom sheet being dragged by its top edge.
@@ -98,6 +103,181 @@ fn snap_points(bytes: Option<&[u8]>) -> Vec<f32> {
     snaps
 }
 
+/// Kinds that paint nothing of their own with a plain decoration.
+fn is_container(kind: NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::View
+            | NodeKind::Column
+            | NodeKind::Row
+            | NodeKind::Scroll
+            | NodeKind::Pressable
+            | NodeKind::SafeAreaView
+            | NodeKind::KeyboardAvoidingView
+            | NodeKind::Spacer
+    )
+}
+
+/// The first box painted in the modal content `content`, when it has an
+/// outer shadow that falls straight on the backdrop (`backdrop`: the
+/// backdrop's frame): only empty containers (no fill, border, transform,
+/// opacity, scroll offset or z-index; clips no smaller than the backdrop)
+/// are painted before it. Its shadow in the backdrop's coordinates.
+fn shadow_box(ctx: &Ctx<'_>, content: NodeId, backdrop: Rect) -> Option<(NodeId, BackdropBox)> {
+    let mut stack = vec![content];
+    let mut visited = 0;
+    while let Some(id) = stack.pop() {
+        visited += 1;
+        if visited > 256 {
+            return None;
+        }
+        let node = ctx.scene.node(id)?;
+        if !node.layer.visible {
+            continue;
+        }
+        if node.layer.opacity < 0.999
+            || !node.layer.transform.is_identity()
+            || node
+                .props()
+                .integer(PropKey::ZIndex)
+                .is_some_and(|z| z != 0)
+        {
+            return None;
+        }
+        // The node's own paint (the overlay that moves it is ignored).
+        let decoration = Decoration::resolve(node.kind, node.props());
+        let shadow = match decoration.shadows.as_slice() {
+            [] => None,
+            [shadow] if !shadow.inset => Some(*shadow),
+            _ => return None,
+        };
+        let fill = (decoration.background.a > 0
+            && decoration.background.a < 255
+            && decoration.gradients.is_empty())
+        .then_some(decoration.background);
+        if shadow.is_some() || fill.is_some() {
+            let rect = Rect::new(
+                node.frame.x - backdrop.x,
+                node.frame.y - backdrop.y,
+                node.frame.width,
+                node.frame.height,
+            );
+            return Some((
+                id,
+                BackdropBox {
+                    rect,
+                    radii: decoration.radii,
+                    shadow,
+                    fill,
+                    clip: None,
+                },
+            ));
+        }
+        let clips = decoration.clip;
+        let bare = Decoration {
+            clip: false,
+            ..decoration
+        };
+        if !is_container(node.kind) || !bare.is_plain() {
+            return None;
+        }
+        if clips && node.frame.intersect(backdrop) != Some(backdrop) {
+            return None;
+        }
+        if node.kind == NodeKind::Scroll && ctx.scene.scroll_offset(id) != Point::ZERO {
+            return None;
+        }
+        stack.extend(node.children.iter().rev().copied());
+    }
+    None
+}
+
+/// Kinds that scroll (and clip) their content.
+fn is_scroller(kind: NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Scroll | NodeKind::VirtualList | NodeKind::List | NodeKind::SectionList
+    )
+}
+
+/// Boxes inside the dialog box `dialog` whose translucent plain fills
+/// Chromium blends into the dialog's layer: reached through boxes that are
+/// empty or themselves such fills (an opaque, gradient or shadowed box, an
+/// own layer, opacity, transform, z-index or a scrolled view leaves its
+/// subtree to the backend), each cut to its clipping ancestors.
+fn inner_fills(ctx: &Ctx<'_>, dialog: NodeId, backdrop: Rect) -> Vec<(NodeId, BackdropBox)> {
+    let local = |rect: Rect| {
+        Rect::new(
+            rect.x - backdrop.x,
+            rect.y - backdrop.y,
+            rect.width,
+            rect.height,
+        )
+    };
+    let Some(node) = ctx.scene.node(dialog) else {
+        return Vec::new();
+    };
+    let own = Decoration::resolve(node.kind, node.props());
+    let clip = own.clip.then(|| local(node.frame));
+    let mut stack: Vec<(NodeId, Option<Rect>)> = node
+        .children
+        .iter()
+        .rev()
+        .map(|child| (*child, clip))
+        .collect();
+    let mut found = Vec::new();
+    let mut visited = 0;
+    while let Some((id, clip)) = stack.pop() {
+        visited += 1;
+        if visited > 512 || found.len() >= 64 {
+            break;
+        }
+        let Some(node) = ctx.scene.node(id) else {
+            continue;
+        };
+        let props = node.props();
+        if !node.layer.visible
+            || node.layer.opacity < 0.999
+            || !node.layer.transform.is_identity()
+            || props.integer(PropKey::ZIndex).is_some_and(|z| z != 0)
+            || props.flag_or(PropKey::CompositedLayer, false)
+            || (is_scroller(node.kind) && ctx.scene.scroll_offset(id) != Point::ZERO)
+            // Hover, focus and press restyle these boxes later.
+            || matches!(node.kind, NodeKind::Pressable | NodeKind::Button)
+            || props.text(PropKey::NativeStateStyles).is_some_and(|styles| !styles.is_empty())
+        {
+            continue;
+        }
+        let decoration = Decoration::resolve(node.kind, props);
+        let background = decoration.background;
+        if !decoration.shadows.is_empty() || !decoration.gradients.is_empty() || background.a == 255
+        {
+            continue;
+        }
+        let frame = local(node.frame);
+        if background.a > 0 {
+            found.push((
+                id,
+                BackdropBox {
+                    rect: frame,
+                    radii: decoration.radii,
+                    shadow: None,
+                    fill: Some(background),
+                    clip,
+                },
+            ));
+        }
+        let clips = decoration.clip || is_scroller(node.kind);
+        let inner_clip = if clips {
+            Some(clip.map_or(frame, |clip| clip.intersect(frame).unwrap_or(Rect::ZERO)))
+        } else {
+            clip
+        };
+        stack.extend(node.children.iter().rev().map(|child| (*child, inner_clip)));
+    }
+    found
+}
+
 fn content_of(ctx: &Ctx<'_>, modal: NodeId) -> Option<NodeId> {
     let node = ctx.scene.node(modal)?;
     node.children.iter().copied().find(|child| {
@@ -128,6 +308,8 @@ impl Modals {
                         animation: ANIMATION_NONE,
                         sheet: false,
                         overlay: false,
+                        shadow_box: None,
+                        inner_fills: Vec::new(),
                     },
                 );
                 self.dirty = true;
@@ -136,6 +318,10 @@ impl Modals {
                 // Unmounting a visible modal closes it without a dismiss event.
                 self.modals.remove(&id);
                 self.stack.retain(|presented| *presented != id);
+                if let Some(top) = self.top().and_then(|top| self.modals.get_mut(&top)) {
+                    top.restyle = true;
+                    self.dirty = true;
+                }
                 ctx.animator.cancel(Owner::ModalBackdrop(id), ctx.now_ms);
                 ctx.animator.cancel(Owner::ModalContent(id), ctx.now_ms);
             }
@@ -159,6 +345,25 @@ impl Modals {
                 // The modal or its content moved: chrome follows.
                 let modal = if self.modals.contains_key(&id) {
                     Some(id)
+                } else if self.modals.values().any(|modal| modal.shadow_box.is_some()) {
+                    // A box deeper in a dialog moved: its shadow may be the
+                    // one the backdrop composites.
+                    let mut current = id;
+                    let mut found = None;
+                    for _ in 0..64 {
+                        let Some(parent) = ctx.scene.node(current).map(|node| node.parent) else {
+                            break;
+                        };
+                        if self.modals.contains_key(&parent) {
+                            found = Some(parent);
+                            break;
+                        }
+                        if parent == current {
+                            break;
+                        }
+                        current = parent;
+                    }
+                    found
                 } else {
                     ctx.scene
                         .node(id)
@@ -180,6 +385,7 @@ impl Modals {
         }
         self.dirty = false;
         let ids: Vec<NodeId> = self.modals.keys().copied().collect();
+        let mut entering = Vec::new();
         for id in ids {
             let Some(modal) = self.modals.get_mut(&id) else {
                 continue;
@@ -195,7 +401,7 @@ impl Modals {
                     .is_some_and(|node| node.props().flag_or(PropKey::Visible, true));
                 let presented = matches!(modal.phase, Phase::Entering | Phase::Shown);
                 if visible && !presented {
-                    self.present(ctx, id);
+                    entering.push(id);
                 } else if !visible && presented {
                     self.dismiss(ctx, id);
                 }
@@ -207,6 +413,15 @@ impl Modals {
             {
                 self.style(ctx, id);
             }
+        }
+        // Modals that appear in the same commit stack in tree order, like
+        // dialogs opened one after another (a later sibling on top).
+        if entering.len() > 1 {
+            let order = ctx.scene.nodes_in_order();
+            entering.sort_by_key(|id| order.iter().position(|node| node == id));
+        }
+        for id in entering {
+            self.present(ctx, id);
         }
     }
 
@@ -228,6 +443,22 @@ impl Modals {
         let passive = self.stack.iter().copied().filter(overlay).collect();
         ctx.scene.set_overlays(self.stack.clone());
         ctx.scene.set_passive_overlays(passive);
+        // Only the topmost dialog's backdrop composites its boxes.
+        if ctx.scene.environment.backdrop_boxes == BackdropBoxes::Topmost {
+            let presented: Vec<NodeId> = self
+                .stack
+                .iter()
+                .copied()
+                .filter(|id| {
+                    self.modals
+                        .get(id)
+                        .is_some_and(|modal| modal.phase != Phase::Hidden && !modal.overlay)
+                })
+                .collect();
+            for id in presented {
+                self.style(ctx, id);
+            }
+        }
     }
 
     #[must_use]
@@ -312,6 +543,7 @@ impl Modals {
         }
         modal.phase = Phase::Exiting;
         let (animation, sheet) = (modal.animation, modal.sheet);
+        self.place_shadow(ctx, id, None, Vec::new());
         let backdrop_from = ctx
             .animator
             .cancel(Owner::ModalBackdrop(id), ctx.now_ms)
@@ -370,6 +602,7 @@ impl Modals {
 
     /// Backdrop colour, sheet corners and grabber, and chrome geometry.
     fn style(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
+        let topmost = self.top() == Some(id);
         let Some(node) = ctx.scene.node(id) else {
             return;
         };
@@ -414,6 +647,25 @@ impl Modals {
                 (blur > 0.0).then_some(PropValue::Float(f64::from(blur))),
             );
         }
+        let translucent = (color >> 24) & 0xFF;
+        // Only the topmost dialog: a lower one shows only through the
+        // composited backdrop above it, which would keep three window-sized
+        // composites for a stack of three.
+        let shadow = (match ctx.scene.environment.backdrop_boxes {
+            BackdropBoxes::None => false,
+            BackdropBoxes::Topmost => topmost,
+            BackdropBoxes::All => true,
+        } && blur > 0.0
+            && !sheet
+            && translucent > 0
+            && translucent < 255)
+            .then(|| content.and_then(|content| shadow_box(ctx, content, frame)))
+            .flatten();
+        let inner = shadow
+            .as_ref()
+            .filter(|(_, painted)| painted.fill.is_some())
+            .map(|(node, _)| inner_fills(ctx, *node, frame))
+            .unwrap_or_default();
         if let Some(content) = content {
             // A sheet rounds its top corners and clips its content to them.
             let overlay = sheet.then(|| {
@@ -457,6 +709,87 @@ impl Modals {
             }
             _ => {}
         }
+        self.place_shadow(ctx, id, shadow, inner);
+    }
+
+    /// Moves the outer shadow of the dialog box `shadow` (or none) onto the
+    /// backdrop of `id`: Chromium paints a dialog's shadow inside its mask's
+    /// layer, blended in 8 bits with the mask's fill before the layer meets
+    /// the blurred backdrop, which only a backend compositing the backdrop
+    /// itself reproduces.
+    fn place_shadow(
+        &mut self,
+        ctx: &mut Ctx<'_>,
+        id: NodeId,
+        shadow: Option<(NodeId, BackdropBox)>,
+        inner: Vec<(NodeId, BackdropBox)>,
+    ) {
+        let Some(modal) = self.modals.get_mut(&id) else {
+            return;
+        };
+        let next = shadow.as_ref().map(|(node, _)| *node);
+        if modal.shadow_box != next
+            && let Some(previous) = modal.shadow_box
+        {
+            ctx.scene
+                .set_style_overlay(previous, StyleLayer::Presenter, None);
+            ctx.scene.set_fill_composited(previous, false);
+        }
+        if let Some((node, painted)) = &shadow {
+            // The box paints neither what the backdrop composites.
+            let mut overlay = PropMap::new();
+            if painted.shadow.is_some() {
+                overlay.insert(PropKey::BoxShadows, PropValue::String("[]".to_owned()));
+            }
+            ctx.scene
+                .set_style_overlay(*node, StyleLayer::Presenter, Some(overlay));
+            ctx.scene.set_fill_composited(*node, painted.fill.is_some());
+        }
+        modal.shadow_box = next;
+        let inner_ids: Vec<NodeId> = inner.iter().map(|(node, _)| *node).collect();
+        for previous in &modal.inner_fills {
+            if !inner_ids.contains(previous) {
+                ctx.scene.set_fill_composited(*previous, false);
+            }
+        }
+        for node in &inner_ids {
+            ctx.scene.set_fill_composited(*node, true);
+        }
+        modal.inner_fills = inner_ids;
+        if let Some(backdrop) = modal.backdrop {
+            let boxes = shadow
+                .map(|(_, painted)| {
+                    std::iter::once(painted)
+                        .chain(inner.into_iter().map(|(_, painted)| painted))
+                        .collect()
+                })
+                .unwrap_or_default();
+            ctx.scene.set_backdrop_boxes(backdrop, boxes);
+        }
+    }
+
+    /// A view scrolled: boxes the backdrop composites inside it moved.
+    pub fn on_scroll(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
+        if !self.modals.values().any(|modal| modal.shadow_box.is_some()) {
+            return;
+        }
+        let mut current = id;
+        for _ in 0..64 {
+            if self.modals.contains_key(&current) {
+                if self
+                    .modals
+                    .get(&current)
+                    .is_some_and(|modal| modal.shadow_box.is_some())
+                {
+                    self.style(ctx, current);
+                }
+                return;
+            }
+            match ctx.scene.node(current).map(|node| node.parent) {
+                Some(parent) if parent != current => current = parent,
+                _ => return,
+            }
+        }
     }
 
     /// Frame-clock sample of a backdrop or content tween.
@@ -476,6 +809,7 @@ impl Modals {
                             if let Some(modal) = self.modals.get_mut(&id) {
                                 modal.phase = Phase::Shown;
                             }
+                            self.style(ctx, id);
                         }
                         Phase::Exiting => self.finish_exit(ctx, id),
                         _ => {}

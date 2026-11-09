@@ -152,15 +152,31 @@ pub enum GradientShape {
         start: Point,
         end: Point,
     },
-    /// Center in fractions of the box; radii in fractions of width/height.
+    /// Center in fractions of the box; the ending shape is resolved
+    /// against the painted box by [`Gradient::radii`].
     Radial {
         center: Point,
-        radius_x: f32,
-        radius_y: f32,
+        circle: bool,
+        extent: RadialExtent,
     },
     Conic {
         center: Point,
         angle: f32,
+    },
+}
+
+/// CSS `radial-gradient()` ending-shape size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RadialExtent {
+    ClosestSide,
+    ClosestCorner,
+    FarthestSide,
+    FarthestCorner,
+    /// Explicit radii: `(value, is_fraction)`; a fraction is of the box
+    /// width (horizontal) or height (vertical).
+    Explicit {
+        horizontal: (f32, bool),
+        vertical: (f32, bool),
     },
 }
 
@@ -193,6 +209,70 @@ impl Gradient {
             )),
             _ => None,
         }
+    }
+
+    /// Horizontal and vertical radii of a radial gradient's ending shape
+    /// for a box of `size` (CSS sizing: `closest-side` … `farthest-corner`
+    /// measured from the center, or explicit radii), at least 1.
+    #[must_use]
+    pub fn radii(&self, size: Size) -> Option<(f32, f32)> {
+        let GradientShape::Radial {
+            center,
+            circle,
+            extent,
+        } = &self.shape
+        else {
+            return None;
+        };
+        let (cx, cy) = (center.x * size.width, center.y * size.height);
+        let (left, right) = (cx.abs(), (size.width - cx).abs());
+        let (top, bottom) = (cy.abs(), (size.height - cy).abs());
+        let (near_x, far_x) = (left.min(right), left.max(right));
+        let (near_y, far_y) = (top.min(bottom), top.max(bottom));
+        let (horizontal, vertical) = match (*circle, *extent) {
+            (
+                _,
+                RadialExtent::Explicit {
+                    horizontal,
+                    vertical,
+                },
+            ) => {
+                let resolve = |(value, fraction): (f32, bool), side: f32| {
+                    if fraction { value * side } else { value }
+                };
+                let x = resolve(horizontal, size.width);
+                (
+                    x,
+                    if *circle {
+                        x
+                    } else {
+                        resolve(vertical, size.height)
+                    },
+                )
+            }
+            (true, RadialExtent::ClosestSide) => (near_x.min(near_y), near_x.min(near_y)),
+            (true, RadialExtent::FarthestSide) => (far_x.max(far_y), far_x.max(far_y)),
+            (true, RadialExtent::ClosestCorner) => {
+                let radius = near_x.hypot(near_y);
+                (radius, radius)
+            }
+            (true, RadialExtent::FarthestCorner) => {
+                let radius = far_x.hypot(far_y);
+                (radius, radius)
+            }
+            (false, RadialExtent::ClosestSide) => (near_x, near_y),
+            (false, RadialExtent::FarthestSide) => (far_x, far_y),
+            // An ellipse through the corner with the aspect of the sides.
+            (false, RadialExtent::ClosestCorner) => (
+                near_x * std::f32::consts::SQRT_2,
+                near_y * std::f32::consts::SQRT_2,
+            ),
+            (false, RadialExtent::FarthestCorner) => (
+                far_x * std::f32::consts::SQRT_2,
+                far_y * std::f32::consts::SQRT_2,
+            ),
+        };
+        Some((horizontal.max(1.0), vertical.max(1.0)))
     }
 
     /// Color at `offset` (used by hosts without native gradients and by tests).
@@ -255,6 +335,29 @@ pub struct Decoration {
     pub color_matrix: Option<[f32; 20]>,
     /// Blur of whatever is behind the view (frosted glass).
     pub backdrop_blur: f32,
+    /// Boxes painted right over this backdrop view whose outer shadow and
+    /// translucent background a backend that composites the backdrop
+    /// itself paints into it (the boxes then paint neither); see
+    /// `presenter::modal`.
+    pub backdrop_boxes: Vec<BackdropBox>,
+    /// The translucent background is composited by the backdrop under the
+    /// box (`backdrop_boxes`): the backend paints no fill (everything else
+    /// still reads `background`).
+    pub fill_composited: bool,
+}
+
+/// A box painted right over a backdrop (`rect`, rounded by `radii`, in the
+/// backdrop view's coordinates): its outer shadow and translucent
+/// background, composited into the backdrop. The first box of a list is
+/// the dialog; the others, boxes inside it, add their fills to its layer,
+/// each cut to `clip` (its clipping ancestors).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BackdropBox {
+    pub rect: Rect,
+    pub radii: Radii,
+    pub shadow: Option<Shadow>,
+    pub fill: Option<Color>,
+    pub clip: Option<Rect>,
 }
 
 impl Decoration {
@@ -375,7 +478,15 @@ impl Decoration {
                     && !radii.is_zero()),
             blur: props.number_or(PropKey::BlurRadius, 0.0).max(0.0),
             color_matrix: parse_color_matrix(props.text_or_empty(PropKey::FilterColorMatrix)),
-            backdrop_blur: props.number_or(PropKey::BackdropBlurRadius, 0.0).max(0.0),
+            // A Modal's `backdropBlurRadius` frosts its backdrop (the
+            // presenter's mask), not the full-window modal box as well.
+            backdrop_blur: if kind == NodeKind::Modal {
+                0.0
+            } else {
+                props.number_or(PropKey::BackdropBlurRadius, 0.0).max(0.0)
+            },
+            backdrop_boxes: Vec::new(),
+            fill_composited: false,
         }
     }
 }
@@ -542,8 +653,32 @@ fn parse_gradient(layer: &serde_json::Value) -> Option<Gradient> {
     let shape = match integer("t").unwrap_or(GRADIENT_LINEAR) {
         GRADIENT_RADIAL => GradientShape::Radial {
             center: center(),
-            radius_x: 0.5,
-            radius_y: 0.5,
+            circle: integer("e") == Some(0),
+            extent: match integer("z") {
+                Some(1) => RadialExtent::ClosestSide,
+                Some(2) => RadialExtent::ClosestCorner,
+                Some(3) => RadialExtent::FarthestSide,
+                Some(5) => {
+                    let radius = |key: &str| {
+                        let pair = layer.get(key).and_then(serde_json::Value::as_array);
+                        let value = pair
+                            .and_then(|pair| pair.first())
+                            .and_then(serde_json::Value::as_f64)
+                            .unwrap_or(0.5) as f32;
+                        let fraction = pair
+                            .and_then(|pair| pair.get(1))
+                            .and_then(serde_json::Value::as_i64)
+                            .unwrap_or(1)
+                            == 1;
+                        (value, fraction)
+                    };
+                    RadialExtent::Explicit {
+                        horizontal: radius("w"),
+                        vertical: radius("h"),
+                    }
+                }
+                _ => RadialExtent::FarthestCorner,
+            },
         },
         GRADIENT_CONIC => GradientShape::Conic {
             center: center(),
@@ -703,6 +838,34 @@ mod tests {
     use super::*;
     use crate::props::PropMap;
     use pam_desktop_wire::PropValue;
+
+    #[test]
+    fn radial_gradients_size_their_ending_shape_like_css() {
+        let radii = |wire: &str| {
+            let gradients = parse_gradients(wire);
+            gradients[0].radii(Size::new(200.0, 100.0)).expect("radial")
+        };
+        let stops = r#""s":[[4294901760,0,1],[0,1,1]]"#;
+        // circle at top left, farthest-corner: the box diagonal.
+        let (x, y) = radii(&format!(
+            r#"[{{"t":2,{stops},"e":0,"z":4,"c":[[0,1],[0,1]]}}]"#
+        ));
+        assert!((x - 200.0_f32.hypot(100.0)).abs() < 0.01 && x == y);
+        // Default ellipse at the center: sqrt(2) times the half sides.
+        let (x, y) = radii(&format!(r#"[{{"t":2,{stops},"e":1,"z":4}}]"#));
+        assert!((x - 100.0 * std::f32::consts::SQRT_2).abs() < 0.01);
+        assert!((y - 50.0 * std::f32::consts::SQRT_2).abs() < 0.01);
+        // circle closest-side at 20% bottom: the bottom edge is 0 away.
+        let (x, _) = radii(&format!(
+            r#"[{{"t":2,{stops},"e":0,"z":1,"c":[[0.2,1],[1,1]]}}]"#
+        ));
+        assert_eq!(x, 1.0);
+        // Explicit 40px 50%.
+        let (x, y) = radii(&format!(
+            r#"[{{"t":2,{stops},"e":1,"z":5,"w":[40,2],"h":[0.5,1]}}]"#
+        ));
+        assert_eq!((x, y), (40.0, 50.0));
+    }
 
     #[test]
     fn resolves_radii_borders_and_shadows() {

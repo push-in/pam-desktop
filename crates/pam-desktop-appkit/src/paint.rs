@@ -291,15 +291,61 @@ fn srgb() -> Option<CFRetained<CGColorSpace>> {
     CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))
 }
 
+/// Core Graphics interpolates stops unpremultiplied; CSS interpolates with
+/// premultiplied alpha, so a fade to `transparent` keeps its hue instead of
+/// darkening. A transparent stop takes each neighbour's colour on its side
+/// (exact), and a segment between two different partial alphas gets
+/// premultiplied intermediate stops.
+fn premultiplied_stops(source: &[GradientStop]) -> Vec<(f32, Color)> {
+    const STEPS: u8 = 8;
+    let mut stops = Vec::with_capacity(source.len() * 2);
+    for (index, stop) in source.iter().enumerate() {
+        let previous = index.checked_sub(1).map(|before| &source[before]);
+        if stop.color.a == 0 {
+            let mut neighbours = previous.into_iter().chain(source.get(index + 1)).peekable();
+            if neighbours.peek().is_none() {
+                stops.push((stop.offset, stop.color));
+            }
+            for neighbour in neighbours {
+                stops.push((
+                    stop.offset,
+                    Color {
+                        a: 0,
+                        ..neighbour.color
+                    },
+                ));
+            }
+            continue;
+        }
+        if let Some(previous) = previous
+            && previous.color.a != 0
+            && previous.color.a != stop.color.a
+            && (previous.color.r, previous.color.g, previous.color.b)
+                != (stop.color.r, stop.color.g, stop.color.b)
+        {
+            for step in 1..STEPS {
+                let t = f32::from(step) / f32::from(STEPS);
+                stops.push((
+                    previous.offset + (stop.offset - previous.offset) * t,
+                    previous.color.lerp(stop.color, t),
+                ));
+            }
+        }
+        stops.push((stop.offset, stop.color));
+    }
+    stops
+}
+
 fn cg_gradient(stops: &[GradientStop]) -> Option<CFRetained<CGGradient>> {
     if stops.is_empty() {
         return None;
     }
+    let stops = premultiplied_stops(stops);
     let mut components: Vec<CGFloat> = Vec::with_capacity(stops.len() * 4);
     let mut locations: Vec<CGFloat> = Vec::with_capacity(stops.len());
-    for stop in stops {
-        components.extend(stop.color.to_f32().map(CGFloat::from));
-        locations.push(CGFloat::from(stop.offset.clamp(0.0, 1.0)));
+    for (offset, color) in stops {
+        components.extend(color.to_f32().map(CGFloat::from));
+        locations.push(CGFloat::from(offset.clamp(0.0, 1.0)));
     }
     // SAFETY: `components` holds four values per location and both buffers
     // outlive the call, which copies them.
@@ -396,15 +442,9 @@ fn paint_gradient(context: &CGContext, size: Size, gradient: &Gradient) {
                 );
             }
         }
-        GradientShape::Radial {
-            center,
-            radius_x,
-            radius_y,
-        } => {
+        GradientShape::Radial { center, .. } => {
             let center = Point::new(center.x * size.width, center.y * size.height);
-            // Farthest-corner sizing, like the CSS default.
-            let horizontal = (radius_x * size.width * std::f32::consts::SQRT_2).max(1.0);
-            let vertical = (radius_y * size.height * std::f32::consts::SQRT_2).max(1.0);
+            let (horizontal, vertical) = gradient.radii(size).unwrap_or((1.0, 1.0));
             // How many radii the farthest corner is away, in the space
             // where the ellipse is the unit circle.
             let reach = if gradient.repeating {
@@ -800,6 +840,7 @@ pub fn paint_image(
 /// pixel in logical units.
 pub fn paint_drawing(context: &CGContext, commands: &[DrawCommand], hairline: f32) {
     let mut groups = 0_u32;
+    let mut bitmap = false;
     let close_group = |context: &CGContext| {
         CGContext::end_transparency_layer(Some(context));
         CGContext::restore_g_state(Some(context));
@@ -1036,11 +1077,34 @@ pub fn paint_drawing(context: &CGContext, commands: &[DrawCommand], hairline: f3
                     close_group(context);
                 }
             }
+            DrawCommand::Bitmap {
+                size,
+                scale_x,
+                scale_y,
+            } => {
+                // The rest draws on the canvas bitmap, scaled into the box.
+                if !bitmap {
+                    CGContext::save_g_state(Some(context));
+                    bitmap = true;
+                }
+                CGContext::scale_ctm(
+                    Some(context),
+                    CGFloat::from(*scale_x),
+                    CGFloat::from(*scale_y),
+                );
+                CGContext::clip_to_rect(
+                    Some(context),
+                    cg_rect(pam_desktop_ui::geometry::Rect::from_size(*size)),
+                );
+            }
         }
     }
     // An unbalanced list must not leave groups open on the view's context.
     for _ in 0..groups {
         close_group(context);
+    }
+    if bitmap {
+        CGContext::restore_g_state(Some(context));
     }
 }
 

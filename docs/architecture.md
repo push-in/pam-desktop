@@ -133,6 +133,14 @@ The desktop table:
 | 2012 | `WindowHeight` | | 2026 | `ScrollbarThickness` |
 | 2013 | `WindowResizable` | | 2027 | `ScrollbarColor` |
 | 2014 | `WindowModal` | | 2028 | `TextSpanBoxes` |
+| 2029 | `TextInlineBlock` | | 2037 | `InlineLevel` |
+| 2030 | `TableDisplay` | | 2038 | `ScrollBothAxes` |
+| 2031 | `TableLayout` | | 2039 | `CanvasBitmap` |
+| 2032 | `BorderCollapse` | | 2040 | `ScrollbarTrackColor` |
+| 2033 | `VerticalAlign` | | 2041 | `InputSize` |
+| 2034 | `LengthUnits` | | 2042 | `MenuListOptions` |
+| 2035 | `CompositedLayer` | | 2043 | `MinWidthAuto` |
+| 2036 | `FontSmoothing` | | | |
 
 | Id | Event |
 | --- | --- |

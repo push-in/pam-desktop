@@ -259,6 +259,7 @@ impl Shared {
             },
             insets: config.insets,
             vertical: VerticalAlign::Top,
+            inline: false,
         }));
     }
 

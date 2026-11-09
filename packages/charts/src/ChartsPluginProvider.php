@@ -49,6 +49,9 @@ final class ChartsPluginProvider
             ->lineWidth(Props::float($props['lineWidth'] ?? null, LineChart::LINE_WIDTH))
             ->markers(Props::bool($props['markers'] ?? null), Props::float($props['pointRadius'] ?? null, 3.0), Props::color($props['pointBackground'] ?? null))
             ->areaOpacity(Props::float($props['areaStartOpacity'] ?? null, 0.35), Props::float($props['areaEndOpacity'] ?? null, 0.0))
+            ->areaFill(Props::color($props['areaColor'] ?? null),
+                isset($props['areaGradientStart']) ? Props::float($props['areaGradientStart'], 0.0) : null,
+                isset($props['areaGradientEnd']) ? Props::float($props['areaGradientEnd'], 0.0) : null)
             ->area(Props::bool($props['area'] ?? null, $area));
 
         return self::cartesian($chart, $props);
@@ -82,7 +85,20 @@ final class ChartsPluginProvider
         $chart = $chart->legendValues(Props::bool($props['legendValues'] ?? null, true))
             ->legendSpacing(Props::float($props['legendSpacing'] ?? null, DonutChart::LEGEND_ROW_HEIGHT))
             ->legendInline(Props::bool($props['legendInline'] ?? null));
-        $chart = $chart->thickness(Props::float($props['thickness'] ?? null, 18.0));
+        $chart = $chart->thickness(Props::float($props['thickness'] ?? null, 18.0))
+            ->cornerRadius(Props::float($props['cornerRadius'] ?? null, 0.0))
+            ->spacing(Props::float($props['spacing'] ?? null, 0.0));
+        if (isset($props['cutout'])) {
+            $chart = $chart->cutout(Props::float($props['cutout'], 0.0));
+        }
+        $border = Props::color($props['borderColor'] ?? null);
+        if ($border !== null) {
+            $chart = $chart->border(Props::float($props['borderWidth'] ?? null, 1.0), $border);
+        }
+        if (isset($props['frameWidth'], $props['frameHeight'])) {
+            $chart = $chart->frame(Props::float($props['frameWidth'], 160.0), Props::float($props['frameHeight'], 160.0));
+        }
+        $chart = $chart->integerBitmap(Props::bool($props['integerBitmap'] ?? null));
         $theme = Props::theme($props['theme'] ?? null);
 
         return $theme === null ? $chart : $chart->theme($theme);
@@ -100,6 +116,7 @@ final class ChartsPluginProvider
             ->endMarker(Props::bool($props['endMarker'] ?? null));
         $color = Props::color($props['color'] ?? null);
         $chart = $color === null ? $chart : $chart->color($color);
+        $chart = $chart->integerBitmap(Props::bool($props['integerBitmap'] ?? null));
         $theme = Props::theme($props['theme'] ?? null);
 
         return $theme === null ? $chart : $chart->theme($theme);
@@ -118,6 +135,7 @@ final class ChartsPluginProvider
         $chart = $color === null ? $chart : $chart->color($color);
         $track = Props::color($props['track'] ?? null);
         $chart = $track === null ? $chart : $chart->track($track);
+        $chart = $chart->integerBitmap(Props::bool($props['integerBitmap'] ?? null));
         $theme = Props::theme($props['theme'] ?? null);
 
         return $theme === null ? $chart : $chart->theme($theme);
@@ -147,6 +165,7 @@ final class ChartsPluginProvider
 
         $formatter = Props::formatter($props['valueFormatter'] ?? null);
         $chart = $formatter === null ? $chart : $chart->valueFormatter($formatter);
+        $chart = $chart->integerBitmap(Props::bool($props['integerBitmap'] ?? null));
         $theme = Props::theme($props['theme'] ?? null);
         $chart = $theme === null ? $chart : $chart->theme($theme);
         $select = Props::event($props, 'select');

@@ -44,6 +44,7 @@ final class Toast extends Component
         public readonly float $offset = 20,
         public readonly string $fontFamily = 'system-ui',
         public readonly float $backdropBlur = 1.5,
+        public readonly ToastTheme $theme = new ToastTheme(),
     ) {
         if ($limit < 1 || $limit > 20 || $width < 160 || $width > 800 || $offset < 0 || $offset > 200 || !($backdropBlur >= 0 && $backdropBlur <= 50)) {
             throw new \InvalidArgumentException('Invalid toast geometry.');
@@ -142,9 +143,12 @@ final class Toast extends Component
     }
 
     public function icon(ToastMessage $message): string { return $message->severity->icon(); }
-    public function accent(ToastMessage $message): int { return $message->severity->accent(); }
-    public function surface(ToastMessage $message): int { return $message->severity->surface(); }
-    public function border(ToastMessage $message): int { return $message->severity->border(); }
+    public function accent(ToastMessage $message): int { return $this->theme->accent($message->severity); }
+    public function surface(ToastMessage $message): int { return $this->theme->surface($message->severity); }
+    public function border(ToastMessage $message): int { return $this->theme->border($message->severity); }
+    public function edge(ToastMessage $message): int { return $this->theme->edge($message->severity); }
+    public function summaryColor(ToastMessage $message): int { return $this->theme->summary($message->severity); }
+    public function detailColor(ToastMessage $message): int { return $this->theme->detail($message->severity); }
     public function alignment(): string { return $this->position->alignment(); }
     public function vertical(): string { return $this->position->vertical(); }
 
@@ -161,21 +165,19 @@ final class Toast extends Component
     <Portal p-if="$messages !== []" :name="$reference" :host="$host">
         <Column widthPercent="100" heightPercent="100" pointerEvents="box-none" :padding="$offset" :alignItems="alignment()" :justifyContent="vertical()">
             <Column :width="$width" gap="12" pointerEvents="box-none">
-                <Row p-for="$message in $messages" p-key="$message->id" class="message" :backgroundColor="surface($message)" :borderColor="border($message)" :backdropBlurRadius="$backdropBlur" accessibilityRole="alert" :accessibilityLabel="$message->summary">
-                    <Icon :name="icon($message)" font="PrimeIcons" size="18" :color="accent($message)" />
-                    <Column flexGrow="1" flexShrink="1" minWidth="0" gap="8">
-                        <Text class="summary" :fontFamily="$fontFamily" :textColor="accent($message)">{{ $message->summary }}</Text>
-                        <Text p-if="$message->detail !== ''" class="detail" :fontFamily="$fontFamily" :textColor="accent($message)">{{ $message->detail }}</Text>
+                <Row p-for="$message in $messages" p-key="$message->id" class="message" :backgroundColor="surface($message)" :borderColor="border($message)" :borderLeftWidth="$theme->edgeWidth > 0 ? $theme->edgeWidth : 1" :borderLeftColor="$theme->edgeWidth > 0 ? edge($message) : border($message)" :borderRadius="$theme->radius" :paddingVertical="$theme->paddingVertical" :paddingHorizontal="$theme->paddingHorizontal" :shadowColor="$theme->shadowColor" :shadowOffsetY="$theme->shadowOffsetY" :shadowBlurRadius="$theme->shadowBlur" :backdropBlurRadius="$backdropBlur" accessibilityRole="alert" :accessibilityLabel="$message->summary">
+                    <Icon :name="icon($message)" font="PrimeIcons" :size="$theme->iconSize" :color="accent($message)" />
+                    <Column flexGrow="1" flexShrink="1" minWidth="0" :gap="$theme->detailGap">
+                        <Text :fontFamily="$fontFamily" :fontSize="$theme->summaryFontSize" :lineHeight="$theme->summaryLineHeight" :fontWeight="$theme->summaryFontWeight" :textColor="summaryColor($message)">{{ $message->summary }}</Text>
+                        <Text p-if="$message->detail !== ''" :fontFamily="$fontFamily" :fontSize="$theme->detailFontSize" :lineHeight="$theme->detailLineHeight" :fontWeight="$theme->detailFontWeight" :textColor="detailColor($message)">{{ $message->detail }}</Text>
                     </Column>
-                    <Pressable p-if="$message->closable" class="close" accessibilityRole="button" :accessibilityLabel="uiText('toast.close')" on:press="remove($message->id)"><Icon name="times" font="PrimeIcons" size="14" :color="accent($message)" /></Pressable>
+                    <Pressable p-if="$message->closable" class="close" :marginLeft="$theme->closeOffsetX" :marginRight="-$theme->closeOffsetX" :marginTop="$theme->closeOffsetY" :marginBottom="-$theme->closeOffsetY" accessibilityRole="button" :accessibilityLabel="uiText('toast.close')" on:press="remove($message->id)"><Icon name="times" font="PrimeIcons" :size="$theme->closeIconSize" :color="accent($message)" /></Pressable>
                 </Row>
             </Column>
         </Column>
     </Portal>
 </template>
 <style scoped>
-    .message { padding: 12px; gap: 8px; align-items: flex-start; border-width: 1px; border-radius: 6px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.04); }
-    .summary { font-size: 14px; line-height: 21px; font-weight: 500; }
-    .detail { font-size: 14px; line-height: 21px; font-weight: 400; }
+    .message { gap: 8px; align-items: flex-start; border-width: 1px; }
     .close { width: 28px; height: 28px; border-radius: 14px; align-items: center; justify-content: center; }
 </style>

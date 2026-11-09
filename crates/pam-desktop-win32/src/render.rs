@@ -46,6 +46,8 @@ struct Painter<'a> {
     layers: usize,
     /// A backdrop was blurred in this frame.
     blurred: bool,
+    /// The view whose translucent background its backdrop just painted.
+    filled: Option<NodeId>,
     /// Flushing the frame before a backdrop was copied failed: the frame
     /// is lost, as if `EndDraw` had failed with this error.
     failed: Option<windows::core::Error>,
@@ -134,13 +136,17 @@ impl Painter<'_> {
             self.failed.get_or_insert(error);
             return;
         }
-        // The radius means what it means for `blur`: twice the deviation.
-        let sigma = view.decoration.backdrop_blur / 2.0;
+        // CSS `blur(r)`: a Gaussian with standard deviation r.
+        let sigma = view.decoration.backdrop_blur;
+        let fill = pam_desktop_ui::backdrop::backdrop_fill(&view.decoration);
         let Some((image, origin)) =
-            paint::backdrop_image(context, device, cache, generation, size, sigma)
+            paint::backdrop_image(context, device, cache, generation, size, sigma, fill)
         else {
             return;
         };
+        if fill.is_some() {
+            self.filled = Some(id);
+        }
         let outline = paint::rounded(&factory, size, view.decoration.radii, Insets::ZERO);
         let clip = paint::push_clip(context, &factory, &outline);
         if opacity < 0.999 {
@@ -252,8 +258,19 @@ impl Painter<'_> {
         };
         let size = view.frame.size();
         let class = view.class;
+        // Its backdrop already composited the translucent background.
+        let cleared;
+        let decoration = if self.filled == Some(id) {
+            cleared = pam_desktop_ui::style::Decoration {
+                background: pam_desktop_ui::color::Color::TRANSPARENT,
+                ..view.decoration.clone()
+            };
+            &cleared
+        } else {
+            &view.decoration
+        };
 
-        if !view.decoration.is_plain() {
+        if !decoration.is_plain() {
             let cache = view
                 .cache
                 .get_or_insert_with(|| Box::new(PaintCache::default()));
@@ -263,7 +280,7 @@ impl Painter<'_> {
                 scale: self.scale,
                 depth: self.depth,
             };
-            paint::paint_decoration(context, &mut env, cache, size, &view.decoration);
+            paint::paint_decoration(context, &mut env, cache, size, decoration);
         }
 
         // Children, images and text never leave a clipping box.
@@ -510,7 +527,13 @@ impl Painter<'_> {
         };
         if !layout.boxes.is_empty() {
             // Inline boxes (`<kbd>`, padded spans) sit behind the glyphs.
-            let origin = text_origin(size, insets, state.content.vertical, layout.height);
+            let origin = text_origin(
+                size,
+                insets,
+                state.content.vertical,
+                state.content.inline,
+                layout.height,
+            );
             let mut env = PaintEnv {
                 graphics: &mut *self.graphics,
                 shadows: &mut *self.shadows,
@@ -566,7 +589,13 @@ impl Painter<'_> {
             );
             state.colored_for = generation;
         }
-        let origin = text_origin(size, insets, state.content.vertical, layout.height);
+        let origin = text_origin(
+            size,
+            insets,
+            state.content.vertical,
+            state.content.inline,
+            layout.height,
+        );
         // SAFETY: COM calls with live objects inside the context's BeginDraw;
         // the clip pushed for truncated text is popped below.
         unsafe {
@@ -819,6 +848,7 @@ pub fn render_window(state: &mut State, window: WindowId) -> Outcome {
             wants_tick: false,
             layers: 0,
             blurred: false,
+            filled: None,
             failed: None,
         };
         let everything = Rect::from_size(size);
@@ -972,6 +1002,7 @@ pub fn snapshot_view(state: &mut State, id: NodeId) -> Option<(Vec<u8>, u32, u32
             wants_tick: false,
             layers: 0,
             blurred: false,
+            filled: None,
             failed: None,
         };
         painter.paint_content(&context, id, 0, None);

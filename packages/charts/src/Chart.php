@@ -22,6 +22,8 @@ use Pam\Desktop\Renderable;
  */
 abstract class Chart implements Renderable
 {
+    private bool $integerBitmap = false;
+
     public const float MIN_SIZE = 8.0;
     public const float MAX_SIZE = 4096.0;
 
@@ -60,7 +62,7 @@ abstract class Chart implements Renderable
     /** Display list of the chart, in dp. */
     public function scene(): CanvasScene
     {
-        return $this->draw(new Canvas())->scene();
+        return $this->draw((new Canvas())->fontFamily($this->theme->fontFamily))->scene();
     }
 
     /**
@@ -84,10 +86,28 @@ abstract class Chart implements Renderable
 
     public function toElement(): Element
     {
-        return $this->view()
-            ->toElement()
-            ->property(PropKey::Width, $this->width)
-            ->property(PropKey::Height, $this->height);
+        $element = $this->view()->toElement();
+        $element = $element->property(PropKey::Width, $this->width)->property(PropKey::Height, $this->height);
+
+        // An HTML canvas (Chart.js) rasterizes on a bitmap of whole device
+        // pixels that the browser paints into the box's pixel-snapped
+        // rectangle: 1:1 when they match. Hosts without the property draw at
+        // the fractional size.
+        return $this->integerBitmap ? $element->property(PropKey::CanvasBitmap, true) : $element;
+    }
+
+    /**
+     * Draws like an HTML `<canvas>` of a fractional CSS size (Chart.js
+     * responsive charts): rasterized on a bitmap of `floor(size × scale)`
+     * device pixels, clipped there, and painted into the pixel-snapped box
+     * (`PropKey::CanvasBitmap`), so the chart stays crisp at 1:1.
+     */
+    public function integerBitmap(bool $enabled = true): static
+    {
+        $copy = clone $this;
+        $copy->integerBitmap = $enabled;
+
+        return $copy;
     }
 
     /** Paints the chart. */

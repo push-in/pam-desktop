@@ -76,15 +76,27 @@ final class PamPhpRegistry
 
     public static function discover(string $sourcePath, string $cachePath): void
     {
+        // `pam-desktop check`: compile into its private cache and collect
+        // every diagnostic instead of reporting the first to the host.
+        $check = \Pam\Desktop\Tooling\ProjectCheck::active();
+        if ($check) {
+            $cachePath = \Pam\Desktop\Tooling\ProjectCheck::componentRoot($sourcePath, $cachePath);
+        }
+        $report = $check
+            ? \Pam\Desktop\Tooling\ProjectCheck::report(...)
+            : static fn (\Throwable $error, ?string $source = null) => Runtime::reportError($error, RuntimeErrorPhase::Boot);
         $components = PamPhpCompiler::compileDirectory($sourcePath, $cachePath);
         $failures = PamPhpCompiler::failures();
-        if ($components === [] && $failures !== []) {
+        if ($check) {
+            \Pam\Desktop\Tooling\ProjectCheck::compiled($sourcePath, count($components) + count($failures));
+        }
+        if ($components === [] && $failures !== [] && !$check) {
             throw reset($failures);
         }
-        foreach ($failures as $error) {
+        foreach ($failures as $source => $error) {
             // Shown on the development error screen; the other components
             // stay usable.
-            Runtime::reportError($error, RuntimeErrorPhase::Boot);
+            $report($error, $source);
         }
 
         foreach ($components as $component) {
@@ -132,20 +144,30 @@ final class PamPhpRegistry
                     ComponentContractFactory::fromClass($className, $component->tag),
                 );
             } catch (\Throwable $error) {
-                Runtime::reportError($error, RuntimeErrorPhase::Boot);
+                $report($error, $component->source);
             }
         }
 
         foreach ($components as $component) {
-            if ($component->language !== \Pam\Desktop\LanguageVersion::Language2) {
+            if ($component->language !== \Pam\Desktop\LanguageVersion::Language2 && !$check) {
                 continue;
             }
             /** @var class-string<Component> $className */
             $className = $component->className;
             try {
-                TemplateContractValidator::validate($className, $component->template);
+                if ($check) {
+                    foreach (TemplateContractValidator::diagnostics(
+                        $className,
+                        $component->template,
+                        declaredActions: $component->language === \Pam\Desktop\LanguageVersion::Language2,
+                    ) as $diagnostic) {
+                        $report($diagnostic, $component->source);
+                    }
+                } else {
+                    TemplateContractValidator::validate($className, $component->template);
+                }
             } catch (\Throwable $error) {
-                Runtime::reportError($error, RuntimeErrorPhase::Boot);
+                $report($error, $component->source);
             }
         }
     }

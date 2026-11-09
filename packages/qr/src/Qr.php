@@ -22,9 +22,14 @@ final class Qr
                 $level = is_int($value) ? ErrorCorrection::tryFrom($value) : null;
             }
             if (!is_string($data) || !is_int($size) || $level === null) throw new InvalidArgumentException('QrCode requires data, an integer size and a valid ErrorCorrection enum.');
-            $key = hash('sha256', $data).'|'.$size.'|'.$level->value;
+            $margin = filter_var($props['margin'] ?? QrCode::QUIET_MODULES, FILTER_VALIDATE_INT);
+            if (!is_int($margin)) throw new InvalidArgumentException('QrCode margin must be an integer number of modules.');
+            $stretch = filter_var($props['stretch'] ?? false, FILTER_VALIDATE_BOOL);
+            $image = isset($props['image']) ? filter_var($props['image'], FILTER_VALIDATE_INT) : null;
+            if ($image === false) throw new InvalidArgumentException('QrCode image must be an integer number of pixels.');
+            $key = hash('sha256', $data).'|'.$size.'|'.$level->value.'|'.$margin.'|'.(int) $stretch.'|'.($image ?? 0);
             if (isset(self::$cache[$key])) return self::$cache[$key];
-            $code = new QrCode($data, $size, $level);
+            $code = new QrCode($data, $size, $level, $margin, $stretch, $image);
             if (count(self::$cache) >= 4) array_shift(self::$cache);
             self::$cache[$key] = $code;
             return $code;

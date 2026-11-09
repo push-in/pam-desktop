@@ -204,6 +204,10 @@ impl InputHost {
             text.set_truncate_multiline(true);
             text.set_width_chars(0);
             text.set_max_width_chars(0);
+            // Chromium clips a long placeholder at the field edge: the entry
+            // keeps the engine width and clips its (unellipsized) placeholder.
+            text.set_overflow(gtk::Overflow::Hidden);
+            view::set_layout(&text, |layout| layout.clip_width = true);
             text.set_parent(container);
             {
                 let events = Rc::clone(events);
@@ -281,6 +285,24 @@ impl InputHost {
             }
             Control::Line(text)
         };
+
+        // GTK resets its text contexts to whole-pixel glyph positions on every
+        // style (font) update at scale 1; the container is allocated after
+        // that, so the positions are unrounded again before the next frame.
+        {
+            let target = match &control {
+                Control::Line(text) => text.clone().upcast::<gtk::Widget>(),
+                Control::Area { view, .. } => view.clone().upcast::<gtk::Widget>(),
+            };
+            let weak = target.downgrade();
+            container.with_state(|state| {
+                state.on_resize = Some(Box::new(move |_, _| {
+                    if let Some(target) = weak.upgrade() {
+                        subpixel_text(&target);
+                    }
+                }));
+            });
+        }
 
         // Select everything on focus when the application asks for it.
         {
@@ -495,9 +517,13 @@ impl InputHost {
                         f64::from(config.font.size) * f64::from(gtk::pango::SCALE),
                     );
                     let metrics = view.pango_context().metrics(Some(&description), None);
-                    let natural =
-                        (metrics.ascent() + metrics.descent()) as f32 / gtk::pango::SCALE as f32;
-                    ((line_height - natural) / 2.0).max(0.0).round() as i32
+                    // Like Blink: ascent and descent rounded to whole pixels,
+                    // the half-leading floored, so the first baseline lands
+                    // where a browser textarea draws it (and where the
+                    // placeholder text node puts it).
+                    let pixels = |units: i32| (units as f32 / gtk::pango::SCALE as f32).round();
+                    let natural = pixels(metrics.ascent()) + pixels(metrics.descent());
+                    ((line_height - natural) / 2.0).max(0.0).floor() as i32
                 });
                 view.set_pixels_above_lines(leading);
                 view.set_pixels_below_lines(leading);
@@ -613,10 +639,14 @@ fn show_placeholder(container: &PamView, config: &InputConfig, empty: bool) {
                 press: None,
             }],
             align: config.align,
+            // The hint sits in the same line box as typed text (CSS
+            // line-height), not on the font's natural line.
+            line_height: config.line_height.unwrap_or(0.0),
             ..TextBlock::default()
         },
         insets: config.insets,
         vertical: VerticalAlign::Top,
+        inline: false,
     }));
 }
 
@@ -649,4 +679,38 @@ pub(crate) fn assert_placeholder_fallback() {
             .and_then(|text| text.content.block.runs[0].color)
     });
     assert_eq!(color, Some(Color::rgba(98, 113, 132, 255)));
+    // A multi-line hint sits in the text's CSS line box.
+    let boxed = InputConfig {
+        line_height: Some(24.0),
+        ..authored
+    };
+    show_placeholder(&container, &boxed, true);
+    let line_height = container.with_state(|state| {
+        state
+            .text
+            .as_ref()
+            .map(|text| text.content.block.line_height)
+    });
+    assert_eq!(line_height, Some(24.0));
+}
+
+/// GTK lays out the text of its entries, text areas and placeholder labels at
+/// whole-pixel glyph positions on non-HiDPI screens (gtk_widget_update_pango_context
+/// forces it at scale 1), which drew an input's string ~1px left and up to 4px
+/// narrower than the same text node (text.rs) or Chromium. Their contexts use
+/// unrounded positions too. Cheap when already set.
+fn subpixel_text(widget: &gtk::Widget) {
+    let mut pending = vec![widget.clone()];
+    while let Some(current) = pending.pop() {
+        let context = current.pango_context();
+        if context.is_round_glyph_positions() {
+            context.set_round_glyph_positions(false);
+            current.queue_draw();
+        }
+        let mut child = current.first_child();
+        while let Some(next) = child {
+            pending.push(next.clone());
+            child = next.next_sibling();
+        }
+    }
 }

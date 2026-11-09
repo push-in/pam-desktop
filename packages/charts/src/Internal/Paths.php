@@ -14,6 +14,9 @@ use Pam\Desktop\Charts\Curve;
  */
 final class Paths
 {
+    /** Control-point distance of a cubic quarter circle, per unit radius. */
+    private const float KAPPA = 0.5522847498;
+
     /** Points per path command, keeping specs well under the canvas 4,096-character cap. */
     public const int CHUNK = 72;
 
@@ -70,12 +73,14 @@ final class Paths
         $radius = max(0.0, min($radius, $width / 2, $height));
         $direction = $top <= $baseline ? 1.0 : -1.0;
         $inner = $top + $direction * $radius;
+        // Circular corners (Chart.js `ctx.arc`), as cubic quarter circles.
+        $k = $radius * self::KAPPA;
 
         return Path::start($x, $baseline)
             ->lineTo($x, $inner)
-            ->quadTo($x, $top, $x + $radius, $top)
+            ->curveTo($x, $inner - $direction * $k, $x + $radius - $k, $top, $x + $radius, $top)
             ->lineTo($x + $width - $radius, $top)
-            ->quadTo($x + $width, $top, $x + $width, $inner)
+            ->curveTo($x + $width - $radius + $k, $top, $x + $width, $inner - $direction * $k, $x + $width, $inner)
             ->lineTo($x + $width, $baseline)
             ->close();
     }

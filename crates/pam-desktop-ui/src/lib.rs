@@ -7,6 +7,7 @@
 
 pub mod accessibility;
 pub mod animator;
+pub mod backdrop;
 pub mod backend;
 mod canvas_path;
 pub mod chrome;
@@ -16,6 +17,7 @@ pub mod controls;
 pub mod dragdrop;
 pub mod drawing;
 pub mod error_overlay;
+pub mod frame_dump;
 pub mod geometry;
 pub mod gestures;
 pub mod i18n;

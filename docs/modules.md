@@ -526,6 +526,15 @@ A route asks for protection while it is the active route of its navigator: `new 
 | macOS | The sharing type of every window is set to none. Not run on a real machine. |
 | Windows | Every window is excluded from captures; on a system that cannot exclude a window, it is captured as a black rectangle. Not run on a real machine. |
 
+## Text measurement
+
+`Pam\Desktop\System\TextMeasure::width($text, $size, $weight, $family)` returns
+a single-line width measured by the host (`text.measure`, the measurer that
+sizes text nodes), for code that lays text out in PHP. The first read returns
+null and asks the host once; the components that read it render again when
+the width arrives. Widths stay in a bounded cache. The charts use it for fonts
+they have no built-in metrics for. Hosts round widths up to whole pixels.
+
 ## Toasts
 
 `Pam\Desktop\System\Toast` shows a short message over the application. The host draws it; one toast shows at a time and a new one replaces it. Pressing a toast dismisses it, and presses outside it reach the application.

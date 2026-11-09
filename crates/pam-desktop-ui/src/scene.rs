@@ -18,7 +18,7 @@ use crate::geometry::{Affine, Insets, Point, Rect, Size};
 use crate::props::{PropMap, Props};
 use crate::shell::Cursor;
 use crate::style::{
-    Decoration, LayerState, compose_transform, resolve_transform, transform_origin,
+    Border, Decoration, LayerState, compose_transform, resolve_transform, transform_origin,
 };
 use crate::text::{Ellipsize, TextAlign, TextBlock, TextShadow, TextSource};
 
@@ -285,6 +285,8 @@ pub struct SceneNode {
     dirty: Dirty,
     /// Frame last pushed to the backend (parent relative).
     pushed_frame: Option<Rect>,
+    /// Text geometry (wrap width, subpixel x) last pushed to the backend.
+    pushed_wrap: Option<crate::backend::TextGeometry>,
     has_text: bool,
     pushed_content: Option<Size>,
     pushed_scroll: Option<ScrollConfig>,
@@ -428,6 +430,7 @@ pub fn dirty_for(key: PropKey) -> Dirty {
         | K::TextShadowRadius
         | K::TextShadowColor
         | K::FontFeatureSettings
+        | K::FontSmoothing
         | K::TextAllowFontScaling
         | K::TextMaxFontSizeMultiplier
         | K::TextSelectable
@@ -448,6 +451,9 @@ pub struct Environment {
     /// Device pixels per logical unit, used to snap frames to the pixel grid.
     pub scale: f32,
     pub font_scale: f32,
+    /// The backend composites `Decoration::backdrop_boxes` into a
+    /// backdrop (`Backend::composites_backdrop_boxes`).
+    pub backdrop_boxes: crate::backend::BackdropBoxes,
 }
 
 impl Default for Environment {
@@ -455,6 +461,7 @@ impl Default for Environment {
         Self {
             scale: 1.0,
             font_scale: 1.0,
+            backdrop_boxes: crate::backend::BackdropBoxes::None,
         }
     }
 }
@@ -474,6 +481,10 @@ pub struct Scene {
     /// Properties that win over the node's own while resolving paint state.
     style_overlays: IdMap<[Option<PropMap>; STYLE_LAYERS]>,
     scroll_offsets: IdMap<Point>,
+    /// Outer shadows a backdrop view composites (`Decoration::backdrop_boxes`).
+    backdrop_boxes: IdMap<Vec<crate::style::BackdropBox>>,
+    /// Boxes whose fill a backdrop composites (`Decoration::fill_composited`).
+    composited_fills: IdMap<()>,
     /// Views stacked above the root, back to front (presented modals).
     overlays: Vec<NodeId>,
     /// Overlays that do not take every hit (a window toast layer): a press
@@ -529,6 +540,29 @@ impl Scene {
 
     pub fn nodes(&self) -> impl Iterator<Item = &SceneNode> {
         self.nodes.values()
+    }
+
+    /// Padding plus border around a text node's paragraph (the content box).
+    #[must_use]
+    pub fn text_insets(&self, id: NodeId) -> Option<Insets> {
+        let node = self.nodes.get(&id)?;
+        self.text_content(node, self.overlaid(node))
+            .map(|content| content.insets)
+    }
+
+    /// Node ids from the root down, children in paint order (pre-order).
+    #[must_use]
+    pub fn nodes_in_order(&self) -> Vec<NodeId> {
+        let mut order = Vec::with_capacity(self.nodes.len());
+        let mut pending = vec![self.root];
+        while let Some(id) = pending.pop() {
+            let Some(node) = self.nodes.get(&id) else {
+                continue;
+            };
+            order.push(id);
+            pending.extend(node.children.iter().rev().copied());
+        }
+        order
     }
 
     /// The changes recorded since the last call.
@@ -652,6 +686,7 @@ impl Scene {
                 action,
                 dirty: Dirty::NONE,
                 pushed_frame: None,
+                pushed_wrap: None,
                 has_text: false,
                 pushed_content: None,
                 pushed_scroll: None,
@@ -703,6 +738,8 @@ impl Scene {
             self.motion.remove(&removed);
             self.style_overlays.remove(&removed);
             self.scroll_offsets.remove(&removed);
+            self.backdrop_boxes.remove(&removed);
+            self.composited_fills.remove(&removed);
             if let Some(position) = self.overlays.iter().position(|overlay| *overlay == removed) {
                 self.overlays.remove(position);
                 self.overlays_dirty = true;
@@ -943,6 +980,50 @@ impl Scene {
             }
             None => Props::new(&node.props),
         }
+    }
+
+    /// Outer shadows the backdrop view `id` composites into its backdrop
+    /// (empty: none).
+    pub fn set_backdrop_boxes(&mut self, id: NodeId, shadows: Vec<crate::style::BackdropBox>) {
+        if !self.nodes.contains_key(&id)
+            || self
+                .backdrop_boxes
+                .get(&id)
+                .map_or(shadows.is_empty(), |current| *current == shadows)
+        {
+            return;
+        }
+        if shadows.is_empty() {
+            self.backdrop_boxes.remove(&id);
+        } else {
+            self.backdrop_boxes.insert(id, shadows);
+        }
+        self.touch(id, Dirty::DECORATION);
+    }
+
+    /// The boxes the backdrop view `id` composites.
+    #[must_use]
+    pub fn backdrop_boxes(&self, id: NodeId) -> &[crate::style::BackdropBox] {
+        self.backdrop_boxes.get(&id).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether the backdrop composites the translucent background of `id`.
+    #[must_use]
+    pub fn fill_composited(&self, id: NodeId) -> bool {
+        self.composited_fills.contains_key(&id)
+    }
+
+    /// Whether a backdrop composites the translucent background of `id`.
+    pub fn set_fill_composited(&mut self, id: NodeId, composited: bool) {
+        if !self.nodes.contains_key(&id) || self.composited_fills.contains_key(&id) == composited {
+            return;
+        }
+        if composited {
+            self.composited_fills.insert(id, ());
+        } else {
+            self.composited_fills.remove(&id);
+        }
+        self.touch(id, Dirty::DECORATION);
     }
 
     /// The node's properties with its style overlays applied.
@@ -1390,9 +1471,10 @@ impl Scene {
                 color: shadow_color,
             }),
             selectable: props.flag_or(PropKey::TextSelectable, false),
+            antialiased: props.text_or_empty(PropKey::FontSmoothing) == "antialiased",
         };
         let padding = props.padding();
-        let border = node.decoration.border.widths;
+        let border = self.layout_border(node);
         Some(TextContent {
             block,
             insets: Insets::new(
@@ -1403,6 +1485,7 @@ impl Scene {
             ),
             // Like the mobile renderers: a box taller than its text centers it.
             vertical: VerticalAlign::Center,
+            inline: props.integer(PropKey::InlineLevel) == Some(1),
         })
     }
 
@@ -1462,6 +1545,13 @@ impl Scene {
     /// Pushes everything that changed since the last flush to the backend.
     pub fn flush(&mut self, backend: &mut impl Backend, window: WindowId) {
         let mut commands = 0_u64;
+        // Development frame dump (off unless PAM_DESKTOP_DUMP_FRAMES is set).
+        let dump_frames = crate::frame_dump::enabled()
+            && self.touched.iter().any(|id| {
+                self.nodes
+                    .get(id)
+                    .is_some_and(|node| node.dirty.contains(Dirty::FRAME))
+            });
 
         // 1. Views of removed nodes (children before their parents).
         for id in self.removed.drain(..) {
@@ -1489,7 +1579,14 @@ impl Scene {
             };
             let dirty = node.dirty;
             if dirty.contains(Dirty::DECORATION) {
-                let decoration = Decoration::resolve(node.kind, self.overlaid(node));
+                let mut decoration = Decoration::resolve(node.kind, self.overlaid(node));
+                if let Some(border) = self.collapsed_border(*id) {
+                    decoration.border = border;
+                }
+                decoration.fill_composited = self.composited_fills.contains_key(id);
+                if let Some(shadows) = self.backdrop_boxes.get(id) {
+                    decoration.backdrop_boxes.clone_from(shadows);
+                }
                 if dirty.contains(Dirty::CREATED) || decoration != node.decoration {
                     if !(dirty.contains(Dirty::CREATED) && decoration.is_plain()) {
                         backend.set_decoration(*id, &decoration);
@@ -1663,6 +1760,44 @@ impl Scene {
                         node.pushed_frame = Some(frame);
                     }
                 }
+                // Which cell paints a collapsed grid line depends on where
+                // the line snaps, so a moved cell may hand a line over.
+                if let Some(border) = self.collapsed_border(*id)
+                    && let Some(node) = self.nodes.get(id)
+                    && node.decoration.border != border
+                {
+                    let mut decoration = node.decoration.clone();
+                    decoration.border = border;
+                    backend.set_decoration(*id, &decoration);
+                    commands += 1;
+                    if let Some(node) = self.nodes.get_mut(id) {
+                        node.decoration = decoration;
+                    }
+                }
+                if let Some(node) = self.nodes.get(id)
+                    && (node.is_text_bearing() || node.kind == NodeKind::Input)
+                {
+                    let padding = self.overlaid(node).padding();
+                    let border = self.layout_border(node);
+                    let width =
+                        (node.frame.width - padding.left - padding.right - border[0] - border[2])
+                            .max(0.0);
+                    let scale = self.environment.scale.max(f32::EPSILON);
+                    let snap = |edge: f32| edge - (edge * scale).round() / scale;
+                    let wrap = crate::backend::TextGeometry {
+                        wrap_width: width,
+                        offset_x: snap(node.frame.x),
+                        offset_y: snap(node.frame.y),
+                        height: node.frame.height,
+                    };
+                    if node.pushed_wrap != Some(wrap) {
+                        backend.set_text_geometry(*id, wrap);
+                        commands += 1;
+                        if let Some(node) = self.nodes.get_mut(id) {
+                            node.pushed_wrap = Some(wrap);
+                        }
+                    }
+                }
             }
         }
 
@@ -1691,17 +1826,31 @@ impl Scene {
             let config = ScrollConfig {
                 horizontal: props.flag_or(PropKey::ScrollHorizontal, false)
                     || props.flag_or(PropKey::ListHorizontal, false),
+                both: props.flag_or(PropKey::ScrollBothAxes, false),
                 enabled: props.flag_or(PropKey::ScrollEnabled, true),
                 shows_indicators: props.flag_or(PropKey::ShowsScrollIndicator, true),
                 scrollbar_thickness: props.number(PropKey::ScrollbarThickness).or_else(|| {
                     match props.integer(PropKey::ScrollbarWidth) {
-                        Some(2) => Some(10.0),
+                        Some(2) => Some(pam_desktop_engine::SCROLLBAR_GUTTER_THIN),
                         Some(3) => Some(0.0),
                         _ => None,
                     }
                 }),
                 scrollbar_color: props.color(PropKey::ScrollbarColor),
-                reserved_gutter: props.integer(PropKey::ScrollbarGutter).unwrap_or(1) >= 2,
+                scrollbar_track: props.color(PropKey::ScrollbarTrackColor),
+                // `stable`, or `auto` with an authored width: a classic bar
+                // whose room the layout reserves (always, or while the content
+                // overflows).
+                reserved_gutter: props.integer(PropKey::ScrollbarGutter).unwrap_or(1) >= 2
+                    || ((props.integer(PropKey::ScrollbarWidth) == Some(2)
+                        || props
+                            .number(PropKey::ScrollbarThickness)
+                            .is_some_and(|px| px > 0.0)
+                        // `scrollbar-color` alone styles Chromium's 15 px bar.
+                        || (props.color(PropKey::ScrollbarColor).is_some()
+                            && props.integer(PropKey::ScrollbarWidth).unwrap_or(1) == 1
+                            && props.number(PropKey::ScrollbarThickness).is_none()))
+                        && !props.flag_or(PropKey::ListHorizontal, false)),
                 thumb_inset: if props.number(PropKey::ScrollbarThickness).is_none()
                     && props.integer(PropKey::ScrollbarWidth) == Some(2)
                 {
@@ -1732,6 +1881,9 @@ impl Scene {
             }
         }
         self.stats.commands += commands;
+        if dump_frames {
+            crate::frame_dump::write(self, u64::from(window));
+        }
     }
 
     /// Size of the scrollable content of a scroll node (union of its children).
@@ -1749,6 +1901,214 @@ impl Scene {
             }
         }
         Size::new(size.width + padding.right, size.height + padding.bottom)
+    }
+}
+
+/// CSS 2.1 §17.6.2 collapsing borders, as painted: one border per grid
+/// line, the widest of those meeting there (a cell's over a row's over the
+/// table's when equal, then the upper/left one). The cell whose snapped box
+/// holds the line's snapped pixels paints it (see `collapsed_border`); the
+/// outer lines are the outer cells' own. Rows, row groups and the table paint
+/// none of their own.
+#[derive(Clone, Copy)]
+struct Candidate {
+    width: f32,
+    color: Color,
+    rank: u8,
+}
+
+impl Scene {
+    fn table_role(&self, id: NodeId) -> Option<i64> {
+        self.nodes.get(&id)?.props().integer(PropKey::TableDisplay)
+    }
+
+    fn shown_children(&self, id: NodeId) -> Vec<NodeId> {
+        self.nodes.get(&id).map_or_else(Vec::new, |node| {
+            node.children
+                .iter()
+                .copied()
+                .filter(|child| {
+                    self.nodes
+                        .get(child)
+                        .is_some_and(|child| child.props().flag_or(PropKey::Visible, true))
+                })
+                .collect()
+        })
+    }
+
+    /// The collapsing table a cell, row or row group belongs to, with its rows.
+    fn collapsing_table(&self, id: NodeId) -> Option<(NodeId, Vec<NodeId>)> {
+        let mut current = self.nodes.get(&id)?.parent;
+        for _ in 0..3 {
+            let node = self.nodes.get(&current)?;
+            if self.table_role(current) == Some(1) {
+                if node.props().integer(PropKey::BorderCollapse) != Some(2) {
+                    return None;
+                }
+                let mut rows = Vec::new();
+                for child in self.shown_children(current) {
+                    if self.table_role(child) == Some(3) {
+                        rows.push(child);
+                    } else {
+                        rows.extend(self.shown_children(child));
+                    }
+                }
+                return Some((current, rows));
+            }
+            current = node.parent;
+        }
+        None
+    }
+
+    fn candidate(&self, id: Option<NodeId>, side: usize, rank: u8) -> Option<Candidate> {
+        let node = self.nodes.get(&id?)?;
+        let border = Decoration::resolve(node.kind, self.overlaid(node)).border;
+        Some(Candidate {
+            width: border.widths[side],
+            color: border.colors[side],
+            rank,
+        })
+    }
+
+    fn widest(candidates: &[Option<Candidate>]) -> Candidate {
+        candidates
+            .iter()
+            .flatten()
+            .fold(None::<Candidate>, |best, candidate| match best {
+                Some(best)
+                    if best.width > candidate.width
+                        || (best.width == candidate.width && best.rank >= candidate.rank) =>
+                {
+                    Some(best)
+                }
+                _ if candidate.width > 0.0 => Some(*candidate),
+                best => best,
+            })
+            .unwrap_or(Candidate {
+                width: 0.0,
+                color: Color::TRANSPARENT,
+                rank: 0,
+            })
+    }
+
+    /// The four lines around a cell (left, top, right, bottom), resolved, and
+    /// which of them are outer lines of the table (first/last column or row).
+    fn cell_lines(&self, cell: NodeId) -> Option<([Candidate; 4], [bool; 4])> {
+        let node = self.nodes.get(&cell)?;
+        if self.table_role(cell) != Some(4) {
+            return None;
+        }
+        let row = node.parent;
+        let (table, rows) = self.collapsing_table(cell)?;
+        let r = rows.iter().position(|id| *id == row)?;
+        let cells = self.shown_children(row);
+        let c = cells.iter().position(|id| *id == cell)?;
+        let at = |row: Option<&NodeId>, column: usize| {
+            row.and_then(|row| self.shown_children(*row).get(column).copied())
+        };
+        let (left, top, right, bottom) = (0, 1, 2, 3);
+        let (cell_rank, row_rank, table_rank) = (2, 1, 0);
+        let previous = r.checked_sub(1).and_then(|index| rows.get(index));
+        let next = rows.get(r + 1);
+        let top_line = Self::widest(&[
+            self.candidate(at(previous, c), bottom, cell_rank),
+            self.candidate(Some(cell), top, cell_rank),
+            self.candidate(previous.copied(), bottom, row_rank),
+            self.candidate(Some(row), top, row_rank),
+            self.candidate((r == 0).then_some(table), top, table_rank),
+        ]);
+        let bottom_line = Self::widest(&[
+            self.candidate(Some(cell), bottom, cell_rank),
+            self.candidate(at(next, c), top, cell_rank),
+            self.candidate(Some(row), bottom, row_rank),
+            self.candidate(next.copied(), top, row_rank),
+            self.candidate(next.is_none().then_some(table), bottom, table_rank),
+        ]);
+        let last = c + 1 == cells.len();
+        let left_line = Self::widest(&[
+            self.candidate(
+                c.checked_sub(1).and_then(|index| cells.get(index).copied()),
+                right,
+                cell_rank,
+            ),
+            self.candidate(Some(cell), left, cell_rank),
+            self.candidate((c == 0).then_some(row), left, row_rank),
+            self.candidate((c == 0).then_some(table), left, table_rank),
+        ]);
+        let right_line = Self::widest(&[
+            self.candidate(Some(cell), right, cell_rank),
+            self.candidate(cells.get(c + 1).copied(), left, cell_rank),
+            self.candidate(last.then_some(row), right, row_rank),
+            self.candidate(last.then_some(table), right, table_rank),
+        ]);
+        Some((
+            [left_line, top_line, right_line, bottom_line],
+            [c == 0, r == 0, last, next.is_none()],
+        ))
+    }
+
+    /// The border a node paints in a collapsing table.
+    fn collapsed_border(&self, id: NodeId) -> Option<Border> {
+        match self.table_role(id)? {
+            4 => {
+                let (lines, outer) = self.cell_lines(id)?;
+                let frame = self.nodes.get(&id)?.frame;
+                let scale = self.environment.scale.max(f32::EPSILON);
+                // A grid line is centred on the edge between two cells and
+                // snapped like any box edge (Chromium paints it on the pixels
+                // of [edge - w/2, edge + w/2]). The cell whose snapped box holds
+                // those pixels paints it: the following one when the snapped
+                // line starts at or after the snapped edge, else the cell
+                // before it. Outer lines are always the cell's own.
+                let follows = |edge: f32, width: f32| {
+                    ((edge - width / 2.0) * scale).round() >= (edge * scale).round()
+                };
+                let paints = [
+                    outer[0] || follows(frame.x, lines[0].width),
+                    outer[1] || follows(frame.y, lines[1].width),
+                    outer[2] || !follows(frame.x + frame.width, lines[2].width),
+                    outer[3] || !follows(frame.y + frame.height, lines[3].width),
+                ];
+                let mut border = Border::default();
+                for side in 0..4 {
+                    if paints[side] {
+                        border.widths[side] = lines[side].width;
+                        border.colors[side] = lines[side].color;
+                    }
+                }
+                Some(border)
+            }
+            1..=3 => {
+                self.collapsing_table(id)
+                    .or_else(|| {
+                        // The table itself.
+                        (self.table_role(id) == Some(1)
+                            && self
+                                .nodes
+                                .get(&id)?
+                                .props()
+                                .integer(PropKey::BorderCollapse)
+                                == Some(2))
+                        .then(|| (id, Vec::new()))
+                    })
+                    .map(|_| Border::default())
+            }
+            _ => None,
+        }
+    }
+
+    /// Border widths that inset a node's content: half of each grid line for
+    /// a cell of a collapsing table, its own border otherwise.
+    fn layout_border(&self, node: &SceneNode) -> [f32; 4] {
+        self.cell_lines(node.id)
+            .map_or(node.decoration.border.widths, |(lines, _)| {
+                [
+                    lines[0].width / 2.0,
+                    lines[1].width / 2.0,
+                    lines[2].width / 2.0,
+                    lines[3].width / 2.0,
+                ]
+            })
     }
 }
 
@@ -1846,6 +2206,29 @@ mod tests {
                 .position(|command| *command == Command::Create(id, ViewClass::Box))
         };
         assert!(position(1) < position(2) && position(2) < position(3));
+    }
+
+    #[test]
+    fn frame_dump_lists_layout_and_painted_frames() {
+        let (scene, _) = mounted();
+        let document = crate::frame_dump::document(&scene, u64::from(MAIN_WINDOW));
+        let nodes = document["nodes"].as_array().expect("nodes");
+        assert_eq!(nodes.len(), 3);
+        let hello = nodes
+            .iter()
+            .find(|node| node["text"] == "Hello")
+            .expect("text node");
+        assert_eq!(
+            hello["layout"],
+            serde_json::json!([16.0, 16.0, 368.0, 20.0])
+        );
+        assert_eq!(
+            hello["painted"],
+            serde_json::json!([16.0, 16.0, 368.0, 20.0])
+        );
+        assert_eq!(hello["kind"], "Text");
+        // Off unless PAM_DESKTOP_DUMP_FRAMES is set (not in tests).
+        assert!(!crate::frame_dump::enabled());
     }
 
     #[test]
@@ -2268,5 +2651,73 @@ mod tests {
             ],
         );
         assert!(scene.take_changes().is_empty());
+    }
+
+    #[test]
+    fn collapsed_grid_lines_are_painted_by_the_cell_holding_their_pixels() {
+        let mut scene = Scene::new();
+        let mut backend = RecordingBackend::new();
+        let line = [
+            (PropKey::BorderBottomWidth, PropValue::Integer(1)),
+            (PropKey::BorderBottomColor, PropValue::Integer(0xFF1F_2A36)),
+        ];
+        let cell = [
+            &[(PropKey::TableDisplay, PropValue::Integer(4))][..],
+            &line[..],
+        ]
+        .concat();
+        scene.apply(vec![
+            Mutation::SetRoot { id: 1 },
+            node(
+                1,
+                0,
+                0,
+                NodeKind::Column,
+                &[
+                    (PropKey::TableDisplay, PropValue::Integer(1)),
+                    (PropKey::BorderCollapse, PropValue::Integer(2)),
+                ],
+            ),
+            node(
+                2,
+                1,
+                0,
+                NodeKind::Row,
+                &[(PropKey::TableDisplay, PropValue::Integer(3))],
+            ),
+            node(
+                3,
+                1,
+                1,
+                NodeKind::Row,
+                &[(PropKey::TableDisplay, PropValue::Integer(3))],
+            ),
+            node(4, 2, 0, NodeKind::Column, &cell),
+            node(5, 3, 0, NodeKind::Column, &cell),
+            layout(1, 0.0, 0.0, 400.0, 300.0),
+            layout(2, 0.0, 16.42, 400.0, 61.0),
+            layout(3, 0.0, 77.42, 400.0, 61.0),
+            layout(4, 0.0, 16.42, 400.0, 61.0),
+            layout(5, 0.0, 77.42, 400.0, 61.0),
+        ]);
+        scene.flush(&mut backend, MAIN_WINDOW);
+        let border = |id: NodeId| {
+            backend
+                .commands
+                .iter()
+                .rev()
+                .find_map(|command| match command {
+                    Command::Decoration(node, decoration) if *node == id => Some(decoration.border),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        };
+        // The line between the rows spans 76.92..77.92 and snaps to pixel 77,
+        // the first pixel of the second cell (77..138): that cell paints it as
+        // its top border, as Chromium does; the first cell paints nothing.
+        assert_eq!(border(4).widths, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(border(5).widths[1], 1.0);
+        // The last line is an outer line: the last cell keeps it.
+        assert_eq!(border(5).widths[3], 1.0);
     }
 }

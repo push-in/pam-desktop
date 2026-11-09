@@ -267,6 +267,26 @@ fn encode_strokes(strokes: &[Stroke]) -> String {
 }
 
 /// The aspect-fit rectangle of an image of `natural` size inside `view`.
+/// Chromium's `<canvas>`: a bitmap of `floor(size × scale)` device pixels
+/// (what Chart.js allocates), painted into the box's pixel-snapped rectangle
+/// (`round(edge × scale)`), so a box at y 705.67 and 220.8 tall shows its
+/// 220-pixel bitmap 1:1 on rows 706..926.
+fn bitmap_space(frame: Rect, scale: f32) -> DrawCommand {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    let snapped = frame.snapped(scale);
+    let width = ((frame.width * scale).floor() / scale).max(1.0 / scale);
+    let height = ((frame.height * scale).floor() / scale).max(1.0 / scale);
+    DrawCommand::Bitmap {
+        size: Size::new(width, height),
+        scale_x: snapped.width / width,
+        scale_y: snapped.height / height,
+    }
+}
+
 fn content_rect(view: Size, natural: Option<Size>) -> Rect {
     match natural.filter(|size| size.width > 0.0 && size.height > 0.0) {
         Some(natural) => {
@@ -300,6 +320,8 @@ struct Sketch {
 #[derive(Default)]
 pub struct Drawings {
     canvases: IdMap<bool>,
+    /// The `DrawCommand::Bitmap` last sent for each `CanvasBitmap` canvas.
+    bitmaps: IdMap<DrawCommand>,
     sketches: IdMap<Sketch>,
     /// The sketch that owns the pointer until it is released.
     capture: Option<NodeId>,
@@ -327,6 +349,7 @@ impl Drawings {
             }
             Change::Removed(id, NodeKind::Canvas) => {
                 self.canvases.remove(&id);
+                self.bitmaps.remove(&id);
                 if self.hovered_canvas == Some(id) {
                     self.hovered_canvas = None;
                 }
@@ -350,6 +373,12 @@ impl Drawings {
                     self.dirty = true;
                 }
             }
+            Change::Updated(id, PropKey::CanvasBitmap) | Change::Frame(id)
+                if self.canvases.contains_key(&id) =>
+            {
+                // Where the box snaps decides the bitmap's scale.
+                self.dirty = true;
+            }
             Change::Updated(id, _) | Change::Frame(id) => {
                 if let Some(sketch) = self.sketches.get_mut(&id) {
                     sketch.dirty = true;
@@ -365,16 +394,33 @@ impl Drawings {
             return;
         }
         self.dirty = false;
+        let scale = ctx.scene.environment.scale;
         for (id, dirty) in &mut self.canvases {
-            if std::mem::take(dirty) {
-                let commands = ctx
-                    .scene
-                    .node(*id)
-                    .map(|node| parse_canvas(node.props().text_or_empty(PropKey::CanvasCommands)))
-                    .unwrap_or_default();
-                ctx.commands
-                    .push(HostCommand::SetDrawing { id: *id, commands });
+            let node = ctx.scene.node(*id);
+            let bitmap = node
+                .filter(|node| node.props().flag_or(PropKey::CanvasBitmap, false))
+                .map(|node| bitmap_space(node.frame, scale));
+            let moved = match &bitmap {
+                Some(bitmap) => self.bitmaps.get(id) != Some(bitmap),
+                None => self.bitmaps.contains_key(id),
+            };
+            if !std::mem::take(dirty) && !moved {
+                continue;
             }
+            let mut commands = node
+                .map(|node| parse_canvas(node.props().text_or_empty(PropKey::CanvasCommands)))
+                .unwrap_or_default();
+            match bitmap {
+                Some(bitmap) => {
+                    commands.insert(0, bitmap.clone());
+                    self.bitmaps.insert(*id, bitmap);
+                }
+                None => {
+                    self.bitmaps.remove(id);
+                }
+            }
+            ctx.commands
+                .push(HostCommand::SetDrawing { id: *id, commands });
         }
         let dirty: Vec<NodeId> = self
             .sketches
@@ -719,6 +765,33 @@ impl Drawings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canvas_bitmaps_paint_into_the_snapped_box_like_chromium() {
+        // Electron: a 439x220.8 doughnut at y 705.67 shows its 220px bitmap 1:1 (rows 706..926).
+        assert_eq!(
+            bitmap_space(Rect::new(243.0, 705.671_9, 439.0, 220.796_9), 1.0),
+            DrawCommand::Bitmap {
+                size: Size::new(439.0, 220.0),
+                scale_x: 1.0,
+                scale_y: 1.0
+            }
+        );
+        // At y 377.06 the 236px bitmap of a 236.8 box spans rows 377..614.
+        let DrawCommand::Bitmap { size, scale_y, .. } =
+            bitmap_space(Rect::new(243.0, 377.062_5, 920.0, 236.796_9), 1.0)
+        else {
+            unreachable!()
+        };
+        assert_eq!(size.height, 236.0);
+        assert!((scale_y - 237.0 / 236.0).abs() < 1e-6);
+        // Device pixels at scale 2: floor(236.8 × 2) = 473.
+        let DrawCommand::Bitmap { size, .. } = bitmap_space(Rect::new(0.0, 0.0, 10.0, 236.8), 2.0)
+        else {
+            unreachable!()
+        };
+        assert_eq!(size.height, 236.5);
+    }
 
     #[test]
     fn canvas_commands_decode_the_four_primitives() {

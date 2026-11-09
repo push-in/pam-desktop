@@ -541,6 +541,7 @@ impl Scene {
                         view.size(),
                         insets,
                         text.content.vertical,
+                        text.content.inline,
                         layout.height,
                     );
                     let available = (view.frame.width - insets.horizontal()).max(0.0);

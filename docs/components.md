@@ -108,6 +108,8 @@ It follows CSS inline layout:
 - The background covers the padding and is drawn under the text; the run itself is not highlighted again. A box that wraps paints one piece per line.
 - Selection, hit-testing and copying see only the characters: clicking the padding places the caret at the edge of the box, and a selection that covers a box's text does not paint its padding.
 
+`display: inline-block` on the nested `Text` makes the box a CSS inline-block, like `.kbd { display: inline-block }` in a browser: its top and bottom padding and border take room in the line (a `<kbd>` chip in a 17px paragraph makes that line 20.4px tall when its own `line-height` is 15.4px), and its text sits on the paragraph's baseline the way Blink places it. GTK and Win32 grow only the lines that hold the box; AppKit styles whole paragraphs, so there the paragraph takes the tallest such line (written, not run on macOS yet). The record carries the flag (property 2029, `TextInlineBlock`, on the nested run).
+
 Box properties of the paragraph itself (the outer `Text`) stay those of a block, as before. Inline boxes need a host that declares property 2028 (`TextSpanBoxes`); the SDK refuses to send one to an older host. The GTK and AppKit backends draw them (AppKit reserves each edge with an invisible character whose advance is the padding plus border, and paints the box of each line under the text with TextKit's glyph positions). The Win32 backend lays the edges out as DirectWrite inline objects and paints each line's piece under the text; that code type-checks but has not run on Windows yet.
 
 ## Buttons and pressables
@@ -175,6 +177,8 @@ Input::make($this->name)
 | `mask(pattern)` | Formats while typing; `#` stands for a digit. |
 | `currency(...)` | Formats an amount with a prefix, a suffix and a locale. |
 | `decimal($minDigits, $maxDigits, $prefix, $suffix, $locale)` | A decimal number in the separators of the locale, with up to `$maxDigits` (at most 6) decimals and at least `$minDigits`. PHP receives an ASCII number (`0.5`). Prefix and suffix are at most 16 bytes. Template: `inputFormat="decimal"`. |
+
+Without a width, a single-line input is as wide as Chromium's text field (`inputSize="20"` characters of its font's average width, see [Form-control sizes](styling.md#form-control-sizes-input-select-min-width-auto)); template attribute `inputSize` is HTML `size`.
 
 Masks are applied by the host as the user types, with no round trip to PHP:
 

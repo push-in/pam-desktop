@@ -366,7 +366,13 @@ impl Backend for Win32Backend {
             text.colored_for = 0;
         }
         let layout = text.layout.as_ref()?;
-        let origin = text_origin(size, insets, text.content.vertical, layout.height);
+        let origin = text_origin(
+            size,
+            insets,
+            text.content.vertical,
+            text.content.inline,
+            layout.height,
+        );
         Some(layout.index_at(Point::new(point.x - origin.x, point.y - origin.y)))
     }
 
@@ -499,6 +505,14 @@ impl Backend for Win32Backend {
         };
         let state = &mut *state;
         state.text.measure(&state.graphics.dwrite, block, max_width)
+    }
+
+    fn text_control_metrics(
+        &mut self,
+        block: &TextBlock,
+    ) -> Option<pam_desktop_ui::text::CharMetrics> {
+        let state = self.app.state()?;
+        state.text.control_metrics(block)
     }
 
     // ---- frames --------------------------------------------------------

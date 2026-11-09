@@ -273,6 +273,18 @@ impl TextEngine {
         }
     }
 
+    /// Blink's text-field metrics of the font of the block's first run.
+    pub fn control_metrics(&self, block: &TextBlock) -> Option<pam_desktop_ui::text::CharMetrics> {
+        let font = &block.runs.first()?.font;
+        let family = self.family(font);
+        match self.asset(font) {
+            Some(asset) => {
+                crate::inline_boxes::control_metrics(Some(&asset.collection), &family, font)
+            }
+            None => crate::inline_boxes::control_metrics(self.collection.as_ref(), &family, font),
+        }
+    }
+
     /// Forgets resolved families and measurements (the asset root changed).
     pub fn forget_families(&mut self) {
         self.families.borrow_mut().clear();
@@ -822,12 +834,21 @@ impl Layout {
     }
 }
 
-/// Where a paragraph of `height` starts inside a box of `size`.
-pub fn text_origin(size: Size, insets: Insets, vertical: VerticalAlign, height: f32) -> Point {
+/// Where a paragraph of `height` starts inside a box of `size`. An inline
+/// box (`inline`) centres its taller line box on its content area.
+pub fn text_origin(
+    size: Size,
+    insets: Insets,
+    vertical: VerticalAlign,
+    inline: bool,
+    height: f32,
+) -> Point {
     let free = size.height - insets.vertical() - height;
     let top = insets.top
         + match vertical {
             VerticalAlign::Top => 0.0,
+            // Blink's floored half-leading above an inline box's content area.
+            VerticalAlign::Center if inline => (free / 2.0).ceil(),
             VerticalAlign::Center => (free / 2.0).max(0.0),
             VerticalAlign::Bottom => free.max(0.0),
         };

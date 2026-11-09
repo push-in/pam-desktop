@@ -33,10 +33,21 @@ final readonly class SelectTheme
         public ?int $popupShadowColor = null,
         public float $popupShadowOffsetY = 0,
         public float $popupShadowBlur = 0,
+        /** Option row height without the select-mode gap (null: 36, or 64 with images). PrimeVue: 2 × 8 padding + font size × line height. */
+        public ?float $optionHeight = null,
+        /** Field border while focused or open (null keeps the built-in focus style). */
+        public ?int $focusBorder = null,
+        /** Focus ring drawn around the field while focused or open, like `box-shadow: 0 0 0 <width> <color>`. */
+        public ?int $focusRing = null,
+        public float $focusRingWidth = 2,
+        /** Placeholder colour of the field (null: the platform's dimmed text colour). */
+        public ?int $placeholderColor = null,
     ) {
         if ($popupMinWidth < 0 || $popupMinWidth > 1024 || $popupOffset < 0 || $popupOffset > 32
             || $popupShadowBlur < 0 || $popupShadowBlur > 64 || abs($popupShadowOffsetY) > 64
-            || $optionFontSize < 8 || $optionFontSize > 32) {
+            || $optionFontSize < 8 || $optionFontSize > 32
+            || ($optionHeight !== null && (!is_finite($optionHeight) || $optionHeight < 16 || $optionHeight > 96))
+            || !is_finite($focusRingWidth) || $focusRingWidth < 0 || $focusRingWidth > 8) {
             throw new \InvalidArgumentException('Invalid select theme geometry.');
         }
     }

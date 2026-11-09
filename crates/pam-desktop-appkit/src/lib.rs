@@ -10,6 +10,7 @@
 #![cfg(target_os = "macos")]
 
 mod accessibility;
+mod backdrop;
 mod backend;
 mod capture;
 mod clock;
