@@ -13,7 +13,14 @@ fn units(value: f32) -> i32 {
     (value * SCALE).round() as i32
 }
 
-fn weight(weight: u16) -> pango::Weight {
+/// A CSS line height as Blink stores it: a LayoutUnit (1/64 px), rounded.
+/// `18.56px` lines are 18.5625 apart there; the float would push every
+/// box below a few lines of text a fraction off and flip snapped edges.
+fn line_height(value: f32) -> f32 {
+    (value * 64.0).round() / 64.0
+}
+
+pub(crate) fn weight(weight: u16) -> pango::Weight {
     match weight {
         100 => pango::Weight::Thin,
         200 => pango::Weight::Ultralight,
@@ -71,13 +78,127 @@ fn font_extents(layout: &pango::Layout, run: &TextRun) -> (i32, i32) {
         })
 }
 
+#[link(name = "pangocairo-1.0")]
+unsafe extern "C" {
+    fn pango_cairo_context_set_font_options(
+        context: *mut pango::ffi::PangoContext,
+        options: *const gtk::cairo::ffi::cairo_font_options_t,
+    );
+}
+
+thread_local! {
+    /// Unhinted ascent/descent per font description (a handful per app).
+    static UNHINTED: std::cell::RefCell<std::collections::HashMap<String, (f32, f32)>> =
+        std::cell::RefCell::default();
+}
+
+/// Ascent and descent of a run's font in pixels from the font's own
+/// metrics, before hinting rounds them up (the values Chromium rounds).
+fn unhinted_extents(layout: &pango::Layout, run: &TextRun) -> (f32, f32) {
+    use gtk::glib::translate::ToGlibPtr;
+    use pango::prelude::{FontExt, FontMapExt};
+    let description = font_description(layout, run);
+    let key = description.to_string();
+    if let Some(extents) = UNHINTED.with(|cache| cache.borrow().get(&key).copied()) {
+        return extents;
+    }
+    let hinted = || {
+        let (ascent, height) = font_extents(layout, run);
+        (ascent as f32 / SCALE, (height - ascent) as f32 / SCALE)
+    };
+    let (Some(map), Ok(mut options)) =
+        (layout.context().font_map(), gtk::cairo::FontOptions::new())
+    else {
+        return hinted();
+    };
+    options.set_hint_metrics(gtk::cairo::HintMetrics::Off);
+    let context = map.create_context();
+    // SAFETY: both objects are alive; Pango copies the options.
+    unsafe {
+        pango_cairo_context_set_font_options(context.to_glib_none().0, options.to_raw_none())
+    };
+    let extents = context.load_font(&description).map_or_else(hinted, |font| {
+        let metrics = font.metrics(None);
+        (
+            metrics.ascent() as f32 / SCALE,
+            metrics.descent() as f32 / SCALE,
+        )
+    });
+    UNHINTED.with(|cache| cache.borrow_mut().insert(key, extents));
+    extents
+}
+
+/// How far the first baseline must move so it sits where Chromium puts it.
+/// Blink rounds each font's ascent and descent to whole pixels and gives the
+/// ascent side `floor(half-leading)` of the CSS line height, so its baselines
+/// fall on whole pixels of the line box; Pango splits the fractional leading
+/// evenly. Constant for the paragraph: every line has the same line height.
+pub fn baseline_shift(layout: &pango::Layout, block: &TextBlock) -> f32 {
+    let mut chromium = f32::NEG_INFINITY;
+    for (index, run) in block
+        .runs
+        .iter()
+        .enumerate()
+        // An empty first run is the block's strut (`TextSource::styled`).
+        .filter(|(index, run)| !run.text.is_empty() || *index == 0)
+    {
+        // A run inside a box with its own line height takes that line
+        // height; an inline-block also holds its top padding and border.
+        let owner = block
+            .boxes
+            .iter()
+            .rev()
+            .find(|inline| inline.runs.contains(&index) && inline.line_height > 0.0);
+        let (height, edge) = owner.map_or((block.line_height, 0.0), |inline| {
+            (inline.line_height, inline.edge_above())
+        });
+        chromium = chromium.max(edge + chromium_above(layout, run, height));
+    }
+    if chromium.is_finite() {
+        chromium - layout.baseline() as f32 / SCALE
+    } else {
+        0.0
+    }
+}
+
+/// CSS `line-height: normal` as Blink computes it: the rounded ascent plus
+/// the rounded descent of the font's unhinted metrics (the tallest run),
+/// not the hinted extents Pango would use (9px DejaVu Sans: 10px, not 12).
+fn normal_line_height(layout: &pango::Layout, block: &TextBlock) -> Option<f32> {
+    block
+        .runs
+        .iter()
+        .filter(|run| !run.text.is_empty())
+        .map(|run| {
+            let (ascent, descent) = unhinted_extents(layout, run);
+            ascent.round() + descent.round()
+        })
+        .reduce(f32::max)
+        .filter(|height| *height > 0.0)
+}
+
+/// Blink's distance from a line box's top to the baseline of `run` in a
+/// line `height` tall (0: the font's own): the ascent rounded to whole
+/// pixels plus `floor(half-leading)`.
+fn chromium_above(layout: &pango::Layout, run: &TextRun, height: f32) -> f32 {
+    let (ascent, descent) = unhinted_extents(layout, run);
+    let (ascent, descent) = (ascent.round(), descent.round());
+    if height > 0.0 {
+        ascent + ((line_height(height) - ascent - descent) / 2.0).floor()
+    } else {
+        ascent
+    }
+}
+
 pub fn configure(layout: &pango::Layout, block: &TextBlock) {
     let mut text = String::new();
     let attributes = pango::AttrList::new();
     if block.line_height > 0.0 {
         attributes.insert(pango::AttrInt::new_line_height_absolute(units(
-            block.line_height,
+            line_height(block.line_height),
         )));
+    } else if let Some(normal) = normal_line_height(layout, block) {
+        attributes.insert(pango::AttrInt::new_line_height_absolute(units(normal)));
     }
     // Inline box edges are characters shaped as empty glyphs of the edge's
     // width, so they take space in the line and the line breaker sees them.
@@ -93,9 +214,11 @@ pub fn configure(layout: &pango::Layout, block: &TextBlock) {
                 box_starts[spacer.box_index] = start;
             } else if inline.line_height > 0.0 {
                 // A box's own line height sizes its line box, like the
-                // `line-height` of a CSS inline element.
+                // `line-height` of a CSS inline element; an inline-block
+                // adds its vertical padding and border.
                 let mut height: pango::Attribute =
-                    pango::AttrInt::new_line_height_absolute(units(inline.line_height)).into();
+                    pango::AttrInt::new_line_height_absolute(units(inline.line_box_height()))
+                        .into();
                 height.set_start_index(box_starts[spacer.box_index]);
                 height.set_end_index(start + spacer.character.len_utf8() as u32);
                 attributes.insert(height);
@@ -215,6 +338,29 @@ pub fn nowrap(block: &TextBlock) -> bool {
     block.max_lines == 1 && block.ellipsize == Ellipsize::Clip
 }
 
+/// Horizontal shift that aligns a wrapped paragraph's lines like CSS. CSS
+/// keeps the letter-spacing after the last character of a line in the
+/// line's width (Win32 and AppKit trailing spacing do too); Pango drops it,
+/// so a centred or right-aligned tracked line sat half (or all) of it further
+/// right. Only for a layout with a width (a nowrap line is not aligned by Pango).
+#[must_use]
+pub fn alignment_shift(block: &TextBlock) -> f32 {
+    if nowrap(block) {
+        return 0.0;
+    }
+    let trailing = block
+        .runs
+        .iter()
+        .rev()
+        .find(|run| !run.text.is_empty())
+        .map_or(0.0, |run| run.letter_spacing.max(0.0));
+    match block.align {
+        TextAlign::Center => -trailing / 2.0,
+        TextAlign::End => -trailing,
+        _ => 0.0,
+    }
+}
+
 /// Constrains the layout to `width` logical units (infinite = no wrapping).
 pub fn set_width(layout: &pango::Layout, width: f32) {
     if width.is_finite() && width >= 0.0 {
@@ -244,18 +390,114 @@ pub fn measure(layout: &pango::Layout, block: &TextBlock, max_width: f32) -> Tex
         .iter()
         .map(|run| run.letter_spacing.max(0.0))
         .fold(0.0_f32, f32::max);
-    // Round the width up: a box narrower than its text by a fraction would
-    // wrap when drawn. The height stays exact so fractional CSS line heights
-    // (19.2px, 16.5px...) stack like a browser line box instead of drifting a
-    // pixel per row.
+    // Round the width up to a Blink LayoutUnit (1/64 px): a box narrower
+    // than its text by a fraction would wrap when drawn, and a whole pixel
+    // made every shrink-wrapped label (buttons, chips) up to 1px wider than
+    // Chromium. The height stays exact so fractional CSS line heights (19.2px,
+    // 16.5px...) stack like a browser line box instead of drifting a pixel
+    // per row.
     TextMetrics {
-        width: (logical.width() as f32 / SCALE + tracking)
-            .ceil()
-            .min(max_width),
+        width: (((logical.width() as f32 / SCALE + tracking) * 64.0).ceil() / 64.0).min(max_width),
         height: logical.height() as f32 / SCALE,
-        first_baseline: layout.baseline() as f32 / SCALE,
+        // Where the view draws it (Blink's baseline): boxes align on it.
+        first_baseline: layout.baseline() as f32 / SCALE + baseline_shift(layout, block),
         line_count: layout.line_count().max(0) as u32,
     }
+}
+
+#[link(name = "harfbuzz")]
+unsafe extern "C" {
+    fn hb_font_get_face(font: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    fn hb_face_get_upem(face: *mut std::ffi::c_void) -> u32;
+    fn hb_face_reference_table(face: *mut std::ffi::c_void, tag: u32) -> *mut std::ffi::c_void;
+    fn hb_blob_get_data(blob: *mut std::ffi::c_void, length: *mut u32) -> *const u8;
+    fn hb_blob_destroy(blob: *mut std::ffi::c_void);
+}
+
+#[link(name = "pango-1.0")]
+unsafe extern "C" {
+    fn pango_font_get_hb_font(font: *mut pango::ffi::PangoFont) -> *mut std::ffi::c_void;
+}
+
+/// The big-endian `i16` at `offset` of an sfnt table of `face`.
+fn table_i16(face: *mut std::ffi::c_void, tag: &[u8; 4], offset: usize) -> Option<i16> {
+    // SAFETY: the face is alive for the call; the blob is released below and
+    // its bytes are only read within the reported length.
+    unsafe {
+        let blob = hb_face_reference_table(face, u32::from_be_bytes(*tag));
+        if blob.is_null() {
+            return None;
+        }
+        let mut length = 0_u32;
+        let data = hb_blob_get_data(blob, &raw mut length);
+        let value = (!data.is_null() && length as usize >= offset + 2).then(|| {
+            let bytes = std::slice::from_raw_parts(data.add(offset), 2);
+            i16::from_be_bytes([bytes[0], bytes[1]])
+        });
+        hb_blob_destroy(blob);
+        value
+    }
+}
+
+thread_local! {
+    /// Text-control metrics per font description.
+    static CONTROL: std::cell::RefCell<std::collections::HashMap<String, Option<pam_desktop_ui::text::CharMetrics>>> =
+        std::cell::RefCell::default();
+}
+
+/// Blink's text-field metrics of the primary font of the block's first run,
+/// as Skia's FreeType port reports them: `AvgCharWidth` is the OS/2
+/// `xAvgCharWidth` (the `x` advance when it is 0) and `MaxCharWidth` the
+/// rounded width of the head bounding box, both at the font size.
+pub fn control_metrics(
+    layout: &pango::Layout,
+    block: &TextBlock,
+) -> Option<pam_desktop_ui::text::CharMetrics> {
+    use gtk::glib::translate::ToGlibPtr;
+    let run = block.runs.first()?;
+    let description = font_description(layout, run);
+    let key = description.to_string();
+    if let Some(cached) = CONTROL.with(|cache| cache.borrow().get(&key).copied()) {
+        return cached;
+    }
+    let size = run.font.size;
+    let metrics = layout.context().load_font(&description).and_then(|font| {
+        // SAFETY: the font is alive; Pango owns the HarfBuzz font it returns.
+        let face = unsafe {
+            let hb = pango_font_get_hb_font(font.to_glib_none().0);
+            if hb.is_null() {
+                return None;
+            }
+            hb_font_get_face(hb)
+        };
+        // SAFETY: the face belongs to the live HarfBuzz font.
+        let upem = unsafe { hb_face_get_upem(face) } as f32;
+        if face.is_null() || upem <= 0.0 {
+            return None;
+        }
+        let x_min = table_i16(face, b"head", 36)?;
+        let x_max = table_i16(face, b"head", 40)?;
+        let average = match table_i16(face, b"OS/2", 2).filter(|value| *value != 0) {
+            Some(average) => f32::from(average) / upem * size,
+            None => {
+                let probe = TextBlock {
+                    runs: vec![TextRun {
+                        text: "x".to_owned(),
+                        letter_spacing: 0.0,
+                        ..run.clone()
+                    }],
+                    ..TextBlock::default()
+                };
+                configure(layout, &probe);
+                set_width(layout, f32::INFINITY);
+                layout.extents().1.width() as f32 / SCALE
+            }
+        };
+        let maximum = ((f32::from(x_max) - f32::from(x_min)) / upem * size + 0.5).floor();
+        Some(pam_desktop_ui::text::CharMetrics { average, maximum })
+    });
+    CONTROL.with(|cache| cache.borrow_mut().insert(key, metrics));
+    metrics
 }
 
 /// Height of the laid out text in logical units.
@@ -373,8 +615,13 @@ pub fn box_fragments(layout: &pango::Layout, block: &TextBlock) -> Vec<(Rect, De
             };
             let (ascent, height) = font_extents(layout, run);
             let (ascent, descent) = (ascent as f32 / SCALE, (height - ascent) as f32 / SCALE);
-            // A line height centres the content area in it (half-leading).
-            let (above, below) = if inline.line_height > 0.0 {
+            // A line height centres the content area in it (half-leading);
+            // an inline-block's content line sits on its text baseline the
+            // way Blink places it (rounded ascent, floored half-leading).
+            let (above, below) = if inline.inline_block && inline.line_height > 0.0 {
+                let above = chromium_above(layout, run, inline.line_height);
+                (above, inline.line_height - above)
+            } else if inline.line_height > 0.0 {
                 let leading = (inline.line_height - ascent - descent) / 2.0;
                 (ascent + leading, descent + leading)
             } else {
@@ -422,6 +669,14 @@ mod tests {
     use pam_desktop_ui::text::{FontSpec, TextRun};
     use std::{cell::Cell, rc::Rc};
 
+    #[test]
+    fn line_heights_are_blink_layout_units() {
+        // Blink rounds a CSS line height to 1/64 px.
+        assert_eq!(line_height(18.56), 18.5625);
+        assert_eq!(line_height(23.52), 23.515_625);
+        assert_eq!(line_height(20.0), 20.0);
+    }
+
     fn run(text: &str) -> TextRun {
         TextRun {
             text: text.to_owned(),
@@ -456,6 +711,7 @@ mod tests {
                 radius: 4.0,
                 background: Some(pam_desktop_ui::color::Color::BLACK),
                 line_height: 0.0,
+                inline_block: false,
             }],
             ..plain.clone()
         };
@@ -533,6 +789,8 @@ mod tests {
         crate::view::assert_backdrop_registry();
         crate::backend::assert_classic_scrollbar();
         crate::input::assert_placeholder_fallback();
+        crate::glyphs::assert_atlas_draws_and_releases();
+        assert_tracked_centred_lines_keep_the_css_trailing_spacing();
         // Transparent widgets stay pickable (CSS opacity does not hit-test).
         let probe = gtk::Button::new();
         probe.set_opacity(f64::from(crate::backend::pickable_opacity(0.0)));
@@ -542,9 +800,9 @@ mod tests {
         let layout = widget.create_pango_layout(None);
         use_subpixel_positions(&layout);
         for (label, size, tracking) in [
-            ("PDV", 9.0, 1.62),
+            ("POS", 9.0, 1.62),
             ("SYNC", 9.0, 1.62),
-            ("SISTEMA DE PONTO DE VENDA", 11.52, 1.3824),
+            ("POINT OF SALE TERMINAL", 11.52, 1.3824),
             ("CRÉDITO", 10.88, 0.8704),
             ("DÉBITO", 10.88, 0.8704),
         ] {
@@ -594,8 +852,9 @@ mod tests {
             ..TextBlock::default()
         };
         let metrics = measure(&layout, &block, 314.0);
+        // 19.2px is 19.203125 in Chromium (Electron 37 probe: rounded to 1/64 px).
         assert!(
-            (metrics.height - 19.2).abs() < 0.01,
+            (metrics.height - 19.203_125).abs() < 0.001,
             "height {}",
             metrics.height
         );
@@ -645,6 +904,22 @@ mod tests {
         };
         let height = measure(&layout, &kbd, f32::INFINITY).height;
         assert!((height - 20.4).abs() < 0.01, "kbd line {height}");
+        // The same kbd as a CSS inline-block in a 17.024px paragraph (the
+        // Electron header): its padding and border grow the line to 20.4px
+        // and its text baseline sits 13px below the line top, like Blink.
+        let block = TextBlock {
+            boxes: vec![pam_desktop_ui::text::InlineBox {
+                line_height: 15.4,
+                inline_block: true,
+                ..kbd.boxes[0].clone()
+            }],
+            line_height: 17.024,
+            ..kbd.clone()
+        };
+        let height = measure(&layout, &block, f32::INFINITY).height;
+        assert!((height - 20.4).abs() < 0.05, "inline-block line {height}");
+        let baseline = layout.baseline() as f32 / SCALE + baseline_shift(&layout, &block);
+        assert_eq!(baseline, 13.0, "inline-block baseline");
 
         let app = gtk::Application::builder()
             .application_id("com.pamdesktop.gtk-window-state-test")
@@ -669,5 +944,51 @@ mod tests {
             "GDK state notification is forwarded"
         );
         WidgetExt::unrealize(&window);
+    }
+
+    /// GTK runs on one thread: called from `tracked_labels_fit_their_measured_width`.
+    fn assert_tracked_centred_lines_keep_the_css_trailing_spacing() {
+        let widget = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let layout = widget.create_pango_layout(None);
+        use_subpixel_positions(&layout);
+        let block = |align| TextBlock {
+            runs: vec![TextRun {
+                text: "SEM IMAGEM".to_owned(),
+                font: FontSpec {
+                    family: "DejaVu Sans".into(),
+                    size: 12.0,
+                    weight: 700,
+                    ..FontSpec::default()
+                },
+                letter_spacing: 2.16,
+                color: None,
+                background: None,
+                underline: false,
+                strikethrough: false,
+                press: None,
+            }],
+            align,
+            ..TextBlock::default()
+        };
+        let start = block(TextAlign::Start);
+        let css_width = {
+            configure(&layout, &start);
+            set_width(&layout, f32::INFINITY);
+            layout.extents().1.width() as f32 / SCALE + 2.16
+        };
+        let first_x = |block: &TextBlock, width: f32| {
+            configure(&layout, block);
+            set_width(&layout, width);
+            layout.index_to_pos(0).x() as f32 / SCALE + alignment_shift(block)
+        };
+        let left = first_x(&start, 158.0);
+        for (align, share) in [(TextAlign::Center, 0.5), (TextAlign::End, 1.0)] {
+            let moved = first_x(&block(align), 158.0) - left;
+            let css = (158.0 - css_width) * share;
+            assert!(
+                (moved - css).abs() < 0.05,
+                "{align:?}: {moved} vs CSS {css}"
+            );
+        }
     }
 }

@@ -863,6 +863,12 @@ impl Backend for GtkBackend {
         }
     }
 
+    fn set_text_geometry(&mut self, id: NodeId, geometry: pam_desktop_ui::backend::TextGeometry) {
+        if let Some(entry) = self.views.get(&id) {
+            entry.container.set_text_geometry(geometry);
+        }
+    }
+
     fn set_text(&mut self, id: NodeId, text: Option<&TextContent>) {
         if let Some(entry) = self.views.get_mut(&id) {
             entry.container.set_text(text);
@@ -1086,6 +1092,11 @@ impl Backend for GtkBackend {
         crate::accessibility::screen_reader_active()
     }
 
+    fn composites_backdrop_boxes(&self) -> pam_desktop_ui::backend::BackdropBoxes {
+        // One window-sized texture: the topmost dialog's.
+        pam_desktop_ui::backend::BackdropBoxes::Topmost
+    }
+
     fn begin_text_drag(&mut self, window: WindowId, source: NodeId, text: &str) {
         let finished = |events: &Rc<EventQueue>, dropped: bool| {
             events.push(BackendEvent::DragFinished { source, dropped })
@@ -1191,7 +1202,9 @@ impl Backend for GtkBackend {
         } else {
             gtk::PolicyType::External
         };
-        if config.horizontal {
+        if config.both {
+            scrolled.set_policy(scrolling, scrolling);
+        } else if config.horizontal {
             scrolled.set_policy(scrolling, gtk::PolicyType::External);
         } else {
             scrolled.set_policy(gtk::PolicyType::External, scrolling);
@@ -1224,6 +1237,13 @@ impl Backend for GtkBackend {
             Some(layout) => text::measure(layout, block, max_width),
             None => TextMetrics::default(),
         }
+    }
+
+    fn text_control_metrics(
+        &mut self,
+        block: &TextBlock,
+    ) -> Option<pam_desktop_ui::text::CharMetrics> {
+        text::control_metrics(self.measure_layout.as_ref()?, block)
     }
 
     fn request_frame(&mut self) {
@@ -1582,6 +1602,16 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
             return;
         };
         if let Some(display) = gdk::Display::default() {
+            // Without a settings daemon GTK's X11 fallback is full hinting;
+            // the fontconfig default (what Chromium and Qt use) is kept instead.
+            if crate::x11::xsettings_managed(&display) == Some(false)
+                && let (Some(style), Some(settings)) = (
+                    crate::fonts::default_hint_style(),
+                    gtk::Settings::for_display(&display).into(),
+                )
+            {
+                settings.set_gtk_xft_hintstyle(Some(style));
+            }
             let provider = gtk::CssProvider::new();
             crate::compat::load_css(&provider, STYLESHEET);
             gtk::style_context_add_provider_for_display(
@@ -1742,8 +1772,60 @@ fn style_scrollbar(scrolled: &gtk::ScrolledWindow, config: &ScrollConfig) {
         }
     }
     let styled = config.scrollbar_thickness.is_some() || config.scrollbar_color.is_some();
-    scrolled.set_overlay_scrolling(!(config.reserved_gutter && styled));
+    scrolled.set_overlay_scrolling(!config.reserved_gutter);
+    if let (None, Some(c), true) = (
+        config.scrollbar_thickness,
+        config.scrollbar_color,
+        config.reserved_gutter,
+    ) {
+        // `scrollbar-color` with the default width: Chromium's 15 px classic
+        // bar (arrows, 9 px thumb) in the authored thumb colour on the
+        // authored track colour (transparent without one), corner included.
+        let track = config.scrollbar_track;
+        let class = format!(
+            "pam-scrollbar-classic-{}-{}",
+            u32::from_be_bytes([c.a, c.r, c.g, c.b]),
+            track.map_or(0, |t| u32::from_be_bytes([t.a, t.r, t.g, t.b]))
+        );
+        let css = |c: pam_desktop_ui::color::Color| {
+            format!(
+                "rgba({},{},{},{:.4})",
+                c.r,
+                c.g,
+                c.b,
+                f32::from(c.a) / 255.0
+            )
+        };
+        let thumb = css(c);
+        let track = track.map_or_else(|| "transparent".to_owned(), css);
+        add_scrollbar_rule(&class, || classic_rule(&class, &track, &thumb));
+        scrolled.add_css_class(&class);
+        return;
+    }
     if !styled {
+        if config.reserved_gutter {
+            // A reserved gutter without an authored bar: Chromium's default
+            // classic bar. Its colour scheme follows the page (CSS
+            // `color-scheme`); natively, the first opaque background behind
+            // the scroller tells a dark page from a light one.
+            let apply = |scrolled: &gtk::ScrolledWindow| {
+                for class in ["pam-scrollbar-default-0", "pam-scrollbar-default-1"] {
+                    scrolled.remove_css_class(class);
+                }
+                let dark = backdrop_is_dark(scrolled.upcast_ref());
+                let class = format!("pam-scrollbar-default-{}", u8::from(dark));
+                add_scrollbar_rule(&class, || classic_default_rule(&class, dark));
+                scrolled.add_css_class(&class);
+            };
+            apply(scrolled);
+            // The views around it may be attached after the configuration.
+            let weak = scrolled.downgrade();
+            glib::idle_add_local_once(move || {
+                if let Some(scrolled) = weak.upgrade() {
+                    apply(&scrolled);
+                }
+            });
+        }
         return;
     }
     let thickness = config.scrollbar_thickness.unwrap_or(10.0).clamp(0.0, 64.0);
@@ -1781,6 +1863,139 @@ fn style_scrollbar(scrolled: &gtk::ScrolledWindow, config: &ScrollConfig) {
     };
     add_scrollbar_rule(&class, rule);
     scrolled.add_css_class(&class);
+    if config.reserved_gutter && config.thumb_inset > 0.0 {
+        let classic = format!("{class}-classic");
+        add_scrollbar_rule(&classic, || {
+            classic_thin_rule(&classic, thickness, inset, &color)
+        });
+        scrolled.add_css_class(&classic);
+    }
+}
+
+/// Whether the nearest mostly opaque view background around `widget` is dark.
+fn backdrop_is_dark(widget: &gtk::Widget) -> bool {
+    let mut current = Some(widget.clone());
+    while let Some(widget) = current {
+        if let Some(view) = widget.downcast_ref::<crate::view::PamView>() {
+            let background = view.with_state(|state| state.decoration.background);
+            if background.a >= 128 {
+                let luminance = 0.2126 * f32::from(background.r)
+                    + 0.7152 * f32::from(background.g)
+                    + 0.0722 * f32::from(background.b);
+                return luminance < 128.0;
+            }
+        }
+        current = widget.parent();
+    }
+    false
+}
+
+/// Chromium's default classic bar on Linux (Fluent, no `scrollbar-width` or
+/// `scrollbar-color`): a 15 px track, a 9 px rounded thumb 3 px from the
+/// track edges, and a 15 px arrow button at each end with a 5-row triangle
+/// (1, 3 .. 9 px) in the thumb colour. Dark colour scheme: track #2C2C2C,
+/// thumb #9F9F9F; light: track #FCFCFC, thumb #8B8B8B (both measured on Electron 37).
+fn classic_default_rule(class: &str, dark: bool) -> String {
+    let (track, thumb_color) = if dark {
+        ("#2C2C2C", "#9F9F9F")
+    } else {
+        ("#FCFCFC", "#8B8B8B")
+    };
+    classic_rule(class, track, thumb_color)
+}
+
+/// Chromium's 15 px classic bar in `track`/`thumb_color`; the corner between
+/// two bars (GTK's junction) takes the track colour.
+fn classic_rule(class: &str, track: &str, thumb_color: &str) -> String {
+    const THICKNESS: f32 = 15.0;
+    const INSET: f32 = 3.0;
+    let thumb = THICKNESS - 2.0 * INSET;
+    // The triangle's apex sits 6 px from the bar's end, its base 4 rows further.
+    let (rows, apex) = (5_u32, 6.0_f32);
+    let mut vertical = (Vec::new(), Vec::new(), Vec::new());
+    let mut horizontal = (Vec::new(), Vec::new(), Vec::new());
+    for row in 0..rows {
+        let width = 2 * row + 1;
+        let across = (THICKNESS - width as f32) / 2.0;
+        let along = apex + row as f32;
+        for along in [
+            format!("{along}px"),
+            format!("calc(100% - {}px)", along + 1.0),
+        ] {
+            vertical.0.push(format!("image({thumb_color})"));
+            vertical.1.push(format!("{width}px 1px"));
+            vertical.2.push(format!("{across}px {along}"));
+            horizontal.0.push(format!("image({thumb_color})"));
+            horizontal.1.push(format!("1px {width}px"));
+            horizontal.2.push(format!("{along} {across}px"));
+        }
+    }
+    let repeat = vec!["no-repeat"; vertical.0.len()].join(", ");
+    format!(
+        ".{class} > scrollbar {{ background-color: {track}; border: none; padding: 0; margin: 0; min-width: {THICKNESS}px; min-height: {THICKNESS}px; opacity: 1; transition: none; }}\n\
+         .{class} > junction {{ background: {track}; border: none; }}\n\
+         .{class} > scrollbar trough {{ background: transparent; border: none; padding: 0; }}\n\
+         .{class} > scrollbar slider {{ min-width: {thumb}px; min-height: {thumb}px; margin: 0; padding: 0; border: none; border-radius: {radius}px; background-color: {thumb_color}; opacity: 1; transition: none; }}\n\
+         .{class} > scrollbar.vertical:not(.overlay-indicator) {{ background-image: {vi}; background-size: {vs}; background-position: {vp}; background-repeat: {repeat}; }}\n\
+         .{class} > scrollbar.horizontal:not(.overlay-indicator) {{ background-image: {hi}; background-size: {hs}; background-position: {hp}; background-repeat: {repeat}; }}\n\
+         .{class} > scrollbar.vertical trough {{ margin: {edge}px 0; }}\n\
+         .{class} > scrollbar.horizontal trough {{ margin: 0 {edge}px; }}\n\
+         .{class} > scrollbar.vertical slider {{ margin: 0 {INSET}px; min-height: {min}px; }}\n\
+         .{class} > scrollbar.horizontal slider {{ margin: {INSET}px 0; min-width: {min}px; }}\n",
+        radius = thumb / 2.0,
+        edge = THICKNESS + INSET,
+        min = THICKNESS + 1.0,
+        vi = vertical.0.join(", "),
+        vs = vertical.1.join(", "),
+        vp = vertical.2.join(", "),
+        hi = horizontal.0.join(", "),
+        hs = horizontal.1.join(", "),
+        hp = horizontal.2.join(", "),
+    )
+}
+
+/// Chromium's classic `thin` bar (Fluent): an arrow button as long as the
+/// bar is thick at each end, holding a small triangle in the thumb colour;
+/// the thumb travels between the buttons, `inset` away from them, and is at
+/// least `thickness + 1` long.
+fn classic_thin_rule(class: &str, thickness: f32, inset: f32, color: &str) -> String {
+    let thumb = thickness - 2.0 * inset;
+    let rows = (thumb / 2.0).floor().max(1.0) as u32;
+    // The first row (2px wide) sits this far from the bar's end.
+    let start = ((thickness - rows as f32) / 2.0).round();
+    let edge = thickness + inset;
+    let mut vertical = (Vec::new(), Vec::new(), Vec::new());
+    let mut horizontal = (Vec::new(), Vec::new(), Vec::new());
+    for row in 0..rows {
+        let width = 2 * (row + 1);
+        let across = (thickness - width as f32) / 2.0;
+        let along = start + row as f32;
+        // GTK has no `bottom 4px` positions: the far end is `100% - offset`.
+        for along in [format!("{along}px"), format!("calc(100% - {along}px)")] {
+            vertical.0.push(format!("image({color})"));
+            vertical.1.push(format!("{width}px 1px"));
+            vertical.2.push(format!("{across}px {along}"));
+            horizontal.0.push(format!("image({color})"));
+            horizontal.1.push(format!("1px {width}px"));
+            horizontal.2.push(format!("{along} {across}px"));
+        }
+    }
+    let repeat = vec!["no-repeat"; vertical.0.len()].join(", ");
+    format!(
+        ".{class} > scrollbar.vertical:not(.overlay-indicator) {{ background-image: {vi}; background-size: {vs}; background-position: {vp}; background-repeat: {repeat}; }}\n\
+         .{class} > scrollbar.horizontal:not(.overlay-indicator) {{ background-image: {hi}; background-size: {hs}; background-position: {hp}; background-repeat: {repeat}; }}\n\
+         .{class} > scrollbar.vertical:not(.overlay-indicator) trough {{ margin: {edge}px 0; }}\n\
+         .{class} > scrollbar.horizontal:not(.overlay-indicator) trough {{ margin: 0 {edge}px; }}\n\
+         .{class} > scrollbar.vertical:not(.overlay-indicator) slider {{ min-height: {min}px; }}\n\
+         .{class} > scrollbar.horizontal:not(.overlay-indicator) slider {{ min-width: {min}px; }}\n",
+        vi = vertical.0.join(", "),
+        vs = vertical.1.join(", "),
+        vp = vertical.2.join(", "),
+        hi = horizontal.0.join(", "),
+        hs = horizontal.1.join(", "),
+        hp = horizontal.2.join(", "),
+        min = thickness + 1.0,
+    )
 }
 
 /// Adds `class`'s rule (built once) to the display-wide scrollbar stylesheet.

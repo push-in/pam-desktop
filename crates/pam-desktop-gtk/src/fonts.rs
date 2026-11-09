@@ -36,6 +36,130 @@ unsafe extern "C" {
         value: *mut *mut u8,
     ) -> c_int;
     fn FcPatternDestroy(pattern: *mut c_void);
+    fn FcPatternCreate() -> *mut c_void;
+    fn FcConfigSubstitute(config: *mut c_void, pattern: *mut c_void, kind: c_int) -> c_int;
+    fn FcDefaultSubstitute(pattern: *mut c_void);
+    fn FcPatternGetInteger(
+        pattern: *const c_void,
+        object: *const c_char,
+        index: c_int,
+        value: *mut c_int,
+    ) -> c_int;
+    fn FcPatternGetBool(
+        pattern: *const c_void,
+        object: *const c_char,
+        index: c_int,
+        value: *mut c_int,
+    ) -> c_int;
+    fn FcPatternAddString(pattern: *mut c_void, object: *const c_char, value: *const u8) -> c_int;
+    fn FcObjectSetCreate() -> *mut c_void;
+    fn FcObjectSetAdd(set: *mut c_void, object: *const c_char) -> c_int;
+    fn FcObjectSetDestroy(set: *mut c_void);
+    fn FcFontList(config: *mut c_void, pattern: *mut c_void, set: *mut c_void) -> *mut FcFontSet;
+    fn FcFontSetDestroy(set: *mut FcFontSet);
+}
+
+#[repr(C)]
+struct FcFontSet {
+    nfont: c_int,
+    sfont: c_int,
+    fonts: *mut *mut c_void,
+}
+
+/// Whether Fontconfig has a font of exactly this family (case-insensitive),
+/// not one its aliases would substitute.
+fn has_family(name: &str) -> bool {
+    let Ok(family) = CString::new(name) else {
+        return false;
+    };
+    // SAFETY: pattern, object set and font set are created and destroyed
+    // here; Fontconfig copies the family string.
+    unsafe {
+        let pattern = FcPatternCreate();
+        let objects = FcObjectSetCreate();
+        if pattern.is_null() || objects.is_null() {
+            return false;
+        }
+        FcPatternAddString(pattern, c"family".as_ptr(), family.as_ptr().cast());
+        FcObjectSetAdd(objects, c"family".as_ptr());
+        let fonts = FcFontList(std::ptr::null_mut(), pattern, objects);
+        let found = !fonts.is_null() && (*fonts).nfont > 0;
+        if !fonts.is_null() {
+            FcFontSetDestroy(fonts);
+        }
+        FcObjectSetDestroy(objects);
+        FcPatternDestroy(pattern);
+        found
+    }
+}
+
+/// Metric-compatible families Chromium lets stand in for each other on Linux
+/// (Skia's font equivalence classes): `Courier New` uses Liberation Mono.
+const EQUIVALENT: [&[&str]; 5] = [
+    &["arial", "arimo", "liberation sans"],
+    &["times new roman", "tinos", "liberation serif"],
+    &["courier new", "cousine", "liberation mono"],
+    &["calibri", "carlito"],
+    &["cambria", "caladea"],
+];
+
+thread_local! {
+    static INSTALLED: RefCell<HashMap<String, Option<String>>> = RefCell::default();
+}
+
+/// The installed family a CSS family name resolves to, as Chromium matches
+/// it on Linux: the family itself or a metric-compatible equivalent, never a
+/// Fontconfig alias (`Consolas` does not become DejaVu Sans Mono), so an
+/// uninstalled name lets the list go on to its next family.
+fn installed(name: &str) -> Option<String> {
+    let key = name.to_ascii_lowercase();
+    if let Some(found) = INSTALLED.with(|cache| cache.borrow().get(&key).cloned()) {
+        return found;
+    }
+    let found = if has_family(name) {
+        Some(name.to_owned())
+    } else {
+        EQUIVALENT
+            .iter()
+            .find(|class| class.contains(&key.as_str()))
+            .and_then(|class| class.iter().find(|other| has_family(other)))
+            .map(|other| (*other).to_owned())
+    };
+    INSTALLED.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() < 256 {
+            cache.insert(key, found.clone());
+        }
+    });
+    found
+}
+
+/// The hinting fontconfig gives a font by default (`hintnone` ..
+/// `hintfull`), which Chromium and Qt follow when no desktop settings
+/// daemon says otherwise.
+pub fn default_hint_style() -> Option<&'static str> {
+    // SAFETY: a pattern owned and destroyed here; FcMatchPattern is 0.
+    unsafe {
+        let pattern = FcPatternCreate();
+        if pattern.is_null() {
+            return None;
+        }
+        FcConfigSubstitute(std::ptr::null_mut(), pattern, 0);
+        FcDefaultSubstitute(pattern);
+        let (mut hinting, mut style) = (1, 0);
+        let has_hinting = FcPatternGetBool(pattern, c"hinting".as_ptr(), 0, &raw mut hinting) == 0;
+        let has_style = FcPatternGetInteger(pattern, c"hintstyle".as_ptr(), 0, &raw mut style) == 0;
+        FcPatternDestroy(pattern);
+        if has_hinting && hinting == 0 {
+            return Some("hintnone");
+        }
+        has_style.then_some(match style {
+            0 => "hintnone",
+            1 => "hintslight",
+            2 => "hintmedium",
+            _ => "hintfull",
+        })
+    }
 }
 
 #[derive(Default)]
@@ -164,14 +288,36 @@ fn ui_family() -> String {
 /// A CSS `font-family` list as a Pango family list: packaged fonts become
 /// their registered family, the CSS generic families Fontconfig's aliases
 /// (`system-ui` the interface font). Fontconfig then uses the first family
-/// installed. Also returns whether the native font map changed.
+/// installed. Like Chromium, Safari's `ui-monospace`,
+/// `ui-serif`, `ui-sans-serif` and `ui-rounded` match nothing: the list goes
+/// on to its next family (Tailwind's `font-mono` lands on Liberation Mono,
+/// not on Fontconfig's `monospace`), and a named family that is not installed
+/// is skipped rather than replaced by a Fontconfig alias. Also returns whether
+/// the native font map changed.
 pub fn stack(list: &str) -> (String, bool) {
     use pam_desktop_ui::engine::font_family::{Family, families};
     let mut changed = false;
     let mut generic = false;
     let mut names: Vec<String> = Vec::new();
-    for entry in families(list) {
+    let linux = list
+        .split(',')
+        .filter(|entry| {
+            let name = entry
+                .trim()
+                .trim_matches(['"', '\''])
+                .trim()
+                .to_ascii_lowercase();
+            !matches!(
+                name.as_str(),
+                "ui-monospace" | "ui-serif" | "ui-sans-serif" | "ui-rounded"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut named = false;
+    for entry in families(&linux) {
         generic |= entry.is_generic();
+        named = true;
         let name = match entry {
             Family::Asset(source) => {
                 let (name, loaded) = family(source);
@@ -181,7 +327,10 @@ pub fn stack(list: &str) -> (String, bool) {
             Family::SystemUi | Family::Rounded => ui_family(),
             Family::Monospace => String::from("monospace"),
             Family::Serif => String::from("serif"),
-            Family::Named(name) => name.to_owned(),
+            Family::Named(name) => match installed(name) {
+                Some(name) => name,
+                None => continue,
+            },
         };
         // Pango separates families by commas.
         let name = name.replace(',', " ");
@@ -191,7 +340,7 @@ pub fn stack(list: &str) -> (String, bool) {
     }
     // A list of named fonts none of which is installed ends in the
     // interface font, as on the other backends.
-    if !generic && !names.is_empty() {
+    if !generic && named {
         let ui = ui_family();
         if !names.contains(&ui) {
             names.push(ui);
@@ -205,15 +354,17 @@ mod tests {
     use super::*;
     #[test]
     fn css_font_lists_become_pango_family_lists() {
+        // Uninstalled names and the macOS-only `ui-*` families match
+        // nothing, as in Chromium on Linux.
         assert_eq!(
-            stack("ui-monospace, Menlo, \"Liberation Mono\", monospace, serif"),
-            (String::from("monospace,Menlo,Liberation Mono,serif"), false)
+            stack("ui-monospace, NoSuchFont Pam, monospace, serif"),
+            (String::from("monospace,serif"), false)
         );
         assert_eq!(stack(" , "), (String::new(), false));
         // Named fonts only: the interface font closes the list.
         assert_eq!(
-            stack("Segoe UI, \"Helvetica Neue\""),
-            (String::from("Segoe UI,Helvetica Neue,sans-serif"), false)
+            stack("NoSuchFont Pam, \"Other Missing Pam\""),
+            (String::from("sans-serif"), false)
         );
     }
 
