@@ -267,6 +267,16 @@ final class TemplateRenderer
     /** @var array<int, array<string, list<array{source: string, weight: string, style: string}>>> */
     private static array $sheetFonts = [];
 
+    /**
+     * Every @font-face family seen in any stylesheet, by its name and by the
+     * source of each of its faces: a component of another stylesheet inherits
+     * the family (or a face already resolved for its ancestor) and resolves
+     * it for its own weight and style.
+     *
+     * @var array<string, list<array{source: string, weight: string, style: string}>>
+     */
+    private static array $facesBySource = [];
+
     /** @var array<string, array{attribute: string, value: string|int|float|bool}|false> */
     private static array $styleUtilities = [];
 
@@ -7113,6 +7123,17 @@ final class TemplateRenderer
         }
         $fonts = is_array($sheet) ? ($sheet['fonts'] ?? null) : null;
         $validated = self::validatedFontFaces(is_array($fonts) ? $fonts : [], '<scoped-style-data>');
+        if (count(self::$facesBySource) >= 1024) {
+            // Cached sheets register their faces again on their next use.
+            self::$facesBySource = [];
+            self::$sheetFonts = [];
+        }
+        foreach ($validated as $family => $faces) {
+            self::$facesBySource[$family] = $faces;
+            foreach ($faces as $face) {
+                self::$facesBySource[$face['source']] = $faces;
+            }
+        }
         if (is_int($id)) {
             if (count(self::$sheetFonts) >= 512) {
                 self::$sheetFonts = [];
@@ -7131,19 +7152,25 @@ final class TemplateRenderer
     private static function resolveScopedFont(array $attributes, array $fonts): array
     {
         $family = $attributes['fontFamily'] ?? null;
-        if (!is_string($family) || $fonts === []) {
+        if (!is_string($family) || ($fonts === [] && self::$facesBySource === [])) {
             return $attributes;
         }
         // A font-family list: each family declared by @font-face becomes the
         // face that best matches the weight and style; the others stay as
-        // fallbacks for the backend.
+        // fallbacks for the backend. A family declared by another stylesheet
+        // (inherited by a package component, or placed by `<Slot :content>`)
+        // and a face already resolved for an ancestor are resolved again for
+        // this node's weight and style: Fontconfig found such a face by its
+        // family name, but DirectWrite and Core Text did not, and drew a
+        // system face or a bold synthesized from the ancestor's face.
         $entries = array_map('trim', explode(',', $family));
         $resolved = false;
         foreach ($entries as $index => $entry) {
-            if (!isset($fonts[$entry])) {
+            $faces = $fonts[$entry] ?? self::$facesBySource[$entry] ?? null;
+            if ($faces === null) {
                 continue;
             }
-            [$source] = self::bestFontFace($fonts[$entry], $attributes);
+            [$source] = self::bestFontFace($faces, $attributes);
             if ($source === null) {
                 continue;
             }

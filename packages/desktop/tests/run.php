@@ -606,6 +606,40 @@ $assert(
         && $inheritText->properties()[PropKey::TextAlign->value] === 2,
     'Text CSS properties and logical font families must inherit through native layout containers.',
 );
+// A component of another stylesheet (no @font-face, e.g. a package's
+// component placed by <Slot :content>) inherits the resolved Regular face;
+// its own weight picks the family's Bold face, not the Regular file for the
+// host to synthesize from (DirectWrite and Core Text load the named file).
+$placedCss = ScopedStyleCompiler::compile('.badge { font-weight: 900; }', 'PlacedFace.pam.php');
+$placedTemplate = TemplateCompiler::compile('<Column><Text class="badge">PRINCIPAL</Text><Text>Body</Text></Column>');
+$placedStyled = new CompiledTemplateNode(
+    kind: $placedTemplate->kind,
+    name: $placedTemplate->name,
+    attributes: [
+        ...$placedTemplate->attributes,
+        '__pamStyles' => json_encode($placedCss, JSON_THROW_ON_ERROR),
+    ],
+    source: $placedTemplate->source,
+    line: $placedTemplate->line,
+    column: $placedTemplate->column,
+    value: $placedTemplate->value,
+);
+$placedStyled->children = $placedTemplate->children;
+$placedTexts = TemplateRenderer::render($placedStyled, null, [
+    '__pamInheritedStyles' => ['fontFamily' => 'asset://assets/fonts/Theme-Regular.ttf, sans-serif', 'fontWeight' => 400],
+])->children();
+$placedByName = TemplateRenderer::render($placedStyled, null, [
+    '__pamInheritedStyles' => ['fontFamily' => 'Theme, sans-serif'],
+])->children();
+$assert(
+    $placedByName[0]->properties()[PropKey::FontFamily->value] === 'asset://assets/fonts/Theme-Bold.ttf, sans-serif',
+    'A @font-face family inherited by name into another stylesheet must resolve to its face.',
+);
+$assert(
+    $placedTexts[0]->properties()[PropKey::FontFamily->value] === 'asset://assets/fonts/Theme-Bold.ttf, sans-serif'
+        && $placedTexts[1]->properties()[PropKey::FontFamily->value] === 'asset://assets/fonts/Theme-Regular.ttf, sans-serif',
+    'An inherited @font-face face must be re-resolved for the weight of a node of another stylesheet.',
+);
 $textAlignmentCss = ScopedStyleCompiler::compile(
     '.left { text-align: left; } .right { text-align: right; }',
     'TextAlignmentCss.pam.php',

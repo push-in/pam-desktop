@@ -10,13 +10,15 @@
   (buttons, chips, tabs) were up to 1 px wider each, so rows of them drifted
   by several pixels on Windows only (a POS category row ended 6 px further
   right). Found by the cross-platform comparison of the PDV storefront screens.
-- **Inherited `@font-face` faces follow the node's own weight and style.** A
-  component of another stylesheet (a package component placed with
-  `<Slot :content>`) inherited the face resolved for its ancestor (Regular)
-  and kept it for its own `font-weight: 900`: Fontconfig picked the family's
-  ExtraBold by name, but DirectWrite and Core Text load the named file and
-  synthesized a bold from Regular (a badge 5 px wider on macOS and Windows).
-  The face is now resolved again among its family's faces.
+- **Inherited `@font-face` families resolve in package components.** A
+  component of another stylesheet (a DesktopUI component such as `MediaTile`,
+  or one placed with `<Slot :content>`) inherited the app's `@font-face`
+  family by name, or the face resolved for its ancestor, and its stylesheet
+  could not resolve it for the component's own weight. Fontconfig found the
+  face by family name; DirectWrite and Core Text did not and drew another face
+  (`MediaTile`'s "PRINCIPAL" badge 5 px wider on macOS, 3 px on Windows). The
+  SDK now resolves such a family, or face, among the faces any stylesheet
+  declared for it.
 
 ## 2.1.3 - 2026-11-09
 
