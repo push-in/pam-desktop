@@ -8,7 +8,7 @@
   glyphs through Skia's macOS pipeline: masks rasterized offscreen with
   `SkScalerContext_Mac`'s flags at quarter-pixel phases, Skia's smoothing and
   sRGB mask-gamma correction for `-webkit-font-smoothing: auto`, one image
-  mask per glyph run, cached per process (1 MiB, least recently drawn first,
+  mask per glyph run, cached per process (512 KiB, least recently drawn first,
   released while no window is visible). See Text rendering.
 - **macOS capture input `scroll:x,y,dy`.** `PAM_DESKTOP_CAPTURE_INPUT` can
   turn the wheel over a point, for scroll measurements.

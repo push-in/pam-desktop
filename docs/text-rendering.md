@@ -143,7 +143,7 @@ and `crates/pam-desktop-appkit/src/glyphs.rs` reproduces that pipeline:
   freed after the draw.
 - Masks live in one cache per process shared by every view and window
   (key: font, glyph, phase, smoothing, luminance level), least recently
-  drawn first above 1 MiB, and the whole cache is released when no window of
+  drawn first above 512 KiB, and the whole cache is released when no window of
   the process is visible (occlusion: hidden, minimized, covered). Nothing
   runs while nothing draws.
 - Colour glyphs (emoji), glyphs larger than 256 device pixels, rotated or
@@ -166,16 +166,23 @@ the masks lower the difference on 36 routes, by 0.03-0.32 /255 (modules
 
 #### Why it is not the default
 
-Measured on the Mac VM (debug host, `perf-visual.php`, the module screen,
-4 interleaved runs per mode; an 80-step wheel scroll through
+Measured on the Mac VM (release hosts, `perf-visual.php`, the module
+screen, 10 interleaved runs per mode; an 80-step wheel scroll through
 `PAM_DESKTOP_CAPTURE_INPUT`), v2.1.1 drawing vs masks (means):
 
 | metric | Core Graphics | masks | change |
 |---|---|---|---|
-| host footprint idle | 16.71 MB | 16.93 MB | +1.3% |
-| host footprint after the scroll | 19.50 MB | 20.66 MB | +5.9% |
-| host RSS after the scroll | 53.5 MB | 54.7 MB | +2.3% |
-| host CPU idle (20 s) | 0.007 s | 0.007 s | 0 |
-| host CPU during the scroll | 0.32 s | 0.47 s | +45% (debug build: the blending loops are unoptimized) |
+| host footprint idle | 16.41 MB | 16.68 MB | +1.6% |
+| host footprint after the scroll | 19.03 MB | 20.43 MB | +7.3% |
+| host RSS idle | 47.1 MB | 47.4 MB | +0.7% |
+| host RSS after the scroll | 49.8 MB | 51.2 MB | +2.8% |
+| host CPU idle (20 s) | 0.006 s | 0.005 s | 0 |
+| host CPU during the scroll | 0.253 s | 0.280 s | +10.7% |
+
+The mask cache itself holds about 80 KiB on that screen (655 masks); the
+rest of the footprint is Core Graphics' own work for one image mask per
+run. Drawing each glyph from shared 256 x 256 atlas pages instead (one
+image per page, clipped per glyph) was worse: footprint +9% idle, scroll
+CPU +30%.
 
 It stays opt-in until it costs at most 3% on every metric.

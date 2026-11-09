@@ -14,8 +14,9 @@
 //! (`text::GlyphPlacer`): masks are rasterized with Skia's flags, corrected
 //! with Skia's tables (`-webkit-font-smoothing: auto` only: Core Graphics'
 //! smoothing gamma undone, then Skia's sRGB mask gamma for the text
-//! luminance) and kept as 8-bit coverage. Each glyph run blends its masks
-//! into one buffer drawn as a single image mask in the fill colour. Masks
+//! luminance) and kept as 8-bit coverage of their inked box. Each glyph run
+//! blends its masks into one reused buffer, drawn in place as a single image
+//! mask in the fill colour (nothing of the run is kept after the draw). Masks
 //! live in one cache per process, shared by every view and window: least
 //! recently used first above `BUDGET` bytes, released whole when no window
 //! is visible.
@@ -27,9 +28,7 @@ use std::ptr::NonNull;
 use objc2::Message;
 use objc2::rc::Retained;
 use objc2_app_kit::{NSColor, NSColorSpace, NSFont};
-use objc2_core_foundation::{
-    CFData, CFRetained, CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize,
-};
+use objc2_core_foundation::{CFRetained, CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
     CGBitmapContextCreate, CGBitmapContextGetData, CGColorSpace, CGContext, CGDataProvider,
     CGGlyph, CGImage, CGImageAlphaInfo, CGImageByteOrderInfo, CGInterpolationQuality,
@@ -38,7 +37,9 @@ use objc2_core_graphics::{
 use objc2_core_text::{CTFont, CTFontOrientation, CTFontSymbolicTraits};
 
 /// Bytes of masks kept before the least recently used are dropped.
-const BUDGET: usize = 1024 * 1024;
+const BUDGET: usize = 512 * 1024;
+/// Largest run buffer kept between draws.
+const RUN_BUFFER: usize = 64 * 1024;
 /// Bookkeeping per cached glyph (map entry, vector).
 const ENTRY_OVERHEAD: usize = 64;
 /// Glyphs larger than this (device pixels) are left to Core Graphics.
@@ -83,6 +84,8 @@ struct Cache {
     next_font: usize,
     bytes: usize,
     clock: u64,
+    /// The coverage of the run being drawn (reused).
+    run: Vec<u8>,
     /// The offscreen RGB bitmap glyphs are drawn into, grown as needed.
     offscreen: Option<(CFRetained<CGContext>, usize, usize)>,
     /// Skia's sRGB correcting tables, one per luminance level.
@@ -220,7 +223,9 @@ pub fn draw(
             return true;
         }
         let (width, height) = ((x1 - x0) as usize, (y1 - y0) as usize);
-        let mut coverage = vec![0u8; width * height];
+        let mut coverage = std::mem::take(&mut cache.run);
+        coverage.clear();
+        coverage.resize(width * height, 0);
         for &(key, column, row) in &placed {
             let Some(mask) = cache.masks.get(&key) else {
                 continue;
@@ -243,21 +248,26 @@ pub fn draw(
         for value in &mut coverage {
             *value = 0xFF - *value;
         }
-        // SAFETY: `coverage` is a valid byte buffer of its length.
-        let data = unsafe { CFData::new(None, coverage.as_ptr(), coverage.len() as isize) };
-        drop(coverage);
-        let provider = data
-            .as_deref()
-            .and_then(|data| CGDataProvider::with_cf_data(Some(data)));
+        // The image reads the run buffer in place: it is drawn and released
+        // before the buffer is touched again.
+        // SAFETY: `coverage` outlives the provider's only use, the draw below.
+        let provider = unsafe {
+            CGDataProvider::with_data(
+                std::ptr::null_mut(),
+                coverage.as_ptr().cast(),
+                coverage.len(),
+                None,
+            )
+        };
         // SAFETY: an 8-bit mask of `width` x `height` samples, rows packed.
-        let image = provider.and_then(|provider| unsafe {
+        let image = provider.as_deref().and_then(|provider| unsafe {
             CGImage::mask_create(
                 width,
                 height,
                 8,
                 8,
                 width,
-                Some(&provider),
+                Some(provider),
                 std::ptr::null(),
                 false,
             )
@@ -281,6 +291,12 @@ pub fn draw(
             );
             CGContext::restore_g_state(Some(context));
         }
+        drop(provider);
+        // Keep the buffer for the next run unless one long run grew it.
+        if coverage.capacity() > RUN_BUFFER {
+            coverage = Vec::new();
+        }
+        cache.run = coverage;
         cache.trim();
         true
     })
@@ -385,15 +401,27 @@ impl Cache {
                 coverage.push(value as u8);
             }
         }
-        if coverage.iter().all(|&value| value == 0) {
+        // Only the inked box is kept (Skia's box has a one-pixel outset).
+        let w = width as usize;
+        let rows: Vec<usize> = (0..height as usize)
+            .filter(|&y| coverage[y * w..(y + 1) * w].iter().any(|&v| v != 0))
+            .collect();
+        let (Some(&y0), Some(&y1)) = (rows.first(), rows.last()) else {
             return empty;
+        };
+        let columns = |x: usize| (y0..=y1).any(|y| coverage[y * w + x] != 0);
+        let x0 = (0..w).find(|&x| columns(x)).unwrap_or(0);
+        let x1 = (0..w).rev().find(|&x| columns(x)).unwrap_or(w - 1);
+        let mut kept = Vec::with_capacity((x1 - x0 + 1) * (y1 - y0 + 1));
+        for y in y0..=y1 {
+            kept.extend_from_slice(&coverage[y * w + x0..=y * w + x1]);
         }
         Mask {
-            coverage,
-            left,
-            top,
-            width,
-            height,
+            coverage: kept,
+            left: left + x0 as i32,
+            top: top + y0 as i32,
+            width: (x1 - x0 + 1) as i32,
+            height: (y1 - y0 + 1) as i32,
             used: 0,
         }
     }
