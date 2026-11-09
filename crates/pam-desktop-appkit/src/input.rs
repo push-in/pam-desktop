@@ -31,7 +31,7 @@ use pam_desktop_ui::backend::{
 };
 use pam_desktop_ui::color::Color;
 use pam_desktop_ui::geometry::Size;
-use pam_desktop_ui::text::{TextBlock, TextRun};
+use pam_desktop_ui::text::{Ellipsize, TextBlock, TextRun};
 
 use crate::events::{self, Events};
 use crate::text;
@@ -255,6 +255,8 @@ impl Shared {
                     press: None,
                 }],
                 align: config.align,
+                line_height: config.line_height.unwrap_or(0.0),
+                antialiased: config.antialiased,
                 ..TextBlock::default()
             },
             insets: config.insets,
@@ -448,9 +450,65 @@ impl Shared {
         true
     }
 
+    /// A field that is not being edited shows its value (or hint) as the
+    /// node's own text, painted like any other text node: the content box
+    /// is Chromium's inner editor (text from its left edge, the CSS line
+    /// box centred in it), with the same glyph placement and font
+    /// smoothing. The cell would inset the text by its own padding and
+    /// centre the font's natural line instead. The field itself (focus,
+    /// accessibility, the field editor while typing) stays, transparent.
+    fn show_line(&self, field: &NSTextField) {
+        let Some(container) = self.container.load() else {
+            return;
+        };
+        let config = self.config.borrow();
+        let value = field.stringValue().to_string();
+        if config.secure || field.currentEditor().is_some() {
+            field.setAlphaValue(1.0);
+            container.set_text(None);
+            return;
+        }
+        let (text, color) = if value.is_empty() {
+            let hint = placeholder_color(&config).unwrap_or(Color::rgba(128, 128, 128, 200));
+            (config.placeholder.clone(), Some(hint))
+        } else {
+            (value, config.color)
+        };
+        field.setAlphaValue(0.0);
+        if text.is_empty() {
+            container.set_text(None);
+            return;
+        }
+        container.set_text(Some(&TextContent {
+            block: TextBlock {
+                runs: vec![TextRun {
+                    text,
+                    font: config.font.clone(),
+                    color,
+                    background: None,
+                    underline: false,
+                    strikethrough: false,
+                    letter_spacing: config.letter_spacing,
+                    press: None,
+                }],
+                align: config.align,
+                // A text field never wraps: what does not fit is clipped.
+                max_lines: 1,
+                ellipsize: Ellipsize::Clip,
+                line_height: config.line_height.unwrap_or(0.0),
+                antialiased: config.antialiased,
+                ..TextBlock::default()
+            },
+            insets: config.insets,
+            vertical: config.vertical,
+            inline: false,
+        }));
+    }
+
     /// Letter spacing of a field that is not being edited: its cell only
     /// draws it from an attributed value.
     fn restyle_line(&self, field: &NSTextField) {
+        self.show_line(field);
         if self.config.borrow().letter_spacing == 0.0 || field.currentEditor().is_some() {
             return;
         }

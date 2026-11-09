@@ -196,6 +196,7 @@ fn resolve_config(props: Props<'_>, multiline: bool, font_scale: f32) -> InputCo
             .number(PropKey::LineHeight)
             .filter(|height| *height > 0.0)
             .map(|height| height * effective_font_scale(props, font_scale)),
+        antialiased: props.text_or_empty(PropKey::FontSmoothing) == "antialiased",
         secure: props.flag_or(PropKey::Secure, false) && !multiline,
         editable: props.flag_or(PropKey::InputEditable, true),
         enabled: props.flag_or(PropKey::Enabled, true),
