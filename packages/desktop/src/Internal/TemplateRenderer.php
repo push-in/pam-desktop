@@ -7165,8 +7165,11 @@ final class TemplateRenderer
         // system face or a bold synthesized from the ancestor's face.
         $entries = array_map('trim', explode(',', $family));
         $resolved = false;
+        // A bound weight or style is only known after this point: an
+        // inherited family then stays as it came.
+        $known = !isset($attributes[':fontWeight']) && !isset($attributes[':fontStyle']);
         foreach ($entries as $index => $entry) {
-            $faces = $fonts[$entry] ?? self::$facesBySource[$entry] ?? null;
+            $faces = $fonts[$entry] ?? ($known ? self::$facesBySource[$entry] ?? null : null);
             if ($faces === null) {
                 continue;
             }

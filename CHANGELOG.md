@@ -23,7 +23,8 @@
   face by family name; DirectWrite and Core Text did not and drew another face
   (`MediaTile`'s "PRINCIPAL" badge 5 px wider on macOS, 3 px on Windows). The
   SDK now resolves such a family, or face, among the faces any stylesheet
-  declared for it.
+  declared for it (not yet for a bound `:fontWeight`/`:fontStyle`, which is
+  known only later: such a node keeps the inherited family as before).
 
 ## 2.1.3 - 2026-11-09
 

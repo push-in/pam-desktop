@@ -635,6 +635,16 @@ $assert(
     $placedByName[0]->properties()[PropKey::FontFamily->value] === 'asset://assets/fonts/Theme-Bold.ttf, sans-serif',
     'A @font-face family inherited by name into another stylesheet must resolve to its face.',
 );
+// A bound weight is unknown when the face is resolved: the inherited family
+// stays as it came instead of being pinned to the Regular face.
+$boundTemplate = TemplateCompiler::compile('<Column><Text :fontWeight="600">Bound</Text></Column>');
+$boundTexts = TemplateRenderer::render($boundTemplate, null, [
+    '__pamInheritedStyles' => ['fontFamily' => 'Theme, sans-serif'],
+])->children();
+$assert(
+    $boundTexts[0]->properties()[PropKey::FontFamily->value] === 'Theme, sans-serif',
+    'An inherited family must not be pinned to a face before a bound weight is known.',
+);
 $assert(
     $placedTexts[0]->properties()[PropKey::FontFamily->value] === 'asset://assets/fonts/Theme-Bold.ttf, sans-serif'
         && $placedTexts[1]->properties()[PropKey::FontFamily->value] === 'asset://assets/fonts/Theme-Regular.ttf, sans-serif',
