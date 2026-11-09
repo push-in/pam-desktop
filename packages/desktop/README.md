@@ -34,15 +34,17 @@ final class Counter extends Component
 App::run(new Counter());
 ```
 
+Create and run an application with the [PAM CLI](https://github.com/push-in/pam),
+which brings PHP 8.5 and Composer:
+
 ```bash
-composer require pushinbr/pam-desktop
-vendor/bin/pam-desktop init      # writes index.php and pam-desktop.json
-vendor/bin/pam-desktop dev       # runs with hot reload
-vendor/bin/pam-desktop build     # bundles the application and its installers
+pam init my-app --template desktop   # writes the application and installs this package
+cd my-app && pam desktop dev         # runs with hot reload
+pam desktop build                    # bundles the application and its installers
 ```
 
-`vendor/bin/pam-desktop` downloads the native host of the installed version
-for the current system, verifies its SHA-256 and keeps it in the user cache.
-`PAM_DESKTOP_HOST` points it at a host built from source instead.
+`pam desktop` runs the native host of the installed version for the current
+system: it downloads it once, verifies its SHA-256 and keeps it in the user
+cache. `PAM_DESKTOP_HOST` points it at a host built from source instead.
 
 The documentation lives in the [repository](https://github.com/push-in/pam-desktop/tree/main/docs).

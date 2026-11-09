@@ -13,28 +13,20 @@ This page takes you from an empty directory to a running application, then expla
 
 ## A new project
 
-```bash
-mkdir my-app && cd my-app
-composer require pushinbr/pam-desktop
-vendor/bin/pam-desktop init
-composer dump-autoload
-vendor/bin/pam-desktop dev       # or: composer dev
-```
-
-With the PAM CLI instead of a system PHP, the same steps are:
+Install the [PAM CLI](https://github.com/push-in/pam) (it brings PHP 8.5 and Composer), then:
 
 ```bash
-pam init my-app --template desktop   # PAM releases after 2.2.11: composer install + pam desktop init
+pam init my-app --template desktop
 cd my-app && pam desktop dev
 ```
 
-or, by hand: `pam composer require pushinbr/pam-desktop`, `pam desktop init`, `pam composer dump-autoload`, `pam desktop dev`. `vendor/bin/pam-desktop` is a PHP script and needs `php` on `PATH`; PAM does not add one, so use `pam desktop ...` there.
+`pam init --template desktop` creates the directory, installs `pushinbr/pam-desktop` and runs `pam desktop init` in it (PAM releases after 2.2.11). With an older PAM, the same by hand: `mkdir my-app && cd my-app`, `pam composer require pushinbr/pam-desktop`, `pam desktop init`, `pam composer dump-autoload`, `pam desktop dev`.
 
 A window opens on the home screen of the new application. Edit `src/Screens/Home/HomeScreen.pam.php` while it runs: the window updates in about a third of a second and keeps its state (the click count survives the reload).
 
 `dev` needs no argument: it runs the project of the current directory, found by walking up to the nearest `pam-desktop.json`, so it works from any folder of the project (`src/Screens/Home` included). `pam desktop ...` is the same command through the [PAM CLI](https://github.com/push-in/pam), which registers it from the installed package. It also starts PHP for you: when no PHP is installed, the host installs the PAM runtime, which embeds PHP 8.5 (see [How the host finds PHP](#how-the-host-finds-php-and-the-package)).
 
-`vendor/bin/pam-desktop` is the launcher of the PHP package. It runs the native host with the arguments it was given:
+`pam desktop` runs the launcher of the PHP package, `vendor/bin/pam-desktop` (with a system PHP 8.5 on `PATH` it can also be run directly). It runs the native host with the arguments it was given:
 
 - The first time, it downloads `pam-desktop-<version>-<target>.tar.gz` from the GitHub release of the installed version, verifies it against the published SHA-256 and keeps the host in the cache of the user: `$XDG_CACHE_HOME/pam-desktop` or `~/.cache/pam-desktop` on Linux, `~/Library/Caches/pam-desktop` on macOS, `%LOCALAPPDATA%\pam-desktop` on Windows. The first installation needs the Phar extension of PHP.
 - `PAM_DESKTOP_HOST` is the absolute path of a host binary to run instead, with no download.

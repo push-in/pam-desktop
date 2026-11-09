@@ -2,33 +2,58 @@
 
 ## Unreleased
 
+## 2.1.2 - 2026-11-09
+
+Sharper, Chromium-exact text on Linux, an opt-in Chromium text pipeline on
+macOS, Windows fixes and a first run that works. Update the Composer package
+(`pam composer update pushinbr/pam-desktop`); the launcher downloads the
+verified 2.1.2 host. No new properties: applications written for 2.1 run
+unchanged.
+
 ### Added
 
-- **macOS text like Chromium (opt-in).** `PAM_DESKTOP_TEXT_GAMMA=1` draws
-  glyphs through Skia's macOS pipeline: masks rasterized offscreen with
-  `SkScalerContext_Mac`'s flags at quarter-pixel phases, Skia's smoothing and
-  sRGB mask-gamma correction for `-webkit-font-smoothing: auto`, one image
-  mask per glyph run, cached per process (512 KiB, least recently drawn first,
-  released while no window is visible). See Text rendering.
+- **Chromium text on macOS (opt-in).** Set `PAM_DESKTOP_TEXT_GAMMA=1` to draw
+  glyphs the way Chromium does on macOS: Skia's glyph masks at quarter-pixel
+  positions, with Chromium's smoothing and gamma for
+  `-webkit-font-smoothing: auto`. Masks are cached per process (512 KiB at
+  most) and released while no window is visible. It costs some memory and
+  scroll CPU today, so Core Graphics text stays the default.
 - **macOS capture input `scroll:x,y,dy`.** `PAM_DESKTOP_CAPTURE_INPUT` can
   turn the wheel over a point, for scroll measurements.
 
+### Changed
+
+- **Linux text now matches Chromium pixel for pixel, at no extra cost.**
+  Glyphs are rasterized with a port of Skia's analytic anti-aliasing and
+  Skia's mask gamma, and placed at Skia's quarter-pixel positions, so black
+  text is identical to Chromium's and coloured text is within one level.
+  It is the default and uses the same memory and CPU as GTK's own glyphs;
+  `PAM_DESKTOP_TEXT_GAMMA=0` switches back to GTK's glyphs.
+
 ### Fixed
 
-- **Linux glyphs rasterized like Chromium.** Chromium fills each glyph's
-  hinted outline with Skia's analytic anti-aliasing (edge and curve ends
-  snapped to quarter pixels vertically, 8-bit trapezoid coverage), not with
-  FreeType's rasterizer, then applies Skia's mask gamma (76/64, contrast
-  51/255, luminance from 3-bit channels). The GTK glyph atlas now does the
-  same (`crates/pam-desktop-gtk/src/aaa.rs`, a port of `SkScan_AAAPath`
-  matching Skia's masks bit for bit), places glyphs at Skia's quarter-pixel
-  x phase with y rounded, and is on by default (`PAM_DESKTOP_TEXT_GAMMA=0`
-  keeps GSK glyphs). Black text now matches Chromium's pixels exactly;
-  coloured text is within one level (blend rounding). Same memory and CPU
-  as GSK glyphs (see Text rendering).
 - **macOS text size.** Fonts are sized to the CSS size truncated to 1/64 px,
   like Chromium, so fractional sizes such as `0.78rem` lay out with
   Chromium's advances.
+- **Windows: views with `backdropBlur`.** When Direct2D fails to flush a
+  frame under a backdrop blur, the window paints again without the blur
+  instead of failing on every frame (a modal with a backdrop blur could never
+  show).
+- **Windows: PHP download.** Installing PHP from windows.php.net gives up on
+  a stalled connection instead of waiting forever.
+- **Windows: printing with no printer.** Printing reports that no printer is
+  installed instead of a generic error.
+- **`pam desktop init` in an existing project.** An existing `composer.json`
+  is completed with the `App\` autoload and the `dev`, `start`, `build` and
+  `test` scripts, so the new application no longer stops with
+  `Class "App\Navigation\AppRouter" not found`.
+- **PHP through the PAM CLI.** When the host finds `pam` inside its
+  installation it starts PHP through `pam-run`, so `pam desktop dev` no
+  longer stops with `libsodium.so.23: cannot open shared object file` on PAM
+  2.2.11 and earlier.
+- **Getting started.** The README and the guide teach the PAM CLI flow:
+  install PAM, `pam init my-app --template desktop`, then
+  `cd my-app && pam desktop dev`.
 
 ## 2.1.1 - 2026-11-09
 

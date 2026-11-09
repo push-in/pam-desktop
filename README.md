@@ -36,40 +36,16 @@ A PHP developer should be able to ship a desktop application whose interface is 
 
 ## Quick start
 
-With PHP 8.5 and Composer on the machine:
-
 ```bash
 mkdir my-app && cd my-app
 composer require pushinbr/pam-desktop
-vendor/bin/pam-desktop init        # writes the app and adds the App\ autoload to composer.json
-composer dump-autoload
-vendor/bin/pam-desktop dev         # or: composer dev
+vendor/bin/pam-desktop init
+pam desktop dev          # or: vendor/bin/pam-desktop dev, or: composer dev
 ```
 
-Without a system PHP (most Linux distributions do not package PHP 8.5 yet), install the [PAM CLI](https://github.com/push-in/pam), which brings its own PHP 8.5 and Composer, and run every command through `pam`:
+`init` writes a small application: a router, a home screen as a `.pam.php` template with scoped CSS, design tokens, a service and a test. `dev` needs no argument (it finds the nearest `pam-desktop.json`), reloads the window about 0.3 s after a save and keeps `#[State]` values. `pam desktop dev` is the same command through the [PAM CLI](https://github.com/push-in/pam). Without PHP on the machine, the host installs it (the PAM runtime on Linux and macOS, the official windows.php.net build on Windows).
 
-```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://github.com/push-in/pam/releases/latest/download/install.sh | sh
-mkdir my-app && cd my-app
-pam composer require pushinbr/pam-desktop
-pam desktop init
-pam composer dump-autoload
-pam desktop dev
-```
-
-On Linux the host needs GTK 4 first: `sudo apt install libgtk-4-1 gstreamer1.0-plugins-base gstreamer1.0-plugins-good` on Debian and Ubuntu (see [Requirements](#requirements)).
-
-`init` writes a small application: a router, a home screen as a `.pam.php` template with scoped CSS, design tokens, a service and a test. `dev` needs no argument (it finds the nearest `pam-desktop.json`), reloads the window about 0.3 s after a save and keeps `#[State]` values. Then:
-
-```bash
-vendor/bin/pam-desktop check       # every template, CSS and route diagnostic, without a window (pam desktop check)
-composer test                      # the generated test (pam composer test)
-vendor/bin/pam-desktop build --format deb   # bundle and installer (pam desktop build ...)
-```
-
-`vendor/bin/pam-desktop` downloads the native host of the installed version for the current system, verifies its SHA-256 and runs it; `PAM_DESKTOP_HOST` points it at a host built from source instead. It is a PHP script, so it needs `php` on `PATH`; with only PAM installed, use `pam desktop ...`. When no PHP is found at all, the host offers to install one (the PAM runtime on Linux and macOS, the official windows.php.net build on Windows).
-
-PAM Desktop 2.1.1 and earlier keep an existing `composer.json` untouched, so after `composer require` the new application has no `App\` autoload and stops with `Class "App\Navigation\AppRouter" not found`. Add `"autoload": {"psr-4": {"App\\": "src/"}}` to `composer.json` and run `composer dump-autoload`. With PAM 2.2.11 and earlier, `pam desktop dev` can stop with `libsodium.so.23: cannot open shared object file`; run it as `PAM_DESKTOP_PHP=~/.local/bin/pam pam desktop dev`.
+`vendor/bin/pam-desktop` downloads the native host of the installed version for the current system, verifies its SHA-256 and runs it. Version 2.0.0 is not released yet: there is no `v2.0.0` tag for Composer to install and no host archive to download. Until there is, work from a checkout (see below); `PAM_DESKTOP_HOST` points the launcher at a host built from source.
 
 [Getting started](docs/getting-started.md) covers the requirements, the project layout and the `pam-desktop.json` reference.
 <!-- pam:product-page:end -->
@@ -135,9 +111,9 @@ Assigning to a `#[State]` property schedules a render. The host receives a patch
 
 | Requirement | Notes |
 | --- | --- |
-| PHP 8.5 | The `php` executable on `PATH`, or `pam` (the host then runs `pam exec`), or the path in `PAM_DESKTOP_PHP`. Ubuntu 24.04 and older package PHP 8.3 or older: install the [PAM CLI](https://github.com/push-in/pam) or PHP 8.5 from another source. On Linux and macOS without any of them, the host installs the PAM runtime, which embeds PHP; on Windows it downloads the official PHP 8.5 build from windows.php.net (not run on Windows yet). |
+| PHP 8.5 | The `php` executable on `PATH`, or `pam` (the host then runs `pam exec`), or the path in `PAM_DESKTOP_PHP`. On Linux and macOS without any of them, the host installs the PAM runtime, which embeds PHP; on Windows it downloads the official PHP 8.5 build from windows.php.net (not run on Windows yet). |
 | Composer | To install the `pushinbr/pam-desktop` package. |
-| Linux, to run a released host | glibc 2.35 or newer, GTK 4.6 or newer and the GStreamer plugins for media (Ubuntu 22.04, Debian 12, Fedora 36 and later): `sudo apt install libgtk-4-1 gstreamer1.0-plugins-base gstreamer1.0-plugins-good`. Every command of the host, `init` included, needs GTK installed. WebKitGTK 6 (`libwebkitgtk-6.0-4`, Ubuntu 24.04 and later) only for applications that show a `WebView`. The released host is built on Ubuntu 22.04 and uses the GTK features newer than 4.6 when the installed GTK has them. |
+| Linux, to run a released host | glibc 2.35 or newer, GTK 4.6 or newer and the GStreamer plugins for media (Ubuntu 22.04, Debian 12, Fedora 36 and later). WebKitGTK 6 (`libwebkitgtk-6.0-4`, Ubuntu 24.04 and later) only for applications that show a `WebView`. The released host is built on Ubuntu 22.04 and uses the GTK features newer than 4.6 when the installed GTK has them. |
 | Rust 1.92 or newer | Only to build the host from a checkout. `rust-toolchain.toml` selects the stable channel. |
 | Linux, to build: `libgtk-4-dev` | GTK 4.6 or newer. |
 

@@ -3,14 +3,14 @@
 A native desktop application built with [PAM Desktop](https://github.com/push-in/pam-desktop).
 
 ```bash
-composer install       # with the PAM CLI: pam composer install
-pam desktop dev        # or: vendor/bin/pam-desktop dev (needs php on PATH)
+pam composer install
+pam desktop dev
 ```
 
 | Task | Command |
 | --- | --- |
 | Check every template, stylesheet and route | `pam desktop check` |
-| Run the test | `composer test` (`pam composer test`) |
+| Run the test | `pam composer test` |
 | Bundle and build installers | `pam desktop build` (`--format deb`, `appimage`, `rpm`, …) |
 
 `dev` finds the project from any of its folders, opens the window and reloads it on every save. Errors show where they happened, with the source and the stack.
