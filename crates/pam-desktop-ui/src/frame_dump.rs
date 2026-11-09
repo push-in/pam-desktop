@@ -61,8 +61,12 @@ pub fn document(scene: &Scene, window: u64) -> serde_json::Value {
                     (layout.height - insets.vertical()).max(0.0),
                 ))
             });
+            // Corner radii as declared (TL, TR, BR, BL), to compare with
+            // Chromium's computed border-radius.
+            let radii = crate::style::Decoration::resolve(node.kind, props).radii;
             Some(serde_json::json!({
                 "id": id,
+                "radius": [radii.top_left, radii.top_right, radii.bottom_right, radii.bottom_left],
                 "parent": node.parent,
                 "kind": format!("{:?}", node.kind),
                 "testId": props.text_or_empty(pam_desktop_wire::PropKey::TestId),
