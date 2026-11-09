@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 2.1.4 - 2026-11-09
+
+The same screen now looks the same on Linux, macOS and Windows: text widths,
+line breaks and custom font faces match across the three hosts. Update the
+Composer package (`pam composer update pushinbr/pam-desktop`); the launcher
+downloads the verified 2.1.4 host. No breaking changes and no app changes
+needed.
 
 ### Fixed
 
