@@ -1,5 +1,43 @@
 # Changelog
 
+## 2.1.4 - 2026-11-09
+
+The same screen now looks the same on Linux, macOS and Windows: text widths,
+line breaks and custom font faces match across the three hosts. Update the
+Composer package (`pam composer update pushinbr/pam-desktop`); the launcher
+downloads the verified 2.1.4 host. No breaking changes and no app changes
+needed.
+
+### Fixed
+
+- **Windows lays text out on the same grid as Linux and macOS.** The Win32
+  host rounded every measured text width up to a whole pixel, where GTK and
+  AppKit round up to a Blink LayoutUnit (1/64 px). Shrink-wrapped labels
+  (buttons, chips, tabs) were up to 1 px wider each, so rows of them drifted
+  by several pixels on Windows only (a POS category row ended 6 px further
+  right). Found by the cross-platform comparison of the PDV storefront screens.
+- **Windows wraps text at the engine's exact width.** The Win32 host had no
+  `set_text_geometry`: it wrapped each paragraph at its frame snapped to whole
+  pixels, so a label laid out in exactly its measured width (106.25 px drawn
+  in a 106 px frame) lost its last word to a second line. Lines now break at
+  the content width the engine laid out, as on GTK and AppKit.
+- **Inherited `@font-face` families resolve in package components.** A
+  component of another stylesheet (a DesktopUI component such as `MediaTile`,
+  or one placed with `<Slot :content>`) inherited the app's `@font-face`
+  family by name, or the face resolved for its ancestor, and its stylesheet
+  could not resolve it for the component's own weight. Fontconfig found the
+  face by family name; DirectWrite and Core Text did not and drew another face
+  (`MediaTile`'s "PRINCIPAL" badge 5 px wider on macOS, 3 px on Windows). The
+  SDK now resolves such a family, or face, among the faces any stylesheet
+  declared for it.
+- **A bound font weight picks the right face on macOS and Windows.** When the
+  weight or style comes from a binding (`:fontWeight="$style->fontWeight"`,
+  as in DesktopUI's `Autocomplete` input) the SDK looked the face up before
+  the value was known, so Core Text and DirectWrite drew the Regular face (or
+  another font) where Linux drew the right one. The face is now chosen after
+  the binding is evaluated, for every backend; a weight from a CSS variable
+  (`font-weight: var(--title-weight)`) also resolves to its face.
+
 ## 2.1.3 - 2026-11-09
 
 Theme switching and text inputs for storefront-style apps. Update the

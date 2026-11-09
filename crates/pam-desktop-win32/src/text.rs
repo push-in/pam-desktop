@@ -669,11 +669,15 @@ impl TextEngine {
             return *metrics;
         }
         let metrics = match self.build(dwrite, block, max_width) {
-            // Round the width up: a box narrower than its text by a fraction
-            // would wrap when drawn. The height stays exact, so fractional
-            // CSS line heights stack like a browser's line boxes (as GTK).
+            // Round the width up to a Blink LayoutUnit (1/64 px), as GTK and
+            // AppKit do: a box narrower than its text by a fraction would
+            // wrap when drawn, and a whole pixel made every shrink-wrapped
+            // label up to 1px wider than on the other platforms (rows of
+            // chips and tabs drifted by several pixels). The height stays
+            // exact, so fractional CSS line heights stack like a browser's
+            // line boxes.
             Some(layout) => TextMetrics {
-                width: layout.width.ceil(),
+                width: layout_unit_width(layout.width, max_width),
                 height: layout.height,
                 first_baseline: layout.first_baseline,
                 line_count: layout.line_count,
@@ -686,6 +690,12 @@ impl TextEngine {
         self.metrics.insert(key, metrics);
         metrics
     }
+}
+
+/// `width` rounded up to the 1/64 px layout grid, never wider than a finite
+/// `max_width`.
+fn layout_unit_width(width: f32, max_width: f32) -> f32 {
+    ((width * 64.0).ceil() / 64.0).min(max_width)
 }
 
 impl Layout {
@@ -853,4 +863,19 @@ pub fn text_origin(
             VerticalAlign::Bottom => free.max(0.0),
         };
     Point::new(insets.left, top.round())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::layout_unit_width;
+
+    #[test]
+    fn widths_round_up_to_the_layout_unit_like_gtk_and_appkit() {
+        // 91.78125 is on the 1/64 grid: kept, not rounded to 92.
+        assert_eq!(layout_unit_width(91.781_25, f32::INFINITY), 91.781_25);
+        assert_eq!(layout_unit_width(65.9, f32::INFINITY), 65.906_25);
+        assert_eq!(layout_unit_width(14.0, f32::INFINITY), 14.0);
+        // Never wider than the space the paragraph was laid out in.
+        assert_eq!(layout_unit_width(99.99, 99.995), 99.995);
+    }
 }

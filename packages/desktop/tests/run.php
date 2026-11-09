@@ -606,6 +606,119 @@ $assert(
         && $inheritText->properties()[PropKey::TextAlign->value] === 2,
     'Text CSS properties and logical font families must inherit through native layout containers.',
 );
+// A component of another stylesheet (no @font-face, e.g. a package's
+// component placed by <Slot :content>) inherits the resolved Regular face;
+// its own weight picks the family's Bold face, not the Regular file for the
+// host to synthesize from (DirectWrite and Core Text load the named file).
+$placedCss = ScopedStyleCompiler::compile('.badge { font-weight: 900; }', 'PlacedFace.pam.php');
+$placedTemplate = TemplateCompiler::compile('<Column><Text class="badge">PRINCIPAL</Text><Text>Body</Text></Column>');
+$placedStyled = new CompiledTemplateNode(
+    kind: $placedTemplate->kind,
+    name: $placedTemplate->name,
+    attributes: [
+        ...$placedTemplate->attributes,
+        '__pamStyles' => json_encode($placedCss, JSON_THROW_ON_ERROR),
+    ],
+    source: $placedTemplate->source,
+    line: $placedTemplate->line,
+    column: $placedTemplate->column,
+    value: $placedTemplate->value,
+);
+$placedStyled->children = $placedTemplate->children;
+$placedTexts = TemplateRenderer::render($placedStyled, null, [
+    '__pamInheritedStyles' => ['fontFamily' => 'asset://assets/fonts/Theme-Regular.ttf, sans-serif', 'fontWeight' => 400],
+])->children();
+$placedByName = TemplateRenderer::render($placedStyled, null, [
+    '__pamInheritedStyles' => ['fontFamily' => 'Theme, sans-serif'],
+])->children();
+$assert(
+    $placedByName[0]->properties()[PropKey::FontFamily->value] === 'asset://assets/fonts/Theme-Bold.ttf, sans-serif',
+    'A @font-face family inherited by name into another stylesheet must resolve to its face.',
+);
+// A bound weight (`:fontWeight="$style->weight"`) is evaluated before the
+// face is looked up: an inherited family resolves to the face of that weight
+// on every backend (Core Text and DirectWrite do not find it by name), on
+// the first render and on the cached fast path alike.
+$boundTemplate = TemplateCompiler::compile('<Column><Text :fontWeight="$weight">Bound</Text></Column>');
+foreach ([[700, 'Bold'], [400, 'Regular'], [600, 'Bold'], [600, 'Bold'], [300, 'Regular']] as [$boundWeight, $boundFace]) {
+    $boundTexts = TemplateRenderer::render($boundTemplate, null, [
+        'weight' => $boundWeight,
+        '__pamInheritedStyles' => ['fontFamily' => 'Theme, sans-serif'],
+    ])->children();
+    $assert(
+        $boundTexts[0]->properties()[PropKey::FontFamily->value] === "asset://assets/fonts/Theme-{$boundFace}.ttf, sans-serif",
+        "An inherited family must resolve to the face of a bound weight ({$boundWeight}).",
+    );
+}
+$boundOwnTemplate = TemplateCompiler::compile('<Column><Text class="theme" :fontWeight="$weight">Own</Text></Column>');
+$boundOwnStyled = new CompiledTemplateNode(
+    kind: $boundOwnTemplate->kind,
+    name: $boundOwnTemplate->name,
+    attributes: [
+        ...$boundOwnTemplate->attributes,
+        '__pamStyles' => json_encode($inheritCss, JSON_THROW_ON_ERROR),
+    ],
+    source: $boundOwnTemplate->source,
+    line: $boundOwnTemplate->line,
+    column: $boundOwnTemplate->column,
+    value: $boundOwnTemplate->value,
+);
+$boundOwnStyled->children = $boundOwnTemplate->children;
+foreach ([700, 700, 400] as $boundWeight) {
+    $boundOwn = TemplateRenderer::render($boundOwnStyled, null, ['weight' => $boundWeight])->children()[0];
+    $assert(
+        $boundOwn->properties()[PropKey::FontFamily->value]
+            === 'asset://assets/fonts/Theme-'.($boundWeight === 700 ? 'Bold' : 'Regular').'.ttf',
+        "A bound weight must pick the face of the node's own @font-face family ({$boundWeight}).",
+    );
+}
+// A weight from a CSS variable is resolved before the face is looked up.
+$varWeightCss = ScopedStyleCompiler::compile(
+    <<<'CSS'
+    :root { --title-weight: 700; }
+    @font-face {
+        font-family: "Theme";
+        src: url("asset://assets/fonts/Theme-Regular.ttf");
+        font-weight: 400;
+    }
+    @font-face {
+        font-family: "Theme";
+        src: url("asset://assets/fonts/Theme-Bold.ttf");
+        font-weight: 700;
+    }
+    .title { font-family: "Theme"; font-weight: var(--title-weight); }
+    CSS,
+    'VarWeightCss.pam.php',
+);
+$varWeightTemplate = TemplateCompiler::compile('<Column><Text class="title">Title</Text><Text>Body</Text></Column>');
+$varWeightStyled = new CompiledTemplateNode(
+    kind: $varWeightTemplate->kind,
+    name: $varWeightTemplate->name,
+    attributes: [
+        ...$varWeightTemplate->attributes,
+        '__pamStyles' => json_encode($varWeightCss, JSON_THROW_ON_ERROR),
+    ],
+    source: $varWeightTemplate->source,
+    line: $varWeightTemplate->line,
+    column: $varWeightTemplate->column,
+    value: $varWeightTemplate->value,
+);
+$varWeightStyled->children = $varWeightTemplate->children;
+foreach ([1, 2] as $_) {
+    $varWeightTexts = TemplateRenderer::render($varWeightStyled, null, [
+        '__pamInheritedStyles' => ['fontFamily' => 'Theme, sans-serif'],
+    ])->children();
+    $assert(
+        $varWeightTexts[0]->properties()[PropKey::FontFamily->value] === 'asset://assets/fonts/Theme-Bold.ttf'
+            && $varWeightTexts[1]->properties()[PropKey::FontFamily->value] === 'asset://assets/fonts/Theme-Regular.ttf, sans-serif',
+        'A font-weight from a CSS variable must pick the face of that weight.',
+    );
+}
+$assert(
+    $placedTexts[0]->properties()[PropKey::FontFamily->value] === 'asset://assets/fonts/Theme-Bold.ttf, sans-serif'
+        && $placedTexts[1]->properties()[PropKey::FontFamily->value] === 'asset://assets/fonts/Theme-Regular.ttf, sans-serif',
+    'An inherited @font-face face must be re-resolved for the weight of a node of another stylesheet.',
+);
 $textAlignmentCss = ScopedStyleCompiler::compile(
     '.left { text-align: left; } .right { text-align: right; }',
     'TextAlignmentCss.pam.php',
