@@ -290,6 +290,8 @@ pub struct InputConfig {
     pub letter_spacing: f32,
     /// CSS `line-height` in logical px; `None` is the font's own (normal).
     pub line_height: Option<f32>,
+    /// CSS `-webkit-font-smoothing: antialiased` (see `TextBlock`).
+    pub antialiased: bool,
     /// Password masking (single-line only).
     pub secure: bool,
     /// `false` is read-only: focusable and selectable, never modified.
@@ -322,6 +324,7 @@ impl Default for InputConfig {
             insets: Insets::ZERO,
             letter_spacing: 0.0,
             line_height: None,
+            antialiased: false,
             secure: false,
             editable: true,
             enabled: true,

@@ -620,7 +620,7 @@ pub fn paint_drawing(
                     crate::fonts::stack(&font.family).0
                 };
                 description.set_family(&family);
-                description.set_absolute_size(f64::from(font.size) * f64::from(gtk::pango::SCALE));
+                description.set_absolute_size(crate::text::face_size(font.size));
                 // The CSS weight itself, like text nodes: 600 picks a semibold
                 // face or, as in Chromium, the bold one when the family has none.
                 description.set_weight(crate::text::weight(font.weight));

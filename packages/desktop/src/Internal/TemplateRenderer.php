@@ -1523,6 +1523,10 @@ final class TemplateRenderer
             if (!$content instanceof Renderable) {
                 throw new RuntimeException("Slot {$name} contains non-renderable content.");
             }
+            if ($content instanceof Component && array_key_exists(':content', $attributes)) {
+                $inherited = $nodeData['__pamInheritedStyles'] ?? [];
+                $content->__pamPlacedInheriting(is_array($inherited) ? $inherited : []);
+            }
             $element = $content->toElement();
             $output[] = $element->withIdentitySlot(
                 $slot.'.'.($element->identitySlot() ?? (string) $contentIndex),

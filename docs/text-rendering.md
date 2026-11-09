@@ -13,6 +13,13 @@ engine's exact geometry (`TextGeometry`: wrap width, exact left/top offsets
 and height, baselines snapped like Blink) in `TextState::place`
 (`view.rs`). Glyph x positions are sub-pixel (Pango units, 1/1024 px).
 
+On Linux the font face is sized like Chromium's: Skia sets the FreeType
+size in 26.6 fixed point, truncated, so a 12.48px (0.78rem) run is shaped
+and drawn from a 12.46875px face (`text::face_size`), about 0.1% narrower
+than the exact size; a long line otherwise drifts a pixel from Chromium's.
+Font metrics (ascent, descent, `line-height: normal`, the average character
+width of fields) keep the exact size, as Skia's do.
+
 Drawing never changes those positions: both paths below draw the same
 layout at the same origin.
 

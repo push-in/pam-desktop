@@ -41,6 +41,24 @@ pub(crate) fn weight(weight: u16) -> pango::Weight {
 /// Fills `layout` with the paragraph. Colors are applied as attributes; runs
 /// without a color keep the foreground passed when the layout is drawn.
 fn font_description(layout: &pango::Layout, run: &TextRun) -> pango::FontDescription {
+    let mut description = metrics_description(layout, run);
+    description.set_absolute_size(face_size(run.font.size));
+    description
+}
+
+/// The size (Pango units) of the face that shapes and draws `size` px text.
+/// Chromium on Linux sets the FreeType face size in 26.6 fixed point,
+/// truncated (Skia `SkScalarToFDot6`), so advances and glyphs come from a
+/// face up to 1/64 px smaller: 0.78rem (12.48px) text is laid out at
+/// 12.46875px. Font metrics (ascent, descent, average width) still scale
+/// with the exact size there.
+#[must_use]
+pub fn face_size(size: f32) -> f64 {
+    (f64::from(size) * 64.0).floor() / 64.0 * f64::from(SCALE)
+}
+
+/// The run's font at its exact CSS size (for font metrics, see [`face_size`]).
+fn metrics_description(layout: &pango::Layout, run: &TextRun) -> pango::FontDescription {
     let mut description = pango::FontDescription::new();
     if !run.font.family.is_empty() {
         let (family, changed) = crate::fonts::stack(&run.font.family);
@@ -97,7 +115,7 @@ thread_local! {
 fn unhinted_extents(layout: &pango::Layout, run: &TextRun) -> (f32, f32) {
     use gtk::glib::translate::ToGlibPtr;
     use pango::prelude::{FontExt, FontMapExt};
-    let description = font_description(layout, run);
+    let description = metrics_description(layout, run);
     let key = description.to_string();
     if let Some(extents) = UNHINTED.with(|cache| cache.borrow().get(&key).copied()) {
         return extents;
@@ -675,6 +693,15 @@ mod tests {
         assert_eq!(line_height(18.56), 18.5625);
         assert_eq!(line_height(23.52), 23.515_625);
         assert_eq!(line_height(20.0), 20.0);
+    }
+
+    #[test]
+    fn faces_are_sized_in_freetype_26_6() {
+        // Skia truncates the face size to 1/64 px: 0.78rem is a 12.46875px face.
+        let px = |size: f32| face_size(size) / f64::from(SCALE);
+        assert_eq!(px(12.48), 12.468_75);
+        assert_eq!(px(12.16), 12.156_25);
+        assert_eq!(px(14.0), 14.0);
     }
 
     fn run(text: &str) -> TextRun {

@@ -24,6 +24,19 @@ final class Host extends \Pam\Desktop\Component
 ?>
 <template><Column><Slot :content="$content"><Text>Empty</Text></Slot></Column></template>
 PAM);
+file_put_contents($root.'/StyledHost.pam.php', <<<'PAM'
+<?php
+namespace SlotContentRegression;
+final class StyledHost extends \Pam\Desktop\Component
+{
+    public mixed $content = null;
+}
+?>
+<template><Column><Slot :content="$content" /></Column></template>
+<style>
+:root { -webkit-font-smoothing: antialiased; }
+</style>
+PAM);
 try {
     App::components($root, $root.'/cache');
     $host = new SlotContentRegression\Host();
@@ -48,7 +61,17 @@ try {
     $mounted->render();
     if (!str_contains($mounted->text(), 'One') || !str_contains($mounted->text(), 'Two')) throw new RuntimeException('Renderable lists must render.');
     $mounted->unmount();
-    echo "Bound slot content: fallback, lifecycle, replacement and lists passed\n";
+    // A component built in PHP and placed by <Slot :content> inherits the
+    // text styles of where it renders (CSS inheritance), :root included.
+    $styled = new SlotContentRegression\StyledHost();
+    $placed = new class extends Component {
+        public function render(): Renderable { return Text::make('Placed'); }
+    };
+    $styled->content = $placed;
+    $styledMount = Pam\Desktop\Testing\mount($styled);
+    if (($placed->__pamInheritedStyles()['fontSmoothing'] ?? null) !== 'antialiased') throw new RuntimeException('Slot content must inherit the text styles of its place.');
+    $styledMount->unmount();
+    echo "Bound slot content: fallback, lifecycle, replacement, lists and inherited text styles passed\n";
 } finally {
     $items = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
     foreach ($items as $item) $item->isDir() ? rmdir($item->getPathname()) : unlink($item->getPathname());

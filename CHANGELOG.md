@@ -1,5 +1,37 @@
 # Changelog
 
+## 2.1.1 - 2026-11-09
+
+A pixel-parity patch for 2.1. Update the Composer package
+(`composer update pushinbr/pam-desktop`); the launcher downloads the
+verified 2.1.1 host. No new properties: 2.1.0 hosts keep running the same
+applications.
+
+### Fixed
+
+- **Linux text size.** Font faces are sized in FreeType 26.6 (truncated to
+  1/64 px) like Skia, so fractional sizes such as `0.78rem` shape and
+  rasterize like Chromium; long lines no longer drift a pixel to the right.
+- **macOS text fields.** Unfocused `<input>` and `<textarea>` values and
+  hints paint from the content box with the CSS line box and
+  `-webkit-font-smoothing`, matching Chromium's inner editor instead of
+  AppKit's inset and stem darkening.
+- **`<Slot :content>` inheritance.** Components built in PHP and placed with
+  `<Slot :content>` now inherit text styles (font family, smoothing, line
+  height) from where they render, including `:root`.
+- **macOS classic scrollbar.** Scrollers with a reserved gutter and no
+  `scrollbar-width`/`scrollbar-color` draw Chromium's default classic bar
+  instead of the overlay scroller; an authored `scrollbar-color` track is
+  painted too.
+- **macOS `filter: blur()` without Metal.** Plain decorative boxes are blurred
+  on the CPU like Skia when Core Animation has no Metal device (virtual
+  machines, remote sessions).
+
+### Tooling
+
+- `PAM_DESKTOP_DUMP_FRAMES` nodes include their declared corner radii, for
+  comparison with Chromium's computed `border-radius`.
+
 ## 2.1.0 - 2026-11-09
 
 PAM Desktop 2.1 makes native windows lay out and paint like Chromium. A

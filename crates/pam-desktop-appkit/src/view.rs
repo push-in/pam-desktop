@@ -119,6 +119,9 @@ pub struct ViewIvars {
     focusable: Cell<bool>,
     capture_keys: RefCell<String>,
     target_self: Cell<bool>,
+    /// The background the node declares, even when another layer paints
+    /// it (a dialog panel composited by the CPU backdrop).
+    authored_background: Cell<pam_desktop_ui::color::Color>,
     target_children: Cell<bool>,
     cursor: Cell<Cursor>,
     /// Assistive technology may press the view.
@@ -539,6 +542,7 @@ impl PamView {
             focusable: Cell::new(false),
             capture_keys: RefCell::new(String::new()),
             target_self: Cell::new(true),
+            authored_background: Cell::new(pam_desktop_ui::color::Color::TRANSPARENT),
             target_children: Cell::new(true),
             cursor: Cell::new(Cursor::Default),
             pressable: Cell::new(false),
@@ -1021,6 +1025,29 @@ pub(crate) fn gpu_filters_available() -> bool {
     })
 }
 
+/// Whether the first box behind `view` with a mostly opaque background
+/// (alpha at least one half: a dialog panel over its mask counts) is dark:
+/// Chromium draws its default classic scrollbar in the page's colour
+/// scheme. `None` when no node behind it paints such a background.
+pub(crate) fn backdrop_is_dark(view: &NSView) -> Option<bool> {
+    // SAFETY: superviews are only read.
+    let mut current = unsafe { view.superview() };
+    while let Some(parent) = current {
+        if let Some(node) = parent.downcast_ref::<PamView>() {
+            let color = node.ivars().authored_background.get();
+            if color.a >= 128 {
+                let luma = 0.2126 * f32::from(color.r)
+                    + 0.7152 * f32::from(color.g)
+                    + 0.0722 * f32::from(color.b);
+                return Some(luma < 128.0);
+            }
+        }
+        // SAFETY: as above.
+        current = unsafe { parent.superview() };
+    }
+    None
+}
+
 fn gaussian_blur(radius: f32) -> Option<Retained<CIFilter>> {
     let radius = NSNumber::new_f32(radius);
     filter("CIGaussianBlur", &[("inputRadius", radius.as_ref())])
@@ -1064,6 +1091,19 @@ pub struct NodeView {
     filters: Filters,
     /// Shows the CPU-blurred backdrop when there is no Metal device.
     backdrop: Option<Retained<PlainView>>,
+    /// The CPU `filter: blur()` of a plain box without a Metal device, and
+    /// what it was rendered for (blur, size, background, radii).
+    blurred: Option<(Retained<CALayer>, CpuBlur)>,
+}
+
+/// What a CPU-blurred box was rendered from.
+#[derive(Clone, Copy, PartialEq)]
+struct CpuBlur {
+    sigma: f32,
+    size: Size,
+    scale: f32,
+    color: pam_desktop_ui::color::Color,
+    radii: [f32; 4],
 }
 
 impl NodeView {
@@ -1078,6 +1118,7 @@ impl NodeView {
             layer: LayerState::default(),
             filters: Filters::default(),
             backdrop: None,
+            blurred: None,
         }
     }
 
@@ -1363,11 +1404,16 @@ impl NodeView {
     }
 
     pub fn set_decoration(&mut self, decoration: &Decoration) {
+        self.view
+            .ivars()
+            .authored_background
+            .set(decoration.background);
         // Without Metal the CPU backdrop composites the box's translucent
         // fill (Chromium's 8-bit blend); the box itself paints none.
         if !gpu_filters_available()
             && (pam_desktop_ui::backdrop::backdrop_fill(decoration).is_some()
-                || decoration.fill_composited)
+                || decoration.fill_composited
+                || self.cpu_blurs(decoration))
         {
             self.view.set_decoration(&Decoration {
                 background: pam_desktop_ui::color::Color::TRANSPARENT,
@@ -1386,6 +1432,133 @@ impl NodeView {
         }
         self.layout_shadows();
         self.apply_filters(decoration);
+        self.cpu_blur(decoration);
+    }
+
+    /// Without a Metal device Core Animation drops a layer's `filter:
+    /// blur()`: a box that only paints one background colour (a glow, a
+    /// decorative blob) is blurred on the CPU like Skia instead.
+    fn cpu_blurs(&self, decoration: &Decoration) -> bool {
+        !gpu_filters_available()
+            && decoration.blur > 0.0
+            && decoration.background.a > 0
+            && decoration.gradients.is_empty()
+            && !decoration.border.is_visible()
+            && decoration.shadows.is_empty()
+            && self.view.subviews().is_empty()
+            && self.view.ivars().state.borrow().text.is_none()
+            && self.view.ivars().state.borrow().image.is_none()
+    }
+
+    fn cpu_blur(&mut self, decoration: &Decoration) {
+        if !self.cpu_blurs(decoration) {
+            if let Some((layer, _)) = self.blurred.take() {
+                layer.removeFromSuperlayer();
+            }
+            return;
+        }
+        let scale = self
+            .view
+            .window()
+            .map_or(1.0, |window| window.backingScaleFactor() as f32)
+            .max(1.0);
+        let size = self.frame.size();
+        let radii = decoration.radii.clamped(size);
+        let wanted = CpuBlur {
+            sigma: decoration.blur,
+            size,
+            scale,
+            color: decoration.background,
+            radii: [
+                radii.top_left,
+                radii.top_right,
+                radii.bottom_right,
+                radii.bottom_left,
+            ],
+        };
+        if self
+            .blurred
+            .as_ref()
+            .is_some_and(|(_, done)| *done == wanted)
+        {
+            return;
+        }
+        let Some(own) = self.view.layer() else { return };
+        let sigma = wanted.sigma * scale;
+        let reach = pam_desktop_pixels::blur_reach(sigma) as f32;
+        let (width, height) = (
+            (size.width * scale).ceil() as usize + 2 * reach as usize,
+            (size.height * scale).ceil() as usize + 2 * reach as usize,
+        );
+        let color = wanted.color;
+        let pixels = pam_desktop_pixels::blurred_box(
+            width,
+            height,
+            [
+                reach,
+                reach,
+                reach + size.width * scale,
+                reach + size.height * scale,
+            ],
+            wanted.radii.map(|radius| radius * scale),
+            [color.r, color.g, color.b, color.a],
+            sigma,
+        );
+        let points = CGSize::new(
+            width as CGFloat / CGFloat::from(scale),
+            height as CGFloat / CGFloat::from(scale),
+        );
+        let Some(bitmap) = self
+            .view
+            .bitmapImageRepForCachingDisplayInRect(CGRect::new(CGPoint::ZERO, points))
+        else {
+            return;
+        };
+        let format = bitmap.bitmapFormat();
+        let data = bitmap.bitmapData();
+        if data.is_null()
+            || bitmap.bitsPerSample() != 8
+            || bitmap.samplesPerPixel() != 4
+            || bitmap.isPlanar()
+            || bitmap.pixelsWide() as usize != width
+            || bitmap.pixelsHigh() as usize != height
+            || format.contains(objc2_app_kit::NSBitmapFormat::AlphaFirst)
+            || format.contains(objc2_app_kit::NSBitmapFormat::AlphaNonpremultiplied)
+            || format.contains(objc2_app_kit::NSBitmapFormat::FloatingPointSamples)
+        {
+            return;
+        }
+        let row = bitmap.bytesPerRow() as usize;
+        for y in 0..height {
+            // SAFETY: row `y` of `width` RGBA pixels lies inside the
+            // bitmap's buffer, which nothing else touches meanwhile.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    pixels.as_ptr().add(y * width * 4),
+                    data.add(y * row),
+                    width * 4,
+                );
+            }
+        }
+        let image = NSImage::initWithSize(NSImage::alloc(), points);
+        image.addRepresentation(&bitmap);
+        let layer = match self.blurred.take() {
+            Some((layer, _)) => layer,
+            None => {
+                let layer = CALayer::new();
+                // At the bottom of the view's own layer.
+                own.insertSublayer_atIndex(&layer, 0);
+                layer
+            }
+        };
+        let margin = CGFloat::from(reach / scale);
+        without_animation(|| {
+            layer.setFrame(CGRect::new(CGPoint::new(-margin, -margin), points));
+            layer.setContentsScale(CGFloat::from(scale));
+            // SAFETY: a layer's contents may be an `NSImage`.
+            unsafe { layer.setContents(Some(&image)) };
+        });
+        self.blurred = Some((layer, wanted));
     }
 
     /// Where the view goes and what its layer adds: a node's translation
@@ -1421,6 +1594,13 @@ impl NodeView {
             self.view.size_changed();
             self.layout_clip();
             self.layout_shadows();
+            if self.blurred.is_some() {
+                let decoration = self.view.ivars().state.borrow().decoration.clone();
+                self.cpu_blur(&Decoration {
+                    background: self.view.ivars().authored_background.get(),
+                    ..decoration
+                });
+            }
         }
     }
 

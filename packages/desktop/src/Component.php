@@ -531,6 +531,22 @@ abstract class Component implements Renderable
         return $this->pamSlots;
     }
 
+    /**
+     * @internal A component instance placed by `<Slot :content>` (built with
+     * `new`, not by a template call site) inherits the text styles of the
+     * place it is rendered at, like any element in CSS.
+     *
+     * @param array<string, mixed> $inheritedStyles
+     */
+    final public function __pamPlacedInheriting(array $inheritedStyles): void
+    {
+        if ($inheritedStyles === $this->pamInheritedStyles) {
+            return;
+        }
+        $this->pamInheritedStyles = $inheritedStyles;
+        DependencyTracker::markDirty($this);
+    }
+
     /** @return array<string, mixed> */
     final public function __pamInheritedStyles(): array
     {
