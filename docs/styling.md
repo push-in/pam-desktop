@@ -162,7 +162,7 @@ The whole list is kept. Each backend walks it in order and uses the first family
 | `asset://…` | A font file packaged with the application, loaded on first use: Fontconfig on Linux, CoreText on macOS, DirectWrite (and a private GDI font for text inputs) on Windows. At most 32 files, 8 MiB each and 64 MiB in all. |
 | Any other name | An installed family. One that is not installed is skipped; on Linux a Fontconfig alias does not count (`Consolas` is not DejaVu Sans Mono), only Chromium's metric-compatible equivalents (`Arial` → Liberation Sans, `Times New Roman` → Liberation Serif, `Courier New` → Liberation Mono, `Calibri` → Carlito, `Cambria` → Caladea). |
 
-A `@font-face` family in the list resolves to its best face for the weight and style; the other entries stay as fallbacks. On Windows a packaged font is only used as the first entry. When no entry matches, the interface font is used. The `system-ui` keyword inside the `font:` shorthand is not accepted; use `font-family`.
+A `@font-face` family in the list resolves to its best face for the weight and style; the other entries stay as fallbacks. Text inputs (`Input`, multiline `Input`, the fields of `Select` and `Autocomplete`) draw with the same resolved list, weight and size as `Text`. On Windows a packaged font is only used as the first entry. When no entry matches, the interface font is used. The `system-ui` keyword inside the `font:` shorthand is not accepted; use `font-family`.
 
 ### Line breaking and white space
 
@@ -363,7 +363,7 @@ A `:root` block inside `@media` redeclares the custom properties for the whole s
 .row:hover { background-color: var(--fg); }
 ```
 
-Every rule that reads a redeclared property follows it: rules outside the query, their state blocks (`:hover`, `:focus`…) and the rules of other matched queries. The rules keep their place in the cascade. The scheme is the effective one (`Appearance::set()` or the system), and a change restyles the tree. `oklch()`, `lab()` and `color-mix()` values resolve to sRGB like Chromium (out-of-gamut colors are clipped). Text styles declared on `:root` itself (`:root { color: var(--fg) }`) are resolved once; put them on a tag rule (`Text { color: var(--fg); }`) to follow the scheme.
+Every rule that reads a redeclared property follows it: rules outside the query, their state blocks (`:hover`, `:focus`…) and the rules of other matched queries. The rules keep their place in the cascade. The scheme is the effective one (`Appearance::set()` or the system), and a change restyles the tree. `oklch()`, `lab()` and `color-mix()` values resolve to sRGB like Chromium (out-of-gamut colors are clipped). Text styles declared on `:root` itself (`:root { color: var(--fg); font-family: var(--font-sans) }`) follow it too. CSS `color` also tints an `ActivityIndicator` (`.spinner { color: var(--muted) }`; a `color` attribute still wins), so spinners switch with the scheme. For colors computed in PHP (DesktopUI themes), see [live theme switching](desktop-ui.md#live-theme-switching).
 
 ### In PHP
 

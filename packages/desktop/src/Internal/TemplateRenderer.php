@@ -242,6 +242,9 @@ final class TemplateRenderer
     /** @var array<string, ReflectionProperty> */
     private static array $properties = [];
 
+    /** @var array<string, array<array-key, mixed>> */
+    private static array $rootInheritedCache = [];
+
     /** @var array<string,array<string,mixed>> */
     private static array $reactiveStyleCache = [];
 
@@ -926,7 +929,7 @@ final class TemplateRenderer
     ): Element
     {
         $data['__pamStyles'] = self::styleSheet($tree);
-        $root = $data['__pamStyles']['rootInherited'] ?? [];
+        $root = self::rootInheritedStyles($data['__pamStyles'], $data);
         if (is_array($root) && $root !== []) {
             // `:root` text styles under whatever the parent passed down.
             $inherited = $data['__pamInheritedStyles'] ?? [];
@@ -4256,6 +4259,14 @@ final class TemplateRenderer
                 $batch[$key->value] = $value;
             }
         }
+        if (isset($batch[PropKey::TextColor->value])
+            && $element->kind() === NodeKind::ActivityIndicator
+            && !isset($batch[PropKey::ProgressColor->value])
+            && !array_key_exists(PropKey::ProgressColor->value, $element->properties())) {
+            // CSS `color` tints a spinner (`.spinner { color: var(--muted) }`),
+            // so it follows custom properties and scheme switches like text.
+            $batch[PropKey::ProgressColor->value] = $batch[PropKey::TextColor->value];
+        }
 
         return $batch === [] ? $element : $element->__pamWithProperties($batch);
     }
@@ -5668,6 +5679,7 @@ final class TemplateRenderer
             'tokens' => self::safeStyleMetadata($decoded['tokens'] ?? [], $tree->source),
             'variables' => self::safeStyleMetadata($decoded['variables'] ?? [], $tree->source),
             'rootInherited' => self::safeStyleMetadata($decoded['rootInherited'] ?? [], $tree->source),
+            'rootInheritedSource' => is_string($decoded['rootInheritedSource'] ?? null) ? $decoded['rootInheritedSource'] : '',
             'variableRules' => self::safeStyleMetadata($decoded['variableRules'] ?? [], $tree->source),
             'stateVariableRules' => self::safeStyleMetadata($decoded['stateVariableRules'] ?? [], $tree->source),
             'states' => self::safeStyleMetadata($decoded['states'] ?? [], $tree->source),
@@ -6809,6 +6821,48 @@ final class TemplateRenderer
         }
 
         return $rules;
+    }
+
+    /**
+     * The `:root` text styles (`:root { color: var(--fg) }`) for this frame:
+     * declarations that read custom properties resolve again with the
+     * values of the matched queries (`@media (prefers-color-scheme: …) {
+     * :root { --fg: … } }`) and StyleVariables, like every other rule.
+     *
+     * @param array<string, mixed> $sheet
+     * @param array<string, mixed> $data
+     * @return array<array-key, mixed>
+     */
+    private static function rootInheritedStyles(array $sheet, array $data): array
+    {
+        $root = is_array($sheet['rootInherited'] ?? null) ? $sheet['rootInherited'] : [];
+        $source = $sheet['rootInheritedSource'] ?? '';
+        if (!is_string($source) || $source === '') {
+            return $root;
+        }
+        $overrides = [
+            ...self::queryRootVariables($sheet, self::matchedStyleQueries($sheet, $data)),
+            ...StyleVariables::all(),
+        ];
+        if ($overrides === []) {
+            return $root;
+        }
+        $key = hash('xxh128', $source."\0".serialize($sheet['variables'] ?? [])."\0".serialize($overrides));
+        if (isset(self::$rootInheritedCache[$key])) {
+            return self::$rootInheritedCache[$key];
+        }
+        $variables = [];
+        foreach (is_array($sheet['variables'] ?? null) ? $sheet['variables'] : [] as $name => $value) {
+            if (is_string($name) && is_string($value)) $variables[$name] = $value;
+        }
+        foreach ($overrides as $name => $value) $variables[$name] = (string) $value;
+        if (count(self::$rootInheritedCache) >= 64) self::$rootInheritedCache = [];
+
+        return self::$rootInheritedCache[$key] = ScopedStyleCompiler::compileDeclarations(
+            $source,
+            $variables,
+            '<root-inherited-style>',
+        );
     }
 
     /**

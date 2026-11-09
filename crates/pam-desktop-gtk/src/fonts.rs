@@ -349,9 +349,38 @@ pub fn stack(list: &str) -> (String, bool) {
     (names.join(","), changed)
 }
 
+/// A CSS `font-family` list for GTK's style provider from a resolved Pango
+/// family list (see [`stack`]): every family quoted, characters that could
+/// end the declaration dropped.
+pub fn css_list(pango: &str) -> String {
+    pango
+        .split(',')
+        .map(|name| name.trim().replace(['"', '\\', ';', '{', '}'], ""))
+        .filter(|name| !name.is_empty())
+        .map(|name| format!("\"{name}\""))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resolved_lists_become_gtk_css_lists() {
+        assert_eq!(
+            css_list("Plus Jakarta Sans,Cantarell,sans-serif"),
+            "\"Plus Jakarta Sans\", \"Cantarell\", \"sans-serif\""
+        );
+        assert_eq!(css_list("a\";}b, ,"), "\"ab\"");
+        assert_eq!(css_list(""), "");
+        // A packaged face that is not loadable falls through to the rest of
+        // the list instead of emptying it (the field drew a fallback face).
+        assert_eq!(
+            stack("asset://fonts/missing.ttf, monospace"),
+            (String::from("monospace"), false)
+        );
+    }
+
     #[test]
     fn css_font_lists_become_pango_family_lists() {
         // Uninstalled names and the macOS-only `ui-*` families match

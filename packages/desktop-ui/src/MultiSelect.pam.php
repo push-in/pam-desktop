@@ -39,7 +39,7 @@ final class MultiSelect extends Component
     #[State(hotReload: false)] public bool $hasMore = false;
 
     public readonly string $reference;
-    public readonly SelectTheme $theme;
+    use Concerns\FollowsSelectTheme;
 
     private int $generation = 0;
     private ?Closure $cancel = null;
@@ -59,7 +59,7 @@ final class MultiSelect extends Component
         public ?string $placeholder = null,
         public ?string $label = null,
         public string $host = 'desktop-ui',
-        ?SelectTheme $theme = null,
+        SelectTheme|Closure|null $theme = null,
         private readonly int $limit = 8,
         private readonly int $minimumLength = 0,
         private readonly int $debounceMs = 250,
@@ -70,7 +70,7 @@ final class MultiSelect extends Component
         }
         $this->placeholder ??= FrameworkText::get('multiSelect.placeholder');
         $this->label ??= FrameworkText::get('multiSelect.label');
-        $this->theme = $theme ?? new SelectTheme();
+        $this->followTheme($theme);
         $this->reference = 'multi-select-'.spl_object_id($this);
         $this->replaceSelection($selectedOptions, notify: false);
         ViewRef::of($host);

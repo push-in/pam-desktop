@@ -29,7 +29,7 @@ final class Select extends Component
     #[State] public float $popupHeight = 0;
     #[State] public int $scrollRevision = 0;
     #[State] public float $scrollOffset = 0;
-    public readonly SelectTheme $theme;
+    use Concerns\FollowsSelectTheme;
     public readonly string $reference;
     /** Trigger geometry and typography, so products can match their input fields. */
     public readonly AutocompleteInputStyle $fieldStyle;
@@ -44,7 +44,7 @@ final class Select extends Component
         public ?string $placeholder = null,
         public string $host = 'desktop-ui',
         public ?string $label = null,
-        ?SelectTheme $theme = null,
+        SelectTheme|Closure|null $theme = null,
         public bool $showClear = false,
         public bool $filter = false,
         public ?string $filterPlaceholder = null,
@@ -55,7 +55,7 @@ final class Select extends Component
         $this->label ??= FrameworkText::get('select.label');
         $this->filterPlaceholder ??= FrameworkText::get('select.search');
         $this->emptyMessage ??= FrameworkText::get('select.empty');
-        $this->theme = $theme ?? new SelectTheme();
+        $this->followTheme($theme);
         $this->fieldStyle = $fieldStyle ?? new AutocompleteInputStyle(40, 14, 400, 12, 6);
         $this->options = self::validatedOptions($options);
         $this->visibleOptions = $this->options;

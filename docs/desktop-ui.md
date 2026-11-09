@@ -61,7 +61,7 @@ A closed list of options, with an optional filter field and a clear button.
 | `placeholder`, `label` | "Select" | Text shown without a value; accessibility label. |
 | `showClear` | `false` | A clear button when a value is selected. |
 | `filter`, `filterPlaceholder`, `emptyMessage` | `false` | A filter field at the top of the popup. |
-| `theme`, `fieldStyle` | | `SelectTheme`, `AutocompleteInputStyle`. |
+| `theme`, `fieldStyle` | | `SelectTheme` (or a `Closure` returning one, see [live theme switching](#live-theme-switching)), `AutocompleteInputStyle`. |
 
 `setOptions()` replaces the options. Arrow keys, Enter, Escape and typing to filter work while the popup is open.
 
@@ -187,7 +187,7 @@ The blur is drawn on GTK; on macOS and Windows see [Platforms](#platforms).
 $this->active = new Checkbox($this->enabled, fn (bool $checked) => $this->enabled = $checked, label: 'Enabled');
 ```
 
-`size` is 24 by default; `theme` takes a `SelectTheme`. Space and Enter toggle it while focused. `boxSize` paints a smaller box at the top-left of the `size` slot (PrimeVue `.p-checkbox` vs `.p-checkbox-box`, e.g. `size: 20, boxSize: 18`) and `radius` sets its corners (5 by default).
+`size` is 24 by default; `theme` takes a `SelectTheme` or a `Closure` returning one. Space and Enter toggle it while focused. `boxSize` paints a smaller box at the top-left of the `size` slot (PrimeVue `.p-checkbox` vs `.p-checkbox-box`, e.g. `size: 20, boxSize: 18`) and `radius` sets its corners (5 by default).
 
 ## ProgressButton
 
@@ -222,6 +222,22 @@ $theme = new SelectTheme(
 | Placeholder | `placeholderColor` (null: the field text at 45%, the hosts' dimmed default) |
 | Rows | `optionHeight` (16 to 96, null = 36): option height; select mode adds its 2px gap. PrimeVue: 2 × 8 padding + font size × 1.5 |
 | Popup | `popupElevation`, `popupMinWidth` (up to 1024), `popupOffset` (up to 32), `popupShadowColor`, `popupShadowOffsetY` (±64), `popupShadowBlur` (up to 64) |
+
+### Live theme switching
+
+Every control that takes a theme (`Select`, `Autocomplete`, `MultiSelect`, `DatePicker`, `Checkbox`, `Toast` and `Toast::service()->configure()`) also takes a `Closure` that returns one. The Closure is called on every render, and a light/dark switch (`Appearance::set()` or the system) renders every component again, so a control built once follows the switch at once, popups and toasts already on screen included:
+
+```php
+// Two fixed themes, picked by the effective scheme.
+$theme = SelectTheme::adaptive(light: $lightTheme, dark: $darkTheme);
+// Or build it from the product's tokens on each render.
+$theme = static fn (): SelectTheme => new SelectTheme(surface: Tokens::argb('surface'), text: Tokens::argb('fg'));
+
+$this->status = new Select($options, null, $this->changed(...), theme: $theme);
+Toast::service()->configure(theme: ToastTheme::adaptive(light: $lightToasts, dark: $darkToasts));
+```
+
+`SelectTheme::resolve()` and `ToastTheme::resolve()` return the theme a value or Closure stands for; the component's public `$theme` is the one drawn by the current render. Keep the Closure cheap (it runs on every render of the control). Colours that only CSS sets (classes on your own views, `ActivityIndicator` `color`) follow the scheme through custom properties without PHP; see [theme tokens in CSS](styling.md#theme-tokens-in-css).
 
 `AutocompleteInputStyle(height, fontSize, fontWeight, paddingHorizontal, radius)` sets the geometry of the field of `Autocomplete`, `Select` (`fieldStyle`) and `DatePicker`.
 

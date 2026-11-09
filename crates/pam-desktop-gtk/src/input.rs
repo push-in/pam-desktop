@@ -399,12 +399,21 @@ impl InputHost {
             },
             config.letter_spacing,
         );
-        if !config.font.family.is_empty() {
+        // The CSS family list resolved like a Text run's: packaged faces
+        // (`asset://…` from @font-face), installed names and generics.
+        let families = if config.font.family.is_empty() {
+            String::new()
+        } else {
+            let (families, changed) = crate::fonts::stack(&config.font.family);
+            if changed && let Some(map) = self.widget().pango_context().font_map() {
+                crate::fonts::invalidate_map(&map);
+            }
+            families
+        };
+        if !families.is_empty() {
             rules.push_str(&format!(
-                " font-family: \"{}\";",
-                crate::fonts::family(&config.font.family)
-                    .0
-                    .replace(['"', '\\', ';', '{', '}'], "")
+                " font-family: {};",
+                crate::fonts::css_list(&families)
             ));
         }
         if let Some(color) = config.color {
@@ -510,9 +519,10 @@ impl InputHost {
                 // browser textarea starts it.
                 let leading = config.line_height.map_or(0, |line_height| {
                     let mut description = gtk::pango::FontDescription::new();
-                    if !config.font.family.is_empty() {
-                        description.set_family(&config.font.family);
+                    if !families.is_empty() {
+                        description.set_family(&families);
                     }
+                    description.set_weight(crate::text::weight(config.font.weight));
                     description.set_absolute_size(
                         f64::from(config.font.size) * f64::from(gtk::pango::SCALE),
                     );

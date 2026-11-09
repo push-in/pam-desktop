@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Pam\DesktopUi;
 
+use Closure;
+use Pam\Desktop\Appearance;
+
 /**
  * Explicit toast tokens, for products whose design system restyles the
  * PrimeVue toast (e.g. an opaque surface with a severity edge on the left).
@@ -12,6 +15,9 @@ namespace Pam\DesktopUi;
  * ```php
  * Toast::service()->configure(theme: new ToastTheme(surface: 0xFF151D27, border: 0xFF1F2A36, edgeWidth: 3));
  * ```
+ *
+ * A `Closure(): ToastTheme` is called on every render of the stack, so toasts
+ * on screen follow a live light/dark switch (see {@see self::adaptive()}).
  */
 final readonly class ToastTheme
 {
@@ -56,6 +62,34 @@ final readonly class ToastTheme
             || !($detailGap >= 0 && $detailGap <= 32) || !($shadowBlur >= 0 && $shadowBlur <= 64) || abs($shadowOffsetY) > 64) {
             throw new \InvalidArgumentException('Invalid toast theme geometry.');
         }
+    }
+
+    /**
+     * The theme to draw now: the theme itself, or what its Closure returns.
+     *
+     * @param self|(Closure(): self)|null $theme
+     */
+    public static function resolve(self|Closure|null $theme): self
+    {
+        if (!$theme instanceof Closure) {
+            return $theme ?? new self();
+        }
+        $resolved = $theme();
+        if (!$resolved instanceof self) {
+            throw new \InvalidArgumentException('A ToastTheme closure must return a ToastTheme.');
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * Picks `$dark` or `$light` by the effective scheme on every render.
+     *
+     * @return Closure(): self
+     */
+    public static function adaptive(self $light, self $dark): Closure
+    {
+        return static fn (): self => Appearance::isDark() ? $dark : $light;
     }
 
     public function accent(ToastSeverity $severity): int { return $this->accents[$severity->value] ?? $severity->accent(); }
