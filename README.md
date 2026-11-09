@@ -1,72 +1,44 @@
-<!-- pam:product-page:start -->
 <div align="center">
 
-# PAM Desktop
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/banner-dark.svg">
+  <img src=".github/assets/banner-light.svg" width="880" alt="pam-desktop: Native desktop applications written in PHP. No Electron, no Node.js, no web view.">
+</picture>
 
-**Native desktop applications written in PHP.**
+**Native desktop applications written in PHP.**<br>
+Components, state and styles in PHP; a Rust host that lays the tree out and drives real platform views.<br>No Electron, no Node.js, no web view in the rendering path.
 
-Components, state and styles in PHP; a Rust host that lays the tree out and drives real platform views. No Electron, no Node.js, no web view in the rendering path.
+[![Packagist](https://img.shields.io/packagist/v/pushinbr/pam-desktop?label=packagist&color=f53003)](https://packagist.org/packages/pushinbr/pam-desktop)
+[![Latest release](https://img.shields.io/github/v/release/push-in/pam-desktop?label=release&color=e3a008)](https://github.com/push-in/pam-desktop/releases/latest)
+![PHP 8.5](https://img.shields.io/badge/php-8.5-777bb4)
+[![CI](https://img.shields.io/github/actions/workflow/status/push-in/pam-desktop/ci.yml?branch=main&label=ci)](https://github.com/push-in/pam-desktop/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/push-in/pam-desktop?color=1f6feb)](LICENSE)
 
-![PHP](https://img.shields.io/badge/PHP-8.5-777BB4?style=flat-square&logo=php&logoColor=white)
-![Rust](https://img.shields.io/badge/Rust-1.92-000000?style=flat-square&logo=rust&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
-
-**[Getting started](docs/getting-started.md) · [Components](docs/components.md) · [Templates](docs/templates.md) · [Styling](docs/styling.md) · [Platforms](docs/platforms.md) · [Issues](https://github.com/push-in/pam-desktop/issues)**
+[Install](#install) · [Quick example](#quick-example) · [Platforms](#platform-support) · [Features](#features) · [Docs](#docs) · [Issues](https://github.com/push-in/pam-desktop/issues)
 
 </div>
 
----
+<a id="install"></a>
+## <picture><img src=".github/assets/icons/terminal.svg" width="22" height="22" alt=""></picture> Install
 
-## Why this exists
+Create a project with the PAM CLI and run it:
 
-A PHP developer should be able to ship a desktop application whose interface is made of the operating system's own views, without writing HTML, CSS or JavaScript and without bundling a browser.
-
-| | |
-| --- | --- |
-| **Role** | Desktop product |
-| **Execution path** | PHP worker · Rust host · GTK 4, AppKit or Win32 + Direct2D |
-| **This repository owns** | The PHP component package, the wire protocol, the layout and diff engine, the render core, the platform backends and the `pam-desktop` host binary |
-| **Boundary** | PHP describes the interface and handles events; the host owns windows, input, animation, scrolling, media and system services |
-
-## What you can build
-
-- Tools with native windows, menus, tray icons, shortcuts and file dialogs
-- Document and data applications with long lists, local SQLite databases and a private file sandbox
-- Media and drawing applications with images, video, canvases and gestures
-
-## Quick start
-
-```bash
-mkdir my-app && cd my-app
-composer require pushinbr/pam-desktop
-vendor/bin/pam-desktop init
-pam desktop dev          # or: vendor/bin/pam-desktop dev, or: composer dev
+```sh
+pam init my-app --template desktop
+cd my-app
+pam composer require pushinbr/pam-desktop:^2.1
+pam desktop init
+pam desktop dev
 ```
 
-`init` writes a small application: a router, a home screen as a `.pam.php` template with scoped CSS, design tokens, a service and a test. `dev` needs no argument (it finds the nearest `pam-desktop.json`), reloads the window about 0.3 s after a save and keeps `#[State]` values. `pam desktop dev` is the same command through the [PAM CLI](https://github.com/push-in/pam). Without PHP on the machine, the host installs it (the PAM runtime on Linux and macOS, the official windows.php.net build on Windows).
+`pam init --template desktop` in CLI 2.2.11 still scaffolds `pushinbr/pam-desktop` `^1.2` (1.x), so the third line moves the project to 2.x; it becomes unnecessary once the template is updated. `pam desktop init` writes a small application: a router, a home screen as a `.pam.php` template with scoped CSS, design tokens, a service and a test. `pam desktop dev` needs no argument (it finds the nearest `pam-desktop.json`), reloads the window about 0.3 s after a save and keeps `#[State]` values. Without PHP on the machine, the host installs it (the PAM runtime on Linux and macOS, the official windows.php.net build on Windows).
 
-`vendor/bin/pam-desktop` downloads the native host of the installed version for the current system, verifies its SHA-256 and runs it. Version 2.0.0 is not released yet: there is no `v2.0.0` tag for Composer to install and no host archive to download. Until there is, work from a checkout (see below); `PAM_DESKTOP_HOST` points the launcher at a host built from source.
+`pam desktop` runs the package's launcher, which downloads the native host of the installed version for the current system from the [GitHub release](https://github.com/push-in/pam-desktop/releases/latest) (Linux, macOS and Windows, x86_64 and aarch64), verifies its SHA-256 and runs it. `PAM_DESKTOP_HOST` points the launcher at a host built from source. To build and run from a checkout, see [Examples](docs/examples.md).
 
-[Getting started](docs/getting-started.md) covers the requirements, the project layout and the `pam-desktop.json` reference.
-<!-- pam:product-page:end -->
+> PAM Desktop 2.0 is a different product from 1.x. Version 1 rendered a web interface in a Servo web view behind a typed command gateway; version 2 renders a native interface from PHP components. Applications written for 1.x do not run on 2.x. See [Migrating from 1.x](docs/migrating-from-1.x.md).
 
-> PAM Desktop 2.0 is a different product from 1.x. Version 1 rendered a web interface in a Servo web view behind a typed command gateway; version 2 renders a native interface from PHP components. Applications written for 1.x do not run on 2.0. See [Migrating from 1.x](docs/migrating-from-1.x.md).
-
-## What it is
-
-A PAM Desktop application is a PHP script. It declares components with reactive state and returns a tree of elements (`Column`, `Row`, `Text`, `Button`, `Input`, `VirtualizedList`…), using the same component syntax as PAM Native, the mobile sibling of this project.
-
-The `pam-desktop` host starts that script in a PHP worker process and talks to it over stdin and stdout in binary frames. For every frame the host lays the tree out, computes the difference from the previous one and updates real platform views:
-
-- GTK 4 on Linux
-- AppKit on macOS
-- Win32 with Direct2D and DirectWrite on Windows
-
-Rendering never goes through a web view. A `WebView` element exists for the cases where an application wants to embed a page.
-
-The host does not wait for PHP to animate, scroll, track gestures, play media or edit text. PHP runs when an event needs application logic and sleeps otherwise.
-
-## A minimal application
+<a id="quick-example"></a>
+## <picture><img src=".github/assets/icons/code.svg" width="22" height="22" alt=""></picture> Quick example
 
 `examples/counter/index.php`:
 
@@ -107,7 +79,17 @@ App::run(new Counter());
 
 Assigning to a `#[State]` property schedules a render. The host receives a patch with the one text that changed.
 
-## Requirements
+<a id="platform-support"></a>
+## <picture><img src=".github/assets/icons/grid.svg" width="22" height="22" alt=""></picture> Platform support
+
+| Platform | Support | Notes |
+| --- | --- | --- |
+| Linux | GTK 4 (`pam-desktop-gtk`) | The reference backend. Every example and every feature was run and checked on Linux. |
+| macOS | AppKit (`pam-desktop-appkit`) | Run on macOS 26 (x86_64) in a VM without a GPU: core examples, hot reload, input, a real application and a DMG from `pam-desktop build`. Not run on Apple Silicon; blur, media, web views, notifications, printing and drag and drop not verified. |
+| Windows | Win32 + Direct2D/DirectWrite (`pam-desktop-win32`) | Type-checked by cross compilation against the same `Backend` contract. Not run on Windows yet: first runs are expected to need fixes. |
+
+<a id="requirements"></a>
+## <picture><img src=".github/assets/icons/shield.svg" width="22" height="22" alt=""></picture> Requirements
 
 | Requirement | Notes |
 | --- | --- |
@@ -119,54 +101,25 @@ Assigning to a `#[State]` property schedules a render. The host receives a patch
 
 The optional features of the host on Linux, `tray` and `hotkeys`, need no extra system library. [Platforms](docs/platforms.md) lists what each feature does.
 
-## Run an example from a checkout
+The host starts the backend of the system it was built for. Two things were not verified on Linux either: the accessibility tree with a real screen reader, and global shortcuts through the Wayland portal (X11 key grabs were verified). Per-feature status: [Platforms](docs/platforms.md); first-run checklist: [First run on macOS and Windows](docs/first-run-macos-windows.md).
 
-```bash
-git clone https://github.com/push-in/pam-desktop.git
-cd pam-desktop
-composer install
-cargo build -p pam-desktop-host
-target/debug/pam-desktop dev examples/counter
-```
+<a id="how-it-works"></a>
+## <picture><img src=".github/assets/icons/layers.svg" width="22" height="22" alt=""></picture> How it works
 
-`composer install` writes the `vendor/autoload.php` that the examples load. `dev` restarts the PHP worker when a source file changes and keeps `#[State]` values across the restart. `run` starts the application without the watcher, with production error handling:
+A PAM Desktop application is a PHP script. It declares components with reactive state and returns a tree of elements (`Column`, `Row`, `Text`, `Button`, `Input`, `VirtualizedList`…), using the same component syntax as PAM Native, the mobile sibling of this project.
 
-```bash
-target/debug/pam-desktop run examples/showcase
-```
+The `pam-desktop` host starts that script in a PHP worker process and talks to it over stdin and stdout in binary frames. For every frame the host lays the tree out, computes the difference from the previous one and updates real platform views:
 
-Every directory under `examples/` is a runnable application that exercises one feature:
+- GTK 4 on Linux
+- AppKit on macOS
+- Win32 with Direct2D and DirectWrite on Windows
 
-| Example | Shows |
-| --- | --- |
-| `counter` | State and a button |
-| `showcase` | A larger application: routes, templates, lists, themes |
-| `controls` | Switch, activity indicator, masked inputs, dialog, bottom sheet |
-| `lists`, `chat` | A 2000-row virtualized list; an inverted list |
-| `navigation` | Stack navigation, the header, search, a form sheet |
-| `motion` | Implicit transitions, springs, endless programs, presets, shimmer |
-| `gestures` | Swipeable rows, long press, swipe, native pan and zoom |
-| `images`, `media`, `webview`, `canvas` | Images, the media player, the web view, vector and freehand canvases |
-| `shell`, `windows` | Menu bar, context menus, tray, shortcuts, dialogs, notifications; secondary windows |
-| `dragdrop`, `text` | Drag and drop between elements; selectable text |
-| `modules` | Timers, storage, alerts, clipboard, device information, appearance |
-| `links` | A URL scheme, a single instance that receives the link of every later launch, a screen reader announcement |
-| `toast`, `errors` | Toasts; the development error overlay |
-| `web-defaults` | Web semantics: a content-sized list, CSS font stacks, thin classic scrollbars, value methods in templates, Chart.js value axes |
+Rendering never goes through a web view. A `WebView` element exists for the cases where an application wants to embed a page.
 
-## Platforms
+The host does not wait for PHP to animate, scroll, track gestures, play media or edit text. PHP runs when an event needs application logic and sleeps otherwise.
 
-| System | Backend | Status |
-| --- | --- | --- |
-| Linux | GTK 4 (`pam-desktop-gtk`) | The reference backend. Every example above, and every feature below, was run and checked on Linux. |
-| macOS | AppKit (`pam-desktop-appkit`) | Run on macOS 26 (x86_64) in a virtual machine without a GPU: the core examples, hot reload, keyboard and pointer input, a real application and a DMG from `pam-desktop build`. Not run on Apple Silicon; blur, media, web views, notifications, printing and drag and drop not verified. |
-| Windows | Win32 + Direct2D/DirectWrite (`pam-desktop-win32`) | Written against the same `Backend` contract and type-checked by cross compilation. Not run on Windows yet: first runs are expected to need fixes. |
-
-The host starts the backend of the system it was built for. Two things were not verified on Linux either: the accessibility tree with a real screen reader, and global shortcuts through the Wayland portal (X11 key grabs were verified).
-
-Details, a per-feature status table, dependencies and the commands that cross-check the macOS and Windows backends from Linux are in [Platforms](docs/platforms.md). [First run on macOS and Windows](docs/first-run-macos-windows.md) is the checklist for the first run on those systems and the list of known differences from the GTK backend.
-
-## Features
+<a id="features"></a>
+## <picture><img src=".github/assets/icons/widgets.svg" width="22" height="22" alt=""></picture> Features
 
 | Area | What you get | Document |
 | --- | --- | --- |
@@ -189,28 +142,13 @@ Details, a per-feature status table, dependencies and the commands that cross-ch
 
 Capabilities that only exist on phones in PAM Native (location, contacts, sensors, biometrics, SMS…) are not part of PAM Desktop. Their class names are still known: using one throws a `PluginException` that names the optional package it belongs to.
 
-## Repository layout
+<a id="examples"></a>
+## <picture><img src=".github/assets/icons/sparkle.svg" width="22" height="22" alt=""></picture> Examples
 
-```text
-crates/
-  pam-desktop-wire     frame, patch and mutation batch encoding; property and event tables
-  pam-desktop-engine   layout and tree diff
-  pam-desktop-ui       platform-neutral render core and the Backend trait
-  pam-desktop-gtk      Linux backend (GTK 4)
-  pam-desktop-appkit   macOS backend (AppKit)
-  pam-desktop-win32    Windows backend (Win32, Direct2D, DirectWrite)
-  pam-desktop-host     the pam-desktop binary; SQLite, secure storage, packaging and updates
-packages/desktop/      the PHP package (Pam\Desktop), the Composer launcher, the worker bootstrap, the init skeleton and tests
-packages/desktop-ui/   ready controls (Pam\DesktopUi)
-packages/charts/       charts (Pam\Desktop\Charts), drawn with packages/canvas/
-packages/desktop-printing/  native printing of text documents and receipts
-examples/              one runnable application per feature
-scripts/               shot.sh captures an example on a virtual display; visual.sh compares the examples with a baseline; package-host.sh packs a release archive
-.github/workflows/     ci.yml (checks) and release.yml (host archives of a tag)
-docs/                  this documentation
-```
+Every directory under [`examples/`](examples) is a runnable application that exercises one feature: `counter`, `showcase`, `controls`, `lists`, `chat`, `navigation`, `motion`, `gestures`, `images`, `media`, `webview`, `canvas`, `shell`, `windows`, `dragdrop`, `text`, `modules`, `links`, `toast`, `errors`, `web-defaults`. What each one shows and how to run them from a checkout: [docs/examples.md](docs/examples.md). Crate and package map: [docs/repository-layout.md](docs/repository-layout.md).
 
-## Documentation
+<a id="docs"></a>
+## <picture><img src=".github/assets/icons/book.svg" width="22" height="22" alt=""></picture> Docs
 
 - [Getting started](docs/getting-started.md)
 - [Components](docs/components.md)
@@ -232,10 +170,19 @@ docs/                  this documentation
 - [Distribution](docs/distribution.md)
 - [Updates](docs/updates.md)
 - [Migrating from 1.x](docs/migrating-from-1.x.md)
+- [Examples](docs/examples.md)
+- [Repository layout](docs/repository-layout.md)
 - [Changelog](CHANGELOG.md)
 
-## License
+<a id="pam-ecosystem"></a>
+## <picture><img src=".github/assets/icons/plug.svg" width="22" height="22" alt=""></picture> Part of the PAM ecosystem
 
-PAM Desktop is released under the [MIT License](LICENSE).
+PAM runs PHP natively on servers, desktops and phones. This repository is one piece of it.
 
-The reactive PHP component core, the binary wire protocol and the layout and diff engine started as a copy of [PAM Native](https://github.com/push-in/pam-native) and remain under the Apache License 2.0. [NOTICE](NOTICE) lists the origin release and the directories that hold the copied code. The two projects do not depend on each other; fixes are ported between them by hand.
+| [**PAM**](https://github.com/push-in/pam) | [**PAM Native**](https://github.com/push-in/pam-native) | [**Ecosystem**](https://github.com/push-in/pam#ecosystem) |
+| --- | --- | --- |
+| the runtime and CLI | native Android and iOS apps in PHP | every official package and plugin |
+
+<sub>Docs: [push-in.github.io/pam-docs](https://push-in.github.io/pam-docs/introduction/) · [Issues](https://github.com/push-in/pam-desktop/issues)</sub>
+
+<p align="center"><sub><a href="LICENSE">MIT License</a>. The reactive PHP component core, the binary wire protocol and the layout and diff engine started as a copy of <a href="https://github.com/push-in/pam-native">PAM Native</a> and remain under the Apache License 2.0; <a href="NOTICE">NOTICE</a> lists the origin release and the directories that hold the copied code. The two projects do not depend on each other; fixes are ported between them by hand.<br>Made in Brazil by Pushin</sub></p>
