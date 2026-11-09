@@ -5669,6 +5669,7 @@ final class TemplateRenderer
             'variables' => self::safeStyleMetadata($decoded['variables'] ?? [], $tree->source),
             'rootInherited' => self::safeStyleMetadata($decoded['rootInherited'] ?? [], $tree->source),
             'variableRules' => self::safeStyleMetadata($decoded['variableRules'] ?? [], $tree->source),
+            'stateVariableRules' => self::safeStyleMetadata($decoded['stateVariableRules'] ?? [], $tree->source),
             'states' => self::safeStyleMetadata($decoded['states'] ?? [], $tree->source),
             'stateRules' => self::safeStyleMetadata($decoded['stateRules'] ?? [], $tree->source),
             'recipes' => self::safeStyleMetadata($decoded['recipes'] ?? [], $tree->source),
@@ -6712,18 +6713,27 @@ final class TemplateRenderer
     }
 
     /**
+     * Resolves the var() rules of a sheet again with the application's
+     * StyleVariables and, for a matched query that redeclares :root custom
+     * properties (`@media (prefers-color-scheme: dark) { :root { … } }`),
+     * those values. Rules keep their place in the cascade.
+     *
      * @param array<string, mixed> $sheet
+     * @param array<string, string> $queryVariables
      * @return array<string, mixed>
      */
-    private static function reactiveStyleSheet(array $sheet): array
+    private static function reactiveStyleSheet(array $sheet, array $queryVariables = []): array
     {
-        $overrides = StyleVariables::all();
+        $overrides = [...$queryVariables, ...StyleVariables::all()];
         $bindings = $sheet['variableRules'] ?? [];
-        if ($overrides === [] || !is_array($bindings) || $bindings === []) return $sheet;
+        $stateBindings = $sheet['stateVariableRules'] ?? [];
+        if ($overrides === []
+            || ((!is_array($bindings) || $bindings === []) && (!is_array($stateBindings) || $stateBindings === []))) return $sheet;
         $fingerprint = is_string($sheet['styleFingerprint'] ?? null) && $sheet['styleFingerprint'] !== ''
             ? $sheet['styleFingerprint']
             : hash('sha256', serialize($sheet));
-        $key = $fingerprint.':'.StyleVariables::revision();
+        $key = $fingerprint.':'.StyleVariables::revision()
+            .($queryVariables === [] ? '' : ':'.hash('xxh128', serialize($queryVariables)));
         if (isset(self::$reactiveStyleCache[$key])) return self::$reactiveStyleCache[$key];
         $variables = [];
         $rawVariables = $sheet['variables'] ?? [];
@@ -6736,31 +6746,56 @@ final class TemplateRenderer
             }
             $variables[$name] = $value;
         }
-        $rules = $sheet['cascadeRules'] ?? [];
-        if (!is_array($rules)) {
-            throw new RuntimeException('Invalid reactive style cascade rules.');
-        }
         foreach ($overrides as $name => $value) $variables[$name] = $value;
+        $sheet['cascadeRules'] = self::resolveVariableBindings(
+            $sheet['cascadeRules'] ?? [],
+            is_array($bindings) ? $bindings : [],
+            $variables,
+            false,
+        );
+        $sheet['stateRules'] = self::resolveVariableBindings(
+            $sheet['stateRules'] ?? [],
+            is_array($stateBindings) ? $stateBindings : [],
+            $variables,
+            true,
+        );
+        if (count(self::$reactiveStyleCache) >= 64) self::$reactiveStyleCache = [];
+        return self::$reactiveStyleCache[$key] = $sheet;
+    }
+
+    /**
+     * @param array<string, string> $variables
+     * @return array<array-key, mixed>
+     */
+    private static function resolveVariableBindings(mixed $rules, array $bindings, array $variables, bool $states): array
+    {
+        if (!is_array($rules)) {
+            throw new RuntimeException($states ? 'Invalid reactive style state rules.' : 'Invalid reactive style cascade rules.');
+        }
         foreach ($bindings as $binding) {
             if (!is_array($binding)
                 || !is_string($binding['selector'] ?? null)
-                || !is_int($binding['order'] ?? null)
-                || !is_string($binding['body'] ?? null)) continue;
-            $declarations = ScopedStyleCompiler::compileDeclarations(
+                || !is_string($binding['body'] ?? null)
+                || ($states ? !is_string($binding['state'] ?? null) : !is_int($binding['order'] ?? null))) continue;
+            $resolved = ScopedStyleCompiler::compileDeclarations(
                 $binding['body'],
                 $variables,
                 '<reactive-style-variable>',
             );
             foreach ($rules as $index => $rule) {
                 if (!is_array($rule)
-                    || ($rule['order'] ?? null) !== $binding['order']
                     || !is_array($rule['selector'] ?? null)
                     || ($rule['selector']['source'] ?? null) !== $binding['selector']) continue;
+                if ($states ? ($rule['state'] ?? null) !== $binding['state'] : ($rule['order'] ?? null) !== $binding['order']) continue;
                 $ruleDeclarations = $rule['declarations'] ?? [];
                 if (!is_array($ruleDeclarations)) {
                     throw new RuntimeException('Invalid reactive style declarations.');
                 }
-                foreach ($declarations as $attribute => $value) {
+                foreach ($resolved as $attribute => $value) {
+                    if ($states) {
+                        $ruleDeclarations[$attribute] = $value;
+                        continue;
+                    }
                     $declaration = $ruleDeclarations[$attribute] ?? [];
                     if (!is_array($declaration)) {
                         throw new RuntimeException('Invalid reactive style declaration.');
@@ -6772,9 +6807,34 @@ final class TemplateRenderer
                 $rules[$index] = $rule;
             }
         }
-        $sheet['cascadeRules'] = $rules;
-        if (count(self::$reactiveStyleCache) >= 64) self::$reactiveStyleCache = [];
-        return self::$reactiveStyleCache[$key] = $sheet;
+
+        return $rules;
+    }
+
+    /**
+     * Custom properties a matched query redeclares in its own :root block:
+     * the values that differ from the sheet's.
+     *
+     * @param array<string, mixed> $sheet
+     * @param list<array-key> $matched
+     * @return array<string, string>
+     */
+    private static function queryRootVariables(array $sheet, array $matched): array
+    {
+        $base = is_array($sheet['variables'] ?? null) ? $sheet['variables'] : [];
+        $queries = is_array($sheet['queries'] ?? null) ? $sheet['queries'] : [];
+        $overrides = [];
+        foreach ($matched as $index) {
+            $variables = $queries[$index]['styles']['variables'] ?? null;
+            if (!is_array($variables)) continue;
+            foreach ($variables as $name => $value) {
+                if (is_string($name) && is_string($value) && ($base[$name] ?? null) !== $value) {
+                    $overrides[$name] = $value;
+                }
+            }
+        }
+
+        return $overrides;
     }
 
     /**
@@ -6847,9 +6907,16 @@ final class TemplateRenderer
             return $sheet;
         }
         $queries = $sheet['queries'];
+        // A matched `@media (…) { :root { --x: … } }` changes the custom
+        // properties for the whole sheet, like CSS: every var() rule outside
+        // the query (and inside the other matched queries) is resolved again.
+        $rootVariables = self::queryRootVariables($sheet, $matched);
+        if ($rootVariables !== []) {
+            $sheet = self::reactiveStyleSheet($sheet, $rootVariables);
+        }
         foreach ($matched as $index) {
             $query = $queries[$index];
-            $queryStyles = self::reactiveStyleSheet(self::styleMap($query['styles'], 'responsive sheet'));
+            $queryStyles = self::reactiveStyleSheet(self::styleMap($query['styles'], 'responsive sheet'), $rootVariables);
             foreach (['classes', 'tags'] as $group) {
                 $incoming = self::validatedStyleRules($queryStyles[$group] ?? [], '<responsive-style>');
                 $base = self::validatedStyleRules($sheet[$group] ?? [], '<base-style>');
@@ -6893,6 +6960,11 @@ final class TemplateRenderer
                     $baseRules[] = $incomingRule;
                 }
                 $sheet['cascadeRules'] = $baseRules;
+            }
+            $incomingStates = $queryStyles['stateRules'] ?? [];
+            if (is_array($incomingStates) && $incomingStates !== []) {
+                $baseStates = $sheet['stateRules'] ?? [];
+                $sheet['stateRules'] = [...(is_array($baseStates) ? $baseStates : []), ...$incomingStates];
             }
             // Query rules are later than base rules by definition.
             $sheet['classCascade'] = [];

@@ -7517,6 +7517,7 @@ require __DIR__.'/qualified_enum_expression.php';
 require __DIR__.'/media_only_class.php';
 require __DIR__.'/hot_reload_state.php';
 require __DIR__.'/appearance.php';
+require __DIR__.'/media_root_variables.php';
 require __DIR__.'/keyboard_visibility.php';
 
 foreach ($testPluginRoots as $testPluginRoot) {

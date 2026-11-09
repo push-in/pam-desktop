@@ -351,6 +351,23 @@ The tooltip is the native one of the platform, shown when the pointer rests on t
 
 ## Dark mode
 
+### Theme tokens in CSS
+
+A `:root` block inside `@media` redeclares the custom properties for the whole stylesheet while the query matches, as in CSS. Declare the tokens once and switch them with the scheme:
+
+```css
+:root { --bg: #13141b; --fg: #f2f3f8; }                     /* dark by default */
+@media (prefers-color-scheme: light) { :root { --bg: #ffffff; --fg: #15172b; } }
+
+.page { background-color: var(--bg); }
+.row:hover { background-color: var(--fg); }
+```
+
+Every rule that reads a redeclared property follows it: rules outside the query, their state blocks (`:hover`, `:focus`…) and the rules of other matched queries. The rules keep their place in the cascade. The scheme is the effective one (`Appearance::set()` or the system), and a change restyles the tree. `oklch()`, `lab()` and `color-mix()` values resolve to sRGB like Chromium (out-of-gamut colors are clipped). Text styles declared on `:root` itself (`:root { color: var(--fg) }`) are resolved once; put them on a tag rule (`Text { color: var(--fg); }`) to follow the scheme.
+
+### In PHP
+
+
 `Pam\Desktop\Appearance` reads and sets the appearance of the application. Reads are synchronous.
 
 ```php

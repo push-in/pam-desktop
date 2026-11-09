@@ -349,6 +349,7 @@ final class ScopedStyleCompiler
             'variables' => $variables,
             'rootInherited' => $rootInherited,
             'variableRules' => $variableRules,
+            'stateVariableRules' => $language2['stateVariableRules'],
             'tokens' => $language2['tokens'],
             'states' => $language2['states'],
             'stateRules' => $stateRules,

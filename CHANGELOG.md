@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Theme tokens switch with the scheme.** A `:root` block inside a matched
+  `@media` (`@media (prefers-color-scheme: light) { :root { --bg: #fff; } }`)
+  now redeclares the custom properties for the whole stylesheet: rules outside
+  the query, their state blocks and the rules of other matched queries read
+  the new values and keep their cascade order. Before, only rules written
+  inside the query saw them, so the skeleton's dark tokens never applied.
+  State blocks (`:hover`, `:focus`…) inside a matched query now apply too.
+
 ## 2.1.2 - 2026-11-09
 
 Sharper, Chromium-exact text on Linux, an opt-in Chromium text pipeline on
