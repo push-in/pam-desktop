@@ -390,7 +390,7 @@ impl InputHost {
         let mut rules = format!(
             "font-size: {}px; font-weight: {}; font-style: {}; letter-spacing: {}px; \
              background: none; border: none; box-shadow: none; outline: none; padding: 0; margin: 0; min-height: 0;",
-            config.font.size,
+            crate::text::face_size(config.font.size) / f64::from(gtk::pango::SCALE),
             config.font.weight,
             if config.font.italic {
                 "italic"
