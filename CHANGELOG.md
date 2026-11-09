@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 2.1.3 - 2026-11-09
+
+Theme switching and text inputs for storefront-style apps. Update the
+Composer package (`pam composer update pushinbr/pam-desktop`); the launcher
+downloads the verified 2.1.3 host. No breaking changes: DesktopUI themes still
+take plain `SelectTheme`/`ToastTheme` values.
 
 ### Fixed
 
