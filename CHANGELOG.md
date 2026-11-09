@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Windows lays text out on the same grid as Linux and macOS.** The Win32
+  host rounded every measured text width up to a whole pixel, where GTK and
+  AppKit round up to a Blink LayoutUnit (1/64 px). Shrink-wrapped labels
+  (buttons, chips, tabs) were up to 1 px wider each, so rows of them drifted
+  by several pixels on Windows only (a POS category row ended 6 px further
+  right). Found by the cross-platform comparison of the PDV storefront screens.
+- **Inherited `@font-face` faces follow the node's own weight and style.** A
+  component of another stylesheet (a package component placed with
+  `<Slot :content>`) inherited the face resolved for its ancestor (Regular)
+  and kept it for its own `font-weight: 900`: Fontconfig picked the family's
+  ExtraBold by name, but DirectWrite and Core Text load the named file and
+  synthesized a bold from Regular (a badge 5 px wider on macOS and Windows).
+  The face is now resolved again among its family's faces.
+
 ## 2.1.3 - 2026-11-09
 
 Theme switching and text inputs for storefront-style apps. Update the
