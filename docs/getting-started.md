@@ -4,7 +4,8 @@ This page takes you from an empty directory to a running application, then expla
 
 ## Requirements
 
-- PHP 8.5 and Composer.
+- PHP 8.5 and Composer, or the [PAM CLI](https://github.com/push-in/pam), which brings both (`pam composer ...`, `pam desktop ...`). Ubuntu 24.04 and older package PHP 8.3 or older.
+- On Debian and Ubuntu: `sudo apt install libgtk-4-1 gstreamer1.0-plugins-base gstreamer1.0-plugins-good`. Every command of the host needs GTK, `init` included.
 - On Linux, to run a released host: glibc 2.35 or newer, GTK 4.6 or newer and the GStreamer plugins for media (Ubuntu 22.04 and later); WebKitGTK 6 (`libwebkitgtk-6.0-4`, Ubuntu 24.04 and later) only for applications that show a `WebView`. The released host is built on Ubuntu 22.04.
 - To build the host from a checkout instead: a Rust toolchain, 1.92 or newer (`rust-toolchain.toml` selects the stable channel) and, on Linux, `libgtk-4-dev`.
 
@@ -16,8 +17,18 @@ This page takes you from an empty directory to a running application, then expla
 mkdir my-app && cd my-app
 composer require pushinbr/pam-desktop
 vendor/bin/pam-desktop init
-pam desktop dev            # or: vendor/bin/pam-desktop dev, or: composer dev
+composer dump-autoload
+vendor/bin/pam-desktop dev       # or: composer dev
 ```
+
+With the PAM CLI instead of a system PHP, the same steps are:
+
+```bash
+pam init my-app --template desktop   # PAM releases after 2.2.11: composer install + pam desktop init
+cd my-app && pam desktop dev
+```
+
+or, by hand: `pam composer require pushinbr/pam-desktop`, `pam desktop init`, `pam composer dump-autoload`, `pam desktop dev`. `vendor/bin/pam-desktop` is a PHP script and needs `php` on `PATH`; PAM does not add one, so use `pam desktop ...` there.
 
 A window opens on the home screen of the new application. Edit `src/Screens/Home/HomeScreen.pam.php` while it runs: the window updates in about a third of a second and keeps its state (the click count survives the reload).
 
@@ -29,7 +40,7 @@ A window opens on the home screen of the new application. Edit `src/Screens/Home
 - `PAM_DESKTOP_HOST` is the absolute path of a host binary to run instead, with no download.
 - A release has archives for Linux and macOS on x86_64 and arm64 and for Windows on x86_64.
 
-Version 2.0.0 is not released yet: there is no `v2.0.0` tag for Composer to install and no host archive to download. Until there is, work from a checkout, as described below.
+The release used is the version of the installed package: `composer show pushinbr/pam-desktop` names it, and `vendor/bin/pam-desktop --version` prints the host's.
 
 ### `pam-desktop init`
 
@@ -60,7 +71,29 @@ Each screen is one `.pam.php` file: the PHP class with its state and actions, th
 
 Template expressions, including method calls on values (`{{ $order->status->label() }}`), are described in [Templates](templates.md#expressions).
 
-A file that already exists is kept: the command prints `[new]` or `[kept]` for each one, so it is safe to run in a directory where Composer already wrote `composer.json`. Without `--name` the name is the name of the directory; without `--id` the identifier is `com.example.<directory name>`, in lower case with dashes. An identifier that [`build`](distribution.md) would refuse stops the command.
+A file that already exists is kept: the command prints `[new]` or `[kept]` for each one, so it is safe to run in a directory where Composer already wrote `composer.json`. That `composer.json` is completed rather than replaced (`[merged]`): `init` adds the `App\` autoload, the `dev`, `start`, `build` and `test` scripts and the PHP requirement when they are missing, and asks for `composer dump-autoload`. Version 2.1.1 and earlier only keep it: add `"autoload": {"psr-4": {"App\\": "src/"}}` yourself, otherwise the first run stops with `Class "App\Navigation\AppRouter" not found`. Without `--name` the name is the name of the directory; without `--id` the identifier is `com.example.<directory name>`, in lower case with dashes. An identifier that [`build`](distribution.md) would refuse stops the command.
+
+### Without a display (CI, containers, SSH)
+
+The host is a GTK application, so it needs an X or Wayland display. On a machine without one, start a virtual X server and capture it:
+
+```bash
+sudo apt install xvfb imagemagick
+Xvfb :99 -screen 0 1280x800x24 &
+DISPLAY=:99 pam desktop dev &             # or vendor/bin/pam-desktop dev
+sleep 5 && DISPLAY=:99 import -window root shot.png
+```
+
+GTK then logs that it cannot reach a session bus and falls back to software rendering; both are harmless. `scripts/shot.sh` of this repository does the same for the examples ([Development](development.md#screenshots-on-a-virtual-display)).
+
+### Troubleshooting the first run
+
+| Message | Cause and fix |
+| --- | --- |
+| `error while loading shared libraries: libgtk-4.so.1` (or `libpangoft2`, `libcairo`) | GTK 4 is missing: install the packages under [Requirements](#requirements). |
+| `/usr/bin/env: 'php': No such file or directory` | `vendor/bin/pam-desktop` needs `php` on `PATH`. With PAM only, run `pam desktop ...`. |
+| `Class "App\Navigation\AppRouter" not found` | `composer.json` lacks the `App\` autoload: run `init` again (releases after 2.1.1 complete it) or add it by hand, then `composer dump-autoload`. |
+| `bin/pam: error while loading shared libraries: libsodium.so.23` | PAM 2.2.11 and earlier with `pam desktop dev`: run `PAM_DESKTOP_PHP=~/.local/bin/pam pam desktop dev`, or update PAM. |
 
 ## From a checkout
 
