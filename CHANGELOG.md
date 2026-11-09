@@ -1,5 +1,90 @@
 # Changelog
 
+## 2.1.0 - 2026-11-09
+
+PAM Desktop 2.1 makes native windows lay out and paint like Chromium. A
+screen written with web CSS (Tailwind, PrimeVue-style themes) now lands on
+the same device pixels as the same markup in Chrome or Electron, measured
+side by side on Linux and macOS. Update the Composer package and the host
+together (`composer update pushinbr/pam-desktop`); the launcher downloads
+the verified 2.1.0 host. Older hosts keep running applications that do not
+use the new properties (2029-2043, see Compatibility).
+
+### Highlights
+
+- **Chromium-exact layout.** Frames on Blink's LayoutUnit grid (1/64 px),
+  Blink's rounding of fixed lengths, line heights and centring, flex
+  shrinking weighted like CSS, form controls (`<input size>`, menulists)
+  sized like Blink, and pixel snapping that breaks ties like Chromium.
+- **New CSS support.** CSS tables (`display: table*`, `table-layout`,
+  `border-collapse`, `vertical-align`), inline formatting contexts
+  (`display: inline`, `inline-block`, `inline-flex`, `inline-grid`,
+  `vertical-align`), `position: sticky`, two-axis `overflow: auto`,
+  classic and thin scrollbars with `scrollbar-color` (thumb and track),
+  `scrollbar-gutter`, `:focus-visible`, `ch` units, `min-width: auto`,
+  `line-height: normal` and `calc()` line heights, `will-change: transform`
+  layers, `-webkit-font-smoothing`, Chromium's `font-family` fallback rules.
+- **Skia-exact effects.** `backdrop-filter: blur()`, translucent scrims and
+  dialog `box-shadow` follow Skia's 8-bit pipeline (new
+  `pam-desktop-pixels` crate); macOS without Metal blurs on the CPU.
+- **Developer tools.** `vendor/bin/pam-desktop check` lists every template,
+  CSS and route diagnostic without opening a window; unknown attributes on
+  built-in tags are `PAM2401` diagnostics with a suggestion;
+  `PAM_DESKTOP_DUMP_FRAMES` plus `scripts/parity/` compare a native screen
+  with Chromium's boxes edge by edge.
+- **Charts, canvas and QR.** Chart.js-faithful axes and bars, canvases drawn
+  1:1 like an HTML `<canvas>`, QR codes with margin, stretch and image modes.
+- **Performance.** New features cost nothing when unused: frame dumps and
+  the text gamma atlas are off by default, the backdrop compositor only runs
+  for open dialogs (one window-sized texture) and the AppKit CPU backdrop is
+  limited to ten updates a second when pixels changed.
+
+### Changes
+
+- PHP's default time zone follows the system (`TZ`, `/etc/localtime`) when
+  php.ini sets none (`Pam\Desktop\System\SystemTimezone`, applied by
+  `App::run()`), instead of PHP's UTC fallback.
+- `Pam\Desktop\System\TextMeasure` measures single-line text widths on the
+  host for code that lays text out in PHP (chart axes and legends).
+- QR (`pushinbr/pam-desktop-qr`): `margin` (quiet zone in modules),
+  `stretch` (fractional modules that fill `size`) and `image` (a bitmap
+  scaled into the box, like a QR image service).
+- DesktopUI: `ToastTheme` tokens for `ToastService` (surface, border,
+  severity edge); the `DatePicker` icon uses the theme icon font when set.
+- Backdrop filter like Chromium (measured on Electron 37, identical on Linux and macOS): the blur is Skia's three-box Gaussian (box `⌊σ·3√(2π)/4 + ½⌋`), transparent beyond the box and drawn over the unblurred backdrop, and the box's translucent fill is blended in 8 bits (`fill + ⌊dst·(256 − α)/256⌋`, also per stacked mask). New `pam_desktop_ui::backdrop` (`composite`, `skia_over`, `backdrop_fill`). GTK composites the fill into the blurred backdrop in one colour-matrix pass (the 8-bit store rounds it to Skia's floor); AppKit's CPU backdrop runs `composite` and the box paints no fill; Win32 composites blur over the copy and the fill with Direct2D effects (blur border soft, σ = the CSS length, it was half). A Modal's own box no longer frosts the window a second time under its mask. Two stacked slate-950/70 masks now read (1,5,22) like Electron, not (2,5,22)/(4,8,24).
+- Dialogs over a frosted mask paint like Chromium: Chromium draws the dialog's `box-shadow` inside the mask's layer and the dialog's translucent background (and the translucent fills inside it) as its own layer, all in 8 bits. The modal presenter now hands the first box of a dialog (and, when its fill is translucent, the plain translucent fills inside it that hover/press do not restyle and that sit in unscrolled containers) to the backdrop as `Decoration::backdrop_boxes`; those boxes then paint no shadow (`box-shadow` overlay) and no fill (`Decoration::fill_composited`). Only backends that opt in through `Backend::composites_backdrop_boxes` (`BackdropBoxes::{None, Topmost, All}`) get them: GTK for the topmost dialog (its backdrop is rendered with the window's renderer shortly after a change, composited and shown as a texture; the GPU path stays until it is ready; one window-sized texture while the dialog is open) and AppKit without Metal for every dialog. The presenter restyles on frame changes inside the dialog, on scroll and when the stack changes. The exact Skia pipeline (three-box blur, shadow mask `(α·(mask+1))>>8`, 8-bit layers) lives in the new `pam-desktop-pixels` crate, built optimised in development too (a 1200×800 window: ~45 ms dev, ~30 ms release).
+- Fonts: `font-family` lists resolve like Chromium on every platform: Safari's `ui-monospace`, `ui-serif`, `ui-sans-serif`, `ui-rounded` and `-apple-system` match nothing (measured in Electron 37 on Linux and macOS), `BlinkMacSystemFont` is the UI font on macOS only. Tailwind's `font-mono` now lands on Menlo on macOS (was SF Mono), as in Chromium.
+- AppKit: without a Metal device (virtual machines, some remote sessions) `backdrop-filter: blur()` is done on the CPU (Chromium's pipeline below, encoded colour space) into a view just below the box: the window's layer tree is rendered (after a display pass, so views drawn in the same update are in it) without the box and what paints after it, at most ten times a second and only after a view changed and when the pixels under the box differ. Before, the box was shown unblurred.
+- Layout: form controls are sized like Chromium. A single-line `<Input>` without a width is Blink's text field: `inputSize` (HTML `size`, property 2041; 20 by default) times the primary font's average character width, plus the maximum character width minus one average, rounded up, plus padding and border (`TextFieldIntrinsicInlineSize`; families Blink distrusts — Helvetica, Times, `.`-prefixed system names… — use the width of `0`). Hosts report the metrics like each Skia port: GTK the OS/2 `xAvgCharWidth` and head bounding box (HarfBuzz tables), AppKit the `hmtx` advance of `x` and the rounded ascent, Win32 the DirectWrite OS/2/head tables (new `Backend::text_control_metrics`, `PamTextMeasureRequest::flags`, `PamTextMeasureResult::{avg,max}_char_width`). `menuListOptions` (property 2042) on a `<select>` label `Text` makes it as wide as its widest option, rounded up (Blink menulist). CSS `min-width: auto` (property 2043) is a flex item's automatic minimum (its min-content width) instead of 0. Measured against Electron 37 on Linux (DejaVu) and macOS (San Francisco, Arial, Helvetica). Older hosts drop the three properties.
+- Styles: `scrollbar-color: <thumb> <track>` paints the track (and corner) of the default 15 px classic bar (`PropKey::ScrollbarTrackColor`, property 2040; older hosts drop it and keep a transparent track).
+- Modals: dialogs shown in the same render stack in tree order (a later one on top), not in hash-map order; with `backdropBlurRadius`, a dialog stacked over another frosts the dialog below too (GTK recorded only the content before the first backdrop).
+- GTK text: every line of a multi-line text lands on the pixel of its exact line-box top, like Blink snaps each line box (lines a fractional line-height apart, e.g. 19.5px, drifted a pixel from the second line on).
+- Canvas: `PropKey::CanvasBitmap` (property 2039) paints a canvas like an HTML `<canvas>` bitmap (`floor(size × scale)` device pixels, clipped, drawn 1:1 into the pixel-snapped box — new `DrawCommand::Bitmap` in GTK, AppKit and Win32). Charts' `integerBitmap()` uses it instead of stretching the bitmap to the fractional size.
+- CLI: `vendor/bin/pam-desktop check [--json] [--src=<dir>]` compiles every component template and stylesheet of the app (the `App::components()` roots of its entry file) in a private cache and lists every diagnostic as `file:line:col CODE message`: template contracts (`PAM2401`, every one instead of the first), compile errors (`PAM2402`), invalid CSS (`PAM2403`) and route errors (`PAM2404`); no host is downloaded or started and no window opens; exit 0 when clean, 1 otherwise.
+- Templates: an unknown attribute on a built-in tag (`<Text color=…>`, `maxLines`, typos) is a `PAM2401` diagnostic with file:line and a suggestion ("did you mean textColor?") at component load (dev overlay, tests), no longer ignored. DesktopUI `DatePicker` dropped its no-op `accessibilityHidden`.
+
+- Text/styles: `line-height: <px>` rounds to 1/64 px like Blink (18.56px → 18.5625; was floored); unitless line heights multiply in float like Blink's `MinimumValueForLength` (12px × `calc(1/.75)` = 16, 12.8px = 17.046875, measured); `line-height: calc(<numbers>)` is a factor (Tailwind v4 `text-*`); a `calc()` of px/rem/numbers resolves at compile time (box sizes stay LayoutUnits); CSS math reads `1.25` as one number (it split into `1` `.25`).
+- Charts: `AxisStyle(fitEdgeLabels: true)` ports Chart.js scale fitting for offset (bar) category axes, measures labels with the host (`text.measure`, kerning like canvas `measureText`) before the advance tables, places tick labels with Blink's `textBaseline: 'middle'`, and draws bars like Chart.js (grouped and stacked: half-grid base, `inflateAmount` 0.33, circular corners). Canvas text (GTK) snaps its baseline to whole device pixels like Skia's axis-aligned glyph runs.
+- GTK: a translucent fill partly over an earlier sibling's shadow is composited like Skia outside that sibling's painted area instead of not at all.
+- Docs/tests: a unitless `line-height` is Blink's `MinimumValueForLength(percent, ComputedFontSizeAsFixed)` (font size rounded to 1/64 first), so `22.4px × 1.5` is 33.609375 while a pre-multiplied `line-height: 33.6px` floors to 33.59375 (`LayoutUnit::FromFloatFloor`) and drifts 1/64 px per line; ports of web styles should keep the inherited number (`line-height: 1.5`) instead of the px product.
+- Text (GTK): `PAM_DESKTOP_TEXT_GAMMA=1` now draws text from one glyph atlas shared by every view of the process instead of a texture per paragraph: glyphs rasterized once per font, glyph, quarter-pixel phase and colour, corrected with Skia's gamma/contrast tables like Chromium, packed into pages, bounded to 4 MiB (least recently drawn pages first) and released when no window is mapped. Positions, selection, decorations, letter-spacing, inline boxes and ellipsis are unchanged; colour glyphs stay GSK's. Still opt-in (see Text rendering).
+- Scrolling: `overflow: auto` on a `ScrollView` scrolls both axes in one viewport (property 2038, `ScrollBothAxes`), with Chromium's classic bars on each overflowing axis and the corner; `scrollbar-color` alone styles the default 15 px classic bar. Tables measure single-line texts and inline boxes at their CSS min-content width (longest word, nowrap lines whole), so a table wider than its scroller overflows like Chromium's.
+- Layout: centred flex items use Blink's LayoutUnit halving (toward zero on the 1/64 px grid); icon fonts take Blink's unitless `line-height: 1` (the LayoutUnit-rounded font size); a field's text (GTK) starts at the exact fractional left edge of its box.
+- Layout: CSS inline formatting contexts (property 2037, `InlineLevel`): `display: inline`, `inline-block`, `inline-flex`/`inline-grid` lay boxes on line boxes that start with the parent's strut, aligned on the baseline by `vertical-align` (`baseline`, `middle`, `top`, `bottom`, `text-top`, `text-bottom`), with anonymous block boxes around inline runs among blocks; inline texts are boxed on the font's content area and fields without lines (`<textarea>`) sit on their bottom margin edge. Hosts report Blink's first baseline from text measurement (GTK, AppKit), and `TextContent::inline` places an inline box's line box over its content area on every backend.
+- Text: `display: inline-block` on a nested `Text` (property 2029, `TextInlineBlock`): the box's vertical padding and border take room in its line, like a browser `<kbd>`.
+- Text (GTK): baselines placed like Blink (rounded unhinted ascent/descent, floored half-leading), lines wrapped at the engine's exact width with glyphs from the exact x (`Backend::set_text_geometry`), measured widths and line heights on Blink's LayoutUnit grid (1/64 px). Without an XSettings daemon on X11 the font hinting follows fontconfig.
+- Layout: frames on the LayoutUnit grid (1/64 px, edges rounded), so pixel snapping breaks .5 ties like Chromium instead of by float drift. `scrollbar-gutter: auto` with an authored `scrollbar-width` reserves a classic bar only while the content overflows (horizontal scrollers take its height).
+- Development: `PAM_DESKTOP_DUMP_FRAMES=<path>` writes every node's layout (LayoutUnit), content and painted frame as JSON; `scripts/parity/` compares them with Chromium's `getBoundingClientRect()` (see Development › Layout parity with a web build).
+- Layout: flex shrinking is weighted by the inner (content-box) base size and `justify-content: center`/`flex-end` keep centring overflowing content, like CSS. Icons (`Icon`) are one em tall (`line-height: 1`), like icon fonts on the web.
+- CSS tables (properties 2030-2033): `display: table`/`table-row-group`/`table-row`/`table-cell`, automatic and fixed column widths, `border-collapse: collapse` (CSS 2.1 shared half borders, painted once) and `vertical-align` of cells.
+- `ch` lengths for sizes (property 2034, resolved with the element's font); `line-height: normal` is Chromium's (rounded ascent + descent) and overrides an inherited or element-wide line height.
+- Icons keep their own font and size inside containers that set `font-size`/`line-height`.
+- DesktopUI `DatePicker`: the field icon is the theme icon font's `calendar` glyph when `SelectTheme::iconFont` is set; without one it is drawn like Chromium's `<input type="date">` picker indicator.
+- Text: line boxes snap to whole pixels from the exact top of the box and centre in its exact height, not in the snapped frame (`Backend::set_text_geometry` takes a `TextGeometry`: wrap width, exact left/top offsets and height). Half-pixel tops round down the page like a browser's.
+- Text: the block's own font sets up every line box (the CSS strut) when all of its characters sit in spans of other fonts, so a monospace span in a sans line sits on the sans baseline. A nested `Text` (span) carries a CSS `font-family` list.
+- Fonts (GTK): `font-family` lists resolve like Chromium on Linux: `ui-monospace`/`ui-serif`/`ui-sans-serif`/`ui-rounded` and uninstalled names are skipped instead of becoming Fontconfig aliases (metric-compatible equivalents such as Courier New → Liberation Mono still match).
+- Layout: fixed lengths (margin, padding, gap, width/height, min/max sizes, insets; not borders) truncate to 1/64 px like Blink's `LayoutUnit(float)` for `kFixed` lengths (`length_functions.cc`): `margin-top: 10.4px` is 10.390625, so boxes down a page no longer drift 1/64 px each from the float values.
+
 ## 2.0.1 - 2026-11-08
 
 ### Fixed
