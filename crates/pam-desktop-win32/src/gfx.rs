@@ -8,12 +8,13 @@
 use pam_desktop_ui::color::Color;
 use windows::Win32::Foundation::{HMODULE, HWND};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_SIZE_U, D2D1_ALPHA_MODE_IGNORE, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BORDER_MODE_HARD,
+    D2D_SIZE_U, D2D1_ALPHA_MODE_IGNORE, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BORDER_MODE_SOFT,
     D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    CLSID_D2D1GaussianBlur, D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET,
-    D2D1_BITMAP_PROPERTIES1, D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID,
+    CLSID_D2D1ColorMatrix, CLSID_D2D1Composite, CLSID_D2D1GaussianBlur,
+    D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1,
+    D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID,
     D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_MULTI_THREADED,
     D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_LINE_JOIN_ROUND, D2D1_PROPERTY_TYPE_UNKNOWN,
     D2D1_STROKE_STYLE_PROPERTIES, D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE, D2D1_UNIT_MODE_DIPS,
@@ -58,6 +59,9 @@ pub struct Device {
     pub brush: ID2D1SolidColorBrush,
     /// The blur of `backdropBlur`, made the first time a view needs it.
     backdrop: Option<ID2D1Effect>,
+    /// Composite (blur over the copy) and color matrix (the translucent
+    /// fill) of a frosted view with a plain translucent background.
+    backdrop_fill: Option<(ID2D1Effect, ID2D1Effect)>,
     /// Whether the device can decode video for Media Foundation.
     pub video: bool,
 }
@@ -183,6 +187,7 @@ impl Device {
                 offscreen: Vec::new(),
                 brush,
                 backdrop: None,
+                backdrop_fill: None,
                 video,
             })
         }
@@ -210,8 +215,8 @@ impl Device {
     }
 
     /// The Gaussian blur that frosts what is behind a view. Its border is
-    /// hard: the rim of the blurred area repeats its edge pixels instead
-    /// of fading to nothing.
+    /// soft (transparent beyond the copy) and the result is drawn over the
+    /// unblurred backdrop, like Chromium.
     pub fn backdrop_blur(&mut self) -> Option<&ID2D1Effect> {
         if self.backdrop.is_none() {
             // SAFETY: COM calls on the live window context; the bytes are
@@ -223,7 +228,7 @@ impl Device {
                     .SetValue(
                         D2D1_GAUSSIANBLUR_PROP_BORDER_MODE.0 as u32,
                         D2D1_PROPERTY_TYPE_UNKNOWN,
-                        &(D2D1_BORDER_MODE_HARD.0 as u32).to_ne_bytes(),
+                        &(D2D1_BORDER_MODE_SOFT.0 as u32).to_ne_bytes(),
                     )
                     .ok()?;
                 self.backdrop = Some(effect);
@@ -232,12 +237,33 @@ impl Device {
         self.backdrop.as_ref()
     }
 
+    /// The composite and color matrix effects of a backdrop with a fill.
+    pub fn backdrop_fill(&mut self) -> Option<&(ID2D1Effect, ID2D1Effect)> {
+        if self.backdrop_fill.is_none() {
+            // SAFETY: COM calls on the live window context.
+            unsafe {
+                let composite = self.context.CreateEffect(&CLSID_D2D1Composite).ok()?;
+                composite.SetInputCount(2).ok()?;
+                let matrix = self.context.CreateEffect(&CLSID_D2D1ColorMatrix).ok()?;
+                self.backdrop_fill = Some((composite, matrix));
+            }
+        }
+        self.backdrop_fill.as_ref()
+    }
+
     /// Lets go of the last bitmap the backdrop blur was given, once the
     /// frame that used it is drawn.
     pub fn release_backdrop(&self) {
-        if let Some(effect) = &self.backdrop {
-            // SAFETY: plain call on the live effect.
-            unsafe { effect.SetInput(0, None::<&ID2D1Image>, true) };
+        // SAFETY: plain calls on the live effects.
+        unsafe {
+            if let Some(effect) = &self.backdrop {
+                effect.SetInput(0, None::<&ID2D1Image>, true);
+            }
+            if let Some((composite, matrix)) = &self.backdrop_fill {
+                composite.SetInput(0, None::<&ID2D1Image>, true);
+                composite.SetInput(1, None::<&ID2D1Image>, true);
+                matrix.SetInput(0, None::<&ID2D1Image>, true);
+            }
         }
     }
 
