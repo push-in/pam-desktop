@@ -119,6 +119,9 @@ pub struct ViewIvars {
     focusable: Cell<bool>,
     capture_keys: RefCell<String>,
     target_self: Cell<bool>,
+    /// The background the node declares, even when another layer paints
+    /// it (a dialog panel composited by the CPU backdrop).
+    authored_background: Cell<pam_desktop_ui::color::Color>,
     target_children: Cell<bool>,
     cursor: Cell<Cursor>,
     /// Assistive technology may press the view.
@@ -539,6 +542,7 @@ impl PamView {
             focusable: Cell::new(false),
             capture_keys: RefCell::new(String::new()),
             target_self: Cell::new(true),
+            authored_background: Cell::new(pam_desktop_ui::color::Color::TRANSPARENT),
             target_children: Cell::new(true),
             cursor: Cell::new(Cursor::Default),
             pressable: Cell::new(false),
@@ -1021,6 +1025,29 @@ pub(crate) fn gpu_filters_available() -> bool {
     })
 }
 
+/// Whether the first box behind `view` with a mostly opaque background
+/// (alpha at least one half: a dialog panel over its mask counts) is dark:
+/// Chromium draws its default classic scrollbar in the page's colour
+/// scheme. `None` when no node behind it paints such a background.
+pub(crate) fn backdrop_is_dark(view: &NSView) -> Option<bool> {
+    // SAFETY: superviews are only read.
+    let mut current = unsafe { view.superview() };
+    while let Some(parent) = current {
+        if let Some(node) = parent.downcast_ref::<PamView>() {
+            let color = node.ivars().authored_background.get();
+            if color.a >= 128 {
+                let luma = 0.2126 * f32::from(color.r)
+                    + 0.7152 * f32::from(color.g)
+                    + 0.0722 * f32::from(color.b);
+                return Some(luma < 128.0);
+            }
+        }
+        // SAFETY: as above.
+        current = unsafe { parent.superview() };
+    }
+    None
+}
+
 fn gaussian_blur(radius: f32) -> Option<Retained<CIFilter>> {
     let radius = NSNumber::new_f32(radius);
     filter("CIGaussianBlur", &[("inputRadius", radius.as_ref())])
@@ -1363,6 +1390,10 @@ impl NodeView {
     }
 
     pub fn set_decoration(&mut self, decoration: &Decoration) {
+        self.view
+            .ivars()
+            .authored_background
+            .set(decoration.background);
         // Without Metal the CPU backdrop composites the box's translucent
         // fill (Chromium's 8-bit blend); the box itself paints none.
         if !gpu_filters_available()

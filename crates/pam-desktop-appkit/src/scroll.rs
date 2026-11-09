@@ -9,7 +9,7 @@ use objc2::runtime::NSObject;
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAnimationContext, NSBorderType, NSEvent, NSResponder, NSScrollElasticity, NSScrollView,
-    NSScrollerStyle, NSView, NSViewBoundsDidChangeNotification,
+    NSScrollerStyle, NSView, NSViewBoundsDidChangeNotification, NSWindowOrderingMode,
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{NSNotification, NSNotificationCenter};
@@ -41,7 +41,56 @@ pub struct ScrollIvars {
     gutters: Cell<(f64, f64)>,
     /// The content's size from the engine (the document may be larger).
     content: Cell<CGSize>,
+    /// The track behind each classic bar (same order as `bars`).
+    /// Fill, content-side line and outer line views of each track.
+    tracks: RefCell<Vec<[Retained<PlainView>; 3]>>,
+    /// How the tracks and thumbs look; `None` paints no track.
+    track: Cell<Option<TrackStyle>>,
+    /// Chromium's default bar (no `scrollbar-width`/`scrollbar-color`):
+    /// its colours follow the colour scheme of the page behind it.
+    default_bar: Cell<bool>,
 }
+
+/// The track of a classic bar: its fill and, for Chromium's default bar on
+/// macOS, a 1 pt line on the content side and one on the outer edge.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrackStyle {
+    pub fill: Color,
+    pub inner: Option<Color>,
+    pub outer: Option<Color>,
+}
+
+/// Chromium's default classic bar on macOS (legacy scrollers, measured on
+/// Electron 37): the regular 15 pt geometry; dark colour scheme: track
+/// #2C2C2C between a #3D3D3D line on the content side and a #515151 line
+/// on the outer edge, thumb #6B6B6B; light: track #FAFAFA, lines #E8E8E8
+/// and #EDEDED, thumb #C1C1C1. Chromium picks them by CSS `color-scheme`;
+/// natively the first opaque background behind the bar tells (like GTK).
+fn default_bar_colors(dark: bool) -> (TrackStyle, Color) {
+    let grey = |value: u8| Color::rgba(value, value, value, 255);
+    if dark {
+        (
+            TrackStyle {
+                fill: grey(44),
+                inner: Some(grey(61)),
+                outer: Some(grey(81)),
+            },
+            grey(107),
+        )
+    } else {
+        (
+            TrackStyle {
+                fill: grey(LIGHT[0]),
+                inner: Some(grey(LIGHT[1])),
+                outer: Some(grey(LIGHT[2])),
+            },
+            grey(LIGHT[3]),
+        )
+    }
+}
+
+/// Light colour scheme: track, content-side line, outer line, thumb.
+const LIGHT: [u8; 4] = [250, 232, 237, 193];
 
 /// A classic bar's geometry across the bar: the gutter, the thumb inside it
 /// and the thumb's gap to the outer edge (the rest is on the content side),
@@ -351,21 +400,112 @@ impl PamScrollView {
         self.ivars().gutters.replace(gutters) != gutters
     }
 
+    /// Shows `track` along the whole gutter of a bar (the corner between
+    /// two bars belongs to the vertical one), with its edge lines.
+    fn paint_track(
+        &self,
+        track: &[Retained<PlainView>; 3],
+        style: Option<TrackStyle>,
+        geometry: BarGeometry,
+        horizontal: bool,
+        size: CGSize,
+        gutters: (f64, f64),
+    ) {
+        let Some(style) = style else {
+            for part in track {
+                part.setHidden(true);
+            }
+            return;
+        };
+        let thickness = geometry.thickness;
+        let frame = if horizontal {
+            let y = if self.isFlipped() {
+                size.height - thickness
+            } else {
+                0.0
+            };
+            CGRect::new(
+                CGPoint::new(0.0, y),
+                CGSize::new((size.width - gutters.0).max(0.0), thickness),
+            )
+        } else {
+            CGRect::new(
+                CGPoint::new(size.width - thickness, 0.0),
+                CGSize::new(thickness, size.height),
+            )
+        };
+        // Across the bar: the content side first, the outer edge last.
+        let line = |across: f64| {
+            if horizontal {
+                let y = if self.isFlipped() {
+                    frame.origin.y + across
+                } else {
+                    frame.origin.y + thickness - 1.0 - across
+                };
+                CGRect::new(
+                    CGPoint::new(frame.origin.x, y),
+                    CGSize::new(frame.size.width, 1.0),
+                )
+            } else {
+                CGRect::new(
+                    CGPoint::new(frame.origin.x + across, frame.origin.y),
+                    CGSize::new(1.0, frame.size.height),
+                )
+            }
+        };
+        let parts = [
+            (Some(style.fill), frame),
+            (style.inner, line(0.0)),
+            (style.outer, line(thickness - 1.0)),
+        ];
+        for (part, (color, rect)) in track.iter().zip(parts) {
+            match (color, part.layer()) {
+                (Some(color), Some(layer)) => {
+                    part.setFrame(rect);
+                    layer.setBackgroundColor(Some(&cg_color(color)));
+                    part.setHidden(false);
+                }
+                _ => part.setHidden(true),
+            }
+        }
+    }
+
     /// Places each classic bar's thumb in its gutter (proportional, at least
     /// 40 points long); hidden while everything fits, the gutter staying
     /// reserved by the layout.
     fn update_bar(&self) {
         let bars = self.ivars().bars.borrow().clone();
+        let tracks = self.ivars().tracks.borrow().clone();
         let size = self.frame().size;
         let gutters = self.ivars().gutters.get();
-        for bar in bars {
+        // The default bar takes the scheme of the page around it, which
+        // may only be known once the scroll view is in place.
+        if self.ivars().default_bar.get()
+            && let Some(dark) = crate::view::backdrop_is_dark(self)
+        {
+            let (track, thumb) = default_bar_colors(dark);
+            self.ivars().track.set(Some(track));
+            for bar in &bars {
+                let geometry = bar.ivars().geometry.get();
+                bar.style(geometry, thumb, bar.ivars().horizontal.get());
+            }
+        }
+        let track_style = self.ivars().track.get();
+        for (index, bar) in bars.into_iter().enumerate() {
+            let track = tracks.get(index);
             let horizontal = bar.ivars().horizontal.get();
             let (viewport, content) = self.extent(horizontal);
             let geometry = bar.ivars().geometry.get();
             let shown = if horizontal { gutters.1 } else { gutters.0 } > 0.0;
             if !shown || content <= viewport + 0.5 || viewport <= 0.0 {
                 bar.setHidden(true);
+                for part in track.into_iter().flatten() {
+                    part.setHidden(true);
+                }
                 continue;
+            }
+            if let Some(track) = track {
+                self.paint_track(track, track_style, geometry, horizontal, size, gutters);
             }
             let margin = geometry.margin;
             let track = (viewport - 2.0 * margin).max(0.0);
@@ -433,6 +573,9 @@ impl ScrollHost {
             bars: RefCell::new(Vec::new()),
             gutters: Cell::new((0.0, 0.0)),
             content: Cell::new(CGSize::ZERO),
+            tracks: RefCell::new(Vec::new()),
+            track: Cell::new(None),
+            default_bar: Cell::new(false),
         });
         // SAFETY: `initWithFrame:` is the designated initializer of `NSScrollView`.
         let scroll: Retained<PamScrollView> =
@@ -541,21 +684,43 @@ impl ScrollHost {
             && config
                 .scrollbar_thickness
                 .is_none_or(|thickness| thickness > 0.0);
-        // A styled bar in a reserved gutter is classic, like Chromium's with
-        // legacy scrollers: drawn at the authored thickness and colour, on
-        // each scrolling axis. Without a gutter the system's overlay
-        // scroller stays.
+        // A bar in a reserved gutter is classic, like Chromium's with legacy
+        // scrollers: drawn at the authored thickness and colours, or as
+        // Chromium's default bar, on each scrolling axis. Without a gutter
+        // the system's overlay scroller stays.
         let styled = config.scrollbar_thickness.is_some() || config.scrollbar_color.is_some();
-        let classic = indicators && config.reserved_gutter && styled;
+        let classic = indicators && config.reserved_gutter;
+        let default_bar = classic && !styled;
+        self.scroll.ivars().default_bar.set(default_bar);
         let style = classic.then(|| {
-            (
-                BarGeometry::for_config(config.scrollbar_thickness, config.thumb_inset),
-                // Without `scrollbar-color`: a neutral grey that reads on
-                // light and dark pages alike.
-                config
-                    .scrollbar_color
-                    .unwrap_or(Color::rgba(128, 128, 128, 140)),
-            )
+            if default_bar {
+                let dark = crate::view::backdrop_is_dark(&self.scroll).unwrap_or(false);
+                (
+                    BarGeometry::for_config(None, 0.0),
+                    default_bar_colors(dark).1,
+                )
+            } else {
+                (
+                    BarGeometry::for_config(config.scrollbar_thickness, config.thumb_inset),
+                    // Without `scrollbar-color`: a neutral grey that reads on
+                    // light and dark pages alike.
+                    config
+                        .scrollbar_color
+                        .unwrap_or(Color::rgba(128, 128, 128, 140)),
+                )
+            }
+        });
+        self.scroll.ivars().track.set(if default_bar {
+            let dark = crate::view::backdrop_is_dark(&self.scroll).unwrap_or(false);
+            Some(default_bar_colors(dark).0)
+        } else if classic {
+            config.scrollbar_track.map(|fill| TrackStyle {
+                fill,
+                inner: None,
+                outer: None,
+            })
+        } else {
+            None
         });
         let axes: &[bool] = if config.both {
             &[false, true]
@@ -597,6 +762,30 @@ impl ScrollHost {
             self.scroll.addSubview(&bar);
             bars.push(bar);
         }
+        let mut tracks = self.scroll.ivars().tracks.borrow_mut();
+        while tracks.len() > axes.len() {
+            for part in tracks.pop().into_iter().flatten() {
+                part.removeFromSuperview();
+            }
+        }
+        while tracks.len() < axes.len() {
+            let mtm = self.scroll.mtm();
+            let track = [
+                PlainView::new(mtm),
+                PlainView::new(mtm),
+                PlainView::new(mtm),
+            ];
+            for part in &track {
+                part.setHidden(true);
+                self.scroll.addSubview_positioned_relativeTo(
+                    part,
+                    NSWindowOrderingMode::Below,
+                    Some(&bars[tracks.len()]),
+                );
+            }
+            tracks.push(track);
+        }
+        drop(tracks);
         if let Some((geometry, color)) = style {
             for (bar, &horizontal) in bars.iter().zip(axes) {
                 bar.style(geometry, color, horizontal);
@@ -651,6 +840,9 @@ impl ScrollHost {
         unsafe { NSNotificationCenter::defaultCenter().removeObserver(&self.scroll) };
         for bar in self.scroll.ivars().bars.borrow_mut().drain(..) {
             bar.removeFromSuperview();
+        }
+        for part in self.scroll.ivars().tracks.borrow_mut().drain(..).flatten() {
+            part.removeFromSuperview();
         }
         self.scroll.removeFromSuperview();
     }
