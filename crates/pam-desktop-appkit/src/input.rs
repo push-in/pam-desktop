@@ -16,9 +16,10 @@ use objc2_app_kit::{
     NSApplication, NSBackgroundColorAttributeName, NSBorderType, NSColor, NSControl,
     NSControlTextEditingDelegate, NSEventModifierFlags, NSEventType, NSFocusRingType,
     NSFontAttributeName, NSForegroundColorAttributeName, NSKernAttributeName, NSLineBreakMode,
-    NSMutableParagraphStyle, NSParagraphStyleAttributeName, NSResponder, NSScrollView, NSScrollerStyle,
-    NSSecureTextField, NSText, NSTextDelegate, NSTextField, NSTextFieldDelegate, NSTextInputClient,
-    NSTextView, NSTextViewDelegate, NSTextViewDidChangeSelectionNotification, NSView,
+    NSMutableParagraphStyle, NSParagraphStyleAttributeName, NSResponder, NSScrollView,
+    NSScrollerStyle, NSSecureTextField, NSText, NSTextDelegate, NSTextField, NSTextFieldDelegate,
+    NSTextInputClient, NSTextView, NSTextViewDelegate, NSTextViewDidChangeSelectionNotification,
+    NSView,
 };
 use objc2_core_foundation::{CGRect, CGSize};
 use objc2_foundation::{
@@ -281,7 +282,9 @@ impl Shared {
                 return;
             };
             let room = scroll.contentSize();
-            let height = text::Paragraph::new(&block).measure(room.width as f32).height;
+            let height = text::Paragraph::new(&block)
+                .measure(room.width as f32)
+                .height;
             if f64::from(height) > room.height + 0.5 {
                 show_view(true);
                 container.set_text(None);
