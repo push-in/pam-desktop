@@ -11,9 +11,35 @@ $assert ??= static function (bool $condition, string $message): void {
     }
 };
 
-$projectCheck = static function (string $project, string ...$arguments): array {
+// The launcher as Composer's bin proxy runs it, with an autoloader of the
+// SDK sources, so the suite needs no `composer install` of the fixtures.
+$checkTools = sys_get_temp_dir().'/pam-desktop-project-check-'.getmypid();
+@mkdir($checkTools, 0o700, true);
+$source = var_export(realpath(__DIR__.'/../src'), true);
+file_put_contents($checkTools.'/autoload.php', <<<PHP
+    <?php
+    spl_autoload_register(static function (string \$class): void {
+        if (str_starts_with(\$class, 'Pam\\\\Desktop\\\\')) {
+            \$path = {$source}.'/'.str_replace('\\\\', '/', substr(\$class, 12)).'.php';
+            if (is_file(\$path)) require \$path;
+        }
+    });
+    foreach (['Polyfill/mbstring_functions.php', 'Routing/functions.php', 'functions.php', 'Testing/functions.php'] as \$file) {
+        require_once {$source}.'/'.\$file;
+    }
+    PHP);
+file_put_contents($checkTools.'/pam-desktop', '<?php $GLOBALS[\'_composer_autoload_path\'] = '
+    .var_export($checkTools.'/autoload.php', true).'; require '
+    .var_export(realpath(__DIR__.'/../bin/pam-desktop'), true).';');
+register_shutdown_function(static function () use ($checkTools): void {
+    @unlink($checkTools.'/autoload.php');
+    @unlink($checkTools.'/pam-desktop');
+    @rmdir($checkTools);
+});
+
+$projectCheck = static function (string $project, string ...$arguments) use ($checkTools): array {
     $process = proc_open(
-        [PHP_BINARY, __DIR__.'/../bin/pam-desktop', 'check', ...$arguments],
+        [PHP_BINARY, $checkTools.'/pam-desktop', 'check', ...$arguments],
         [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
         $pipes,
         $project,

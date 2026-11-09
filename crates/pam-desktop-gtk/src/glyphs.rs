@@ -454,7 +454,7 @@ fn rasterize(
     let row = width as usize * 4;
     let mut coverage = Vec::with_capacity(width as usize * height as usize);
     for line in data.chunks(stride).take(height as usize) {
-        for pixel in line[..row].chunks_exact(4) {
+        for pixel in line[..row].as_chunks::<4>().0 {
             // Black ink leaves the colour channels empty: anything else is a
             // colour glyph (or subpixel antialiasing), drawn by GSK.
             if pixel[0] | pixel[1] | pixel[2] != 0 {
