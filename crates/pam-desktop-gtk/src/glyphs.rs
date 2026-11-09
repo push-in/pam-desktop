@@ -1,20 +1,25 @@
 //! Text drawn like Chromium on Linux, from one glyph atlas shared by every
 //! view of the process.
 //!
-//! Skia (Chromium builds it with `SK_GAMMA_APPLY_TO_A8`, gamma 1.2 and
-//! contrast 0.2 on Linux) corrects each glyph mask for the luminance of the
-//! text colour: light text on dark gains weight, dark text on light loses a
-//! little. GSK blends the raw coverage, so the same glyphs look lighter there.
+//! Chromium does not use FreeType's rasterizer for glyphs: it takes the
+//! hinted outline (same FreeType light hinting as cairo), moves it by the
+//! quarter-pixel x phase and fills it with Skia's analytic anti-aliasing
+//! ([`crate::aaa`]: curve and edge ends snapped to 1/4 pixel vertically,
+//! 8-bit trapezoid coverage). Skia then corrects the mask for the luminance
+//! of the text colour (gamma 76/64, contrast 51/255 on Linux): light text on
+//! dark gains weight, dark text on light loses a little. GSK draws FreeType's
+//! exact-area coverage blended raw, which differs on every edge pixel.
 //!
 //! A paragraph is walked by a Pango renderer (so backgrounds, selection,
 //! underline, strikethrough, letter-spacing, ellipsis and inline boxes come
-//! from Pango exactly as for GSK's own renderer); each glyph is rasterized
-//! once by cairo with the font's own options (hinting, antialiasing) at the
-//! quarter-pixel phase cairo itself would use, its coverage goes through
-//! Skia's correcting table for the text colour, and the result is kept in
-//! the atlas. Drawing a paragraph then only places texture nodes of cached
-//! glyphs on whole device pixels: no texture per paragraph. Colour glyphs
-//! (emoji), unknown glyphs and huge glyphs are left to GSK's text node.
+//! from Pango exactly as for GSK's own renderer); each glyph's outline comes
+//! from cairo (the Pango font's own scaled font: size, hinting) and is
+//! filled as Skia fills it, at Skia's quarter-pixel phase, through Skia's
+//! correcting table for the text colour, and kept in the atlas. Drawing a
+//! paragraph then only places texture nodes of cached glyphs on whole device
+//! pixels: no texture per paragraph. Colour glyphs (emoji), unknown glyphs
+//! and huge glyphs are left to GSK's text node; outlines with cubic curves
+//! (CFF) are rasterized by cairo.
 //!
 //! The atlas is a set of pages (one CPU buffer per batch of new glyphs; each
 //! glyph's texture is a view of its page), least recently used pages go
@@ -41,8 +46,40 @@ unsafe extern "C" {
     ) -> *mut cairo::ffi::cairo_scaled_font_t;
 }
 
-const GAMMA: f32 = 1.2;
-const CONTRAST: f32 = 0.2;
+#[link(name = "pango-1.0")]
+unsafe extern "C" {
+    fn pango_font_get_hb_font(font: *mut pango_ffi::PangoFont) -> *mut std::ffi::c_void;
+}
+
+#[link(name = "harfbuzz")]
+unsafe extern "C" {
+    fn hb_font_get_face(font: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    fn hb_ot_color_has_layers(face: *mut std::ffi::c_void) -> i32;
+    fn hb_ot_color_has_png(face: *mut std::ffi::c_void) -> i32;
+    fn hb_ot_color_has_svg(face: *mut std::ffi::c_void) -> i32;
+}
+
+/// Whether the font has colour glyphs (COLR, sbix/CBDT, SVG): those stay
+/// GSK text nodes.
+fn is_colour_font(font: &pango::Font) -> bool {
+    // SAFETY: the hb font and face belong to `font`, alive for this call.
+    unsafe {
+        let hb = pango_font_get_hb_font(font.as_ptr());
+        if hb.is_null() {
+            return true;
+        }
+        let face = hb_font_get_face(hb);
+        hb_ot_color_has_layers(face) != 0
+            || hb_ot_color_has_png(face) != 0
+            || hb_ot_color_has_svg(face) != 0
+    }
+}
+
+/// Chromium's `SK_GAMMA_EXPONENT` 1.2 as Skia stores it (6 fractional
+/// bits): 76/64.
+const GAMMA: f32 = 76.0 / 64.0;
+/// `SK_GAMMA_CONTRAST` 0.2 as Skia stores it (51/255).
+const CONTRAST: f32 = 51.0 / 255.0;
 /// Luminance levels of the tables (Skia: 3 bits).
 const LEVELS: usize = 8;
 
@@ -64,28 +101,28 @@ fn correcting_table(source: u8) -> [u8; 256] {
             let linear = lin_src * coverage + (1.0 - coverage) * lin_dst;
             (linear.powf(1.0 / GAMMA) - dst) / (src - dst)
         };
-        *entry = (value * 255.0).round().clamp(0.0, 255.0) as u8;
+        *entry = (value * 255.0 + 0.5).floor().clamp(0.0, 255.0) as u8;
     }
     table
 }
 
-fn tables() -> &'static [[u8; 256]; LEVELS] {
-    static TABLES: OnceLock<[[u8; 256]; LEVELS]> = OnceLock::new();
-    TABLES.get_or_init(|| {
-        std::array::from_fn(|level| {
-            // sk_t_scale255<3>: the level spread back over 0..255.
-            let level = level as u32;
-            correcting_table(((level << 5) | (level << 2) | (level >> 1)) as u8)
-        })
-    })
+/// `sk_t_scale255<3>`: a 3-bit level spread back over 0..255.
+const fn scale255(level: u32) -> u32 {
+    (level << 5) | (level << 2) | (level >> 1)
 }
 
-/// Skia's luminance of a text colour (paint gamma), as a table index.
+fn tables() -> &'static [[u8; 256]; LEVELS] {
+    static TABLES: OnceLock<[[u8; 256]; LEVELS]> = OnceLock::new();
+    TABLES
+        .get_or_init(|| std::array::from_fn(|level| correcting_table(scale255(level as u32) as u8)))
+}
+
+/// Skia's luminance of an A8 text colour, as a table index: each channel
+/// reduced to 3 bits (`CanonicalColor`), then `SkComputeLuminance`.
 fn level(red: u32, green: u32, blue: u32) -> usize {
-    let luma = |channel: u32| (channel as f32 / 255.0).powf(GAMMA);
-    let linear = 0.2126 * luma(red) + 0.7152 * luma(green) + 0.0722 * luma(blue);
-    let luminance = (linear.powf(1.0 / GAMMA) * 255.0).round() as u32;
-    (luminance.min(255) >> 5) as usize
+    let canonical = |channel: u32| scale255(channel >> 5);
+    let luminance = (canonical(red) * 54 + canonical(green) * 183 + canonical(blue) * 19) >> 8;
+    (luminance >> 5) as usize
 }
 
 /// Whether text views use the atlas. `PAM_DESKTOP_TEXT_GAMMA=1` turns it on,
@@ -101,9 +138,9 @@ fn enabled() -> bool {
     )
 }
 
-/// The atlas stays opt-in until it costs no more than GSK's own glyph cache
-/// (see docs/text-rendering.md for the measurements).
-const DEFAULT_ENABLED: bool = false;
+/// On by default: it costs no more than GSK's own glyph cache (see
+/// docs/text-rendering.md for the measurements).
+const DEFAULT_ENABLED: bool = true;
 
 /// Upper bound of all atlas pages together; least recently drawn pages are
 /// dropped first (their glyphs are rasterized again if they come back).
@@ -116,10 +153,9 @@ const PAGE_WIDTH: usize = 512;
 const GLYPH_EMPTY: u32 = 0x0FFF_FFFF;
 const GLYPH_UNKNOWN_FLAG: u32 = 0x1000_0000;
 
-/// Cairo's image compositor places a glyph at `floor(x + 1/8)` with a
-/// quarter-pixel phase `floor(4 (x + 1/8)) - 4 floor(x + 1/8)`; the atlas
-/// buckets device positions the same way so its glyphs land where cairo's
-/// would.
+/// Skia (and cairo's image compositor) place a glyph at `floor(x + 1/8)`
+/// with a quarter-pixel phase `floor(4 (x + 1/8)) - 4 floor(x + 1/8)`
+/// (`SkGlyph::kSubpixelRounding`); the atlas buckets positions the same way.
 fn position(device: f64) -> (i32, u8) {
     let shifted = device + 0.125;
     let whole = shifted.floor();
@@ -234,7 +270,7 @@ struct Atlas {
     pages: Vec<Rc<Page>>,
     bytes: usize,
     /// Fonts by pointer, kept alive so a pointer is never reused for another.
-    fonts: FxMap<usize, (pango::Font, u32)>,
+    fonts: FxMap<usize, (pango::Font, u32, bool)>,
     /// Whether the pages are cairo images (GTK's Cairo renderer).
     software: bool,
 }
@@ -245,13 +281,15 @@ thread_local! {
 }
 
 impl Atlas {
-    fn font_id(&mut self, font: &pango::Font) -> u32 {
+    /// The atlas id of `font` and whether it has colour glyphs.
+    fn font_id(&mut self, font: &pango::Font) -> (u32, bool) {
         let next = self.fonts.len() as u32;
         let pointer = font.as_ptr() as usize;
-        self.fonts
+        let entry = self
+            .fonts
             .entry(pointer)
-            .or_insert_with(|| (font.clone(), next))
-            .1
+            .or_insert_with(|| (font.clone(), next, is_colour_font(font)));
+        (entry.1, entry.2)
     }
 
     /// Looks a glyph up and marks its page as drawn now.
@@ -411,16 +449,109 @@ unsafe fn part_color(
 /// Rasterizes one glyph with black ink at `phase`: the coverage, or `None`
 /// when the glyph has no ink, or `Err` when it must stay a GSK glyph.
 #[allow(clippy::type_complexity)]
+/// A glyph mask: coverage bytes, left, top, width, height (device pixels,
+/// from the glyph's pixel origin).
+type Coverage = (Vec<u8>, i32, i32, i32, i32);
+
+/// Rasterizes the glyph's hinted outline (cairo's path of the same scaled
+/// font: hinting, size) with Skia's analytic coverage, as Chromium does:
+/// the outline moved by the quarter-pixel x phase, filled into a mask that
+/// covers its bounds. `None` for outlines with cubic curves (CFF), which
+/// cairo rasterizes instead.
+fn outline(
+    scaled: *mut cairo::ffi::cairo_scaled_font_t,
+    glyph: u32,
+    scale: f64,
+    phase: (u8, u8),
+) -> Option<Coverage> {
+    thread_local! {
+        static CONTEXT: Option<cairo::Context> = cairo::ImageSurface::create(cairo::Format::A8, 1, 1)
+            .ok()
+            .and_then(|surface| cairo::Context::new(&surface).ok());
+    }
+    let path = CONTEXT.with(|context| {
+        let context = context.as_ref()?;
+        context.new_path();
+        context.identity_matrix();
+        context.scale(scale, scale);
+        // SAFETY: the scaled font belongs to the glyph's font, alive here.
+        let scaled = unsafe { cairo::ScaledFont::from_raw_none(scaled) };
+        context.set_scaled_font(&scaled);
+        context.glyph_path(&[cairo::Glyph::new(glyph.into(), 0.0, 0.0)]);
+        let path = context.copy_path().ok();
+        context.new_path();
+        path
+    })?;
+    let dx = f64::from(phase.0) / 4.0;
+    let dy = f64::from(phase.1) / 4.0;
+    let device = |(x, y): (f64, f64)| ((x * scale + dx) as f32, (y * scale + dy) as f32);
+    let mut verbs = Vec::new();
+    let mut last = (0.0f64, 0.0f64);
+    let mut start = last;
+    for segment in path.iter() {
+        match segment {
+            cairo::PathSegment::MoveTo(p) => {
+                verbs.push(crate::aaa::Verb::Move(device(p).0, device(p).1));
+                (last, start) = (p, p);
+            }
+            cairo::PathSegment::LineTo(p) => {
+                let (x, y) = device(p);
+                verbs.push(crate::aaa::Verb::Line(x, y));
+                last = p;
+            }
+            cairo::PathSegment::CurveTo(c1, c2, p) => {
+                // cairo elevates TrueType's quadratic curves to cubics (in
+                // 24.8 fixed point): recover the quadratic control point, on
+                // FreeType's 26.6 grid as Skia reads it, or give up (CFF).
+                let q = device(((3.0 * c1.0 - last.0) / 2.0, (3.0 * c1.1 - last.1) / 2.0));
+                let other = device(((3.0 * c2.0 - p.0) / 2.0, (3.0 * c2.1 - p.1) / 2.0));
+                if (q.0 - other.0).abs() > 0.02 || (q.1 - other.1).abs() > 0.02 {
+                    return None;
+                }
+                let grid = |value: f32, offset: f64| {
+                    ((f64::from(value) - offset) * 64.0).round() / 64.0 + offset
+                };
+                let (cx, cy) = (grid(q.0, dx) as f32, grid(q.1, dy) as f32);
+                let (x, y) = device(p);
+                verbs.push(crate::aaa::Verb::Quad(cx, cy, x, y));
+                last = p;
+            }
+            cairo::PathSegment::ClosePath => {
+                verbs.push(crate::aaa::Verb::Close);
+                last = start;
+            }
+        }
+    }
+    if verbs.is_empty() {
+        return None;
+    }
+    let mask = crate::aaa::fill(&verbs)?;
+    Some((
+        mask.data,
+        mask.left,
+        mask.top,
+        mask.width as i32,
+        mask.height as i32,
+    ))
+}
+
 fn rasterize(
     font: &pango::Font,
     scaled: *mut cairo::ffi::cairo_scaled_font_t,
     glyph: u32,
     scale: f64,
     phase: (u8, u8),
-) -> Result<Option<(Vec<u8>, i32, i32, i32, i32)>, ()> {
+    colour: bool,
+) -> Result<Option<Coverage>, ()> {
     let (ink, _) = font.glyph_extents(glyph);
     if ink.width() <= 0 || ink.height() <= 0 {
         return Ok(None);
+    }
+    if colour {
+        return Err(());
+    }
+    if let Some(mask) = outline(scaled, glyph, scale, phase) {
+        return Ok(Some(mask));
     }
     let units = f64::from(pango::SCALE);
     let device = |value: i32| f64::from(value) / units * scale;
@@ -508,7 +639,7 @@ impl Frame {
         if scaled.is_null() {
             return false;
         }
-        let font_id = atlas.font_id(font);
+        let (font_id, colour) = atlas.font_id(font);
         let scale = self.scale;
         let scale8 = scale as u8;
         let units = f64::from(pango::SCALE);
@@ -543,7 +674,9 @@ impl Frame {
                 return false;
             }
             let (pixel_x, phase_x) = position(glyph_x);
-            let (pixel_y, phase_y) = position(glyph_y);
+            // Skia keeps sub-pixel phases along the baseline only: y is
+            // rounded to the pixel.
+            let (pixel_y, phase_y) = ((glyph_y + 0.5).floor() as i32, 0);
             let key = Key::new(font_id, glyph, scale8, (phase_x, phase_y), color8);
             if atlas.hit(&key).is_some() || self.pending_index.contains_key(&key) {
                 self.ops.push(Op::Glyph(key, pixel_x, pixel_y));
@@ -557,7 +690,7 @@ impl Frame {
                 }
                 None => {}
             }
-            match rasterize(font, scaled, glyph, scale, key.phase()) {
+            match rasterize(font, scaled, glyph, scale, key.phase(), colour) {
                 Ok(Some((coverage, left, top, width, height))) => {
                     self.pending_index.insert(key, self.pending.len());
                     self.pending.push(Pending {

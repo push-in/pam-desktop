@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Linux glyphs rasterized like Chromium.** Chromium fills each glyph's
+  hinted outline with Skia's analytic anti-aliasing (edge and curve ends
+  snapped to quarter pixels vertically, 8-bit trapezoid coverage), not with
+  FreeType's rasterizer, then applies Skia's mask gamma (76/64, contrast
+  51/255, luminance from 3-bit channels). The GTK glyph atlas now does the
+  same (`crates/pam-desktop-gtk/src/aaa.rs`, a port of `SkScan_AAAPath`
+  matching Skia's masks bit for bit), places glyphs at Skia's quarter-pixel
+  x phase with y rounded, and is on by default (`PAM_DESKTOP_TEXT_GAMMA=0`
+  keeps GSK glyphs). Black text now matches Chromium's pixels exactly;
+  coloured text is within one level (blend rounding). Same memory and CPU
+  as GSK glyphs (see Text rendering).
+
 ## 2.1.1 - 2026-11-09
 
 A pixel-parity patch for 2.1. Update the Composer package
