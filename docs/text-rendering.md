@@ -1,9 +1,11 @@
-# Text rendering (GTK)
+# Text rendering
 
-How the Linux backend turns a `Text` into pixels, and the glyph atlas that
-rasterizes it like Chromium.
+How the Linux (GTK) and macOS (AppKit) backends turn a `Text` into pixels,
+and how each one rasterizes glyphs like Chromium (on Linux by default, on
+macOS opt-in). The GTK sections come
+first; [macOS](#macos-appkit) is at the end.
 
-## Layout and positions
+## Layout and positions (GTK)
 
 Every text view owns one Pango layout (`crates/pam-desktop-gtk/src/text.rs`).
 Runs carry their font, colour, background, underline, strikethrough and
@@ -120,3 +122,99 @@ Electron drops on every in-scope route, e.g. /modules 0.345 to 0.099,
 The layout is appended with `gtk_snapshot_append_layout`: GSK text nodes,
 rasterized and cached by GSK's own glyph cache (GL/Vulkan) or by cairo
 (Cairo renderer), with FreeType's exact coverage blended raw.
+
+## macOS (AppKit)
+
+### Layout and positions
+
+TextKit lays every paragraph out (`crates/pam-desktop-appkit/src/text.rs`),
+one shared layout manager for measuring, drawing and hit testing.
+
+### Default: Core Graphics glyphs
+
+By default TextKit draws the glyphs with Core Graphics at their exact
+advances, with subpixel positioning and Core Graphics' own quantization;
+the line origin moves an eighth of a pixel so that Core Graphics'
+truncation lands where Skia's rounding does on small text.
+
+### Opt-in: glyphs like Chromium (`PAM_DESKTOP_TEXT_GAMMA=1`)
+
+Chromium does not let Core Graphics draw text into the page. Skia's
+`SkScalerContext_Mac` draws each glyph once into an offscreen device-RGB
+bitmap (black on white, Core Graphics' subpixel quantization off, subpixel
+positioning on) at one of four horizontal quarter-pixel phases, keeps its
+coverage as an 8-bit mask and blends the mask in the text colour at whole
+device pixels. Drawn straight into a layer, Core Graphics places glyphs on
+other positions (it keeps fewer than four phases above 11 px) and
+antialiases those phases differently, so almost every glyph edge of
+Chromium's text came out different.
+
+`GlyphPlacer` (the layout manager subclass) intercepts TextKit's glyph runs
+and `crates/pam-desktop-appkit/src/glyphs.rs` reproduces that pipeline:
+
+- As on Linux, the font that shapes and draws `size` px text is sized to
+  the CSS size truncated to 1/64 px (`face_size`): Chromium on macOS lays
+  fractional sizes out the same way (0.78rem, 12.48px, is 12.46875px text).
+  Core Graphics' own quantization (the default) loses more than it gains
+  from this, so it only applies with the masks.
+- Each glyph's device x is rounded to the nearest quarter pixel
+  (`floor(4(x + 1/8))`) and its baseline to the nearest pixel, as Skia's
+  subpixel rounding.
+- The mask is rasterized with Skia's flags and box (the glyph's bounds,
+  grown by the phase, rounded out and outset by one pixel). With
+  `-webkit-font-smoothing: antialiased` (Chromium: no hinting) the coverage
+  is used as is. With `auto` the glyph is drawn with Core Graphics smoothing,
+  its 2.0 coverage gamma undone (`sk_pow2_table`) and Skia's sRGB mask gamma
+  table (contrast 0, `SK_GAMMA_SRGB` as Chromium builds Skia for macOS)
+  applied for the text luminance (8 levels). Whether smoothing changes
+  anything on this system is detected once, as Skia does.
+- Masks are kept as 8-bit coverage. A glyph run (one font and colour)
+  blends its masks into one buffer (overlapping edges cover `a + b - ab`, as
+  two blends in one colour would) and draws it as a single image mask in the
+  run's colour, on whole device pixels, without resampling. The buffer is
+  freed after the draw.
+- Masks live in one cache per process shared by every view and window
+  (key: font, glyph, phase, smoothing, luminance level), least recently
+  drawn first above 512 KiB, and the whole cache is released when no window of
+  the process is visible (occlusion: hidden, minimized, covered). Nothing
+  runs while nothing draws.
+- Colour glyphs (emoji), glyphs larger than 256 device pixels, rotated or
+  skewed contexts and text with a shadow (Core Graphics would cast it per
+  glyph) keep Core Graphics drawing, still at Skia's quarter pixels.
+  Printing keeps exact positions.
+
+
+Measured on the Mac VM against Electron 37 on the same machine (probe of 51
+lines, 11-18px, regular and semibold, light and dark): mean difference per
+line 1.46 to 0.26 /255; 11-16px integer sizes are within 0.05-0.07 (equal
+masks). What is left is fractional sizes: Chromium's glyph positions there
+(HarfBuzz advances and kerning) differ from TextKit's by up to ~0.4 px over a
+700 px line, so a few glyphs land on the neighbouring quarter.
+
+On the PushinShop point-of-sale application (39 routes, content x >= 216)
+the masks lower the difference on 36 routes, by 0.03-0.32 /255 (modules
+0.80 to 0.48, products 0.71 to 0.46, caderneta-saldos 0.66 to 0.46); reports
++0.02 (chart labels), the two login routes are unchanged.
+
+#### Why it is not the default
+
+Measured on the Mac VM (release hosts, `perf-visual.php`, the module
+screen, 10 interleaved runs per mode; an 80-step wheel scroll through
+`PAM_DESKTOP_CAPTURE_INPUT`), v2.1.1 drawing vs masks (means):
+
+| metric | Core Graphics | masks | change |
+|---|---|---|---|
+| host footprint idle | 16.41 MB | 16.68 MB | +1.6% |
+| host footprint after the scroll | 19.03 MB | 20.43 MB | +7.3% |
+| host RSS idle | 47.1 MB | 47.4 MB | +0.7% |
+| host RSS after the scroll | 49.8 MB | 51.2 MB | +2.8% |
+| host CPU idle (20 s) | 0.006 s | 0.005 s | 0 |
+| host CPU during the scroll | 0.253 s | 0.280 s | +10.7% |
+
+The mask cache itself holds about 80 KiB on that screen (655 masks); the
+rest of the footprint is Core Graphics' own work for one image mask per
+run. Drawing each glyph from shared 256 x 256 atlas pages instead (one
+image per page, clipped per glyph) was worse: footprint +9% idle, scroll
+CPU +30%.
+
+It stays opt-in until it costs at most 3% on every metric.

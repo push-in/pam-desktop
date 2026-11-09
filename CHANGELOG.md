@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- **macOS text like Chromium (opt-in).** `PAM_DESKTOP_TEXT_GAMMA=1` draws
+  glyphs through Skia's macOS pipeline: masks rasterized offscreen with
+  `SkScalerContext_Mac`'s flags at quarter-pixel phases, Skia's smoothing and
+  sRGB mask-gamma correction for `-webkit-font-smoothing: auto`, one image
+  mask per glyph run, cached per process (512 KiB, least recently drawn first,
+  released while no window is visible). See Text rendering.
+- **macOS capture input `scroll:x,y,dy`.** `PAM_DESKTOP_CAPTURE_INPUT` can
+  turn the wheel over a point, for scroll measurements.
+
 ### Fixed
 
 - **Linux glyphs rasterized like Chromium.** Chromium fills each glyph's
@@ -15,6 +26,9 @@
   keeps GSK glyphs). Black text now matches Chromium's pixels exactly;
   coloured text is within one level (blend rounding). Same memory and CPU
   as GSK glyphs (see Text rendering).
+- **macOS text size.** Fonts are sized to the CSS size truncated to 1/64 px,
+  like Chromium, so fractional sizes such as `0.78rem` lay out with
+  Chromium's advances.
 
 ## 2.1.1 - 2026-11-09
 

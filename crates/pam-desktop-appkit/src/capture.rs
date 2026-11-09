@@ -4,11 +4,12 @@
 //! screen recording permission, also on a locked session, so this is how
 //! visual checks capture an application on macOS.
 //!
-//! `PAM_DESKTOP_CAPTURE_INPUT="click:x,y;sleep:0.7;move:x,y"`: input that
+//! `PAM_DESKTOP_CAPTURE_INPUT="click:x,y;sleep:0.7;move:x,y;scroll:x,y,dy"`: input that
 //! visual checks replay inside the process once the first window shows
 //! (after `PAM_DESKTOP_CAPTURE_AFTER`; the capture waits for it), in content points from the top left
-//! like an xdotool recipe. Synthesized events need no accessibility
-//! permission and do not move the system pointer.
+//! like an xdotool recipe (`scroll` turns the wheel by `dy` pixels, positive
+//! towards the top). Synthesized events need no accessibility permission and
+//! do not move the system pointer.
 
 use std::cell::Cell;
 use std::ffi::OsString;
@@ -19,9 +20,9 @@ use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{
     NSAppearanceCustomization, NSApplication, NSBitmapImageFileType, NSBitmapImageRep, NSEvent,
-    NSEventModifierFlags, NSEventType, NSGraphicsContext, NSView, NSWindow,
+    NSEventModifierFlags, NSEventType, NSGraphicsContext, NSScreen, NSView, NSWindow,
 };
-use objc2_core_graphics::CGContext;
+use objc2_core_graphics::{CGContext, CGEvent, CGEventField, CGScrollEventUnit};
 use objc2_foundation::{
     NSDictionary, NSPoint, NSProcessInfo, NSRunLoop, NSRunLoopCommonModes, NSTimer,
 };
@@ -55,6 +56,7 @@ pub fn schedule(mtm: MainThreadMarker) {
 enum Step {
     Click(f64, f64),
     Move(f64, f64),
+    Scroll(f64, f64, f64),
     Sleep(f64),
 }
 
@@ -70,6 +72,11 @@ fn parse_input(script: &str) -> Vec<Step> {
             match kind {
                 "click" => point(value).map(|(x, y)| Step::Click(x, y)),
                 "move" => point(value).map(|(x, y)| Step::Move(x, y)),
+                "scroll" => {
+                    let (at, delta) = value.rsplit_once(',')?;
+                    let (x, y) = point(at)?;
+                    Some(Step::Scroll(x, y, delta.trim().parse().ok()?))
+                }
                 "sleep" => value.trim().parse().ok().map(Step::Sleep),
                 _ => None,
             }
@@ -102,6 +109,11 @@ fn replay(mtm: MainThreadMarker, steps: Vec<Step>, index: usize, attempts: u32) 
                     }
                 }
             }
+            Step::Scroll(x, y, delta) => {
+                if let Some(event) = scroll_event(mtm, &window, x, y, delta) {
+                    window.sendEvent(&event);
+                }
+            }
             Step::Move(x, y) => {
                 if let (Some(content), Some(event)) = (
                     window.contentView(),
@@ -112,6 +124,35 @@ fn replay(mtm: MainThreadMarker, steps: Vec<Step>, index: usize, attempts: u32) 
             }
         }
     }
+}
+
+/// A pixel wheel event over content point `(x, y)` of `window`.
+fn scroll_event(
+    mtm: MainThreadMarker,
+    window: &NSWindow,
+    x: f64,
+    y: f64,
+    delta: f64,
+) -> Option<Retained<NSEvent>> {
+    let content = window.contentView()?;
+    let y = if content.isFlipped() {
+        y
+    } else {
+        content.bounds().size.height - y
+    };
+    let screen = window.convertPointToScreen(content.convertPoint_toView(NSPoint::new(x, y), None));
+    // Quartz places events from the top left of the main display.
+    let height = NSScreen::screens(mtm).firstObject()?.frame().size.height;
+    let event =
+        CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Pixel, 1, delta as i32, 0, 0)?;
+    CGEvent::set_location(Some(&event), NSPoint::new(screen.x, height - screen.y));
+    for field in [
+        CGEventField::MouseEventWindowUnderMousePointer,
+        CGEventField::MouseEventWindowUnderMousePointerThatCanHandleThisEvent,
+    ] {
+        CGEvent::set_integer_value_field(Some(&event), field, window.windowNumber() as i64);
+    }
+    NSEvent::eventWithCGEvent(&event)
 }
 
 fn mouse_event(window: &NSWindow, kind: NSEventType, x: f64, y: f64) -> Option<Retained<NSEvent>> {
@@ -223,11 +264,12 @@ mod tests {
     #[test]
     fn input_scripts_read_like_xdotool_recipes() {
         assert_eq!(
-            parse_input("click:307,294; sleep:0.7;move:1199, 799;bogus;click:1"),
+            parse_input("click:307,294; sleep:0.7;move:1199, 799;bogus;click:1;scroll:600,400,-40"),
             [
                 Step::Click(307.0, 294.0),
                 Step::Sleep(0.7),
-                Step::Move(1199.0, 799.0)
+                Step::Move(1199.0, 799.0),
+                Step::Scroll(600.0, 400.0, -40.0)
             ]
         );
     }
