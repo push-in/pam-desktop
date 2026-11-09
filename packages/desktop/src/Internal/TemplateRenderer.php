@@ -1844,6 +1844,9 @@ final class TemplateRenderer
                 $evaluated[$name] = $value;
             }
         }
+        if ($factory === null && (isset($attributes[':fontWeight']) || isset($attributes[':fontStyle']))) {
+            $values = self::boundFontFace($values, $data);
+        }
         $rippleAttribute = $attributes[':p-ripple'] ?? $attributes['p-ripple'] ?? null;
         if ($rippleAttribute !== null) {
             if (array_key_exists(':p-ripple', $attributes)) {
@@ -2712,6 +2715,13 @@ final class TemplateRenderer
                 $dynamicNames[$valueName] = true;
             }
         }
+        if (
+            (isset($dynamicNames['fontWeight']) || isset($dynamicNames['fontStyle']))
+            && array_key_exists('fontFamily', $template)
+        ) {
+            // The face follows the bound weight or style (boundFontFace()).
+            $dynamicNames['fontFamily'] = true;
+        }
         $probe = match ($tag) {
             'Text', 'Span' => Text::make(''),
             'Image' => Image::make(''),
@@ -2872,6 +2882,9 @@ final class TemplateRenderer
             if ($remember) {
                 $evaluated[$name] = $value;
             }
+        }
+        if (isset($attributes[':fontWeight']) || isset($attributes[':fontStyle'])) {
+            $values = self::boundFontFace($values, $data);
         }
         if ($fast['ripple']) {
             $rippleAttribute = $attributes[':p-ripple'] ?? $attributes['p-ripple'];
@@ -7163,13 +7176,59 @@ final class TemplateRenderer
         // this node's weight and style: Fontconfig found such a face by its
         // family name, but DirectWrite and Core Text did not, and drew a
         // system face or a bold synthesized from the ancestor's face.
+        // A bound weight or style (`:fontWeight="$style->weight"`) is only
+        // known once the node's values are evaluated: boundFontFace()
+        // resolves the face then, for every backend.
+        if (isset($attributes[':fontWeight']) || isset($attributes[':fontStyle'])) {
+            return $attributes;
+        }
+        return self::resolvedFontFamily($attributes, $family, $fonts);
+    }
+
+    /**
+     * The face of a node whose weight or style is bound, resolved with the
+     * evaluated values (see resolveScopedFont()).
+     *
+     * @param array<string, mixed> $values
+     * @param array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    private static function boundFontFace(array $values, array $data): array
+    {
+        $family = $values['fontFamily'] ?? null;
+        if (!is_string($family)) {
+            return $values;
+        }
+        $fonts = self::styleSheetFonts($data);
+        if ($fonts === [] && self::$facesBySource === []) {
+            return $values;
+        }
+        $attributes = [];
+        foreach (['fontWeight', 'fontStyle'] as $name) {
+            $value = $values[$name] ?? null;
+            if (is_string($value) || is_int($value) || is_float($value)) {
+                $attributes[$name] = is_float($value) ? (int) $value : $value;
+            }
+        }
+        $resolved = self::resolvedFontFamily($attributes, $family, $fonts);
+        if (isset($resolved['fontFamily']) && $resolved['fontFamily'] !== $family) {
+            $values['fontFamily'] = $resolved['fontFamily'];
+        }
+
+        return $values;
+    }
+
+    /**
+     * @param array<string, mixed> $attributes
+     * @param array<string, list<array{source: string, weight: string, style: string}>> $fonts
+     * @return array<string, mixed>
+     */
+    private static function resolvedFontFamily(array $attributes, string $family, array $fonts): array
+    {
         $entries = array_map('trim', explode(',', $family));
         $resolved = false;
-        // A bound weight or style is only known after this point: an
-        // inherited family then stays as it came.
-        $known = !isset($attributes[':fontWeight']) && !isset($attributes[':fontStyle']);
         foreach ($entries as $index => $entry) {
-            $faces = $fonts[$entry] ?? ($known ? self::$facesBySource[$entry] ?? null : null);
+            $faces = $fonts[$entry] ?? self::$facesBySource[$entry] ?? null;
             if ($faces === null) {
                 continue;
             }
@@ -7198,7 +7257,12 @@ final class TemplateRenderer
      */
     private static function bestFontFace(array $faces, array $attributes): array
     {
-        $wantedWeight = (int) ($attributes['fontWeight'] ?? '400');
+        $weight = $attributes['fontWeight'] ?? '400';
+        $wantedWeight = match ($weight) {
+            'normal' => 400,
+            'bold' => 700,
+            default => (int) $weight,
+        };
         $wantedStyle = (string) ($attributes['fontStyle'] ?? 'normal');
         $best = null;
         $bestScore = PHP_INT_MAX;

@@ -23,8 +23,14 @@
   face by family name; DirectWrite and Core Text did not and drew another face
   (`MediaTile`'s "PRINCIPAL" badge 5 px wider on macOS, 3 px on Windows). The
   SDK now resolves such a family, or face, among the faces any stylesheet
-  declared for it (not yet for a bound `:fontWeight`/`:fontStyle`, which is
-  known only later: such a node keeps the inherited family as before).
+  declared for it.
+- **A bound font weight picks the right face on macOS and Windows.** When the
+  weight or style comes from a binding (`:fontWeight="$style->fontWeight"`,
+  as in DesktopUI's `Autocomplete` input) the SDK looked the face up before
+  the value was known, so Core Text and DirectWrite drew the Regular face (or
+  another font) where Linux drew the right one. The face is now chosen after
+  the binding is evaluated, for every backend; a weight from a CSS variable
+  (`font-weight: var(--title-weight)`) also resolves to its face.
 
 ## 2.1.3 - 2026-11-09
 
