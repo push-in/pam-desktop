@@ -735,6 +735,23 @@ define_class!(
             self.report(notification);
         }
 
+        /// Glyph masks are freed while no window of the process can be
+        /// seen (hidden, minimized, covered or on another space).
+        #[unsafe(method(windowDidChangeOcclusionState:))]
+        fn window_did_change_occlusion_state(&self, _notification: &NSNotification) {
+            let visible = NSApplication::sharedApplication(self.mtm())
+                .windows()
+                .iter()
+                .any(|window| {
+                    window
+                        .occlusionState()
+                        .contains(objc2_app_kit::NSWindowOcclusionState::Visible)
+                });
+            if !visible {
+                crate::glyphs::release();
+            }
+        }
+
         #[unsafe(method(windowDidDeminiaturize:))]
         fn window_did_deminiaturize(&self, notification: &NSNotification) {
             self.report(notification);

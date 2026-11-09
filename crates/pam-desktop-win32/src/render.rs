@@ -134,6 +134,12 @@ impl Painter<'_> {
         // SAFETY: plain call inside the context's BeginDraw.
         if let Err(error) = unsafe { context.Flush(None, None) } {
             self.failed.get_or_insert(error);
+            // The frame is lost, but it was lost to the blur: counting it
+            // as blurred lets the window paint again without backdrop
+            // blurs, instead of failing on the same flush every frame
+            // (Direct2D implementations without `Flush` never show a
+            // modal with a backdrop blur otherwise).
+            self.blurred = true;
             return;
         }
         // CSS `blur(r)`: a Gaussian with standard deviation r.

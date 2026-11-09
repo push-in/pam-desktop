@@ -55,7 +55,7 @@ define_class!(
                     let y = block.y + index as f64 * document.height;
                     CGContext::save_g_state(Some(&context));
                     CGContext::clip_to_rect(Some(&context), CGRect::new(CGPoint::new(block.x, y), CGSize::new(block.width, block.height)));
-                    paragraph.draw(&context, CGPoint::new(block.x, y), block.width as f32, None);
+                    paragraph.draw_printed(&context, CGPoint::new(block.x, y), block.width as f32);
                     CGContext::restore_g_state(Some(&context));
                 }
             }
