@@ -256,9 +256,13 @@ final class ProjectCheck
         $file = self::locateFile($file, $source);
         // Absolute paths inside the message read like the location.
         $message = str_replace(self::$project.DIRECTORY_SEPARATOR, '', $message);
+        $file = self::relative($file);
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $message = str_replace(str_replace('/', '\\', $file), $file, $message);
+        }
 
         return [
-            'file' => self::relative($file),
+            'file' => $file,
             'line' => max(1, (int) $line),
             'column' => max(1, (int) $column),
             'code' => $code,
@@ -272,7 +276,7 @@ final class ProjectCheck
      */
     private static function locateFile(string $file, ?string $source): string
     {
-        if (str_starts_with($file, '/') || preg_match('/^[A-Za-z]:[\\\/]/', $file) === 1
+        if (str_starts_with($file, '/') || preg_match('/^[A-Za-z]:[\\\\\/]/', $file) === 1
             || is_file(self::$project.DIRECTORY_SEPARATOR.$file) || $source === null) {
             return $file;
         }
@@ -313,7 +317,10 @@ final class ProjectCheck
         $path = realpath($path) ?: $path;
         $prefix = self::$project.DIRECTORY_SEPARATOR;
 
-        return str_starts_with($path, $prefix) ? substr($path, strlen($prefix)) : $path;
+        $path = str_starts_with($path, $prefix) ? substr($path, strlen($prefix)) : $path;
+
+        // One spelling on every system: `src/Screens/Card.pam.php:12:5`.
+        return DIRECTORY_SEPARATOR === '\\' ? str_replace('\\', '/', $path) : $path;
     }
 
     private static function removeTree(?string $directory): void
