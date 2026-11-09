@@ -92,7 +92,7 @@ pam-desktop publish-update [app] ...  sign the update feed of a release
 pam-desktop --version
 ```
 
-`vendor/bin/pam-desktop` takes the same commands. This page covers `init`, `dev` and `run`. `build` is described in [Distribution](distribution.md); `update-key` and `publish-update` in [Updates](updates.md).
+`vendor/bin/pam-desktop` takes the same commands, plus `vendor/bin/pam-desktop check [--json] [--src=<dir>]`, which it runs itself in PHP without the host: it compiles and validates every template, stylesheet and route of the application and lists all the diagnostics ([Template diagnostics](development.md#template-diagnostics)). This page covers `init`, `dev` and `run`. `build` is described in [Distribution](distribution.md); `update-key` and `publish-update` in [Updates](updates.md).
 
 `app` is a project directory or a PHP file. With a directory the entry script is the `entry` of its manifest, `index.php` by default. With a file, the file is the entry script and its directory is the project. Without `app`, `dev`, `run`, `build` and `publish-update` take the project of the current directory: the nearest directory, from it up, that holds a `pam-desktop.json`, else the current directory.
 

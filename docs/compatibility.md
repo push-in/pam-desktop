@@ -7,7 +7,7 @@ The PHP package (`pushinbr/pam-desktop`) and the native host (`pam-desktop`) are
 Before it starts the worker, the host exports `PAM_RENDERER_CONTRACT`: its ABI version, the protocol versions it speaks and the highest property and event identifiers it implements, for the core table and for the extension and desktop tables. The current host exports:
 
 ```json
-{"abi":1,"events":[80,2007],"properties":[543,2028],"protocol":[1,1]}
+{"abi":1,"events":[80,2007],"properties":[543,2043],"protocol":[1,1]}
 ```
 
 At boot the PHP package negotiates with that contract:
@@ -36,6 +36,18 @@ The desktop table starts at 2001. These are the identifiers added after the firs
 | `ScrollbarThickness` | 2026 | `scrollbar-width: <length>` |
 | `ScrollbarColor` | 2027 | `scrollbar-color` |
 | `TextSpanBoxes` | 2028 | A nested `Text` with padding, a border, or a background and a radius |
+| `TextInlineBlock` | 2029 | `display: inline-block` on a `Text` (a nested one becomes an inline-block box of its paragraph) |
+| `TableDisplay`, `TableLayout`, `BorderCollapse`, `VerticalAlign` | 2030-2033 | `display: table*`, `table-layout`, `border-collapse`, `vertical-align` |
+| `LengthUnits` | 2034 | `ch` lengths (`max-width: 52ch`) |
+| `CompositedLayer` | 2035 | `will-change: transform` (the box is a composited layer on whole pixels) |
+| `FontSmoothing` | 2036 | `-webkit-font-smoothing: antialiased`, `-moz-osx-font-smoothing: grayscale` (macOS) |
+| `InlineLevel` | 2037 | `display: inline`, `inline-block`, `inline-flex`, `inline-grid` on boxes (inline formatting context) |
+| `ScrollBothAxes` | 2038 | `overflow: auto` on a `ScrollView` (both axes in one viewport) |
+| `CanvasBitmap` | 2039 | Charts' `integerBitmap()`, canvases drawn 1:1 like an HTML `<canvas>` |
+| `ScrollbarTrackColor` | 2040 | the track of `scrollbar-color: <thumb> <track>` |
+| `InputSize` | 2041 | `inputSize` (HTML `size`) and the intrinsic width of a single-line `Input` |
+| `MenuListOptions` | 2042 | `menuListOptions` on a select's label (as wide as its widest option) |
+| `MinWidthAuto` | 2043 | `min-width: auto` on a flex item |
 
 | Event | Id | Reported to |
 | --- | --- | --- |

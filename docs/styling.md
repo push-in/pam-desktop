@@ -124,7 +124,7 @@ The host applies these properties for a state: opacity, scale, translation, back
 
 ## CSS in template stylesheets
 
-The `<style>` block of a `.pam.php` component, and the stylesheets it imports, are compiled to the same native properties as `Style`. The selectors are classes, tags and the state pseudo-classes above; `@media` and `@container` rules apply while their condition holds. A property that has no meaning for native views (`outline`, `will-change`, `appearance`, `-webkit-font-smoothing` and similar) is accepted and ignored; anything else that does not compile is an error that names the file and the line.
+The `<style>` block of a `.pam.php` component, and the stylesheets it imports, are compiled to the same native properties as `Style`. The selectors are classes, tags and the state pseudo-classes above; `@media` and `@container` rules apply while their condition holds. A property that has no meaning for native views (`outline`, `appearance` and similar) is accepted and ignored (`-webkit-font-smoothing: antialiased` / `-moz-osx-font-smoothing: grayscale` is inherited and, on macOS, draws text without font smoothing, like Chromium); anything else that does not compile is an error that names the file and the line.
 
 This section covers the text, font and scrollbar properties. The table at the end says what each backend does with them.
 
@@ -155,12 +155,12 @@ The whole list is kept. Each backend walks it in order and uses the first family
 
 | Entry | Font |
 | --- | --- |
-| `system-ui`, `-apple-system`, `BlinkMacSystemFont`, `ui-sans-serif`, `sans-serif`, `system` | The interface font of the platform: the GTK font setting on Linux, San Francisco on macOS, the Windows UI font. |
-| `monospace`, `ui-monospace` | The monospace font (Fontconfig's `monospace`, the system monospace font, Consolas). |
-| `serif`, `ui-serif` | The serif font (Fontconfig's `serif`, the serif design of the system font, Times New Roman). |
-| `ui-rounded` | The rounded design of the system font on macOS; the interface font elsewhere. |
+| `system-ui`, `sans-serif`, `system` (and `BlinkMacSystemFont` on macOS) | The interface font of the platform: the GTK font setting on Linux, San Francisco on macOS, the Windows UI font. |
+| `monospace` | The monospace font (Fontconfig's `monospace`, the system monospace font, Consolas). |
+| `serif` | The serif font (Fontconfig's `serif`, the serif design of the system font, Times New Roman). |
+| `ui-monospace`, `ui-serif`, `ui-sans-serif`, `ui-rounded`, `-apple-system` | Nothing, on every platform, as in Chromium (measured with Electron 37 on Linux and macOS: only Safari knows them); the list goes on. |
 | `asset://…` | A font file packaged with the application, loaded on first use: Fontconfig on Linux, CoreText on macOS, DirectWrite (and a private GDI font for text inputs) on Windows. At most 32 files, 8 MiB each and 64 MiB in all. |
-| Any other name | An installed family. One that is not installed is skipped. |
+| Any other name | An installed family. One that is not installed is skipped; on Linux a Fontconfig alias does not count (`Consolas` is not DejaVu Sans Mono), only Chromium's metric-compatible equivalents (`Arial` → Liberation Sans, `Times New Roman` → Liberation Serif, `Courier New` → Liberation Mono, `Calibri` → Carlito, `Cambria` → Caladea). |
 
 A `@font-face` family in the list resolves to its best face for the weight and style; the other entries stay as fallbacks. On Windows a packaged font is only used as the first entry. When no entry matches, the interface font is used. The `system-ui` keyword inside the `font:` shorthand is not accepted; use `font-family`.
 
@@ -204,9 +204,76 @@ The scrollbar properties apply to `ScrollView` and `VirtualizedList`; on other e
 | --- | --- | --- |
 | `scrollbar-gutter` | `auto`, `stable`, `stable both-edges` | `stable` reserves the width of the bar inside a vertical scroller whether or not the content overflows, so content never moves when the bar appears: 15 px, 10 px with `thin`, the length given to `scrollbar-width`, 0 with `none`. `both-edges` reserves it on both sides. |
 | `scrollbar-width` | `auto`, `thin`, `none`, a length up to 64 px | The thickness of the bar. `none` hides it; the view still scrolls. |
-| `scrollbar-color` | `<thumb> <track>`, `auto` | The colour of the thumb. The track is always transparent. |
+| `scrollbar-color` | `<thumb> <track>`, `auto` | The colour of the thumb and, on the default-width classic bar, of the track and the corner (transparent when omitted or `transparent`). Thin and px-width bars keep a transparent track. |
 
 With a reserved gutter and a `scrollbar-width` or `scrollbar-color`, the bar is a classic bar: shown in the gutter while the content overflows, at that thickness, with a rounded thumb you can drag. `thin` draws Chromium's thin bar: a 10 px track with the thumb inset 2 px. Without a gutter the platform's own overlay scrollbar stays. Without `scrollbar-color` the thumb is the text colour at 35% on GTK and a neutral grey on AppKit.
+
+### Tables
+
+`display: table`, `table-header-group` / `table-row-group` / `table-footer-group`, `table-row` and `table-cell` lay a container out as a CSS table, so a screen ported from HTML declares the same rules as its `<table>`:
+
+```css
+.app-table { display: table; border-collapse: collapse; }
+.head      { display: table-row; border-bottom: 1px solid rgba(255,255,255,.06); }
+.th        { display: table-cell; padding: 9px 14px; line-height: normal; }
+.body      { display: table-row-group; }          /* a VirtualizedList works too */
+.tr        { display: table-row; }
+.td        { display: table-cell; padding: 9px 14px; border-top: 1px solid rgba(255,255,255,.05);
+             border-bottom: 1px solid #1F2A36; vertical-align: middle; }
+```
+
+- The children of a table are rows or row groups (any container of rows, a `VirtualizedList` included); the children of a row are its cells, whatever their kind (`Text`, `Column`, `Row`).
+- `table-layout: auto` (the default) sizes the columns like browsers: each starts at its widest cell (max-content, or an authored `width`/percentage), spare room goes to the automatic columns in proportion to those widths, a shortfall is taken above each column's min-content width. `table-layout: fixed` takes the widths of the first row's cells and shares the rest.
+- A row is as tall as its tallest cell (or its own `height`/`min-height`); `vertical-align: top | middle | bottom` places a cell's content (`middle` by default, like `td`).
+- `border-collapse: collapse` follows CSS 2.1 §17.6.2: each grid line is the widest of the borders meeting on it (a cell's over a row's over the table's), every row and cell takes half of it, and the table half of its outer lines. The line is painted once, centred on the edge between the cells and snapped like Chromium (the pixels of edge ± width/2), by the cell whose box holds those pixels. `separate` (the default) keeps each cell's own border, with no spacing.
+- A virtualized row group only measures the rows that are mounted.
+
+### Inline formatting (`display: inline`, `inline-block`, `inline-flex`)
+
+`display: inline`, `inline-block` and `inline-flex`/`inline-grid` make a box inline-level, and its parent lays it on line boxes like a browser's block container, so markup ported from HTML keeps its `<span>`, `<small>`, chips and `<textarea>` as they are:
+
+```css
+.td     { padding: 10px 14px; font-size: 16px; line-height: 24px; }   /* the cell's strut */
+.code   { display: inline; padding: 4px 8px; font-size: 12px; line-height: 16px; background-color: #314158; }
+.status { display: inline-flex; padding: 4px 12px; align-items: center; }
+.notes  { display: inline-block; width: 100%; height: 130px; }        /* a <textarea> */
+```
+
+- A container whose in-flow children are all inline-level holds line boxes; in a vertical container each run of consecutive inline-level children among block children gets an anonymous block (CSS 2.1 §9.2.1.1). In a row with other block children an inline-level child stays a flex item (blockified, like inside a CSS flex container).
+- Every line box starts with the container's strut: a zero-width box with the container's own (or inherited) `font-*` and `line-height`, Blink's rounded ascent/descent plus the floored half-leading. Boxes sit on the line's baseline; a line breaks before a box that does not fit, and `text-align` places each line. The lines are placed as one block by the container's `align-items` (row), `justify-content` (column) or a cell's `vertical-align`.
+- An inline `Text` takes its `line-height` around its baseline; its box (background, border, padding, hit area) is the font's content area plus padding and border, which overflow the line box like Chromium's. A text that wraps is laid as one box.
+- An `inline-block`/`inline-flex` box is atomic: its margin box sits on the baseline at its own baseline: its text's (an inline-block: the last line's), the first item's in an `inline-flex` (or that item's bottom edge), or its bottom margin edge when it has no text or `overflow: hidden`. A multi-line `Input` (a `<textarea>`) always uses its bottom margin edge, so the strut's descent stays under it; a single-line one its centred text.
+- `vertical-align`: `baseline`, `middle` (the box centred half an x-height, taken as 0.5em, above the baseline), `text-top`/`text-bottom` (the parent's content area), `top`/`bottom` (the line box). Lengths, percentages, `sub` and `super` are rejected.
+- Hosts report the first baseline of a measured text where they draw it (Chromium's rounded ascent plus floored half-leading), so baseline alignment (`align-items: baseline` included) matches Blink.
+
+### Form-control sizes (`<input>`, `<select>`, `min-width: auto`)
+
+A single-line `<Input>` without a `width` is as wide as Chromium's text field: `inputSize` (HTML `size`, 20 by default) characters of the primary font's average width (Blink rounds it up when its fraction is ≥ .5), plus the font's maximum character width minus one average, rounded up, plus padding and border. The first family of the authored `font-family` list decides whether the average is trusted (Blink's list: Helvetica, Times, Courier, Lucida Grande, `.`-prefixed system names…); otherwise the width is `size` zeros. Each host reports the metrics like its Skia port, so the same CSS gives 200px at 16px DejaVu Sans on Linux and 175px at 16px San Francisco on macOS, as Electron does there. An authored `width` (or a percentage) still wins.
+
+A `<select>` is a styled `Pressable` whose label `Text` carries `menuListOptions` (the option labels, one per line or a list): the label is as wide as the widest option in its font, rounded up. Add the menulist's internal padding (4px before the text, 1px + the 15px arrow after it, when the select keeps its native appearance) in the markup around the label.
+
+`min-width: auto` on a flex item is its automatic minimum size: it never shrinks below its min-content width (capped by its `width` and `max-width`), as in a browser. Native boxes default to a 0 minimum, so author it where the browser's automatic minimum matters (e.g. a `flex: 1` search box holding a text field).
+
+### Sticky positioning
+
+`position: sticky` keeps the box in flow and holds it at its `top`/`bottom` (vertical scroll views) or `left`/`right` (horizontal ones) inset from the nearest scroll view's edge while its parent, the containing block, is on screen, as in CSS: a table header row with `position: sticky; top: 0` stays above the rows it covers until the table scrolls away. The box moves with a transform when the scroll offset changes (no layout pass), paints above the content it covers and takes its clicks.
+
+### Scrolling on both axes (`overflow: auto`)
+
+`overflow: auto` (or `scroll`) on a `<ScrollView>` scrolls its content on both axes in the same viewport, like a browser element: each child is as wide as the viewport or as its min-content width (a table whose columns cannot shrink further overflows), and as tall as its content. Single-axis `overflow-x`/`overflow-y: auto` stays a `<ScrollView>` (`horizontal` for the x axis).
+
+- With `scrollbar-gutter: stable`, an authored `scrollbar-width` or a `scrollbar-color`, the bars are Chromium's classic bars: each overflowing axis takes the bar's thickness (15 px by default, `thin` 10 px), which can make the other axis overflow, and the corner between two bars takes the track colour. `scrollbar-color` alone styles the default 15 px bar (9 px thumb, arrow buttons) in that thumb colour on its track colour.
+- The wheel moves both axes; `position: sticky` / `stickyHeader` rows stick on the vertical axis (a table header stays while the body scrolls under it).
+
+### Font-relative lengths
+
+`width`, `min-width`, `max-width`, `height`, `min-height` and `max-height` accept `ch` (`max-width: 52ch`): the advance of "0" in the element's own font, measured by the renderer. `line-height: normal` is the font's rounded ascent plus descent, as in Chromium, and overrides a line height another rule gave the element. Line heights land on Blink's LayoutUnits: `line-height: 18.56px` rounds to 1/64 px (18.5625); a number, percentage, `em` or unitless `calc()` (`1.45`, `calc(1.25 / .875)`) multiplies the font size rounded to 1/64 in float and truncates (13.12px × 1.45 = 19.03125). Write the number the web stylesheet authors, not the px that getComputedStyle prints: the two can differ by 1/64 px per line. A `calc()` of only px, rem and numbers is resolved when the stylesheet compiles, so box sizes stay on LayoutUnits too.
+
+Icons (`<Icon>`) keep their own font and size and are one em tall (`line-height: 1`), like icon fonts on the web: only the colour of their container is inherited.
+
+### Compositing layers
+
+`will-change: transform` makes the box a compositing layer, as in Chromium: the box is placed on whole pixels and its content keeps its exact offsets inside it. Dialogs centered with fractional offsets (PrimeVue's `.p-dialog` sets it) then paint their borders and text on the same pixels as the web build. Other `will-change` values are ignored.
 
 ### Backdrop blur
 
@@ -215,6 +282,10 @@ With a reserved gutter and a `scrollbar-width` or `scrollbar-color`, the bar is 
 ```
 
 `backdrop-filter: blur()` (or the `backdropBlurRadius` attribute of a template tag) blurs what is painted behind the box. On a `Modal` it blurs the content behind the backdrop; see [Components](components.md#modal-and-bottom-sheet).
+
+It paints like Chromium: Skia's three-box approximation of the Gaussian, transparent beyond the box and drawn over the unblurred backdrop, then the box's translucent `background-color` blended in 8 bits (`fill + ⌊dst·(256 − α)/256⌋`); stacked masks (a dialog over a dialog) repeat it on the previous result. A gradient background is painted over the blur as before. On GTK, and on macOS without Metal, a `Modal`'s backdrop also composites its dialog box's `box-shadow` and translucent background (and plain translucent fills inside it) the way Chromium layers them, so a dialog over its mask matches Electron to the level; the boxes then paint neither.
+
+On macOS without a Metal device (a virtual machine, some remote sessions) Core Animation cannot run the filter; the AppKit backend then blurs on the CPU: it renders the window without the box and what paints after it, runs the pipeline above on the part under the box (exactly Chromium's pixels) and shows it below the box. It is redone at most ten times a second, only after a view changed and when the pixels under the box differ; content scrolled natively behind a blurred box is picked up on the next change.
 
 ### What each backend does
 
@@ -226,7 +297,7 @@ With a reserved gutter and a `scrollbar-width` or `scrollbar-color`, the bar is 
 | `hyphens: auto` | Yes | No | No |
 | `white-space: nowrap`, `text-overflow` | Yes | Yes | Written, not run |
 | `scrollbar-gutter`, `scrollbar-width`, `scrollbar-color` | Yes | Yes: overlay scrollers, a classic thumb drawn in a reserved gutter | Written, not run: `none` hides the bar, a reserved gutter shows a classic bar |
-| `backdrop-filter: blur()` | Yes (GSK blur) | Core Image filter, not verified on screen | Direct2D blur of the back buffer, not run; see [First run](first-run-macos-windows.md) |
+| `backdrop-filter: blur()` | Yes (GSK Gaussian; the fill blended like Chromium) | Core Image filter with Metal, not verified on screen; without Metal Chromium's exact pipeline on the CPU (run in a VM) | Direct2D blur of the back buffer and fill blend, not run; see [First run](first-run-macos-windows.md) |
 | Subpixel text positions | Yes, as Chromium | TextKit default | DirectWrite default |
 
 "Written, not run" means the code is in the backend and type-checks, but it has not been executed on that system. See [Platforms](platforms.md).
@@ -244,9 +315,11 @@ The CSS generic families name the platform's own fonts:
 
 | Family | Linux (GTK) | Windows | macOS |
 | --- | --- | --- | --- |
-| `system-ui`, `-apple-system`, `BlinkMacSystemFont`, `ui-sans-serif`, `sans-serif` | the desktop's interface font (`gtk-font-name`) | the UI font (Segoe UI) | San Francisco |
-| `ui-monospace`, `monospace` | Fontconfig `monospace` | Consolas | SF Mono |
-| `ui-serif`, `serif` | Fontconfig `serif` | Times New Roman | New York |
+| `system-ui`, `sans-serif` (`BlinkMacSystemFont` on macOS) | the desktop's interface font (`gtk-font-name`) | the UI font (Segoe UI) | San Francisco |
+| `monospace` | Fontconfig `monospace` | Consolas | SF Mono |
+| `serif` | Fontconfig `serif` | Times New Roman | New York |
+
+So Tailwind's `font-mono` (`ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", …`) lands on Liberation Mono on Linux and Menlo on macOS, the fonts Chromium picks. A nested `Text` (a span) takes a family list too.
 
 A family declared with `@font-face` in the stylesheet becomes its packaged file wherever it appears in the list; the families after it are the fallback. When no family of the list is installed the text uses the interface font. The DesktopUI components (`SelectTheme`, `Toast`) default to `system-ui`.
 
