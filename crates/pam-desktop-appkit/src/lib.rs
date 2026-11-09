@@ -16,6 +16,7 @@ mod capture;
 mod clock;
 mod events;
 mod fonts;
+mod glyphs;
 mod image;
 mod input;
 mod media;

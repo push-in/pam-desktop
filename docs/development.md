@@ -280,7 +280,7 @@ The script writes `pam-desktop-<version>-<target>.tar.gz` and its `.sha256` in t
 | `PAM_DESKTOP_WORKER=/path/to/pam-desktop-worker` | Runs another copy of the worker bootstrap. |
 | `PAM_DESKTOP_STRICT=1` | Makes `BuildConfiguration::strict()` true in development. |
 | `PAM_DESKTOP_FRAME_GC=0` | Leaves PHP's cycle collector on its own schedule. |
-| `PAM_DESKTOP_TEXT_GAMMA=1` | GTK: draws text from the Chromium-gamma glyph atlas (see [Text rendering](text-rendering.md)); `0` forces GSK glyphs. |
+| `PAM_DESKTOP_TEXT_GAMMA=1` | GTK: draws text from the Chromium-gamma glyph atlas; macOS: draws glyphs as Chromium's Skia masks (see [Text rendering](text-rendering.md)). On GTK `0` forces GSK glyphs. |
 | `PAM_DESKTOP_FULL_PRESENT=1` | Windows backend: presents every frame whole instead of the changed regions. |
 | `PAM_DESKTOP_BACKDROP_BLUR=0` | Windows backend: paints views with `backdropBlur` without the blur. |
 | `GTK_USE_PORTAL=0` | Linux: dark mode is read from the GTK settings instead of the desktop portal. |

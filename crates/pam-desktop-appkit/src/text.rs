@@ -23,7 +23,7 @@ use objc2_app_kit::{
     NSParagraphStyleAttributeName, NSStrikethroughStyleAttributeName, NSTextAlignment,
     NSTextContainer, NSTextStorage, NSUnderlineStyleAttributeName, NSWritingDirection,
 };
-use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
+use objc2_core_foundation::{CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGContext;
 use objc2_core_text::{
     CTFont, CTFontOrientation, kCTFontOpenTypeFeatureTag, kCTFontOpenTypeFeatureValue,
@@ -303,6 +303,105 @@ impl LineHeights {
     }
 }
 
+define_class!(
+    // SAFETY: `NSLayoutManager` may be subclassed; the override forwards to
+    // the superclass with the same glyphs and font and adjusted positions.
+    #[unsafe(super(NSLayoutManager, NSObject))]
+    #[ivars = ()]
+    struct GlyphPlacer;
+
+    impl GlyphPlacer {
+        /// While a paragraph draws Chromium's masks (`PLACE_GLYPHS`), draws
+        /// the run with `glyphs::draw`. Glyphs that pipeline leaves to Core
+        /// Graphics are placed like Skia's subpixel text: along the baseline
+        /// on a quarter of a device pixel, `floor(x + 1/8)` in quarters, the
+        /// baseline on a whole pixel, `floor(y + 1/2)`; Core Graphics draws
+        /// them exactly there (the paragraph turns its own quantization off:
+        /// it keeps fewer positions above 11 px).
+        #[unsafe(method(showCGGlyphs:positions:count:font:textMatrix:attributes:inContext:))]
+        fn show_glyphs(
+            &self,
+            glyphs: *const objc2_core_graphics::CGGlyph,
+            positions: *const CGPoint,
+            count: objc2_foundation::NSInteger,
+            font: &NSFont,
+            matrix: CGAffineTransform,
+            attributes: &NSDictionary<NSAttributedStringKey, AnyObject>,
+            context: &CGContext,
+        ) {
+            let mut placed = Vec::new();
+            let mut positions = positions;
+            if let Some(smooth) = PLACE_GLYPHS.get()
+                && count > 0
+                && !positions.is_null()
+                && !glyphs.is_null()
+            {
+                // SAFETY: TextKit passes `count` glyphs and positions.
+                let (given, ids) = unsafe {
+                    (
+                        std::slice::from_raw_parts(positions, count as usize),
+                        std::slice::from_raw_parts(glyphs, count as usize),
+                    )
+                };
+                // SAFETY: the attribute name is an immutable string exported by AppKit.
+                let color = attributes
+                    .objectForKey(unsafe { NSForegroundColorAttributeName })
+                    .and_then(|color| color.downcast::<NSColor>().ok());
+                if crate::glyphs::draw(context, font, ids, given, color.as_deref(), smooth) {
+                    return;
+                }
+                let device = CGContext::user_space_to_device_space_transform(Some(context));
+                if let Some(snapped) = quarter_positions(given, &device) {
+                    placed = snapped;
+                    positions = placed.as_ptr();
+                }
+            }
+            // SAFETY: forwards the same selector with valid arguments; the
+            // adjusted positions outlive the call.
+            unsafe {
+                let _: () = msg_send![super(self), showCGGlyphs: glyphs, positions: positions, count: count, font: font, textMatrix: matrix, attributes: attributes, inContext: context];
+            }
+            drop(placed);
+        }
+    }
+);
+
+impl GlyphPlacer {
+    fn new() -> Retained<Self> {
+        let this = Self::alloc().set_ivars(());
+        // SAFETY: `init` is the designated initializer of `NSLayoutManager`.
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+thread_local! {
+    /// Set while a paragraph draws its glyphs as Chromium's masks
+    /// (`glyphs`): whether they are smoothed (`-webkit-font-smoothing:
+    /// auto`).
+    static PLACE_GLYPHS: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+/// `positions` (user space) moved so that, in device space, x lands on
+/// Skia's quarter pixel and y on a whole pixel. `None` when the user space
+/// is rotated or skewed (glyphs keep their exact positions).
+fn quarter_positions(positions: &[CGPoint], device: &CGAffineTransform) -> Option<Vec<CGPoint>> {
+    if device.b != 0.0 || device.c != 0.0 || device.a == 0.0 || device.d == 0.0 {
+        return None;
+    }
+    Some(
+        positions
+            .iter()
+            .map(|point| {
+                let x = device.a * point.x + device.tx;
+                let y = device.d * point.y + device.ty;
+                let qx = ((x + 0.125) * 4.0).floor() / 4.0;
+                let qy = (y + 0.5).floor();
+                CGPoint::new(point.x + (qx - x) / device.a, point.y + (qy - y) / device.d)
+            })
+            .collect(),
+    )
+}
+
 fn word_at(text: &NSString, index: NSUInteger) -> NSRange {
     let length = text.length();
     let mut end = index;
@@ -340,7 +439,7 @@ thread_local! {
 impl Typesetter {
     fn new() -> Self {
         let storage = NSTextStorage::new();
-        let manager = NSLayoutManager::new();
+        let manager = Retained::into_super(GlyphPlacer::new());
         let container = WordContainer::new();
         // Text starts exactly at the origin the view gives.
         container.setLineFragmentPadding(0.0);
@@ -624,8 +723,23 @@ fn css_weight(font: Retained<NSFont>, weight: u16, size: CGFloat) -> Retained<NS
     NSFont::fontWithDescriptor_size(&descriptor, size).unwrap_or(font)
 }
 
+/// The size of the font that shapes and draws `size` px text. Chromium lays
+/// text out and rasterizes it at the CSS size truncated to 1/64 px (as on
+/// Linux): 0.78rem (12.48px) text is 12.46875px text, about 0.1% narrower,
+/// enough to move a long line's glyphs by a quarter pixel. Only with
+/// Chromium's glyph masks: Core Graphics' own quantization rounds the
+/// difference away less often than it shifts it.
+fn face_size(size: f32) -> CGFloat {
+    let size = CGFloat::from(size.max(1.0));
+    if crate::glyphs::enabled() {
+        (size * 64.0).floor() / 64.0
+    } else {
+        size
+    }
+}
+
 fn resolve_font(spec: &FontSpec) -> Retained<NSFont> {
-    let size = CGFloat::from(spec.size.max(1.0));
+    let size = face_size(spec.size);
     let weight = system_weight(spec.weight);
     let system = || {
         css_weight(
@@ -1150,6 +1264,23 @@ impl Paragraph {
         width: f32,
         selection: Option<(u32, u32)>,
     ) {
+        self.draw_glyphs(context, origin, width, selection, true);
+    }
+
+    /// Paints the paragraph into a printed page: glyphs keep their exact
+    /// positions (a page has no pixel grid).
+    pub fn draw_printed(&self, context: &CGContext, origin: CGPoint, width: f32) {
+        self.draw_glyphs(context, origin, width, None, false);
+    }
+
+    fn draw_glyphs(
+        &self,
+        context: &CGContext,
+        origin: CGPoint,
+        width: f32,
+        selection: Option<(u32, u32)>,
+        place: bool,
+    ) {
         TYPESETTER.with(|typesetter| {
             typesetter.load(self, width);
             let glyphs = typesetter.glyphs();
@@ -1181,25 +1312,34 @@ impl Paragraph {
                 };
             }
             self.draw_boxes(typesetter, context, origin);
-            // Skia rounds each glyph to the nearest quarter pixel; Core
+            // Chromium's glyph masks (`glyphs`, opt-in): TextKit's runs go to
+            // `GlyphPlacer`, which draws each glyph on Skia's quarter pixel.
+            // Not under a shadow, which Core Graphics would cast per glyph.
+            let masks = place && self.shadow.is_none() && crate::glyphs::enabled();
+            // Otherwise Core Graphics draws the glyphs at their exact
+            // advances in quarter pixels (without subpixel positioning it
+            // rounds each glyph to a whole pixel and words drift by up to a
+            // pixel). Skia rounds each glyph to the nearest quarter; Core
             // Graphics truncates: an eighth of a pixel turns one into the
             // other.
-            let (_, scale) = self.line_phase.get();
-            let glyph_origin = CGPoint::new(origin.x + 0.125 / scale, origin.y);
+            let glyph_origin = if masks {
+                origin
+            } else {
+                let (_, scale) = self.line_phase.get();
+                CGPoint::new(origin.x + 0.125 / scale, origin.y)
+            };
             let lines = self.snapped_lines(typesetter, glyphs, glyph_origin);
             for &(range, at) in &lines {
                 typesetter
                     .manager
                     .drawBackgroundForGlyphRange_atPoint(range, at);
             }
-            // Glyphs at their exact advances, in quarter pixels, like Skia's
-            // subpixel text on macOS: without it Core Graphics rounds each
-            // glyph to a whole pixel and words drift by up to a pixel.
             CGContext::save_g_state(Some(context));
             CGContext::set_allows_font_subpixel_positioning(Some(context), true);
             CGContext::set_should_subpixel_position_fonts(Some(context), true);
-            CGContext::set_allows_font_subpixel_quantization(Some(context), true);
-            CGContext::set_should_subpixel_quantize_fonts(Some(context), true);
+            CGContext::set_allows_font_subpixel_quantization(Some(context), !masks);
+            CGContext::set_should_subpixel_quantize_fonts(Some(context), !masks);
+            let placing = PLACE_GLYPHS.replace(masks.then_some(!self.antialiased));
             if self.antialiased {
                 // `-webkit-font-smoothing: antialiased`: no stem darkening.
                 CGContext::save_g_state(Some(context));
@@ -1230,6 +1370,7 @@ impl Paragraph {
             if self.antialiased {
                 CGContext::restore_g_state(Some(context));
             }
+            PLACE_GLYPHS.set(placing);
             CGContext::restore_g_state(Some(context));
             if let Some(range) = selected {
                 // SAFETY: the attribute name is an immutable string exported by AppKit.
