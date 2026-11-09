@@ -26,7 +26,8 @@ final class Language2StyleCompiler
      *   states: array<string, array<string, array<string, string|int|bool>>>,
      *   recipes: array<string, array{base: array<string, string|int|bool>, variants: array<string, array<string, array<string, string|int|bool>>>}>,
      *   queries: list<array<string, mixed>>,
-     *   keyframes: array<string, list<array{offset: float, styles: array<string, string|int|bool>}>>
+     *   keyframes: array<string, list<array{offset: float, styles: array<string, string|int|bool>}>>,
+     *   stateVariableRules: list<array{selector: string, state: string, body: string}>
      * }
      */
     public static function extract(string $source, string $name): array
@@ -37,6 +38,9 @@ final class Language2StyleCompiler
         $queries = [];
         $keyframes = [];
         $legacy = [];
+        // State blocks that read var(): kept as source so a query that
+        // redeclares :root custom properties can resolve them again.
+        $stateVariableRules = [];
 
         $blocks = self::blocks($source, $name);
         // :root custom properties are visible inside @media/@container,
@@ -85,6 +89,7 @@ final class Language2StyleCompiler
                     $recipes = array_replace_recursive($recipes, $nested['recipes']);
                     $queries = [...$queries, ...$nested['queries']];
                     $keyframes = [...$keyframes, ...$nested['keyframes']];
+                    $stateVariableRules = [...$stateVariableRules, ...$nested['stateVariableRules']];
                     $legacy[] = preg_replace('/^:root \{[^}]*\}\s*/', '', $nested['source']) ?? $nested['source'];
                 }
                 continue;
@@ -115,6 +120,9 @@ final class Language2StyleCompiler
                 } catch (CssDiagnostic $diagnostic) {
                     $diagnostic->selector ??= $header;
                     throw $diagnostic;
+                }
+                if (str_contains($body, 'var(')) {
+                    $stateVariableRules[] = ['selector' => $selector, 'state' => $state, 'body' => $body];
                 }
                 continue;
             }
@@ -152,6 +160,7 @@ final class Language2StyleCompiler
                 $recipes = array_replace_recursive($recipes, $layer['recipes']);
                 $queries = [...$queries, ...$layer['queries']];
                 $keyframes = [...$keyframes, ...$layer['keyframes']];
+                $stateVariableRules = [...$stateVariableRules, ...$layer['stateVariableRules']];
                 $legacy[] = $layer['source'];
                 continue;
             }
@@ -174,6 +183,7 @@ final class Language2StyleCompiler
             'recipes' => $recipes,
             'queries' => $queries,
             'keyframes' => $keyframes,
+            'stateVariableRules' => $stateVariableRules,
         ];
     }
 

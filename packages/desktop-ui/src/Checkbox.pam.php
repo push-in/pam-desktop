@@ -13,7 +13,7 @@ use Pam\Desktop\KeyEvent;
 /** Controlled checkbox composed of native primitives; the owner applies emitted values. */
 final class Checkbox extends Component
 {
-    public readonly SelectTheme $theme;
+    use Concerns\FollowsSelectTheme;
     /** Accessibility label; the localized "Checkbox" when none is given. */
     public readonly string $label;
     /**
@@ -22,7 +22,7 @@ final class Checkbox extends Component
      * @param ?int $boxSize the painted box at the slot's top-left (`.p-checkbox-box`), `$size` when null
      * @param float $radius corner radius of the box
      */
-    public function __construct(#[State] public bool $checked, private readonly Closure $changed, #[State] public bool $enabled = true, ?string $label = null, ?SelectTheme $theme = null, public readonly int $size = 24, public readonly ?int $boxSize = null, public readonly float $radius = 5.0)
+    public function __construct(#[State] public bool $checked, private readonly Closure $changed, #[State] public bool $enabled = true, ?string $label = null, SelectTheme|Closure|null $theme = null, public readonly int $size = 24, public readonly ?int $boxSize = null, public readonly float $radius = 5.0)
     {
         $this->label = $label ?? \Pam\Desktop\I18n\FrameworkText::get('checkbox.label');
         if ($size < 16 || $size > 48) {
@@ -30,7 +30,7 @@ final class Checkbox extends Component
         }
         if ($boxSize !== null && ($boxSize < 8 || $boxSize > $size)) {
             throw new \InvalidArgumentException("Checkbox boxSize must be 8 pixels up to its size.");
-        }$this->theme = $theme ?? new SelectTheme();
+        }$this->followTheme($theme);
     }
     public function toggle(): void
     {

@@ -4,7 +4,21 @@ declare(strict_types=1);
 
 namespace Pam\DesktopUi;
 
-/** Explicit tokens let desktop products match their existing design system. */
+use Closure;
+use Pam\Desktop\Appearance;
+
+/**
+ * Explicit tokens let desktop products match their existing design system.
+ *
+ * Controls take a theme or a `Closure(): SelectTheme`. The Closure is called
+ * on every render and a light/dark switch renders every component again, so
+ * a theme built from the current scheme follows a live switch:
+ *
+ * ```php
+ * new Select($options, null, $changed, theme: fn (): SelectTheme => Theme::select());
+ * new Select($options, null, $changed, theme: SelectTheme::adaptive(light: $light, dark: $dark));
+ * ```
+ */
 final readonly class SelectTheme
 {
     public function __construct(
@@ -50,5 +64,33 @@ final readonly class SelectTheme
             || !is_finite($focusRingWidth) || $focusRingWidth < 0 || $focusRingWidth > 8) {
             throw new \InvalidArgumentException('Invalid select theme geometry.');
         }
+    }
+
+    /**
+     * The theme to draw now: the theme itself, or what its Closure returns.
+     *
+     * @param self|(Closure(): self)|null $theme
+     */
+    public static function resolve(self|Closure|null $theme): self
+    {
+        if (!$theme instanceof Closure) {
+            return $theme ?? new self();
+        }
+        $resolved = $theme();
+        if (!$resolved instanceof self) {
+            throw new \InvalidArgumentException('A SelectTheme closure must return a SelectTheme.');
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * Picks `$dark` or `$light` by the effective scheme on every render.
+     *
+     * @return Closure(): self
+     */
+    public static function adaptive(self $light, self $dark): Closure
+    {
+        return static fn (): self => Appearance::isDark() ? $dark : $light;
     }
 }

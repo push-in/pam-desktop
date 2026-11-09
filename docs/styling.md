@@ -162,7 +162,7 @@ The whole list is kept. Each backend walks it in order and uses the first family
 | `asset://…` | A font file packaged with the application, loaded on first use: Fontconfig on Linux, CoreText on macOS, DirectWrite (and a private GDI font for text inputs) on Windows. At most 32 files, 8 MiB each and 64 MiB in all. |
 | Any other name | An installed family. One that is not installed is skipped; on Linux a Fontconfig alias does not count (`Consolas` is not DejaVu Sans Mono), only Chromium's metric-compatible equivalents (`Arial` → Liberation Sans, `Times New Roman` → Liberation Serif, `Courier New` → Liberation Mono, `Calibri` → Carlito, `Cambria` → Caladea). |
 
-A `@font-face` family in the list resolves to its best face for the weight and style; the other entries stay as fallbacks. On Windows a packaged font is only used as the first entry. When no entry matches, the interface font is used. The `system-ui` keyword inside the `font:` shorthand is not accepted; use `font-family`.
+A `@font-face` family in the list resolves to its best face for the weight and style; the other entries stay as fallbacks. Text inputs (`Input`, multiline `Input`, the fields of `Select` and `Autocomplete`) draw with the same resolved list, weight and size as `Text`. On Windows a packaged font is only used as the first entry. When no entry matches, the interface font is used. The `system-ui` keyword inside the `font:` shorthand is not accepted; use `font-family`.
 
 ### Line breaking and white space
 
@@ -350,6 +350,23 @@ The tooltip is the native one of the platform, shown when the pointer rests on t
 `onHoverIn()` and `onHoverOut()` exist on every element, not only on pressables.
 
 ## Dark mode
+
+### Theme tokens in CSS
+
+A `:root` block inside `@media` redeclares the custom properties for the whole stylesheet while the query matches, as in CSS. Declare the tokens once and switch them with the scheme:
+
+```css
+:root { --bg: #13141b; --fg: #f2f3f8; }                     /* dark by default */
+@media (prefers-color-scheme: light) { :root { --bg: #ffffff; --fg: #15172b; } }
+
+.page { background-color: var(--bg); }
+.row:hover { background-color: var(--fg); }
+```
+
+Every rule that reads a redeclared property follows it: rules outside the query, their state blocks (`:hover`, `:focus`…) and the rules of other matched queries. The rules keep their place in the cascade. The scheme is the effective one (`Appearance::set()` or the system), and a change restyles the tree. `oklch()`, `lab()` and `color-mix()` values resolve to sRGB like Chromium (out-of-gamut colors are clipped). Text styles declared on `:root` itself (`:root { color: var(--fg); font-family: var(--font-sans) }`) follow it too. CSS `color` also tints an `ActivityIndicator` (`.spinner { color: var(--muted) }`; a `color` attribute still wins), so spinners switch with the scheme. For colors computed in PHP (DesktopUI themes), see [live theme switching](desktop-ui.md#live-theme-switching).
+
+### In PHP
+
 
 `Pam\Desktop\Appearance` reads and sets the appearance of the application. Reads are synchronous.
 

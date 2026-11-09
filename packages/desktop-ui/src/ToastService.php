@@ -33,7 +33,7 @@ final class ToastService
         &get => $this->toast->messages;
     }
     private ?ToastOutlet $outlet = null;
-    /** @var array{0: ToastPosition, 1: int, 2: float, 3: float, 4: string, 5: float, 6?: ToastTheme} */
+    /** @var array{0: ToastPosition, 1: int, 2: float, 3: float, 4: string, 5: float, 6?: ToastTheme|\Closure} */
     private array $geometry = [ToastPosition::TopRight, 5, 400.0, 20.0, 'system-ui', 1.5];
 
     private function __construct()
@@ -57,7 +57,7 @@ final class ToastService
         float $offset = 20,
         string $fontFamily = 'system-ui',
         float $backdropBlur = 1.5,
-        ToastTheme $theme = new ToastTheme(),
+        ToastTheme|\Closure $theme = new ToastTheme(),
     ): self {
         $this->geometry = [$position, $limit, $width, $offset, $fontFamily, $backdropBlur, $theme];
         $toast = $this->create();

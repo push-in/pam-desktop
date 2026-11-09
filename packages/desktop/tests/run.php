@@ -602,7 +602,7 @@ $assert(
         && $inheritText->properties()[PropKey::FontSize->value] === 16
         && $inheritText->properties()[PropKey::FontFamily->value]
             === 'asset://assets/fonts/Theme-Bold.ttf'
-        && !isset($inheritText->properties()[PropKey::FontWeight->value])
+        && in_array($inheritText->properties()[PropKey::FontWeight->value] ?? null, [700, '700', 'bold'], true)
         && $inheritText->properties()[PropKey::TextAlign->value] === 2,
     'Text CSS properties and logical font families must inherit through native layout containers.',
 );
@@ -7517,6 +7517,7 @@ require __DIR__.'/qualified_enum_expression.php';
 require __DIR__.'/media_only_class.php';
 require __DIR__.'/hot_reload_state.php';
 require __DIR__.'/appearance.php';
+require __DIR__.'/media_root_variables.php';
 require __DIR__.'/keyboard_visibility.php';
 
 foreach ($testPluginRoots as $testPluginRoot) {

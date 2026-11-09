@@ -40,7 +40,7 @@ final class Autocomplete extends Component
     public readonly string $anchorReference;
     public readonly string $filterPlaceholder;
     public readonly string $filterLabel;
-    public readonly SelectTheme $theme;
+    use Concerns\FollowsSelectTheme;
     public readonly AutocompleteInputStyle $inputStyle;
     /** @var array<string,true> */
     #[State(hotReload: false)] public array $failedImages = [];
@@ -62,7 +62,7 @@ final class Autocomplete extends Component
         public string $placeholder = '',
         public ?string $label = null,
         public string $host = 'desktop-ui',
-        ?SelectTheme $theme = null,
+        SelectTheme|Closure|null $theme = null,
         private readonly int $minimumLength = 2,
         private readonly int $limit = 8,
         private readonly int $debounceMs = 250,
@@ -79,7 +79,7 @@ final class Autocomplete extends Component
             throw new \InvalidArgumentException('Invalid autocomplete bounds.');
         }
         $this->label ??= FrameworkText::get('autocomplete.label');
-        $this->theme = $theme ?? new SelectTheme();
+        $this->followTheme($theme);
         $this->inputStyle = $inputStyle ?? new AutocompleteInputStyle();
         $this->reference = 'autocomplete-'.spl_object_id($this);
         $this->filterReference = $this->reference.'-filter';

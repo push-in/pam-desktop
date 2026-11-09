@@ -23,7 +23,7 @@ final class DatePicker extends Component
     /** Empty-field text; the localized "Select date" when none is given. */
     public readonly string $placeholder;
     public readonly AutocompleteInputStyle $fieldStyle;
-    public readonly SelectTheme $theme;
+    use Concerns\FollowsSelectTheme;
     public readonly string $host;
     public readonly Select $hours;
     public readonly Select $minutes;
@@ -32,14 +32,14 @@ final class DatePicker extends Component
     private ?DateTimeImmutable $start = null;
     private ?DateTimeImmutable $end = null;
     /** @param Closure(?DateSelection):void $changed */
-    public function __construct(#[State] public ?DateSelection $value, private readonly Closure $changed, public readonly DatePickerMode $mode = DatePickerMode::Date, #[State] public bool $enabled = true, ?string $placeholder = null, ?DatePickerLocale $locale = null, ?SelectTheme $theme = null, public readonly int $minimumYear = 1900, public readonly int $maximumYear = 2100, public readonly DatePickerPresentation $presentation = DatePickerPresentation::Button, public readonly string $accessibilityLabel = '', public readonly ?string $displayFormat = null, ?AutocompleteInputStyle $fieldStyle = null, public readonly string $rangeSeparator = ' — ', public readonly bool $showFieldIcon = true)
+    public function __construct(#[State] public ?DateSelection $value, private readonly Closure $changed, public readonly DatePickerMode $mode = DatePickerMode::Date, #[State] public bool $enabled = true, ?string $placeholder = null, ?DatePickerLocale $locale = null, SelectTheme|Closure|null $theme = null, public readonly int $minimumYear = 1900, public readonly int $maximumYear = 2100, public readonly DatePickerPresentation $presentation = DatePickerPresentation::Button, public readonly string $accessibilityLabel = '', public readonly ?string $displayFormat = null, ?AutocompleteInputStyle $fieldStyle = null, public readonly string $rangeSeparator = ' — ', public readonly bool $showFieldIcon = true)
     {
         if ($minimumYear < 1 || $maximumYear > 9999 || $minimumYear > $maximumYear) throw new InvalidArgumentException('Invalid calendar year bounds.');
         if (mb_strlen($rangeSeparator) > 16) throw new InvalidArgumentException('Range separators are at most 16 characters.');
-        $this->placeholder=$placeholder??FrameworkText::get('datePicker.placeholder');$this->locale=$locale??DatePickerLocale::system();$this->fieldStyle=$fieldStyle??new AutocompleteInputStyle(40,14,400,12,8);$this->theme=$theme??new SelectTheme();$this->host='date-picker-'.spl_object_id($this);$this->fieldReference=$this->host.'-field';
+        $this->placeholder=$placeholder??FrameworkText::get('datePicker.placeholder');$this->locale=$locale??DatePickerLocale::system();$this->fieldStyle=$fieldStyle??new AutocompleteInputStyle(40,14,400,12,8);$this->followTheme($theme);$this->host='date-picker-'.spl_object_id($this);$this->fieldReference=$this->host.'-field';
         $this->month=($value->start??new DateTimeImmutable())->modify('first day of this month')->setTime(0,0);
-        $this->hours=new Select(array_map(static fn(int $v):SelectOption=>new SelectOption($v,str_pad((string)$v,2,'0',STR_PAD_LEFT)),range(0,23)),0,$this->hourChanged(...),host:$this->host,theme:$this->theme,label:$this->locale->hour);
-        $this->minutes=new Select(array_map(static fn(int $v):SelectOption=>new SelectOption($v,str_pad((string)$v,2,'0',STR_PAD_LEFT)),range(0,59)),0,$this->minuteChanged(...),host:$this->host,theme:$this->theme,label:$this->locale->minute);
+        $this->hours=new Select(array_map(static fn(int $v):SelectOption=>new SelectOption($v,str_pad((string)$v,2,'0',STR_PAD_LEFT)),range(0,23)),0,$this->hourChanged(...),host:$this->host,theme:$this->themeSource,label:$this->locale->hour);
+        $this->minutes=new Select(array_map(static fn(int $v):SelectOption=>new SelectOption($v,str_pad((string)$v,2,'0',STR_PAD_LEFT)),range(0,59)),0,$this->minuteChanged(...),host:$this->host,theme:$this->themeSource,label:$this->locale->minute);
     }
     public function setup():void{$this->timezone=\Pam\Desktop\useTimezone();}
     private function local(DateTimeImmutable $date):DateTimeImmutable{return $this->mode===DatePickerMode::DateTime&&$this->timezone!==null?$date->setTimezone($this->timezone->zone()):$date;}

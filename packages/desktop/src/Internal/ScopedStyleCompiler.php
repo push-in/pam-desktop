@@ -348,7 +348,14 @@ final class ScopedStyleCompiler
             'fonts' => $fonts,
             'variables' => $variables,
             'rootInherited' => $rootInherited,
+            // Kept when it reads custom properties, so a scheme query that
+            // redeclares them (`@media (prefers-color-scheme) { :root { … } }`)
+            // or StyleVariables can resolve it again.
+            'rootInheritedSource' => $rootText !== [] && str_contains(implode('; ', $rootText), 'var(')
+                ? implode('; ', $rootText)
+                : '',
             'variableRules' => $variableRules,
+            'stateVariableRules' => $language2['stateVariableRules'],
             'tokens' => $language2['tokens'],
             'states' => $language2['states'],
             'stateRules' => $stateRules,

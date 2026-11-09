@@ -1,6 +1,50 @@
 # Changelog
 
-## Unreleased
+## 2.1.3 - 2026-11-09
+
+Theme switching and text inputs for storefront-style apps. Update the
+Composer package (`pam composer update pushinbr/pam-desktop`); the launcher
+downloads the verified 2.1.3 host. No breaking changes: DesktopUI themes still
+take plain `SelectTheme`/`ToastTheme` values.
+
+### Fixed
+
+- **Theme tokens switch with the scheme.** A `:root` block inside a matched
+  `@media` (`@media (prefers-color-scheme: light) { :root { --bg: #fff; } }`)
+  now redeclares the custom properties for the whole stylesheet: rules outside
+  the query, their state blocks and the rules of other matched queries read
+  the new values and keep their cascade order. Before, only rules written
+  inside the query saw them, so the skeleton's dark tokens never applied.
+  State blocks (`:hover`, `:focus`…) inside a matched query now apply too.
+- **Packaged font families with several weights.** An element that inherits a
+  `@font-face` family and sets its own `font-weight` keeps the weight next to
+  the resolved face, so the GTK host (which names a packaged face by its
+  family) draws the Bold file instead of the Regular one.
+- **Text inputs draw the CSS font on Linux.** `Input` (single and multiline)
+  and the fields of `Select`/`Autocomplete` resolve their `font-family` list
+  like `Text` (packaged `@font-face` faces, installed names, generics) with
+  the weight and size. Before, a list that started with a packaged face
+  (`font-family: var(--font-sans)` with `@font-face`) left GTK without a
+  family and the field drew a fallback face. macOS and Windows already
+  shared the `Text` font path.
+- **`:root` text styles follow the scheme.** `:root { color: var(--fg) }`
+  and the other inherited text properties on `:root` resolve again with the
+  custom properties of a matched scheme query and `StyleVariables`, instead
+  of once per stylesheet.
+
+### Added
+
+- **Live theme switching for DesktopUI.** `Select`, `Autocomplete`,
+  `MultiSelect`, `DatePicker`, `Checkbox`, `Toast` and
+  `Toast::service()->configure()` take a theme or a `Closure` that returns
+  one; it is called on every render, and a light/dark switch renders every
+  component again, so controls (open popups and toasts on screen included)
+  switch at once. `SelectTheme::adaptive(light:, dark:)` and
+  `ToastTheme::adaptive(light:, dark:)` pick by the effective scheme;
+  `resolve()` returns the theme a value or Closure stands for. See
+  docs/desktop-ui.md, "Live theme switching".
+- **CSS `color` tints `ActivityIndicator`.** `.spinner { color: var(--muted) }`
+  colors the spinner and follows the scheme; a `color` attribute still wins.
 
 ## 2.1.2 - 2026-11-09
 

@@ -35,6 +35,10 @@ final class Toast extends Component
     private array $deadlines = [];
     private bool $suspended = false;
     private ?\Closure $emptied = null;
+    /** The theme drawn by the current render (a Closure theme is called again on every render). */
+    public private(set) ToastTheme $theme;
+    /** @var ToastTheme|\Closure(): ToastTheme */
+    private ToastTheme|\Closure $themeSource;
 
     public function __construct(
         public string $host = 'desktop-ui',
@@ -44,12 +48,19 @@ final class Toast extends Component
         public readonly float $offset = 20,
         public readonly string $fontFamily = 'system-ui',
         public readonly float $backdropBlur = 1.5,
-        public readonly ToastTheme $theme = new ToastTheme(),
+        ToastTheme|\Closure $theme = new ToastTheme(),
     ) {
+        $this->themeSource = $theme;
+        $this->theme = ToastTheme::resolve($theme);
         if ($limit < 1 || $limit > 20 || $width < 160 || $width > 800 || $offset < 0 || $offset > 200 || !($backdropBlur >= 0 && $backdropBlur <= 50)) {
             throw new \InvalidArgumentException('Invalid toast geometry.');
         }
         $this->reference = 'toast-'.spl_object_id($this);
+    }
+
+    public function rendering(): void
+    {
+        $this->theme = ToastTheme::resolve($this->themeSource);
     }
 
     /**
