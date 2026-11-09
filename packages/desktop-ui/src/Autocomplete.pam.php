@@ -317,13 +317,18 @@ final class Autocomplete extends Component
         }
         return $index === $this->highlighted ? $this->theme->highlight : 0x00000000;
     }
+    /** The theme placeholder colour, else the field text at 45% (the hosts' dimmed default). */
+    public function placeholderColor(): int
+    {
+        return $this->theme->placeholderColor ?? ((0x73 << 24) | ($this->theme->text & 0xFFFFFF));
+    }
     public function optionColor(AutocompleteOption $option): int
     {
         return $this->isSelected($option) ? ($this->theme->selectedText ?? $this->optionTextColor()) : $this->optionTextColor();
     }
-    /** Select mode keeps a 2px gap between 36px options, like a PrimeVue list. */
-    public function optionHeight(): int { return $this->filterInPopup ? $this->rowHeight() - 2 : $this->rowHeight(); }
-    private function listHeight(): int { return max(0, count($this->options) * $this->rowHeight() - ($this->filterInPopup && $this->options !== [] ? 2 : 0)); }
+    /** Select mode keeps a 2px gap between options (36px unless the theme sets `optionHeight`), like a PrimeVue list. */
+    public function optionHeight(): int|float { return $this->filterInPopup ? $this->rowHeight() - 2 : $this->rowHeight(); }
+    private function listHeight(): int|float { return max(0, count($this->options) * $this->rowHeight() - ($this->filterInPopup && $this->options !== [] ? 2 : 0)); }
     private function chromeHeight(): int { return 10 + ($this->showsPager() ? 40 : 0) + ($this->filterInPopup ? 54 : 0); }
     private function selectedIndex(): int
     {
@@ -380,7 +385,7 @@ final class Autocomplete extends Component
         }
         $this->search(1, '');
     }
-    public function rowHeight(): int { return $this->showImages ? 64 : 38; }
+    public function rowHeight(): int|float { return $this->showImages ? 64 : ($this->theme->optionHeight === null ? 38 : $this->theme->optionHeight + ($this->filterInPopup ? 2 : 0)); }
 
     public function focus(): void
     {
@@ -418,9 +423,9 @@ final class Autocomplete extends Component
 ?>
 <template>
     <Column>
-        <Input p-if="!$filterInPopup" :nativeRef="$reference" :value="$value" :enabled="$enabled" :placeholder="$placeholder" :accessibilityLabel="$label" accessibilityRole="combobox" :accessibilityExpanded="$open" on:change="input" on:blur="blur" on:focus="focus" on:keyDown="key" captureKeys="Enter,Escape,ArrowDown,ArrowUp" :backgroundColor="inputSurfaceColor()" :textColor="$theme->text" :borderColor="$theme->border" class="input" :height="$inputStyle->height" :fontSize="$inputStyle->fontSize" :fontWeight="$inputStyle->fontWeight" :paddingLeft="$inputStyle->paddingHorizontal" :paddingRight="$inputStyle->paddingHorizontal" :borderRadius="$inputStyle->radius" />
-        <Row p-else :nativeRef="$anchorReference" class="select-input" alignItems="center" :backgroundColor="inputSurfaceColor()" :borderColor="$theme->border">
-            <Input :nativeRef="$reference" :value="$value" :enabled="$enabled" :editable="false" :placeholder="$placeholder" :accessibilityLabel="$label" accessibilityRole="combobox" :accessibilityExpanded="$open" on:blur="blur" on:focus="focus" on:keyDown="key" captureKeys="Enter,Escape,ArrowDown,ArrowUp" backgroundColor="0" :textColor="$theme->text" :borderColor="0" class="select-value" :height="$inputStyle->height - 2" :fontSize="$inputStyle->fontSize" :fontWeight="$inputStyle->fontWeight" :paddingLeft="$inputStyle->paddingHorizontal" :paddingRight="$inputStyle->paddingHorizontal" />
+        <Input p-if="!$filterInPopup" :nativeRef="$reference" :value="$value" :enabled="$enabled" :placeholder="$placeholder" :placeholderColor="placeholderColor()" :accessibilityLabel="$label" accessibilityRole="combobox" :accessibilityExpanded="$open" on:change="input" on:blur="blur" on:focus="focus" on:keyDown="key" captureKeys="Enter,Escape,ArrowDown,ArrowUp" :backgroundColor="inputSurfaceColor()" :textColor="$theme->text" :borderColor="$theme->border" class="input" :height="$inputStyle->height" :fontSize="$inputStyle->fontSize" :fontWeight="$inputStyle->fontWeight" :paddingLeft="$inputStyle->paddingHorizontal" :paddingRight="$inputStyle->paddingHorizontal" :borderRadius="$inputStyle->radius" />
+        <Row p-else :nativeRef="$anchorReference" class="select-input" alignItems="center" :backgroundColor="inputSurfaceColor()" :borderColor="$open && $theme->focusBorder !== null ? $theme->focusBorder : $theme->border" :shadowColor="$open && $theme->focusRing !== null ? $theme->focusRing : 0" :shadowSpreadRadius="$open && $theme->focusRing !== null ? $theme->focusRingWidth : 0">
+            <Input :nativeRef="$reference" :value="$value" :enabled="$enabled" :editable="false" :placeholder="$placeholder" :placeholderColor="placeholderColor()" :accessibilityLabel="$label" accessibilityRole="combobox" :accessibilityExpanded="$open" on:blur="blur" on:focus="focus" on:keyDown="key" captureKeys="Enter,Escape,ArrowDown,ArrowUp" backgroundColor="0" :textColor="$theme->text" :borderColor="0" class="select-value" :height="$inputStyle->height - 2" :fontSize="$inputStyle->fontSize" :fontWeight="$inputStyle->fontWeight" :paddingLeft="$inputStyle->paddingHorizontal" :paddingRight="$inputStyle->paddingHorizontal" />
             <Pressable p-if="clearable()" class="select-clear" :accessibilityLabel="uiText('autocomplete.clear', ['label' => mb_strtolower($label)])" accessibilityRole="button" on:press="clear"><Icon p-if="$theme->iconFont !== null" name="times" :font="$theme->iconFont" size="14" :color="clearIconColor()" /><Text p-else :textColor="clearIconColor()" fontSize="16">×</Text></Pressable>
             <Pressable class="select-trigger" :enabled="$enabled" :accessibilityLabel="triggerAccessibilityLabel()" accessibilityRole="button" on:press="toggle"><Icon p-if="$theme->iconFont !== null" name="chevron-down" :font="$theme->iconFont" size="14" :color="triggerIconColor()" /><Text p-else :textColor="triggerIconColor()" fontSize="14">⌄</Text></Pressable>
         </Row>

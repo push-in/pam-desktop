@@ -13,6 +13,9 @@ namespace Pam\Desktop\Charts;
  * - `grid`: recessive grid lines (defaults to 12% ink).
  * - `surface`: chart background and marker knockouts.
  * - `legend`: legend text and marker metrics ({@see LegendStyle}).
+ * - `axis`: axis label, grid and padding metrics ({@see AxisStyle}).
+ * - `fontFamily`: CSS font list of every chart label (Chart.js `font.family`);
+ *   empty is the platform UI font.
  */
 final readonly class ChartTheme
 {
@@ -24,6 +27,8 @@ final readonly class ChartTheme
         public string $surface,
         public ChartPalette $palette,
         public LegendStyle $legend = new LegendStyle(),
+        public AxisStyle $axis = new AxisStyle(),
+        public string $fontFamily = '',
     ) {
     }
 
@@ -91,13 +96,14 @@ final readonly class ChartTheme
             $read('grid', $base->grid),
             $read('surface', $base->surface),
             is_string($values['primary'] ?? null) || is_int($values['primary'] ?? null) ? null : $base->palette,
-        )->legendStyle(self::legendFromArray($values, $base->legend));
+        )->legendStyle(self::legendFromArray($values, $base->legend))->axisStyle(self::axisFromArray($values, $base->axis))
+            ->fontFamily(is_string($values['fontFamily'] ?? null) ? $values['fontFamily'] : $base->fontFamily);
     }
 
     /**
      * Legend metrics from `legendFontSize`, `legendFontWeight` (400..700),
-     * `legendMarkerRadius`, `legendMarkerGap`, `legendItemGap` and
-     * `legendValueGap` keys.
+     * `legendMarkerRadius`, `legendMarkerGap`, `legendItemGap`,
+     * `legendValueGap`, `legendMarkerBox` and `legendColor` keys.
      *
      * @param array<array-key, mixed> $values
      */
@@ -121,18 +127,76 @@ final readonly class ChartTheme
             $number('legendMarkerGap', $base->markerGap),
             $number('legendItemGap', $base->itemGap),
             $number('legendValueGap', $base->valueGap),
+            isset($values['legendMarkerBox']) ? $number('legendMarkerBox', 0.0) : $base->markerBox,
+            is_string($values['legendColor'] ?? null) || is_int($values['legendColor'] ?? null)
+                ? Internal\Color::fromMixed($values['legendColor']) : $base->color,
         );
+    }
+
+    /**
+     * Axis metrics from `axisFontSize`, `axisLabelGap`, `axisXLabelHeight`,
+     * `axisGridDash`, `axisPaddingTop|Right|Bottom|Left`, `axisXLabelWeight`,
+     * `axisFitEdgeLabels`, `axisTickLength`, `axisTickPadding` and
+     * `axisBorderColor` keys.
+     *
+     * @param array<array-key, mixed> $values
+     */
+    private static function axisFromArray(array $values, AxisStyle $base): AxisStyle
+    {
+        $number = static fn (string $key, float $default): float => is_int($values[$key] ?? null) || is_float($values[$key] ?? null) || (is_string($values[$key] ?? null) && is_numeric($values[$key]))
+            ? (float) $values[$key]
+            : $default;
+
+        return new AxisStyle(
+            $number('axisFontSize', $base->fontSize),
+            $number('axisLabelGap', $base->labelGap),
+            $number('axisXLabelHeight', $base->xLabelHeight),
+            $number('axisGridDash', $base->gridDash),
+            $number('axisPaddingTop', $base->paddingTop),
+            $number('axisPaddingRight', $base->paddingRight),
+            $number('axisPaddingBottom', $base->paddingBottom),
+            $number('axisPaddingLeft', $base->paddingLeft),
+            self::weightFrom($values['axisXLabelWeight'] ?? null, $base->xLabelWeight),
+            is_bool($values['axisFitEdgeLabels'] ?? null) ? $values['axisFitEdgeLabels'] : $base->fitEdgeLabels,
+            $number('axisTickLength', $base->tickLength),
+            $number('axisTickPadding', $base->tickPadding),
+            is_string($values['axisBorderColor'] ?? null) || is_int($values['axisBorderColor'] ?? null)
+                ? Internal\Color::fromMixed($values['axisBorderColor']) : $base->borderColor,
+        );
+    }
+
+    /** A CSS numeric weight (400..900) as a canvas weight, or `$default`. */
+    private static function weightFrom(mixed $weight, \Pam\Desktop\Canvas\FontWeight $default): \Pam\Desktop\Canvas\FontWeight
+    {
+        return is_numeric($weight) ? match (true) {
+            (int) $weight >= 700 => \Pam\Desktop\Canvas\FontWeight::Bold,
+            (int) $weight >= 600 => \Pam\Desktop\Canvas\FontWeight::SemiBold,
+            (int) $weight >= 500 => \Pam\Desktop\Canvas\FontWeight::Medium,
+            default => \Pam\Desktop\Canvas\FontWeight::Regular,
+        } : $default;
     }
 
     public function palette(ChartPalette $palette): self
     {
-        return new self($this->primary, $this->ink, $this->muted, $this->grid, $this->surface, $palette, $this->legend);
+        return new self($this->primary, $this->ink, $this->muted, $this->grid, $this->surface, $palette, $this->legend, $this->axis, $this->fontFamily);
     }
 
     /** The same colours with other legend metrics. */
     public function legendStyle(LegendStyle $legend): self
     {
-        return new self($this->primary, $this->ink, $this->muted, $this->grid, $this->surface, $this->palette, $legend);
+        return new self($this->primary, $this->ink, $this->muted, $this->grid, $this->surface, $this->palette, $legend, $this->axis, $this->fontFamily);
+    }
+
+    /** The same colours with other axis metrics. */
+    public function axisStyle(AxisStyle $axis): self
+    {
+        return new self($this->primary, $this->ink, $this->muted, $this->grid, $this->surface, $this->palette, $this->legend, $axis, $this->fontFamily);
+    }
+
+    /** The same theme with labels in another CSS font list (`"Inter, sans-serif"`). */
+    public function fontFamily(string $family): self
+    {
+        return new self($this->primary, $this->ink, $this->muted, $this->grid, $this->surface, $this->palette, $this->legend, $this->axis, trim($family));
     }
 
     /** Color for a series index: the series' own color, otherwise the palette hue. */

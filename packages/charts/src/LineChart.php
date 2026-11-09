@@ -33,6 +33,9 @@ class LineChart extends CartesianChart
     protected ?string $pointBackground = null;
     protected float $areaStartOpacity = 0.35;
     protected float $areaEndOpacity = 0.0;
+    protected ?string $areaColor = null;
+    /** @var array{0: float, 1: float}|null canvas y of the area gradient's start and end */
+    protected ?array $areaGradientSpan = null;
 
     public function tension(float $value): static
     {
@@ -58,6 +61,21 @@ class LineChart extends CartesianChart
     {
         if (!is_finite($start) || !is_finite($end) || $start < 0 || $start > 1 || $end < 0 || $end > 1) throw new \InvalidArgumentException('Area opacity must be between 0 and 1.');
         $copy = clone $this; $copy->areaStartOpacity = $start; $copy->areaEndOpacity = $end; return $copy;
+    }
+
+    /**
+     * Area fill colour (Chart.js `backgroundColor`) instead of the line colour,
+     * and the canvas y where its gradient starts and ends (Chart.js
+     * `createLinearGradient(0, y0, 0, y1)`); by default it spans the plot.
+     */
+    public function areaFill(?string $color, ?float $gradientStart = null, ?float $gradientEnd = null): static
+    {
+        $copy = clone $this;
+        $copy->areaColor = $color === null ? null : Color::normalize($color);
+        $copy->areaGradientSpan = $gradientStart === null || $gradientEnd === null || !is_finite($gradientStart) || !is_finite($gradientEnd)
+            ? null : [$gradientStart, $gradientEnd];
+
+        return $copy;
     }
 
     /**
@@ -141,7 +159,9 @@ class LineChart extends CartesianChart
 
             if ($this->area && count($points) > 1) {
                 foreach (Paths::area($points, $this->curve, $baseline, $this->tension) as $path) {
-                    $canvas = $canvas->gradientPath($path, 0, $py, 0, $py + $ph, Color::alpha($color, $this->areaStartOpacity), Color::alpha($color, $this->areaEndOpacity));
+                    [$fromY, $toY] = $this->areaGradientSpan ?? [$py, $py + $ph];
+                    $fill = $this->areaColor ?? $color;
+                    $canvas = $canvas->gradientPath($path, 0, $fromY, 0, $toY, Color::alpha($fill, $this->areaStartOpacity), Color::alpha($fill, $this->areaEndOpacity));
                 }
             }
 
@@ -166,7 +186,7 @@ class LineChart extends CartesianChart
 
         $canvas = $this->paintHighlight($canvas, $scale, $centers, $py, $ph);
 
-        $canvas = $this->paintLabels($canvas, $centers, $px, $pw, $this->height - self::PADDING
+        $canvas = $this->paintLabels($canvas, $centers, $px, $pw, $this->height - $this->theme->axis->paddingBottom
             - ($this->legend === LegendPosition::Bottom ? self::LEGEND_HEIGHT : 0.0) - 4.0);
         return $this->paintTooltip($canvas, $centers);
     }

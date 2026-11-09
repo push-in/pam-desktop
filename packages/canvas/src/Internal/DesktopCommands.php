@@ -24,7 +24,7 @@ final class DesktopCommands
                 Kind::Line => [['kind' => 4, 'startX' => $a[0], 'startY' => $a[1], 'endX' => $a[2], 'endY' => $a[3], 'color' => self::color($a[4]), 'width' => $a[5]]],
                 Kind::Path => [['kind' => 5, 'path' => Path::assert($a[0]), $a[3] === 2 ? 'stroke' : 'fill' => self::color($a[1]), 'width' => $a[2]]],
                 Kind::GradientPath => [['kind' => 5, 'path' => Path::assert($a[0]), 'gradient' => ['x0' => $a[1], 'y0' => $a[2], 'x1' => $a[3], 'y1' => $a[4], 'start' => self::color($a[5]), 'end' => self::color($a[6])]]],
-                Kind::Text, Kind::Label => [['kind' => 6, 'text' => $a[0], 'x' => $a[1], 'y' => $a[2], 'size' => $a[3], 'color' => self::color($a[4]), 'align' => $a[5] ?? 1, 'weight' => match ($a[6] ?? 1) { 2 => 500, 3 => 600, 4 => 700, default => 400 }]],
+                Kind::Text, Kind::Label => [['kind' => 6, 'text' => $a[0], 'x' => $a[1], 'y' => $a[2], 'size' => $a[3], 'color' => self::color($a[4]), 'align' => $a[5] ?? 1, 'weight' => match ($a[6] ?? 1) { 2 => 500, 3 => 600, 4 => 700, default => 400 }] + (is_string($a[7] ?? null) && $a[7] !== '' ? ['family' => $a[7]] : [])],
                 Kind::Arc => self::arc($a),
                 Kind::Sector => self::sector($a),
                 Kind::Polygon, Kind::Polyline => self::points($a, $command->kind === Kind::Polygon),

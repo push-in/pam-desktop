@@ -42,6 +42,9 @@ checkAutocomplete($single->optionSurface(1,$single->options[1])===0x1F6366F1&&$s
 checkAutocomplete(!$single->showsPager()&&$single->paginated(),'A single complete page hides the pager.');
 checkAutocomplete($single->filterPlaceholder===''&&$single->filterLabel===\Pam\Desktop\I18n\FrameworkText::get('autocomplete.filter',['label'=>\Pam\Desktop\I18n\FrameworkText::get('autocomplete.label')]),'An empty filter placeholder keeps an accessible filter label.');
 checkAutocomplete($single->optionHeight()===36&&$single->rowHeight()===38,'Select rows keep a 2px gap between 36px options.');
+$tall=new Autocomplete('',static function(string $query):void{},static function(int|string $id):void{},static fn()=>null,minimumLength:0,showImages:false,filterInPopup:true,theme:new Pam\DesktopUi\SelectTheme(optionHeight:36.4));
+checkAutocomplete(abs($tall->optionHeight()-36.4)<1e-9&&abs($tall->rowHeight()-38.4)<1e-9,'A theme option height (PrimeVue 13.6px x 1.5 + 16) keeps the 2px select gap.');
+$threw=false;try{new Pam\DesktopUi\SelectTheme(optionHeight:4);}catch(InvalidArgumentException){$threw=true;}checkAutocomplete($threw,'Option heights below 16 are rejected.');
 checkAutocomplete($single->clearable(),'A selected value with a clear handler is clearable.');
 $single->clear();checkAutocomplete($cleared===1&&$single->value===''&&$single->selectedValue===null&&!$single->open&&!$single->clearable(),'Clearing empties label and selection, closes the popup and notifies once.');
 $single->clear();checkAutocomplete($cleared===1,'Clearing an empty select is a no-op.');
