@@ -8,6 +8,7 @@
 
 #![cfg(target_os = "linux")]
 
+mod aaa;
 mod accessibility;
 mod backend;
 mod compat;
