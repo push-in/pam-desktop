@@ -54,6 +54,10 @@ pub struct TextContent {
     /// Space between the box edges and the text (padding plus borders).
     pub insets: Insets,
     pub vertical: VerticalAlign,
+    /// A CSS inline box (`display: inline`): the box is the font's content
+    /// area, shorter than the line height, and the line box overflows it by
+    /// the floored half-leading above (Blink) instead of starting at its top.
+    pub inline: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -558,6 +562,14 @@ pub enum DrawCommand {
     PushGroup { clip: Rect },
     /// Composites the group opened by `PushGroup`.
     PopGroup,
+    /// The rest of the list draws on an HTML canvas bitmap of `size`
+    /// (logical units): clipped to it and scaled by `scale_x`/`scale_y` into
+    /// the view's pixel-snapped box, as Chromium paints a `<canvas>`.
+    Bitmap {
+        size: Size,
+        scale_x: f32,
+        scale_y: f32,
+    },
 }
 
 /// An image painted inside a box, above its background and below its text.
@@ -602,6 +614,8 @@ pub struct AlertConfig {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScrollConfig {
     pub horizontal: bool,
+    /// `overflow: auto`: both axes scroll (`horizontal` is then false).
+    pub both: bool,
     /// User scrolling (wheel, drag, scrollbars) is allowed.
     pub enabled: bool,
     pub shows_indicators: bool,
@@ -610,6 +624,8 @@ pub struct ScrollConfig {
     pub scrollbar_thickness: Option<f32>,
     /// CSS `scrollbar-color` thumb colour.
     pub scrollbar_color: Option<Color>,
+    /// CSS `scrollbar-color` track colour (classic bars; transparent when `None`).
+    pub scrollbar_track: Option<Color>,
     /// `scrollbar-gutter: stable`: the layout reserved the bar's width, so
     /// the platform may draw a classic (non-overlay) bar there. The bar is
     /// only drawn while the content overflows; the space stays reserved.
@@ -624,10 +640,12 @@ impl Default for ScrollConfig {
     fn default() -> Self {
         Self {
             horizontal: false,
+            both: false,
             enabled: true,
             shows_indicators: true,
             scrollbar_thickness: None,
             scrollbar_color: None,
+            scrollbar_track: None,
             reserved_gutter: false,
             thumb_inset: 0.0,
         }
@@ -698,6 +716,36 @@ impl Default for WindowMetrics {
     }
 }
 
+/// Exact geometry of a text view before its frame was snapped to whole
+/// pixels. A backend that wraps at the snapped frame breaks lines the engine
+/// kept (or keeps lines it broke) when the text is within a pixel of the box,
+/// and a browser draws the glyphs from the exact left edge and snaps each line
+/// box from the exact top, centred in the exact height, not in the snapped
+/// frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TextGeometry {
+    /// The width the engine wrapped the lines to (its content width).
+    pub wrap_width: f32,
+    /// Exact left edge minus the snapped one.
+    pub offset_x: f32,
+    /// Exact top edge minus the snapped one.
+    pub offset_y: f32,
+    /// Exact height of the box.
+    pub height: f32,
+}
+
+/// Which dialog masks a backend composites with their boxes
+/// (`Backend::composites_backdrop_boxes`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BackdropBoxes {
+    #[default]
+    None,
+    /// The topmost dialog's mask (each costs a window-sized composite).
+    Topmost,
+    /// Every dialog's mask.
+    All,
+}
+
 pub trait Backend {
     /// Root of packaged assets; font loaders must never escape this directory.
     fn set_asset_root(&mut self, _root: &std::path::Path) {}
@@ -729,6 +777,9 @@ pub trait Backend {
     fn set_decoration(&mut self, id: NodeId, decoration: &Decoration);
     fn set_layer(&mut self, id: NodeId, layer: &LayerState);
     fn set_text(&mut self, id: NodeId, text: Option<&TextContent>);
+    /// Exact geometry of a text view before its frame was snapped to whole
+    /// pixels ([`TextGeometry`]).
+    fn set_text_geometry(&mut self, _id: NodeId, _geometry: TextGeometry) {}
     /// Whether the view takes part in keyboard focus traversal (Tab).
     fn set_focusable(&mut self, id: NodeId, focusable: bool);
     /// Keys owned by a composite control before native focus traversal/text submission.
@@ -807,6 +858,13 @@ pub trait Backend {
     fn screen_reader_active(&self) -> bool {
         false
     }
+    /// Which backdrop views the backend paints `Decoration::backdrop_boxes`
+    /// into (Chromium's 8-bit layers of a dialog over its mask). The modal
+    /// presenter moves a dialog's shadow and fills onto those masks only;
+    /// elsewhere the boxes keep painting them.
+    fn composites_backdrop_boxes(&self) -> BackdropBoxes {
+        BackdropBoxes::None
+    }
     /// Brings the player of a `Media` view to `state`.
     fn set_media(&mut self, id: NodeId, state: &MediaState);
     /// Current position and duration of a prepared player, in seconds.
@@ -833,6 +891,14 @@ pub trait Backend {
     /// Measures a paragraph with the platform's own shaper, exactly as
     /// `set_text` will draw it. `max_width` is infinite when unconstrained.
     fn measure_text(&mut self, block: &TextBlock, max_width: f32) -> TextMetrics;
+
+    /// Text-control metrics of the primary font of the block's first run
+    /// (`None` when the platform cannot tell; text fields then keep the
+    /// engine's portable width).
+    fn text_control_metrics(&mut self, block: &TextBlock) -> Option<crate::text::CharMetrics> {
+        let _ = block;
+        None
+    }
 
     // ---- frames --------------------------------------------------------
 

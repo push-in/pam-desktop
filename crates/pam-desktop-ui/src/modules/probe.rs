@@ -82,22 +82,61 @@ mod platform {
         let Ok(entries) = fs::read_dir("/sys/class/net") else {
             return NETWORK_OTHER;
         };
+        let routes = default_route_interfaces(
+            &fs::read_to_string("/proc/net/route").unwrap_or_default(),
+            &fs::read_to_string("/proc/net/ipv6_route").unwrap_or_default(),
+        );
         let mut connected = NETWORK_NONE;
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
-            if entry.file_name() == "lo"
-                || !fs::read_to_string(path.join("operstate"))
-                    .is_ok_and(|state| state.trim() == "up")
-            {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let state = fs::read_to_string(path.join("operstate")).unwrap_or_default();
+            let carrier = fs::read_to_string(path.join("carrier")).is_ok_and(|c| c.trim() == "1");
+            // Tunnels (VPN, WireGuard, PPP) report `unknown` with a carrier.
+            let up = match state.trim() {
+                "up" => true,
+                "unknown" => carrier,
+                _ => false,
+            };
+            if name == "lo" || !up {
                 continue;
             }
             if path.join("wireless").exists() {
                 connected = connected.max(NETWORK_WIFI);
             } else if path.join("device").exists() {
                 return NETWORK_ETHERNET;
+            } else if routes.contains(&name) {
+                // A virtual link (VPN, VM or container NIC) that carries the
+                // default route; a bridge without it (docker0) is not online.
+                connected = connected.max(NETWORK_OTHER);
             }
         }
         connected
+    }
+
+    /// Interfaces holding a default route in `/proc/net/route` (IPv4) and
+    /// `/proc/net/ipv6_route` (IPv6).
+    pub(super) fn default_route_interfaces(ipv4: &str, ipv6: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        for line in ipv4.lines().skip(1) {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            // Iface Destination Gateway Flags … Mask: destination and mask 0.
+            if fields.len() >= 8 && fields[1] == "00000000" && fields[7] == "00000000" {
+                names.push(fields[0].to_owned());
+            }
+        }
+        for line in ipv6.lines() {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            // dest/prefix … flags device: ::/0 that is not the unreachable entry.
+            if fields.len() >= 10
+                && fields[0].bytes().all(|b| b == b'0')
+                && fields[1] == "00"
+                && fields[9] != "lo"
+            {
+                names.push(fields[9].to_owned());
+            }
+        }
+        names
     }
 
     pub fn low_power_hint() -> bool {
@@ -372,6 +411,21 @@ mod tests {
         assert!(status.battery_level == -1.0 || (0.0..=1.0).contains(&status.battery_level));
         assert!((NETWORK_NONE..=NETWORK_OTHER).contains(&status.network));
         let _ = NETWORK_CELLULAR;
+    }
+
+    #[test]
+    fn finds_the_interfaces_with_a_default_route() {
+        let ipv4 = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n\
+d0\t00000000\t0100FE0A\t0003\t0\t0\t0\t00000000\t0\t0\t0\n\
+d0\t0000FE0A\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n\
+docker0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n";
+        let ipv6 = "00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 00000400 00000001 00000000 00000003 wg0\n\
+00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 ffffffff 00000001 00000000 00200200 lo\n\
+fe800000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001 d0\n";
+        assert_eq!(
+            platform::default_route_interfaces(ipv4, ipv6),
+            vec!["d0".to_owned(), "wg0".to_owned()]
+        );
     }
 
     #[test]

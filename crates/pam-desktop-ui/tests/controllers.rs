@@ -827,3 +827,141 @@ fn a_window_layer_modal_stays_above_dialogs_and_lets_presses_through() {
     assert!(!modals.request_close_top(&mut harness.ctx()));
     assert_eq!(harness.scene.hit_test(Point::new(10.0, 290.0)), Some(1));
 }
+
+#[test]
+fn dialog_shadow_and_fills_move_onto_a_compositing_backdrop() {
+    use pam_desktop_ui::presenter::modal::Modals;
+    let window = Rect::new(0.0, 0.0, 400.0, 300.0);
+    let modal: &[(PropKey, PropValue)] = &[
+        (PropKey::ModalPresentation, PropValue::Integer(2)),
+        (PropKey::ModalAnimationType, PropValue::Integer(1)),
+        (PropKey::ModalBackdropColor, PropValue::Integer(0xB302_0618)),
+        (PropKey::BackdropBlurRadius, PropValue::Float(8.0)),
+    ];
+    let dialog: &[(PropKey, PropValue)] = &[
+        (PropKey::BackgroundColor, PropValue::Integer(0xF202_0618)),
+        (PropKey::BorderRadius, PropValue::Float(8.0)),
+        (
+            PropKey::BoxShadows,
+            PropValue::String(format!("[[0,24,64,0,{}]]", 0xAD00_0000_u32)),
+        ),
+    ];
+    let card: &[(PropKey, PropValue)] =
+        &[(PropKey::BackgroundColor, PropValue::Integer(0x0DFF_FFFF))];
+    let button: &[(PropKey, PropValue)] =
+        &[(PropKey::BackgroundColor, PropValue::Integer(0x0DFF_FFFF))];
+    let mut harness = Harness::with_tree(&[
+        (1, 0, NodeKind::Column, &[], window),
+        (2, 1, NodeKind::Modal, modal, window),
+        (3, 2, NodeKind::Column, &[], window),
+        (
+            4,
+            3,
+            NodeKind::Column,
+            dialog,
+            Rect::new(100.0, 50.0, 200.0, 150.0),
+        ),
+        (
+            5,
+            4,
+            NodeKind::View,
+            card,
+            Rect::new(110.0, 60.0, 80.0, 40.0),
+        ),
+        (
+            6,
+            4,
+            NodeKind::Pressable,
+            button,
+            Rect::new(110.0, 110.0, 80.0, 30.0),
+        ),
+    ]);
+    harness.scene.environment.backdrop_boxes = pam_desktop_ui::backend::BackdropBoxes::Topmost;
+    let mut modals = Modals::default();
+    harness.settle(|ctx, change| modals.on_change(ctx, change));
+    modals.after_commit(&mut harness.ctx());
+    let backdrop = harness
+        .scene
+        .node(2)
+        .and_then(|node| node.children.iter().copied().find(|child| *child != 3))
+        .expect("backdrop");
+    let boxes = harness.scene.backdrop_boxes(backdrop).to_vec();
+    assert_eq!(boxes.len(), 2, "the dialog and its card: {boxes:?}");
+    assert_eq!(boxes[0].rect, Rect::new(100.0, 50.0, 200.0, 150.0));
+    assert!(boxes[0].shadow.is_some() && boxes[0].fill.is_some());
+    assert_eq!(boxes[1].rect, Rect::new(110.0, 60.0, 80.0, 40.0));
+    let shadows = harness
+        .scene
+        .effective_props(4)
+        .and_then(|props| props.text(PropKey::BoxShadows).map(str::to_owned));
+    assert_eq!(
+        shadows.as_deref(),
+        Some("[]"),
+        "the dialog paints no shadow"
+    );
+    assert!(harness.scene.fill_composited(4) && harness.scene.fill_composited(5));
+    assert!(
+        !harness.scene.fill_composited(6),
+        "pressables restyle on hover"
+    );
+    // Without a compositing backend nothing moves.
+    let mut plain = Harness::with_tree(&[
+        (1, 0, NodeKind::Column, &[], window),
+        (2, 1, NodeKind::Modal, modal, window),
+        (3, 2, NodeKind::Column, &[], window),
+        (
+            4,
+            3,
+            NodeKind::Column,
+            dialog,
+            Rect::new(100.0, 50.0, 200.0, 150.0),
+        ),
+    ]);
+    let mut modals = Modals::default();
+    plain.settle(|ctx, change| modals.on_change(ctx, change));
+    modals.after_commit(&mut plain.ctx());
+    assert!(!plain.scene.fill_composited(4));
+}
+
+#[test]
+fn dialogs_shown_in_one_commit_stack_in_tree_order() {
+    use pam_desktop_ui::presenter::modal::Modals;
+    let dialog: &[(PropKey, PropValue)] = &[(PropKey::ModalPresentation, PropValue::Integer(2))];
+    let window = Rect::new(0.0, 0.0, 400.0, 300.0);
+    // A detail, a dialog opened from it and a third on top, all in one render
+    // (ids deliberately out of tree order).
+    let mut harness = Harness::with_tree(&[
+        (1, 0, NodeKind::Column, &[], window),
+        (9, 1, NodeKind::Modal, dialog, window),
+        (
+            10,
+            9,
+            NodeKind::Column,
+            &[],
+            Rect::new(10.0, 10.0, 380.0, 280.0),
+        ),
+        (3, 1, NodeKind::Modal, dialog, window),
+        (
+            4,
+            3,
+            NodeKind::Column,
+            &[],
+            Rect::new(100.0, 50.0, 200.0, 200.0),
+        ),
+        (7, 1, NodeKind::Modal, dialog, window),
+        (
+            8,
+            7,
+            NodeKind::Column,
+            &[],
+            Rect::new(150.0, 100.0, 100.0, 100.0),
+        ),
+    ]);
+    let mut modals = Modals::default();
+    harness.settle(|ctx, change| modals.on_change(ctx, change));
+    modals.after_commit(&mut harness.ctx());
+    assert_eq!(harness.scene.overlays(), &[9, 3, 7], "later siblings above");
+    assert_eq!(modals.top(), Some(7), "Escape reaches the last one");
+    assert_eq!(harness.scene.hit_test(Point::new(200.0, 150.0)), Some(8));
+    assert!(modals.request_close_top(&mut harness.ctx()));
+}

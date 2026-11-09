@@ -266,11 +266,19 @@ unsafe extern "C" fn measure_trampoline<B: Backend>(
     if empty {
         metrics.width = 0.0;
     }
+    let characters = if request.flags & pam_desktop_engine::MEASURE_TEXT_CONTROL != 0 {
+        // SAFETY: as above.
+        unsafe { (*context.backend).text_control_metrics(&block) }.unwrap_or_default()
+    } else {
+        crate::text::CharMetrics::default()
+    };
     *result = PamTextMeasureResult {
         width: metrics.width,
         height: metrics.height,
         first_baseline: metrics.first_baseline,
         line_count: metrics.line_count,
+        avg_char_width: characters.average,
+        max_char_width: characters.maximum,
     };
     1
 }
@@ -392,6 +400,7 @@ impl<B: Backend> Runtime<B> {
 
         let mut scene = Scene::new();
         scene.environment.scale = metrics.scale;
+        scene.environment.backdrop_boxes = backend.composites_backdrop_boxes();
         scene.environment.font_scale = metrics.font_scale;
 
         let mut modules = Registry::default();
@@ -1309,6 +1318,7 @@ impl<B: Backend> Runtime<B> {
             BackendEvent::ScrollChanged { id, offset } => {
                 let mut ctx = ctx!(self);
                 self.scrolling.on_scroll(&mut ctx, id, offset);
+                self.modals.on_scroll(&mut ctx, id);
                 if let Some(window) = self.drag_drop.window() {
                     let root = if window == MAIN_WINDOW {
                         None
@@ -1707,6 +1717,17 @@ impl<B: Backend> Runtime<B> {
     fn handle_key(&mut self, key: &KeyEvent) {
         if key.window != MAIN_WINDOW && self.windows.root_of(key.window).is_none() {
             return;
+        }
+        // Modifier keys alone (a shortcut being held) do not make focus
+        // visible, like Chromium.
+        if key.pressed
+            && !matches!(
+                key.key.as_str(),
+                "Shift" | "Control" | "Alt" | "Meta" | "AltGraph" | "CapsLock"
+            )
+        {
+            let mut ctx = ctx!(self);
+            self.interaction.set_keyboard_modality(&mut ctx, true);
         }
         if key.pressed && !key.repeat && self.selection_key(key) {
             return;

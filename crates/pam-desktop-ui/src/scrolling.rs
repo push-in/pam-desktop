@@ -105,6 +105,97 @@ fn nearest_scroll(scene: &Scene, id: NodeId) -> Option<NodeId> {
     None
 }
 
+/// CSS `position: sticky` (PositionType 4).
+fn is_css_sticky(props: crate::props::Props<'_>) -> bool {
+    props.integer(PropKey::PositionType) == Some(4)
+}
+
+/// How far a `position: sticky` box moves at a scroll offset, as CSS
+/// positioned layout computes it: it stays in flow until its edge would pass
+/// the inset from the scroll view's edge, then sticks there, never leaving
+/// its parent (its containing block). Only the scrolled axis moves.
+fn css_sticky_shift(
+    scene: &Scene,
+    id: NodeId,
+    viewport: Rect,
+    offset: Point,
+    horizontal: bool,
+) -> Point {
+    let Some(node) = scene.node(id) else {
+        return Point::new(0.0, 0.0);
+    };
+    let Some(parent) = scene.node(node.parent) else {
+        return Point::new(0.0, 0.0);
+    };
+    let props = node.props();
+    let (start, end) = if horizontal {
+        (PropKey::Left, PropKey::Right)
+    } else {
+        (PropKey::Top, PropKey::Bottom)
+    };
+    let (position, size, parent_start, parent_size, view_start, view_size, scrolled) = if horizontal
+    {
+        (
+            node.frame.x,
+            node.frame.width,
+            parent.frame.x,
+            parent.frame.width,
+            viewport.x,
+            viewport.width,
+            offset.x,
+        )
+    } else {
+        (
+            node.frame.y,
+            node.frame.height,
+            parent.frame.y,
+            parent.frame.height,
+            viewport.y,
+            viewport.height,
+            offset.y,
+        )
+    };
+    // Room inside the containing block before and after the box.
+    let room_before = parent_start - position;
+    let room_after = parent_start + parent_size - (position + size);
+    let mut shift = 0.0_f32;
+    if let Some(inset) = props.number(end).filter(|value| value.is_finite()) {
+        let limit = view_start + scrolled + view_size - inset;
+        shift = shift
+            .min(limit - (position + size))
+            .max(room_before.min(0.0));
+    }
+    if let Some(inset) = props.number(start).filter(|value| value.is_finite()) {
+        let limit = view_start + scrolled + inset;
+        shift = shift.max(limit - position).min(room_after.max(0.0));
+    }
+    if horizontal {
+        Point::new(shift, 0.0)
+    } else {
+        Point::new(0.0, shift)
+    }
+}
+
+/// Moves a sticky box by `shift` without a new layout; a moved box draws
+/// above the content it covers and takes its clicks.
+fn pin(ctx: &mut Ctx<'_>, id: NodeId, shift: Point) {
+    ctx.scene.set_layer_override(
+        id,
+        LayerSlot::Presenter,
+        LayerOverride {
+            transform: Affine::translation(shift.x, shift.y),
+            ..LayerOverride::NONE
+        },
+    );
+    let overlay = (shift.x != 0.0 || shift.y != 0.0).then(|| {
+        let mut overlay = PropMap::new();
+        overlay.insert(PropKey::ZIndex, PropValue::Integer(1_000_000));
+        overlay
+    });
+    ctx.scene
+        .set_style_overlay(id, StyleLayer::Presenter, overlay);
+}
+
 fn node_children_of(scene: &Scene, id: NodeId) -> Vec<NodeId> {
     scene
         .node(id)
@@ -154,7 +245,27 @@ impl Scrolling {
         let mut current = ctx.scene.hit_test(position).unwrap_or(0);
         while let Some(node) = ctx.scene.node(current) {
             let parent = node.parent;
-            if node.class == ViewClass::Scroll && node.props().flag_or(PropKey::ScrollEnabled, true)
+            if node.class == ViewClass::Scroll
+                && node.props().flag_or(PropKey::ScrollEnabled, true)
+                && node.props().flag_or(PropKey::ScrollBothAxes, false)
+            {
+                // `overflow: auto`: the wheel moves both axes of one viewport.
+                let offset = ctx.scene.scroll_offset(current);
+                let target = Point::new(
+                    (offset.x + delta.x).clamp(0.0, extents(ctx.scene, current, true).2),
+                    (offset.y + delta.y).clamp(0.0, extents(ctx.scene, current, false).2),
+                );
+                if (target.x - offset.x).abs() > 0.01 || (target.y - offset.y).abs() > 0.01 {
+                    ctx.animator.cancel(Owner::Scroll(current), ctx.now_ms);
+                    ctx.commands.push(HostCommand::ScrollTo {
+                        id: current,
+                        offset: target,
+                        animated: false,
+                    });
+                    return true;
+                }
+            } else if node.class == ViewClass::Scroll
+                && node.props().flag_or(PropKey::ScrollEnabled, true)
             {
                 let horizontal = node.props().flag_or(PropKey::ScrollHorizontal, false)
                     || node.props().flag_or(PropKey::ListHorizontal, false);
@@ -219,7 +330,10 @@ impl Scrolling {
                 ctx.timers.cancel(Timer::RefreshFallback(id));
             }
             Change::Updated(id, key) => {
-                if matches!(key, PropKey::StickyHeader | PropKey::OnLayout) {
+                if matches!(
+                    key,
+                    PropKey::StickyHeader | PropKey::PositionType | PropKey::OnLayout
+                ) {
                     self.watch(ctx, id);
                 }
                 if let Some(scroll) = self.scrolls.get_mut(&id) {
@@ -279,7 +393,7 @@ impl Scrolling {
         if node.is_synthetic() {
             return;
         }
-        if node.props().flag_or(PropKey::StickyHeader, false) {
+        if node.props().flag_or(PropKey::StickyHeader, false) || is_css_sticky(node.props()) {
             if let Some(scroll) = nearest_scroll(ctx.scene, id) {
                 self.sticky.insert(id, scroll);
                 if let Some(state) = self.scrolls.get_mut(&scroll) {
@@ -913,21 +1027,46 @@ impl Scrolling {
             .encode()
     }
 
-    /// Sticky headers pin to the top of their viewport and are pushed out by the next one.
+    /// Sticky headers pin to the top of their viewport and are pushed out by
+    /// the next one; CSS `position: sticky` boxes follow their insets.
     fn pin_sticky(&mut self, ctx: &mut Ctx<'_>, id: NodeId) {
         let Some(scroll) = self.scrolls.get(&id) else {
             return;
         };
-        if scroll.horizontal {
-            return;
-        }
-        let Some(origin) = ctx.scene.node(id).map(|node| node.frame.y) else {
+        let (horizontal, offset) = (scroll.horizontal, scroll.offset);
+        let Some(viewport) = ctx.scene.node(id).map(|node| node.frame) else {
             return;
         };
+        let css: Vec<NodeId> = self
+            .sticky
+            .iter()
+            .filter(|(node, owner)| {
+                **owner == id
+                    && ctx
+                        .scene
+                        .node(**node)
+                        .is_some_and(|node| is_css_sticky(node.props()))
+            })
+            .map(|(node, _)| *node)
+            .collect();
+        for node in css {
+            let shift = css_sticky_shift(ctx.scene, node, viewport, offset, horizontal);
+            pin(ctx, node, shift);
+        }
+        if horizontal {
+            return;
+        }
+        let origin = viewport.y;
         let mut headers: Vec<(NodeId, f32, f32)> = self
             .sticky
             .iter()
-            .filter(|(_, owner)| **owner == id)
+            .filter(|(header, owner)| {
+                **owner == id
+                    && ctx
+                        .scene
+                        .node(**header)
+                        .is_some_and(|node| !is_css_sticky(node.props()))
+            })
             .filter_map(|(header, _)| {
                 ctx.scene
                     .node(*header)
@@ -949,22 +1088,7 @@ impl Scrolling {
             } else {
                 (offset - top).min((next - top - height).max(0.0))
             };
-            ctx.scene.set_layer_override(
-                header,
-                LayerSlot::Presenter,
-                LayerOverride {
-                    transform: Affine::translation(0.0, shift),
-                    ..LayerOverride::NONE
-                },
-            );
-            // A pinned header draws above the rows it covers and takes their clicks.
-            let overlay = (shift > 0.0).then(|| {
-                let mut overlay = PropMap::new();
-                overlay.insert(PropKey::ZIndex, PropValue::Integer(1_000_000));
-                overlay
-            });
-            ctx.scene
-                .set_style_overlay(header, StyleLayer::Presenter, overlay);
+            pin(ctx, header, Point::new(0.0, shift));
         }
     }
 
@@ -1277,6 +1401,69 @@ fn decode_sections(bytes: &[u8]) -> Option<Vec<(String, bool)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn css_sticky_boxes_hold_their_inset_inside_their_containing_block() {
+        use pam_desktop_wire::{Layout, Mutation, Node};
+        let create =
+            |id: u64, parent: u64, kind: NodeKind, properties: Vec<(PropKey, PropValue)>| {
+                Mutation::Create(Node {
+                    id,
+                    parent,
+                    index: 0,
+                    kind,
+                    properties: properties.into_iter().collect(),
+                })
+            };
+        let layout = |id: u64, y: f32, height: f32| Mutation::Layout {
+            id,
+            frame: Layout {
+                x: 0.0,
+                y,
+                width: 400.0,
+                height,
+            },
+        };
+        let mut scene = Scene::new();
+        scene.apply(vec![
+            Mutation::SetRoot { id: 1 },
+            create(1, 0, NodeKind::Scroll, vec![]),
+            create(2, 1, NodeKind::Column, vec![]),
+            create(
+                3,
+                2,
+                NodeKind::Row,
+                vec![
+                    (PropKey::PositionType, PropValue::Integer(4)),
+                    (PropKey::Top, PropValue::Float(0.0)),
+                ],
+            ),
+            create(
+                4,
+                2,
+                NodeKind::Row,
+                vec![
+                    (PropKey::PositionType, PropValue::Integer(4)),
+                    (PropKey::Bottom, PropValue::Float(10.0)),
+                ],
+            ),
+            layout(1, 50.0, 300.0),
+            layout(2, 50.0, 1000.0),
+            layout(3, 50.0, 37.0),
+            layout(4, 950.0, 40.0),
+        ]);
+        let viewport = Rect::new(0.0, 50.0, 400.0, 300.0);
+        let shift = |id, y| css_sticky_shift(&scene, id, viewport, Point::new(0.0, y), false).y;
+        // Top: in flow until scrolled past, then held at the top edge, and
+        // pushed out at the end of its parent (1000 - 37).
+        assert_eq!(shift(3, 0.0), 0.0);
+        assert_eq!(shift(3, 200.0), 200.0);
+        assert_eq!(shift(3, 990.0), 963.0);
+        // Bottom: held 10px above the viewport's bottom while its place is
+        // below it, never above the top of its parent.
+        assert_eq!(shift(4, 0.0), 50.0 + 300.0 - 10.0 - 990.0);
+        assert_eq!(shift(4, 700.0), 0.0);
+    }
 
     #[test]
     fn sections_flatten_to_headers_and_items() {

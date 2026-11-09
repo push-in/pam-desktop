@@ -128,13 +128,14 @@ fn authored_value<'a>(props: Props<'a>) -> Option<&'a str> {
         .or_else(|| props.text(PropKey::Text))
 }
 
-fn resolve_config(
-    props: Props<'_>,
-    multiline: bool,
-    border: [f32; 4],
-    font_scale: f32,
-) -> InputConfig {
+fn resolve_config(props: Props<'_>, multiline: bool, font_scale: f32) -> InputConfig {
     let padding = props.padding();
+    // The border comes from the props, not from the node's resolved
+    // decoration: a new input is configured before the scene resolves its
+    // decoration, which left the text one border width too far left/up.
+    let border = crate::style::Decoration::resolve(NodeKind::Input, props)
+        .border
+        .widths;
     let format = props.integer_or(PropKey::InputFormat, 1);
     let purpose = match props.integer_or(PropKey::InputMode, 1) {
         3 => InputPurpose::Decimal,
@@ -297,12 +298,7 @@ impl Inputs {
             };
             let props = node.props();
             let multiline = props.flag_or(PropKey::Multiline, false);
-            let config = resolve_config(
-                props,
-                multiline,
-                node.decoration.border.widths,
-                ctx.scene.environment.font_scale,
-            );
+            let config = resolve_config(props, multiline, ctx.scene.environment.font_scale);
             let selection = props.integer(PropKey::InputSelectionStart).map(|start| {
                 let start = start.max(0) as u32;
                 let end = props
@@ -644,11 +640,22 @@ mod tests {
         let text_color = 0xFFE7_EFF5_u32 as i64;
         properties.insert(PropKey::TextColor, PropValue::Integer(text_color));
 
-        let config = resolve_config(Props::new(&properties), false, [0.0; 4], 1.0);
+        let config = resolve_config(Props::new(&properties), false, 1.0);
 
         assert_eq!(
             config.caret_color,
             Some(crate::color::Color::from_wire(text_color))
         );
+    }
+
+    #[test]
+    fn text_starts_inside_padding_and_border_like_a_css_content_box() {
+        let mut properties = BTreeMap::new();
+        properties.insert(PropKey::BorderWidth, PropValue::Float(1.0));
+        properties.insert(PropKey::PaddingLeft, PropValue::Float(16.0));
+        properties.insert(PropKey::PaddingTop, PropValue::Float(12.0));
+        let config = resolve_config(Props::new(&properties), false, 1.0);
+        assert_eq!(config.insets.left, 17.0);
+        assert_eq!(config.insets.top, 13.0);
     }
 }

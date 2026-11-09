@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 pam-desktop-wire.workspace = true
 pam-desktop-engine.workspace = true
+pam-desktop-pixels.workspace = true
 serde_json = { workspace = true }
 base64 = "0.22"
 getrandom = "0.3"

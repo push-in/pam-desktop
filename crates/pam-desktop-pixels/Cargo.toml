@@ -1,0 +1,13 @@
+[package]
+name = "pam-desktop-pixels"
+description = "CPU pixel compositing of PAM Desktop backdrops (Chromium's 8-bit blur, fill and box-shadow blend)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

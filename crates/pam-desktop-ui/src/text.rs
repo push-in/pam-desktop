@@ -102,7 +102,8 @@ pub struct TextShadow {
 
 /// The CSS inline box of a nested text (`<span>`/`<kbd>` with padding,
 /// border or background). Its horizontal padding and border are space in the
-/// line, so neighbours move; the vertical ones only paint, like CSS.
+/// line, so neighbours move; the vertical ones only paint, like CSS, unless
+/// the box is an inline-block.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InlineBox {
     /// The runs of the block the box wraps.
@@ -118,9 +119,46 @@ pub struct InlineBox {
     /// Height of the content box (the span's CSS `line-height`); 0 uses the
     /// font's ascent plus descent.
     pub line_height: f32,
+    /// CSS `display: inline-block`: the box's vertical padding and border
+    /// take room in its line (a `<kbd>` chip makes its line taller and sits
+    /// on the baseline of its own text).
+    pub inline_block: bool,
 }
 
 impl InlineBox {
+    /// Room above the content box that the line must hold: top padding and
+    /// border of an inline-block, nothing for an inline box.
+    #[must_use]
+    pub fn edge_above(&self) -> f32 {
+        if self.inline_block {
+            self.padding[0] + self.border[0]
+        } else {
+            0.0
+        }
+    }
+
+    /// Room below the content box that the line must hold.
+    #[must_use]
+    pub fn edge_below(&self) -> f32 {
+        if self.inline_block {
+            self.padding[2] + self.border[2]
+        } else {
+            0.0
+        }
+    }
+
+    /// Height the box's runs give their line: the content line height plus,
+    /// for an inline-block, its vertical padding and border; 0 keeps the
+    /// font's own.
+    #[must_use]
+    pub fn line_box_height(&self) -> f32 {
+        if self.line_height > 0.0 {
+            self.line_height + self.edge_above() + self.edge_below()
+        } else {
+            0.0
+        }
+    }
+
     /// Space before the first character: left padding and border.
     #[must_use]
     pub fn leading(&self) -> f32 {
@@ -215,6 +253,9 @@ pub struct TextBlock {
     pub line_height: f32,
     pub shadow: Option<TextShadow>,
     pub selectable: bool,
+    /// CSS `-webkit-font-smoothing: antialiased`: macOS draws the glyphs
+    /// without font smoothing (lighter stems), like Chromium.
+    pub antialiased: bool,
 }
 
 impl TextBlock {
@@ -321,6 +362,17 @@ pub struct TextMetrics {
     pub line_count: u32,
 }
 
+/// The primary font's metrics Chromium sizes text fields with
+/// (`SimpleFontData::AvgCharWidth` / `MaxCharWidth`), computed the way the
+/// platform's Skia port does: the OS/2 `xAvgCharWidth` and the head bounding
+/// box on FreeType and DirectWrite, the `x` advance and the rounded ascent
+/// on Core Text.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CharMetrics {
+    pub average: f32,
+    pub maximum: f32,
+}
+
 /// One inline style override over a range of code points.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct SpanSpec {
@@ -379,7 +431,8 @@ fn parse_spans(wire: &str) -> Vec<SpanSpec> {
             letter_spacing: field(8)
                 .and_then(|value| value.parse::<f32>().ok())
                 .filter(|spacing| spacing.is_finite()),
-            family: field(9).map(str::to_owned),
+            // A family list's commas travel as `|` (fields are comma separated).
+            family: field(9).map(|family| family.replace('|', ",")),
             press: field(10)
                 .and_then(|value| value.parse::<i64>().ok())
                 .filter(|slot| *slot >= 0)
@@ -401,11 +454,13 @@ struct BoxSpec {
     radius: f32,
     background: Option<Color>,
     line_height: f32,
+    inline_block: bool,
 }
 
 /// `start,end,paddingTop,paddingRight,paddingBottom,paddingLeft,borderTop,
 /// borderRight,borderBottom,borderLeft,borderColor,radius,background,
-/// lineHeight` records separated by `;`; offsets are code points.
+/// lineHeight[,inlineBlock]` records separated by `;`; offsets are code
+/// points. `inlineBlock` is 1 for `display: inline-block`.
 fn parse_boxes(wire: &str) -> Vec<BoxSpec> {
     let mut boxes = Vec::new();
     for record in wire.split(';') {
@@ -440,6 +495,7 @@ fn parse_boxes(wire: &str) -> Vec<BoxSpec> {
             radius: length(11),
             background: color(12),
             line_height: length(13),
+            inline_block: field(14) == Some("1"),
         });
     }
     boxes
@@ -636,6 +692,10 @@ impl<'a> TextSource<'a> {
             run.text = transform_text(&segment, transform);
             runs.push(run);
         }
+        // The block's own font sets up every line box (the CSS strut) even
+        // when each character sits in a span of another font: an empty first
+        // run carries it to the backends that place baselines like Chromium.
+        let strut = usize::from(!runs.is_empty() && !runs.iter().any(|run| run.font == base.font));
         let boxes = boxes
             .into_iter()
             .filter_map(|inline| {
@@ -644,18 +704,19 @@ impl<'a> TextSource<'a> {
                     .position(|&(start, _)| start >= inline.start)?;
                 let last = segments.iter().rposition(|&(_, end)| end <= inline.end)?;
                 (first <= last).then(|| InlineBox {
-                    runs: first..last + 1,
+                    runs: first + strut..last + 1 + strut,
                     padding: inline.padding,
                     border: inline.border,
                     border_color: inline.border_color,
                     radius: inline.radius,
                     background: inline.background,
-                    line_height: inline.line_height * self.font_scale,
+                    line_height: layout_unit(inline.line_height * self.font_scale),
+                    inline_block: inline.inline_block,
                 })
             })
             .collect();
-        if runs.is_empty() {
-            runs.push(base);
+        if runs.is_empty() || strut == 1 {
+            runs.insert(0, base);
         }
         (runs, boxes)
     }
@@ -675,10 +736,20 @@ impl<'a> TextSource<'a> {
                 Ellipsize::Tail
             },
             max_lines: self.max_lines,
-            line_height: self.line_height * self.font_scale,
+            line_height: layout_unit(self.line_height * self.font_scale),
             ..TextBlock::default()
         }
     }
+}
+
+/// A CSS line height as Blink keeps it, a LayoutUnit (1/64 px, rounded):
+/// `line-height: 18.56px` lines are 18.5625 apart in Chromium (18.4px:
+/// 18.40625). Numeric line heights arrive already on the grid (PHP
+/// `LayoutUnit::lineHeight`). Every backend receives its text blocks through
+/// here, so boxes under several lines of text end where Chromium's do.
+#[must_use]
+pub fn layout_unit(value: f32) -> f32 {
+    (value * 64.0).round() / 64.0
 }
 
 /// Length of `text` in UTF-16 code units (the unit of protocol offsets).
@@ -743,6 +814,29 @@ mod tests {
     }
 
     #[test]
+    fn line_heights_reach_every_backend_as_blink_layout_units() {
+        assert_eq!(layout_unit(18.56), 18.5625);
+        assert_eq!(layout_unit(18.4), 18.406_25);
+        // Electron 37 probe (div heights for `line-height: <px>`).
+        for (css, chromium) in [
+            (12.096, 12.093_75),
+            (17.024, 17.031_25),
+            (7.2, 7.203_125),
+            (14.352, 14.359_375),
+            (18.6667, 18.671_875),
+            (13.6, 13.593_75),
+        ] {
+            assert_eq!(layout_unit(css), chromium, "line-height: {css}px");
+        }
+        assert_eq!(layout_unit(23.52), 23.515_625);
+        assert_eq!(layout_unit(24.0), 24.0);
+        let mut map = PropMap::new();
+        map.insert(PropKey::Text, PropValue::String("Olá".into()));
+        map.insert(PropKey::LineHeight, PropValue::Float(18.56));
+        assert_eq!(source(&map).measure_block().line_height, 18.5625);
+    }
+
+    #[test]
     fn plain_text_is_one_run() {
         let mut map = PropMap::new();
         map.insert(PropKey::Text, PropValue::String("Olá".into()));
@@ -777,6 +871,47 @@ mod tests {
     }
 
     #[test]
+    fn a_block_whose_text_is_all_in_other_fonts_keeps_its_strut() {
+        let mut map = PropMap::new();
+        map.insert(PropKey::Text, PropValue::String("R$ 1,00".into()));
+        map.insert(
+            PropKey::TextSpans,
+            PropValue::String("0,7,,800,,,,,,ui-monospace|Liberation Mono".into()),
+        );
+        map.insert(
+            PropKey::TextSpanBoxes,
+            PropValue::String("3,7,,,,,,,,,,,,,1".into()),
+        );
+        let (runs, boxes) = source(&map).styled(None, 1);
+        let texts: Vec<&str> = runs.iter().map(|run| run.text.as_str()).collect();
+        // An empty first run in the block's own font, then the span's runs.
+        assert_eq!(texts, vec!["", "R$ ", "1,00"]);
+        assert_eq!(runs[0].font.weight, 400);
+        assert_eq!(runs[1].font.family, "ui-monospace,Liberation Mono");
+        assert_eq!(boxes[0].runs, 2..3);
+    }
+
+    #[test]
+    fn inline_block_boxes_hold_their_vertical_edges_in_the_line() {
+        let mut map = PropMap::new();
+        map.insert(PropKey::Text, PropValue::String("a Ctrl b".into()));
+        map.insert(
+            PropKey::TextSpanBoxes,
+            PropValue::String("2,6,1,6,1,6,1,1,2,1,,6,,15.4,1".into()),
+        );
+        let (_, boxes) = source(&map).styled(None, 1);
+        assert!(boxes[0].inline_block);
+        assert_eq!(boxes[0].edge_above(), 2.0);
+        assert_eq!(boxes[0].edge_below(), 3.0);
+        assert_eq!(boxes[0].line_box_height(), layout_unit(15.4) + 5.0);
+        let inline = InlineBox {
+            inline_block: false,
+            ..boxes[0].clone()
+        };
+        assert_eq!(inline.line_box_height(), layout_unit(15.4));
+    }
+
+    #[test]
     fn inline_boxes_split_runs_and_map_offsets() {
         let mut map = PropMap::new();
         map.insert(PropKey::Text, PropValue::String("a Ctrl+Enter b".into()));
@@ -792,7 +927,8 @@ mod tests {
         assert_eq!(boxes[0].runs, 1..2);
         assert_eq!(boxes[0].leading(), 7.0);
         assert_eq!(boxes[0].border, [1.0, 1.0, 2.0, 1.0]);
-        assert_eq!(boxes[0].line_height, 15.4);
+        assert_eq!(boxes[0].line_height, layout_unit(15.4));
+        assert!(!boxes[0].inline_block);
         assert_eq!(boxes[1].runs, 3..4);
         assert_eq!(boxes[1].trailing(), 4.0);
         let block = TextBlock {
