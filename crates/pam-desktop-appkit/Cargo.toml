@@ -10,6 +10,7 @@ repository.workspace = true
 # Only the framework features the backend uses are compiled.
 [target.'cfg(target_os = "macos")'.dependencies]
 pam-desktop-ui.workspace = true
+pam-desktop-pixels.workspace = true
 objc2 = "0.6.5"
 block2 = "0.6.2"
 objc2-foundation = { version = "0.3.2", default-features = false, features = [

@@ -192,6 +192,53 @@ fn rrect_coverage(x: f32, y: f32, rect: [f32; 4], radii: [f32; 4]) -> u8 {
     (inside as f32 / 16.0 * 255.0 + 0.5) as u8
 }
 
+/// `filter: blur(sigma)` of a box painted in one colour, for a renderer
+/// without GPU filters: the antialiased rounded rectangle `rect` (left,
+/// top, right, bottom; corner radii TL, TR, BR, BL; device pixels) in the
+/// straight RGBA `color`, on a transparent `width` × `height` image,
+/// blurred like Skia (three boxes, transparent beyond the edges).
+/// Premultiplied RGBA, `width * 4` bytes per row.
+#[must_use]
+pub fn blurred_box(
+    width: usize,
+    height: usize,
+    rect: [f32; 4],
+    radii: [f32; 4],
+    color: [u8; 4],
+    sigma: f32,
+) -> Vec<u8> {
+    let mut pixels = vec![0_u8; width * height * 4];
+    for y in 0..height {
+        for x in 0..width {
+            let coverage = u32::from(rrect_coverage(x as f32, y as f32, rect, radii));
+            if coverage == 0 {
+                continue;
+            }
+            let alpha = (u32::from(color[3]) * coverage + 127) / 255;
+            let at = (y * width + x) * 4;
+            for channel in 0..3 {
+                pixels[at + channel] = ((u32::from(color[channel]) * alpha + 127) / 255) as u8;
+            }
+            pixels[at + 3] = alpha as u8;
+        }
+    }
+    let kernel = box_sizes(sigma);
+    if kernel.is_empty() || width == 0 || height == 0 {
+        return pixels;
+    }
+    blur_image::<4>(&pixels, width, height, width * 4, &kernel)
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+/// How far a Skia blur of `sigma` spreads past the blurred shape, in pixels.
+#[must_use]
+pub fn blur_reach(sigma: f32) -> usize {
+    let kernel = box_sizes(sigma);
+    kernel.iter().map(|size| size / 2 + 1).sum()
+}
+
 /// The 8-bit alpha (paint alpha included) of an outer `box-shadow` of the
 /// box `rect` (device pixels, relative to the image) over a `width` ×
 /// `height` image, like Skia draws it: the spread/offset rounded rectangle
