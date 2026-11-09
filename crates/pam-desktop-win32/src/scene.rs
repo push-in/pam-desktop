@@ -8,7 +8,7 @@ use pam_desktop_ui::accessibility::Accessibility;
 use pam_desktop_ui::backend::{
     DrawCommand, ImageContent, NodeId, TextContent, ViewClass, WindowId,
 };
-use pam_desktop_ui::geometry::{Affine, Point, Rect, Size};
+use pam_desktop_ui::geometry::{Affine, Insets, Point, Rect, Size};
 use pam_desktop_ui::scene::IdMap;
 use pam_desktop_ui::shell::Cursor;
 use pam_desktop_ui::style::{Decoration, LayerState};
@@ -41,6 +41,9 @@ pub struct View {
     pub decoration: Decoration,
     pub layer: LayerState,
     pub text: Option<TextState>,
+    /// The engine's exact content width for the text (before the frame was
+    /// snapped to whole pixels): lines wrap there, as on GTK and AppKit.
+    pub text_wrap: Option<f32>,
     pub image: Option<ImageContent>,
     pub drawing: Vec<DrawCommand>,
     pub scroll: Option<Box<ScrollState>>,
@@ -61,6 +64,15 @@ pub struct View {
 }
 
 impl View {
+    /// The width a text view's paragraph is laid out in: the engine's exact
+    /// content width when it gave one, else the snapped frame's.
+    #[must_use]
+    pub fn text_width(&self, size: Size, insets: Insets) -> f32 {
+        self.text_wrap
+            .unwrap_or(size.width - insets.horizontal())
+            .max(0.0)
+    }
+
     fn new(class: ViewClass) -> Self {
         Self {
             class,
@@ -71,6 +83,7 @@ impl View {
             decoration: Decoration::default(),
             layer: LayerState::default(),
             text: None,
+            text_wrap: None,
             image: None,
             drawing: Vec::new(),
             scroll: (class == ViewClass::Scroll).then(|| Box::new(ScrollState::default())),
@@ -544,7 +557,7 @@ impl Scene {
                         text.content.inline,
                         layout.height,
                     );
-                    let available = (view.frame.width - insets.horizontal()).max(0.0);
+                    let available = view.text_width(view.size(), insets);
                     let overhang = (layout.natural_width - available).max(0.0);
                     own = own.union(Rect::new(
                         origin.x - overhang,
@@ -637,5 +650,22 @@ impl Scene {
             visible,
             scale: entry.scale(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Insets, Size, View, ViewClass};
+
+    #[test]
+    fn text_wraps_at_the_exact_width_the_engine_gave() {
+        let mut view = View::new(ViewClass::Box);
+        let size = Size::new(106.0, 20.0);
+        let insets = Insets::new(2.0, 0.0, 2.0, 0.0);
+        // Without a geometry: the (snapped) frame minus the insets.
+        assert_eq!(view.text_width(size, insets), 102.0);
+        // The engine laid the text out in 106.25 px; the frame snapped to 106.
+        view.text_wrap = Some(106.25);
+        assert_eq!(view.text_width(size, insets), 106.25);
     }
 }

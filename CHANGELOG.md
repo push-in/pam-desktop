@@ -10,6 +10,11 @@
   (buttons, chips, tabs) were up to 1 px wider each, so rows of them drifted
   by several pixels on Windows only (a POS category row ended 6 px further
   right). Found by the cross-platform comparison of the PDV storefront screens.
+- **Windows wraps text at the engine's exact width.** The Win32 host had no
+  `set_text_geometry`: it wrapped each paragraph at its frame snapped to whole
+  pixels, so a label laid out in exactly its measured width (106.25 px drawn
+  in a 106 px frame) lost its last word to a second line. Lines now break at
+  the content width the engine laid out, as on GTK and AppKit.
 - **Inherited `@font-face` families resolve in package components.** A
   component of another stylesheet (a DesktopUI component such as `MediaTile`,
   or one placed with `<Slot :content>`) inherited the app's `@font-face`

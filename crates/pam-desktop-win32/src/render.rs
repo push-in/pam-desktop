@@ -516,11 +516,12 @@ impl Painter<'_> {
         let Some(view) = self.scene.views.get_mut(&id) else {
             return;
         };
+        let wrap = view.text_wrap;
         let Some(state) = view.text.as_mut() else {
             return;
         };
         let insets = state.content.insets;
-        let available = (size.width - insets.horizontal()).max(0.0);
+        let available = wrap.unwrap_or(size.width - insets.horizontal()).max(0.0);
         if state.layout.is_none() || state.wrapped_to != available {
             state.layout = self
                 .text

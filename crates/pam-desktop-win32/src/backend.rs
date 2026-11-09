@@ -255,6 +255,23 @@ impl Backend for Win32Backend {
         crate::accessibility::content_changed(&self.app, id);
     }
 
+    fn set_text_geometry(&mut self, id: NodeId, geometry: pam_desktop_ui::backend::TextGeometry) {
+        let Some(mut state) = self.app.state() else {
+            return;
+        };
+        let Some(view) = state.scene.views.get_mut(&id) else {
+            return;
+        };
+        // Lines wrap at the engine's exact content width, not at the frame
+        // snapped to whole pixels: a text laid out in exactly its measured
+        // width would otherwise lose its last word to a new line.
+        let wrap = Some(geometry.wrap_width);
+        if view.text_wrap != wrap {
+            view.text_wrap = wrap;
+            state.scene.damage_content(id);
+        }
+    }
+
     fn set_key_capture(&mut self, id: NodeId, keys: &str) {
         if let Some(mut state) = self.app.state()
             && let Some(view) = state.scene.views.get_mut(&id)
@@ -353,9 +370,10 @@ impl Backend for Win32Backend {
         let state = &mut *state;
         let view = state.scene.views.get_mut(&id)?;
         let size = view.frame.size();
+        let wrap = view.text_wrap;
         let text = view.text.as_mut()?;
         let insets = text.content.insets;
-        let available = (size.width - insets.horizontal()).max(0.0);
+        let available = wrap.unwrap_or(size.width - insets.horizontal()).max(0.0);
         // The layout that is (or will be) painted answers, so the index
         // matches what the user sees.
         if text.layout.is_none() || text.wrapped_to != available {
