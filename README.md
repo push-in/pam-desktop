@@ -25,13 +25,10 @@ Create a project with the PAM CLI and run it:
 
 ```sh
 pam init my-app --template desktop
-cd my-app
-pam composer require pushinbr/pam-desktop:^2.1
-pam desktop init
-pam desktop dev
+cd my-app && pam desktop dev
 ```
 
-`pam init --template desktop` in CLI 2.2.11 still scaffolds `pushinbr/pam-desktop` `^1.2` (1.x), so the third line moves the project to 2.x; it becomes unnecessary once the template is updated. `pam desktop init` writes a small application: a router, a home screen as a `.pam.php` template with scoped CSS, design tokens, a service and a test. `pam desktop dev` needs no argument (it finds the nearest `pam-desktop.json`), reloads the window about 0.3 s after a save and keeps `#[State]` values. Without PHP on the machine, the host installs it (the PAM runtime on Linux and macOS, the official windows.php.net build on Windows).
+`pam init --template desktop` (PAM 2.2.12 and later) requires `pushinbr/pam-desktop` `^2.1`, installs it and runs `pam desktop init`, which writes a small application: a router, a home screen as a `.pam.php` template with scoped CSS, design tokens, a service and a test. `pam desktop dev` needs no argument (it finds the nearest `pam-desktop.json`), reloads the window about 0.3 s after a save and keeps `#[State]` values. Without PHP on the machine, the host installs it (the PAM runtime on Linux and macOS, the official windows.php.net build on Windows).
 
 `pam desktop` runs the package's launcher, which downloads the native host of the installed version for the current system from the [GitHub release](https://github.com/push-in/pam-desktop/releases/latest) (Linux, macOS and Windows, x86_64 and aarch64), verifies its SHA-256 and runs it. `PAM_DESKTOP_HOST` points the launcher at a host built from source. To build and run from a checkout, see [Examples](docs/examples.md).
 
