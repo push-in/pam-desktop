@@ -16,7 +16,7 @@ use objc2_app_kit::{
     NSApplication, NSBackgroundColorAttributeName, NSBorderType, NSColor, NSControl,
     NSControlTextEditingDelegate, NSEventModifierFlags, NSEventType, NSFocusRingType,
     NSFontAttributeName, NSForegroundColorAttributeName, NSKernAttributeName, NSLineBreakMode,
-    NSMutableParagraphStyle, NSParagraphStyleAttributeName, NSScrollView, NSScrollerStyle,
+    NSMutableParagraphStyle, NSParagraphStyleAttributeName, NSResponder, NSScrollView, NSScrollerStyle,
     NSSecureTextField, NSText, NSTextDelegate, NSTextField, NSTextFieldDelegate, NSTextInputClient,
     NSTextView, NSTextViewDelegate, NSTextViewDidChangeSelectionNotification, NSView,
 };
@@ -202,7 +202,7 @@ impl Shared {
 
     /// The user edited the multi-line editor.
     fn area_changed(&self, view: &NSTextView) {
-        self.refresh_placeholder(view.string().length() == 0);
+        self.refresh_area(view, true);
         self.report_content_size(view);
         if self.updating.get() {
             return;
@@ -231,34 +231,68 @@ impl Shared {
     }
 
     /// `NSTextView` has no placeholder: the box paints it while the
-    /// editor is empty.
-    fn refresh_placeholder(&self, empty: bool) {
+    /// editor is empty. An editor that is not focused and whose text fits
+    /// shows it the same way, painted like any text node (Chromium's line
+    /// boxes, glyph placement and font smoothing; TextKit centres nothing
+    /// in the CSS line height and darkens stems); the text view stays,
+    /// transparent, for focus and accessibility.
+    fn refresh_area(&self, view: &NSTextView, focused: bool) {
         let Some(container) = self.container.load() else {
             return;
         };
+        let scroll = view.enclosingScrollView();
+        let show_view = |shown: bool| {
+            if let Some(scroll) = &scroll {
+                scroll.setAlphaValue(if shown { 1.0 } else { 0.0 });
+            }
+        };
         let config = self.config.borrow();
-        if !empty || config.placeholder.is_empty() {
+        let value = view.string().to_string();
+        let (text, color) = if value.is_empty() {
+            let hint = placeholder_color(&config).unwrap_or(Color::rgba(128, 128, 128, 200));
+            (config.placeholder.clone(), Some(hint))
+        } else {
+            (value, config.color)
+        };
+        if text.is_empty() || (focused && !view.string().to_string().is_empty()) {
+            show_view(true);
             container.set_text(None);
             return;
         }
-        let color = placeholder_color(&config).unwrap_or(Color::rgba(128, 128, 128, 200));
+        let block = TextBlock {
+            runs: vec![TextRun {
+                text,
+                font: config.font.clone(),
+                color,
+                background: None,
+                underline: false,
+                strikethrough: false,
+                letter_spacing: config.letter_spacing,
+                press: None,
+            }],
+            align: config.align,
+            line_height: config.line_height.unwrap_or(0.0),
+            antialiased: config.antialiased,
+            ..TextBlock::default()
+        };
+        if view.string().length() > 0 {
+            // Text taller than the box scrolls in the editor: keep it there.
+            let Some(scroll) = &scroll else {
+                return;
+            };
+            let room = scroll.contentSize();
+            let height = text::Paragraph::new(&block).measure(room.width as f32).height;
+            if f64::from(height) > room.height + 0.5 {
+                show_view(true);
+                container.set_text(None);
+                return;
+            }
+            show_view(false);
+        } else {
+            show_view(true);
+        }
         container.set_text(Some(&TextContent {
-            block: TextBlock {
-                runs: vec![TextRun {
-                    text: config.placeholder.clone(),
-                    font: config.font.clone(),
-                    color: Some(color),
-                    background: None,
-                    underline: false,
-                    strikethrough: false,
-                    letter_spacing: config.letter_spacing,
-                    press: None,
-                }],
-                align: config.align,
-                line_height: config.line_height.unwrap_or(0.0),
-                antialiased: config.antialiased,
-                ..TextBlock::default()
-            },
+            block,
             insets: config.insets,
             vertical: VerticalAlign::Top,
             inline: false,
@@ -746,6 +780,9 @@ impl InputHost {
             Control::Area { view, .. } => {
                 let (shared, view) = (Rc::clone(&self.shared), Weak::from_retained(view));
                 container.set_focus_listener(Some(Rc::new(move |focused| {
+                    if let Some(view) = view.load() {
+                        shared.refresh_area(&view, focused);
+                    }
                     if !focused || !shared.config.borrow().select_on_focus {
                         return;
                     }
@@ -966,7 +1003,7 @@ impl InputHost {
                     }
                 }
                 self.shared.style_editor(view);
-                self.shared.refresh_placeholder(view.string().length() == 0);
+                self.shared.refresh_area(view, is_focused(view));
             }
         }
         self.layout(self.size);
@@ -1006,7 +1043,7 @@ impl InputHost {
                     unsafe { view.setTypingAttributes(&shared.text_attributes(None)) };
                 }
                 view.setSelectedRange(range);
-                shared.refresh_placeholder(length == 0);
+                shared.refresh_area(view, is_focused(view));
                 shared.report_content_size(view);
             }
         }
@@ -1049,6 +1086,13 @@ impl InputHost {
 
 /// The colour of the hint: the authored one, else the text colour at 45%,
 /// like the GTK backend; `None` leaves it to the system.
+/// Whether the editor is its window's first responder.
+fn is_focused(view: &NSTextView) -> bool {
+    view.window()
+        .and_then(|window| window.firstResponder())
+        .is_some_and(|responder| std::ptr::eq(&*responder, view.as_ref() as &NSResponder))
+}
+
 fn placeholder_color(config: &InputConfig) -> Option<Color> {
     config
         .placeholder_color
