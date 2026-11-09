@@ -391,6 +391,10 @@ pub fn install() -> Result<PathBuf, String> {
     Ok(php)
 }
 
+const DOWNLOAD_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// How long a download may go without receiving a byte.
+const DOWNLOAD_STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 pub(crate) fn agent() -> ureq::Agent {
     use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
     let provider = if cfg!(any(target_os = "macos", target_os = "windows")) {
@@ -407,6 +411,14 @@ pub(crate) fn agent() -> ureq::Agent {
             .tls_config(tls)
             .https_only(true)
             .max_redirects(3)
+            // ureq has no timeouts by default: a connection that stops
+            // answering (captive portal, proxy, dropped route) would leave
+            // the first `pam-desktop run` waiting forever. These bound each
+            // step, not the whole download, which may be slow.
+            .timeout_resolve(Some(DOWNLOAD_CONNECT_TIMEOUT))
+            .timeout_connect(Some(DOWNLOAD_CONNECT_TIMEOUT))
+            .timeout_recv_response(Some(DOWNLOAD_STALL_TIMEOUT))
+            .timeout_per_read(Some(DOWNLOAD_STALL_TIMEOUT))
             .user_agent(concat!("pam-desktop/", env!("CARGO_PKG_VERSION")))
             .build(),
     )

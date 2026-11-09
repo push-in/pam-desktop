@@ -93,6 +93,10 @@ unsafe fn choose_printer(
             }
             return if error == 0 {
                 Ok(None)
+            } else if error == PDERR_NODEFAULTPRN.0 || error == PDERR_NODEVICES.0 {
+                // A machine without any printer (Windows has already told the
+                // user): say so instead of a bare CommDlgExtendedError code.
+                Err(format!("No printer is installed ({error})"))
             } else {
                 Err(format!("Native printer dialog failed ({error})"))
             };
