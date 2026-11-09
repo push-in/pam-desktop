@@ -18,9 +18,12 @@ use std::rc::Rc;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, Sel};
-use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
+use objc2::{
+    AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel,
+};
 use objc2_app_kit::{
-    NSGraphicsContext, NSResponder, NSView, NSViewLayerContentsRedrawPolicy, NSWindowOrderingMode,
+    NSGraphicsContext, NSImage, NSResponder, NSView, NSViewLayerContentsRedrawPolicy,
+    NSWindowOrderingMode,
 };
 use objc2_core_foundation::{CFRetained, CGAffineTransform, CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{CGContext, CGImage};
@@ -31,7 +34,7 @@ use objc2_foundation::{
 };
 use objc2_quartz_core::{CALayer, CAShapeLayer, CATransaction, kCAFillRuleEvenOdd};
 use pam_desktop_ui::backend::{
-    BackendEvent, DrawCommand, ImageContent, NodeId, TextContent, VerticalAlign,
+    BackendEvent, DrawCommand, ImageContent, NodeId, TextContent, TextGeometry, VerticalAlign,
 };
 use pam_desktop_ui::geometry::{Affine, Insets, Point, Rect, Size};
 use pam_desktop_ui::shell::Cursor;
@@ -61,6 +64,9 @@ pub struct ViewState {
     pub drawing: Vec<DrawCommand>,
     /// Range of the text painted as selected (UTF-16 offsets).
     pub selection: Option<(u32, u32)>,
+    /// The engine's exact geometry before the frame was snapped to whole
+    /// pixels (`Backend::set_text_geometry`).
+    pub text_geometry: Option<TextGeometry>,
 }
 
 impl ViewState {
@@ -122,6 +128,9 @@ pub struct ViewIvars {
     focus_listener: RefCell<Option<FocusListener>>,
     /// Secondary clicks do not reach the native control inside the view.
     context_menu_hidden: Cell<bool>,
+    /// Text that overflows the box (`overflow: visible`) is drawn in this
+    /// sublayer: a layer-backed view only paints inside its bounds.
+    overflow: RefCell<Option<Retained<CALayer>>>,
 }
 
 /// Layer geometry inside a window's content view has its origin at the
@@ -535,6 +544,7 @@ impl PamView {
             pressable: Cell::new(false),
             focus_listener: RefCell::new(None),
             context_menu_hidden: Cell::new(false),
+            overflow: RefCell::new(None),
         });
         // SAFETY: `initWithFrame:` is the designated initializer of `NSView`.
         let view: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: CGRect::ZERO] };
@@ -611,6 +621,10 @@ impl PamView {
             layer.setBackgroundColor(Some(&cg_color(decoration.background)));
         }
         layer.setCornerRadius(CGFloat::from(decoration.radii.clamped(size).top_left));
+        // AppKit turns a rounded layer of a view into a clip of its subviews;
+        // CSS rounds only the box's own paint (`overflow: hidden` has its
+        // own clip view).
+        set_clips(self, false);
         if decoration.border.is_visible() {
             layer.setBorderWidth(CGFloat::from(decoration.border.widths[0]));
             layer.setBorderColor(Some(&cg_color(decoration.border.colors[0])));
@@ -641,6 +655,13 @@ impl PamView {
             state.text = text;
             state.selection = None;
         });
+    }
+
+    pub fn set_text_geometry(&self, geometry: TextGeometry) {
+        let geometry = Some(geometry);
+        if self.ivars().state.borrow().text_geometry != geometry {
+            self.update(|state| state.text_geometry = geometry);
+        }
     }
 
     pub fn set_image(&self, image: Option<ImageState>) {
@@ -739,23 +760,43 @@ impl PamView {
     }
 
     /// Where the text is painted: its top-left corner and wrapping width.
-    fn text_placement(&self, text: &TextState, size: Size) -> (Point, f32) {
+    fn text_placement(
+        &self,
+        text: &TextState,
+        size: Size,
+        geometry: Option<TextGeometry>,
+    ) -> (Point, f32) {
         let insets = text.content.insets;
-        let available = (size.width - insets.horizontal()).max(0.0);
-        let free = size.height - insets.vertical() - text.paragraph.measure(available).height;
+        // The engine's exact width: the snapped frame can be a fraction
+        // wider or narrower and wrap the lines differently.
+        let exact = geometry.unwrap_or(TextGeometry {
+            wrap_width: (size.width - insets.horizontal()).max(0.0),
+            height: size.height,
+            ..TextGeometry::default()
+        });
+        let (available, offset_x, offset_y) = (exact.wrap_width, exact.offset_x, exact.offset_y);
+        let free = exact.height - insets.vertical() - text.paragraph.measure(available).height;
         let top = insets.top
             + match text.content.vertical {
                 VerticalAlign::Top => 0.0,
+                // An inline box's line box overflows its content area by
+                // Blink's floored half-leading above.
+                VerticalAlign::Center if text.content.inline => (free / 2.0).ceil(),
                 VerticalAlign::Center => (free / 2.0).max(0.0),
                 VerticalAlign::Bottom => free.max(0.0),
             };
-        // Whole device pixels keep the glyphs crisp.
+        // Whole device pixels keep the glyphs crisp; the line box snaps from
+        // the exact top, not from the snapped frame.
         let scale = self
             .window()
             .map_or(1.0, |window| window.backingScaleFactor() as f32)
             .max(1.0);
+        let shift = text.paragraph.baseline_shift(available);
+        let exact = (offset_y + top) * scale;
+        let snapped = (exact + 0.5).floor();
+        text.paragraph.set_line_phase(exact - snapped, scale);
         (
-            Point::new(insets.left, (top * scale).round() / scale),
+            Point::new(insets.left + offset_x, snapped / scale + shift),
             available,
         )
     }
@@ -764,7 +805,8 @@ impl PamView {
     pub fn text_index_at(&self, point: Point) -> Option<u32> {
         let state = self.ivars().state.borrow();
         let text = state.text.as_ref()?;
-        let (origin, width) = self.text_placement(text, util::size(self.bounds().size));
+        let (origin, width) =
+            self.text_placement(text, util::size(self.bounds().size), state.text_geometry);
         Some(text.paragraph.index_at(
             width,
             CGPoint::new(
@@ -772,6 +814,57 @@ impl PamView {
                 CGFloat::from(point.y - origin.y),
             ),
         ))
+    }
+
+    /// Draws `paragraph` into the overflow sublayer at `origin`, as large
+    /// as its glyphs, so the part past the box shows like CSS
+    /// `overflow: visible`.
+    fn show_overflow(&self, paragraph: &Paragraph, origin: Point, width: f32, ink: (f32, f32)) {
+        let rect = CGRect::new(
+            CGPoint::ZERO,
+            CGSize::new(
+                CGFloat::from(ink.0.ceil().max(1.0)),
+                CGFloat::from(ink.1.ceil().max(1.0)),
+            ),
+        );
+        let Some(bitmap) = self.bitmapImageRepForCachingDisplayInRect(rect) else {
+            return;
+        };
+        let Some(bitmap_context) = NSGraphicsContext::graphicsContextWithBitmapImageRep(&bitmap)
+        else {
+            return;
+        };
+        let cg = bitmap_context.CGContext();
+        // TextKit draws in a flipped context, like the view.
+        CGContext::translate_ctm(Some(&cg), 0.0, rect.size.height);
+        CGContext::scale_ctm(Some(&cg), 1.0, -1.0);
+        let flipped = NSGraphicsContext::graphicsContextWithCGContext_flipped(&cg, true);
+        let previous = NSGraphicsContext::currentContext();
+        NSGraphicsContext::setCurrentContext(Some(&flipped));
+        paragraph.draw(&cg, CGPoint::ZERO, width, None);
+        flipped.flushGraphics();
+        NSGraphicsContext::setCurrentContext(previous.as_deref());
+        let image = NSImage::initWithSize(NSImage::alloc(), rect.size);
+        image.addRepresentation(&bitmap);
+        let Some(layer) = self.layer() else { return };
+        let mut slot = self.ivars().overflow.borrow_mut();
+        let overflow = slot.get_or_insert_with(|| {
+            let overflow = CALayer::new();
+            layer.addSublayer(&overflow);
+            overflow
+        });
+        CATransaction::begin();
+        CATransaction::setDisableActions(true);
+        overflow.setFrame(CGRect::new(util::cg_point(origin), rect.size));
+        // SAFETY: a layer's contents may be an `NSImage`.
+        unsafe { overflow.setContents(Some(&image)) };
+        CATransaction::commit();
+    }
+
+    fn hide_overflow(&self) {
+        if let Some(overflow) = self.ivars().overflow.borrow_mut().take() {
+            overflow.removeFromSuperlayer();
+        }
     }
 
     fn paint(&self, context: &CGContext) {
@@ -801,9 +894,21 @@ impl PamView {
             CGContext::restore_g_state(Some(context));
         }
         if let Some(text) = &state.text {
-            let (origin, width) = self.text_placement(text, size);
-            text.paragraph
-                .draw(context, util::cg_point(origin), width, state.selection);
+            let (origin, width) = self.text_placement(text, size, state.text_geometry);
+            let (ink_width, ink_height) = text.paragraph.ink_size(width);
+            let overflows = !decoration.clip
+                && state.selection.is_none()
+                && (origin.x + ink_width > size.width + 0.5
+                    || origin.y + ink_height > size.height + 0.5);
+            if overflows {
+                self.show_overflow(&text.paragraph, origin, width, (ink_width, ink_height));
+            } else {
+                self.hide_overflow();
+                text.paragraph
+                    .draw(context, util::cg_point(origin), width, state.selection);
+            }
+        } else {
+            self.hide_overflow();
         }
         if decoration.clip {
             CGContext::restore_g_state(Some(context));
@@ -907,7 +1012,7 @@ unsafe extern "C" {
 }
 
 /// Whether the system has a Metal device, checked once.
-fn gpu_filters_available() -> bool {
+pub(crate) fn gpu_filters_available() -> bool {
     static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *AVAILABLE.get_or_init(|| {
         // SAFETY: the function takes no arguments and returns a +1
@@ -957,6 +1062,8 @@ pub struct NodeView {
     frame: Rect,
     layer: LayerState,
     filters: Filters,
+    /// Shows the CPU-blurred backdrop when there is no Metal device.
+    backdrop: Option<Retained<PlainView>>,
 }
 
 impl NodeView {
@@ -970,6 +1077,7 @@ impl NodeView {
             frame: Rect::ZERO,
             layer: LayerState::default(),
             filters: Filters::default(),
+            backdrop: None,
         }
     }
 
@@ -979,6 +1087,9 @@ impl NodeView {
 
     /// The views this node contributes to its parent, back to front.
     pub fn stack(&self, into: &mut Vec<Retained<NSView>>) {
+        if let Some(backdrop) = &self.backdrop {
+            into.push(Retained::into_super(backdrop.clone()));
+        }
         if let Some(shadow) = &self.shadow {
             into.push(Retained::into_super(shadow.view.clone()));
         }
@@ -1156,7 +1267,62 @@ impl NodeView {
         });
     }
 
+    /// Without a Metal device a backdrop blur is done on the CPU
+    /// (`crate::backdrop`) into a view just below the box.
+    fn cpu_backdrop(&mut self, decoration: &Decoration) {
+        if gpu_filters_available() || decoration.backdrop_blur <= 0.0 {
+            if let Some(host) = self.backdrop.take() {
+                crate::backdrop::unregister(&host);
+                host.retire();
+                host.removeFromSuperview();
+            }
+            return;
+        }
+        if self.backdrop.is_none() {
+            let host = PlainView::new(self.mtm);
+            let (frame, linear) = self.placement();
+            host.place(frame, linear);
+            host.setAlphaValue(CGFloat::from(self.layer.opacity));
+            host.setHidden(!self.layer.visible);
+            let below: Retained<NSView> = match &self.shadow {
+                Some(shadow) => Retained::into_super(shadow.view.clone()),
+                None => Retained::into_super(self.view.clone()),
+            };
+            // SAFETY: the superview is only used to insert the sibling.
+            if let Some(parent) = unsafe { below.superview() } {
+                parent.addSubview_positioned_relativeTo(
+                    &host,
+                    NSWindowOrderingMode::Below,
+                    Some(&below),
+                );
+            }
+            self.backdrop = Some(host);
+        }
+        let Some(host) = &self.backdrop else { return };
+        let mut covers: Vec<Retained<NSView>> = Vec::new();
+        if let Some(shadow) = &self.shadow {
+            covers.push(Retained::into_super(shadow.view.clone()));
+        }
+        covers.push(Retained::into_super(self.view.clone()));
+        let radii = decoration.radii;
+        let corner = radii
+            .top_left
+            .max(radii.top_right)
+            .max(radii.bottom_right)
+            .max(radii.bottom_left)
+            .min(self.frame.width.min(self.frame.height) / 2.0);
+        crate::backdrop::register(
+            &Retained::into_super(host.clone()),
+            covers,
+            decoration.backdrop_blur,
+            corner,
+            pam_desktop_ui::backdrop::backdrop_fill(decoration),
+            decoration.backdrop_boxes.clone(),
+        );
+    }
+
     fn apply_filters(&mut self, decoration: &Decoration) {
+        self.cpu_backdrop(decoration);
         // Core Animation runs Core Image layer filters on the GPU. Without a
         // Metal device (a virtual machine, a remote session) a filtered
         // layer, and everything a backdrop filter covers, renders empty:
@@ -1197,7 +1363,19 @@ impl NodeView {
     }
 
     pub fn set_decoration(&mut self, decoration: &Decoration) {
-        self.view.set_decoration(decoration);
+        // Without Metal the CPU backdrop composites the box's translucent
+        // fill (Chromium's 8-bit blend); the box itself paints none.
+        if !gpu_filters_available()
+            && (pam_desktop_ui::backdrop::backdrop_fill(decoration).is_some()
+                || decoration.fill_composited)
+        {
+            self.view.set_decoration(&Decoration {
+                background: pam_desktop_ui::color::Color::TRANSPARENT,
+                ..decoration.clone()
+            });
+        } else {
+            self.view.set_decoration(decoration);
+        }
         self.clipping = decoration.clip;
         if !self.clipping {
             self.dissolve_clip();
@@ -1227,6 +1405,9 @@ impl NodeView {
     fn place(&self) {
         let (frame, linear) = self.placement();
         self.view.place(frame, linear);
+        if let Some(backdrop) = &self.backdrop {
+            backdrop.place(frame, linear);
+        }
         if let Some(shadow) = &self.shadow {
             shadow.view.place(frame, linear);
         }
@@ -1255,6 +1436,10 @@ impl NodeView {
             shadow.view.setAlphaValue(CGFloat::from(layer.opacity));
             shadow.view.setHidden(!layer.visible);
         }
+        if let Some(backdrop) = &self.backdrop {
+            backdrop.setAlphaValue(CGFloat::from(layer.opacity));
+            backdrop.setHidden(!layer.visible);
+        }
         if previous.transform != layer.transform {
             self.place();
         }
@@ -1262,6 +1447,11 @@ impl NodeView {
 
     /// Takes the node out of its parent.
     pub fn detach(&self) {
+        if let Some(backdrop) = &self.backdrop {
+            crate::backdrop::unregister(backdrop);
+            backdrop.retire();
+            backdrop.removeFromSuperview();
+        }
         if let Some(shadow) = &self.shadow {
             shadow.view.retire();
             shadow.view.removeFromSuperview();
@@ -1278,6 +1468,10 @@ impl Drop for NodeView {
     /// A layer must not be released while its transform is still watched
     /// (a node that was never destroyed, when the application ends).
     fn drop(&mut self) {
+        if let Some(backdrop) = &self.backdrop {
+            crate::backdrop::unregister(backdrop);
+            backdrop.retire();
+        }
         if let Some(shadow) = &self.shadow {
             shadow.view.retire();
         }

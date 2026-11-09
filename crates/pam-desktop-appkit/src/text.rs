@@ -11,15 +11,17 @@ use std::collections::{HashMap, VecDeque};
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{AnyThread, MainThreadMarker};
+use objc2::runtime::{Bool, NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::{AnyThread, DefinedClass, MainThreadMarker, define_class, msg_send};
 use objc2_app_kit::{
-    NSBackgroundColorAttributeName, NSBaselineOffsetAttributeName, NSColor, NSFont,
-    NSFontAttributeName, NSFontDescriptor, NSFontDescriptorSymbolicTraits,
-    NSFontDescriptorSystemDesignRounded, NSFontDescriptorSystemDesignSerif,
-    NSFontFeatureSettingsAttribute, NSFontManager, NSFontTraitMask, NSForegroundColorAttributeName,
-    NSKernAttributeName, NSLayoutManager, NSLineBreakMode, NSMutableParagraphStyle,
+    NSAttributedStringNSStringDrawing, NSBackgroundColorAttributeName,
+    NSBaselineOffsetAttributeName, NSColor, NSFont, NSFontAttributeName, NSFontDescriptor,
+    NSFontDescriptorSymbolicTraits, NSFontDescriptorSystemDesignRounded,
+    NSFontDescriptorSystemDesignSerif, NSFontFeatureSettingsAttribute, NSFontManager,
+    NSFontTraitMask, NSFontVariationAttribute, NSForegroundColorAttributeName, NSKernAttributeName,
+    NSLayoutManager, NSLayoutManagerDelegate, NSLineBreakMode, NSMutableParagraphStyle,
     NSParagraphStyleAttributeName, NSStrikethroughStyleAttributeName, NSTextAlignment,
-    NSTextContainer, NSTextStorage, NSUnderlineStyleAttributeName,
+    NSTextContainer, NSTextStorage, NSUnderlineStyleAttributeName, NSWritingDirection,
 };
 use objc2_core_foundation::{CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGContext;
@@ -28,14 +30,15 @@ use objc2_core_text::{
 };
 use objc2_foundation::{
     NSArray, NSAttributedString, NSAttributedStringKey, NSDictionary, NSMutableAttributedString,
-    NSMutableDictionary, NSNumber, NSRange, NSString,
+    NSMutableDictionary, NSNumber, NSRange, NSString, NSUInteger,
 };
 use pam_desktop_ui::geometry::Size;
 use pam_desktop_ui::style::{Border, Decoration, Radii};
 use pam_desktop_ui::text::{
     Ellipsize, FontSpec, InlineBox, SPACER_OPEN, SpacerMap, TextAlign, TextBlock, TextMetrics,
-    TextShadow,
+    TextShadow, TextWrap,
 };
+use std::ptr::NonNull;
 
 use crate::util::{cg_color, ns_color, ns_string, utf16_len};
 
@@ -57,6 +60,13 @@ pub struct Paragraph {
     serial: u64,
     max_lines: u32,
     ellipsize: Ellipsize,
+    wrap: TextWrap,
+    /// CSS `-webkit-font-smoothing: antialiased`.
+    antialiased: bool,
+    /// Where Chromium puts the first baseline below the line top: each
+    /// font's ascent and descent rounded to whole pixels and
+    /// `floor(half-leading)` above, so baselines fall on whole pixels.
+    chromium_baseline: f32,
     shadow: Option<TextShadow>,
     /// UTF-16 length of the authored text.
     length: usize,
@@ -70,6 +80,11 @@ pub struct Paragraph {
     /// Inline boxes (`TextSpanBoxes`): the laid-out range from the opening
     /// spacer through the closing one, and the font of the box's text.
     boxes: Vec<(NSRange, InlineBox, Retained<NSFont>)>,
+    /// Exact minus snapped top of the paragraph in device pixels, and the
+    /// device scale, for the next `draw` (see `set_line_phase`).
+    line_phase: Cell<(f64, f64)>,
+    /// Inline-blocks taller than the line: which lines keep the base height.
+    line_rule: Option<LineRule>,
 }
 
 /// Closes an inline box in the laid-out string. Like the shared
@@ -104,6 +119,57 @@ fn advance(font: &NSFont, character: char) -> CGFloat {
     }
 }
 
+/// Blink's text-field metrics of the block's first font, as Chromium's Mac
+/// port computes them (`SimpleFontData::PlatformInit`): the average is the
+/// advance of `x` from the font's own `hmtx` (Skia's Core Text glyph widths
+/// carry no size-specific tracking), the maximum the ascent rounded like
+/// Blink (with its Times/Helvetica/Courier adjustment).
+pub fn control_metrics(block: &TextBlock) -> Option<pam_desktop_ui::text::CharMetrics> {
+    let run = block.runs.first()?;
+    let font = font(&run.font);
+    // SAFETY: `NSFont` is toll-free bridged with `CTFont`; the glyph and
+    // advance buffers are valid for one element during the calls.
+    let average = unsafe {
+        let font = &*std::ptr::from_ref(&*font).cast::<CTFont>();
+        let mut unit = [u16::from(b'x')];
+        let mut glyph = 0_u16;
+        if !font.glyphs_for_characters(
+            std::ptr::NonNull::from(&mut unit[0]),
+            std::ptr::NonNull::from(&mut glyph),
+            1,
+        ) {
+            return None;
+        }
+        let graphics = font.graphics_font(std::ptr::null_mut());
+        let units = objc2_core_graphics::CGFont::units_per_em(Some(&graphics));
+        let mut advance = 0_i32;
+        if units <= 0
+            || !objc2_core_graphics::CGFont::glyph_advances(
+                Some(&graphics),
+                std::ptr::NonNull::from(&mut glyph),
+                1,
+                std::ptr::NonNull::from(&mut advance),
+            )
+        {
+            return None;
+        }
+        advance as f32 / units as f32 * font.size() as f32
+    };
+    let mut ascent = font.ascender().round() as f32;
+    let descent = (-font.descender()).round() as f32;
+    let family = font
+        .familyName()
+        .map(|name| name.to_string())
+        .unwrap_or_default();
+    if matches!(family.as_str(), "Times" | "Helvetica" | "Courier") {
+        ascent += ((ascent + descent) * 0.15 + 0.5).floor();
+    }
+    Some(pam_desktop_ui::text::CharMetrics {
+        average,
+        maximum: ascent,
+    })
+}
+
 #[derive(Clone, Eq, Hash, PartialEq)]
 struct FontKey {
     family: String,
@@ -113,10 +179,151 @@ struct FontKey {
     features: String,
 }
 
+define_class!(
+    // SAFETY: `NSTextContainer` may be subclassed to shape line fragments;
+    // the instance variable is a plain `Cell` and the class has no `Drop`.
+    #[unsafe(super(NSTextContainer))]
+    #[ivars = Cell<bool>]
+    struct WordContainer;
+
+    impl WordContainer {
+        /// CSS `overflow-wrap: normal`: a word wider than the column is never
+        /// broken. TextKit breaks it between characters, so while the loaded
+        /// paragraph has such a word, a line that starts with one is made as
+        /// wide as the word: it overflows the column alone, like a browser.
+        #[unsafe(method(lineFragmentRectForProposedRect:atIndex:writingDirection:remainingRect:))]
+        fn line_fragment(
+            &self,
+            proposed: CGRect,
+            index: NSUInteger,
+            direction: NSWritingDirection,
+            remaining: *mut CGRect,
+        ) -> CGRect {
+            // SAFETY: the arguments are forwarded unchanged to the superclass.
+            let mut rect: CGRect = unsafe {
+                msg_send![super(self), lineFragmentRectForProposedRect: proposed, atIndex: index, writingDirection: direction, remainingRect: remaining]
+            };
+            // SAFETY: the container belongs to the typesetter's layout
+            // manager, which keeps its text storage alive.
+            let storage = || unsafe { self.layoutManager().and_then(|manager| manager.textStorage()) };
+            if self.ivars().get()
+                && let Some(storage) = storage()
+            {
+                let word = word_at(&storage.string(), index);
+                if word.length > 0 {
+                    let width = storage.attributedSubstringFromRange(word).size().width.ceil();
+                    if width > rect.size.width {
+                        rect.size.width = width;
+                    }
+                }
+            }
+            rect
+        }
+
+        #[unsafe(method(isSimpleRectangularTextContainer))]
+        fn simple(&self) -> bool {
+            !self.ivars().get()
+        }
+    }
+);
+
+impl WordContainer {
+    fn new() -> Retained<Self> {
+        let this = Self::alloc().set_ivars(Cell::new(false));
+        let size = CGSize::new(UNBOUNDED, UNBOUNDED);
+        // SAFETY: `initWithSize:` is the designated initializer of `NSTextContainer`.
+        unsafe { msg_send![super(this), initWithSize: size] }
+    }
+}
+
+/// The unbreakable run starting at `index`: up to the next space, or just
+/// past the next hyphen or slash (where browsers may break too).
+/// Lines of a paragraph that holds inline-blocks: the paragraph style makes
+/// every line as tall as the tallest box, while CSS grows only the lines a
+/// box sits on.
+#[derive(Clone, Debug, PartialEq)]
+struct LineRule {
+    /// The height of a line without a box (the block's line height).
+    base: CGFloat,
+    /// Plain lines' baseline minus the boxed lines' one, below the top.
+    baseline: CGFloat,
+    /// Laid-out character ranges of the inline-blocks.
+    boxes: Vec<NSRange>,
+}
+
+define_class!(
+    // SAFETY: `NSObject` may be subclassed; the delegate method keeps the
+    // contract of `NSLayoutManagerDelegate` (it only writes through the
+    // pointers TextKit passes). The ivar is a plain `RefCell`.
+    #[unsafe(super(NSObject))]
+    #[ivars = RefCell<Option<LineRule>>]
+    struct LineHeights;
+
+    unsafe impl NSObjectProtocol for LineHeights {}
+
+    unsafe impl NSLayoutManagerDelegate for LineHeights {
+        #[unsafe(method(layoutManager:shouldSetLineFragmentRect:lineFragmentUsedRect:baselineOffset:inTextContainer:forGlyphRange:))]
+        fn should_set_line_fragment(
+            &self,
+            manager: &NSLayoutManager,
+            rect: NonNull<CGRect>,
+            used: NonNull<CGRect>,
+            baseline: NonNull<CGFloat>,
+            _container: &NSTextContainer,
+            glyphs: NSRange,
+        ) -> Bool {
+            let rule = self.ivars().borrow();
+            let Some(rule) = rule.as_ref() else {
+                return Bool::NO;
+            };
+            // SAFETY: no actual range is asked for.
+            let characters = unsafe {
+                manager.characterRangeForGlyphRange_actualGlyphRange(glyphs, std::ptr::null_mut())
+            };
+            let (start, end) = (characters.location, characters.location + characters.length);
+            if rule.boxes.iter().any(|range| range.location < end && start < range.location + range.length) {
+                return Bool::NO;
+            }
+            // SAFETY: TextKit passes valid in-out pointers for this call.
+            unsafe {
+                (*rect.as_ptr()).size.height = rule.base;
+                (*used.as_ptr()).size.height = rule.base;
+                *baseline.as_ptr() += rule.baseline;
+            }
+            Bool::YES
+        }
+    }
+);
+
+impl LineHeights {
+    fn new() -> Retained<Self> {
+        let this = Self::alloc().set_ivars(RefCell::new(None));
+        // SAFETY: `init` is the designated initializer of `NSObject`.
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
+fn word_at(text: &NSString, index: NSUInteger) -> NSRange {
+    let length = text.length();
+    let mut end = index;
+    while end < length {
+        let unit = text.characterAtIndex(end);
+        if char::from_u32(u32::from(unit)).is_some_and(char::is_whitespace) {
+            break;
+        }
+        end += 1;
+        if matches!(unit, 0x2d | 0x2f | 0x2010 | 0x2013 | 0x2014) {
+            break;
+        }
+    }
+    NSRange::new(index, end - index)
+}
+
 struct Typesetter {
     storage: Retained<NSTextStorage>,
     manager: Retained<NSLayoutManager>,
-    container: Retained<NSTextContainer>,
+    lines: Retained<LineHeights>,
+    container: Retained<WordContainer>,
     fonts: RefCell<HashMap<FontKey, Retained<NSFont>>>,
     /// Paragraph and width the storage currently holds.
     loaded: Cell<(u64, u32)>,
@@ -134,10 +341,7 @@ impl Typesetter {
     fn new() -> Self {
         let storage = NSTextStorage::new();
         let manager = NSLayoutManager::new();
-        let container = NSTextContainer::initWithSize(
-            NSTextContainer::alloc(),
-            CGSize::new(UNBOUNDED, UNBOUNDED),
-        );
+        let container = WordContainer::new();
         // Text starts exactly at the origin the view gives.
         container.setLineFragmentPadding(0.0);
         manager.addTextContainer(&container);
@@ -145,9 +349,12 @@ impl Typesetter {
         manager.setBackgroundLayoutEnabled(false);
         manager.setUsesFontLeading(true);
         storage.addLayoutManager(&manager);
+        let lines = LineHeights::new();
+        manager.setDelegate(Some(ProtocolObject::from_ref(&*lines)));
         Self {
             storage,
             manager,
+            lines,
             container,
             fonts: RefCell::new(HashMap::new()),
             loaded: Cell::new((0, 0)),
@@ -203,8 +410,69 @@ impl Typesetter {
                     Ellipsize::Clip => NSLineBreakMode::ByClipping,
                 }
             });
+        self.container.setLineBreakMode(
+            if paragraph.wrap == TextWrap::Char && paragraph.max_lines == 0 {
+                NSLineBreakMode::ByCharWrapping
+            } else {
+                self.container.lineBreakMode()
+            },
+        );
+        self.container.ivars().set(false);
+        self.lines.ivars().replace(paragraph.line_rule.clone());
         self.storage.setAttributedString(&paragraph.string);
         self.loaded.set(key);
+        if paragraph.wrap == TextWrap::Word && width.is_finite() && self.breaks_inside_a_word() {
+            self.container.ivars().set(true);
+            let all = NSRange::new(0, self.storage.length());
+            // SAFETY: the range covers the loaded string; no actual range is asked for.
+            unsafe {
+                self.manager
+                    .invalidateLayoutForCharacterRange_actualCharacterRange(
+                        all,
+                        std::ptr::null_mut(),
+                    );
+            }
+        }
+    }
+
+    /// Whether TextKit had to break a line inside a word: neither side of
+    /// some line end is a space, a hyphen or a slash.
+    fn breaks_inside_a_word(&self) -> bool {
+        let glyphs = self.glyphs();
+        let text = self.storage.string();
+        let end = glyphs.location + glyphs.length;
+        let mut index = glyphs.location;
+        while index < end {
+            let mut line = NSRange::new(index, 0);
+            // SAFETY: `index` is a valid glyph index and `line` outlives the call.
+            unsafe {
+                self.manager
+                    .lineFragmentRectForGlyphAtIndex_effectiveRange(index, &mut line)
+            };
+            let next = line.location + line.length;
+            if next <= index || next >= end {
+                break;
+            }
+            // SAFETY: no actual range is asked for.
+            let characters = unsafe {
+                self.manager
+                    .characterRangeForGlyphRange_actualGlyphRange(line, std::ptr::null_mut())
+            };
+            let cut = characters.location + characters.length;
+            if cut > 0 && cut < text.length() {
+                let breakable = |unit: u16| {
+                    char::from_u32(u32::from(unit)).is_some_and(char::is_whitespace)
+                        || matches!(unit, 0x2d | 0x2f | 0x2010 | 0x2013 | 0x2014)
+                };
+                if !breakable(text.characterAtIndex(cut - 1))
+                    && !breakable(text.characterAtIndex(cut))
+                {
+                    return true;
+                }
+            }
+            index = next;
+        }
+        false
     }
 
     /// The glyphs of the loaded paragraph, laid out.
@@ -212,7 +480,7 @@ impl Typesetter {
         self.manager.glyphRangeForTextContainer(&self.container)
     }
 
-    fn metrics(&self, paragraph: &Paragraph) -> TextMetrics {
+    fn metrics(&self, paragraph: &Paragraph, max_width: f32) -> TextMetrics {
         let glyphs = self.glyphs();
         let used = self.manager.usedRectForTextContainer(&self.container);
         let end = glyphs.location + glyphs.length;
@@ -241,14 +509,20 @@ impl Typesetter {
         if self.manager.extraLineFragmentRect().size.height > 0.0 {
             line_count += 1;
         }
-        // Round up: a box narrower than its text by a fraction would wrap when drawn.
+        // Round the width up: a box narrower than its text by a fraction
+        // would wrap when drawn (TextKit wraps at the exact advance width); a word that overflows the column does not
+        // widen the box (CSS). The height stays exact so fractional line
+        // heights stack like a browser's line boxes instead of drifting a
+        // pixel per paragraph.
         TextMetrics {
             width: if paragraph.empty {
                 0.0
             } else {
-                used.size.width.ceil() as f32
+                // Up to a Blink LayoutUnit (1/64 px): a whole pixel makes
+                // every shrink-wrapped label up to 1px wider than Chromium.
+                (((used.size.width * 64.0).ceil() / 64.0) as f32).min(max_width)
             },
-            height: used.size.height.ceil() as f32,
+            height: used.size.height as f32,
             first_baseline,
             line_count: line_count.max(1),
         }
@@ -328,10 +602,38 @@ fn feature_settings(
     (!settings.is_empty()).then(|| NSArray::from_retained_slice(&settings))
 }
 
+/// The system fonts are variable: Chromium sets their `wght` axis to the
+/// CSS weight itself (900 is wght 900), while AppKit's weight traits pick
+/// named instances (Black is wght 1000, a wider face).
+fn css_weight(font: Retained<NSFont>, weight: u16, size: CGFloat) -> Retained<NSFont> {
+    const WGHT: i32 = i32::from_be_bytes(*b"wght");
+    let axis = NSNumber::new_i32(WGHT);
+    let value = NSNumber::new_f64(f64::from(weight.clamp(1, 1000)));
+    let variation: Retained<NSDictionary<NSNumber, NSNumber>> =
+        NSDictionary::from_slices(&[&*axis], &[&*value]);
+    // SAFETY: the attribute name is an immutable string exported by AppKit.
+    let key: &NSString = unsafe { NSFontVariationAttribute };
+    let attributes: Retained<NSDictionary<NSString, AnyObject>> =
+        NSDictionary::from_slices(&[key], &[any(&*variation)]);
+    // SAFETY: the variation attribute takes a dictionary of axis tags to
+    // values, as documented.
+    let descriptor = unsafe {
+        font.fontDescriptor()
+            .fontDescriptorByAddingAttributes(&attributes)
+    };
+    NSFont::fontWithDescriptor_size(&descriptor, size).unwrap_or(font)
+}
+
 fn resolve_font(spec: &FontSpec) -> Retained<NSFont> {
     let size = CGFloat::from(spec.size.max(1.0));
     let weight = system_weight(spec.weight);
-    let system = || NSFont::systemFontOfSize_weight(size, weight);
+    let system = || {
+        css_weight(
+            NSFont::systemFontOfSize_weight(size, weight),
+            spec.weight,
+            size,
+        )
+    };
     let designed = |design: &NSString| {
         system()
             .fontDescriptor()
@@ -346,7 +648,11 @@ fn resolve_font(spec: &FontSpec) -> Retained<NSFont> {
         let candidate = match family {
             Family::Asset(source) => crate::fonts::font(source, size),
             Family::SystemUi => Some(system()),
-            Family::Monospace => Some(NSFont::monospacedSystemFontOfSize_weight(size, weight)),
+            Family::Monospace => Some(css_weight(
+                NSFont::monospacedSystemFontOfSize_weight(size, weight),
+                spec.weight,
+                size,
+            )),
             // SAFETY: the design names are immutable strings exported by AppKit.
             Family::Serif => designed(unsafe { NSFontDescriptorSystemDesignSerif }),
             // SAFETY: as above.
@@ -410,6 +716,11 @@ pub fn font(spec: &FontSpec) -> Retained<NSFont> {
     TYPESETTER.with(|typesetter| typesetter.font(spec))
 }
 
+/// Blink's `line-height: normal` for `font`.
+fn normal_line_height(font: &NSFont) -> f32 {
+    (font.ascender().round() + (-font.descender()).round() + font.leading().max(0.0).round()) as f32
+}
+
 /// Height of one line of `font` as TextKit lays it out.
 pub fn line_height(font: &NSFont) -> f32 {
     TYPESETTER.with(|typesetter| typesetter.manager.defaultLineHeightForFont(font) as f32)
@@ -436,10 +747,35 @@ impl Paragraph {
                 .map(|run| typesetter.font(&run.font))
                 .collect();
             let mut baseline_shift = None;
-            if block.line_height > 0.0 {
-                let height = CGFloat::from(block.line_height);
+            let mut tall_lines = None;
+            // `line-height: normal` is Blink's line spacing: ascent, descent
+            // and line gap each rounded to whole pixels (TextKit adds them
+            // unrounded and rounds up, a pixel taller with San Francisco).
+            let line_height = if block.line_height > 0.0 {
+                block.line_height
+            } else {
+                fonts
+                    .iter()
+                    .map(|font| normal_line_height(font))
+                    .fold(0.0, f32::max)
+            };
+            if line_height > 0.0 {
+                // An inline-block (a `<kbd>` chip) makes its line as tall as
+                // its line height plus vertical padding and border. TextKit
+                // styles whole paragraphs, so the paragraph takes the tallest.
+                let height = CGFloat::from(
+                    block
+                        .boxes
+                        .iter()
+                        .filter(|inline| inline.inline_block)
+                        .map(InlineBox::line_box_height)
+                        .fold(line_height, f32::max),
+                );
                 style.setMinimumLineHeight(height);
                 style.setMaximumLineHeight(height);
+                if height > CGFloat::from(line_height) + 0.001 {
+                    tall_lines = Some(CGFloat::from(line_height));
+                }
                 // TextKit puts the extra height above the glyphs; CSS splits
                 // it evenly above and below.
                 let natural = fonts
@@ -586,6 +922,38 @@ impl Paragraph {
                 }
             }
             insert_spacers(&string, runs.len(), &mut layout_length);
+            let chromium_baseline: f32 = runs
+                .iter()
+                .zip(&fonts)
+                .enumerate()
+                .filter(|(_, (run, _))| !run.text.is_empty())
+                .map(|(index, (_, font))| {
+                    // A run inside a box with its own line height takes
+                    // that line height; an inline-block also holds its
+                    // top padding and border.
+                    let (height, edge) = block
+                        .boxes
+                        .iter()
+                        .rev()
+                        .find(|inline| inline.runs.contains(&index) && inline.line_height > 0.0)
+                        .map_or((block.line_height, 0.0), |inline| {
+                            (inline.line_height, inline.edge_above())
+                        });
+                    let ascent = font.ascender().round() as f32;
+                    let descent = (-font.descender()).round() as f32;
+                    let height = if height > 0.0 {
+                        height
+                    } else {
+                        normal_line_height(font)
+                    };
+                    let leading = if height > 0.0 {
+                        ((height - ascent - descent) / 2.0).floor()
+                    } else {
+                        0.0
+                    };
+                    edge + ascent + leading
+                })
+                .fold(0.0, f32::max);
             let serial = typesetter.next_serial.get();
             typesetter.next_serial.set(serial + 1);
             Self {
@@ -593,6 +961,10 @@ impl Paragraph {
                 serial,
                 max_lines: block.max_lines,
                 ellipsize: block.ellipsize,
+                wrap: block.wrap,
+                antialiased: block.antialiased,
+                line_phase: Cell::new((0.0, 1.0)),
+                chromium_baseline,
                 shadow: block.shadow,
                 length,
                 empty,
@@ -602,6 +974,27 @@ impl Paragraph {
                     block.spacer_map()
                 },
                 layout_length,
+                line_rule: tall_lines.map(|base| {
+                    // Chromium's baseline of a line without a box: the
+                    // block's strut (ascent, descent, floored half-leading).
+                    let plain = fonts
+                        .iter()
+                        .map(|font| {
+                            let ascent = font.ascender().round();
+                            let descent = (-font.descender()).round();
+                            ascent + ((base - ascent - descent) / 2.0).floor()
+                        })
+                        .fold(0.0, CGFloat::max);
+                    LineRule {
+                        base,
+                        baseline: plain - CGFloat::from(chromium_baseline),
+                        boxes: box_ranges
+                            .iter()
+                            .filter(|(_, inline, _)| inline.inline_block)
+                            .map(|(range, _, _)| *range)
+                            .collect(),
+                    }
+                }),
                 boxes: box_ranges,
             }
         })
@@ -654,12 +1047,97 @@ impl Paragraph {
         }
     }
 
+    /// How far the paragraph must move down so its first baseline sits
+    /// where Chromium puts it (TextKit splits fractional leading evenly and
+    /// keeps fractional ascents).
+    pub fn baseline_shift(&self, width: f32) -> f32 {
+        if self.chromium_baseline <= 0.0 {
+            return 0.0;
+        }
+        self.chromium_baseline - self.measure(width).first_baseline
+    }
+
+    /// The size the glyphs take when wrapped to `width`, without capping the
+    /// width at the column: an overlong word overflows it (CSS
+    /// `overflow: visible`).
+    pub fn ink_size(&self, width: f32) -> (f32, f32) {
+        TYPESETTER.with(|typesetter| {
+            typesetter.load(self, width);
+            let used = typesetter
+                .manager
+                .usedRectForTextContainer(&typesetter.container);
+            (used.size.width as f32, used.size.height as f32)
+        })
+    }
+
+    /// The metrics the layout engine receives: the first baseline where
+    /// Chromium puts it, as the view draws it (baselines align boxes).
+    fn reported(&self, width: f32) -> TextMetrics {
+        let metrics = self.measure(width);
+        if self.chromium_baseline > 0.0 {
+            TextMetrics {
+                first_baseline: self.chromium_baseline,
+                ..metrics
+            }
+        } else {
+            metrics
+        }
+    }
+
     /// Size of the paragraph wrapped to `width`.
     pub fn measure(&self, width: f32) -> TextMetrics {
         TYPESETTER.with(|typesetter| {
             typesetter.load(self, width);
-            typesetter.metrics(self)
+            typesetter.metrics(self, width)
         })
+    }
+
+    /// Where the next `draw` starts: `phase` is the paragraph's exact top
+    /// minus the snapped one, in device pixels at `scale`.
+    pub fn set_line_phase(&self, phase: f32, scale: f32) {
+        self.line_phase
+            .set((f64::from(phase), f64::from(scale.max(1.0))));
+    }
+
+    /// Each line's glyphs and drawing origin. Blink snaps every line box's
+    /// top on its own (round half up of the exact top), so lines a
+    /// fractional line height apart land 18 or 19 pixels apart, and each
+    /// baseline on a whole pixel; TextKit stacks them at exact fractions.
+    fn snapped_lines(
+        &self,
+        typesetter: &Typesetter,
+        glyphs: NSRange,
+        origin: CGPoint,
+    ) -> Vec<(NSRange, CGPoint)> {
+        let (phase, scale) = self.line_phase.get();
+        let end = glyphs.location + glyphs.length;
+        let mut lines = Vec::new();
+        let mut index = glyphs.location;
+        while index < end {
+            let mut line = NSRange::new(index, 0);
+            // SAFETY: `index` is a valid glyph index and `line` outlives the call.
+            let rect = unsafe {
+                typesetter
+                    .manager
+                    .lineFragmentRectForGlyphAtIndex_effectiveRange(index, &mut line)
+            };
+            let top = rect.origin.y * scale;
+            let shift = ((phase + top + 0.5).floor() - top) / scale;
+            let next = (line.location + line.length).min(end);
+            if next <= index {
+                lines.push((
+                    NSRange::new(index, end - index),
+                    CGPoint::new(origin.x, origin.y + shift),
+                ));
+                break;
+            }
+            lines.push((
+                NSRange::new(index, next - index),
+                CGPoint::new(origin.x, origin.y + shift),
+            ));
+            index = next;
+        }
+        lines
     }
 
     /// Paints the paragraph with its top-left corner at `origin`, in the
@@ -703,9 +1181,30 @@ impl Paragraph {
                 };
             }
             self.draw_boxes(typesetter, context, origin);
-            typesetter
-                .manager
-                .drawBackgroundForGlyphRange_atPoint(glyphs, origin);
+            // Skia rounds each glyph to the nearest quarter pixel; Core
+            // Graphics truncates: an eighth of a pixel turns one into the
+            // other.
+            let (_, scale) = self.line_phase.get();
+            let glyph_origin = CGPoint::new(origin.x + 0.125 / scale, origin.y);
+            let lines = self.snapped_lines(typesetter, glyphs, glyph_origin);
+            for &(range, at) in &lines {
+                typesetter
+                    .manager
+                    .drawBackgroundForGlyphRange_atPoint(range, at);
+            }
+            // Glyphs at their exact advances, in quarter pixels, like Skia's
+            // subpixel text on macOS: without it Core Graphics rounds each
+            // glyph to a whole pixel and words drift by up to a pixel.
+            CGContext::save_g_state(Some(context));
+            CGContext::set_allows_font_subpixel_positioning(Some(context), true);
+            CGContext::set_should_subpixel_position_fonts(Some(context), true);
+            CGContext::set_allows_font_subpixel_quantization(Some(context), true);
+            CGContext::set_should_subpixel_quantize_fonts(Some(context), true);
+            if self.antialiased {
+                // `-webkit-font-smoothing: antialiased`: no stem darkening.
+                CGContext::save_g_state(Some(context));
+                CGContext::set_should_smooth_fonts(Some(context), false);
+            }
             if let Some(shadow) = self.shadow {
                 CGContext::save_g_state(Some(context));
                 let offset = crate::paint::shadow_offset(shadow.offset);
@@ -715,15 +1214,23 @@ impl Paragraph {
                     CGFloat::from(shadow.radius.max(0.0)),
                     Some(&cg_color(shadow.color)),
                 );
-                typesetter
-                    .manager
-                    .drawGlyphsForGlyphRange_atPoint(glyphs, origin);
+                for &(range, at) in &lines {
+                    typesetter
+                        .manager
+                        .drawGlyphsForGlyphRange_atPoint(range, at);
+                }
                 CGContext::restore_g_state(Some(context));
             } else {
-                typesetter
-                    .manager
-                    .drawGlyphsForGlyphRange_atPoint(glyphs, origin);
+                for &(range, at) in &lines {
+                    typesetter
+                        .manager
+                        .drawGlyphsForGlyphRange_atPoint(range, at);
+                }
             }
+            if self.antialiased {
+                CGContext::restore_g_state(Some(context));
+            }
+            CGContext::restore_g_state(Some(context));
             if let Some(range) = selected {
                 // SAFETY: the attribute name is an immutable string exported by AppKit.
                 typesetter
@@ -780,13 +1287,13 @@ pub fn measure(block: &TextBlock, max_width: f32) -> TextMetrics {
             .borrow()
             .iter()
             .find(|(cached, _)| *cached == key)
-            .map(|(_, paragraph)| paragraph.measure(max_width))
+            .map(|(_, paragraph)| paragraph.reported(max_width))
     });
     if let Some(metrics) = cached {
         return metrics;
     }
     let paragraph = Paragraph::new(block);
-    let metrics = paragraph.measure(max_width);
+    let metrics = paragraph.reported(max_width);
     TYPESETTER.with(|typesetter| {
         let mut measured = typesetter.measured.borrow_mut();
         if measured.len() >= MEASURE_CACHE_LIMIT {
@@ -863,6 +1370,7 @@ mod tests {
                 radius: 4.0,
                 background: Some(pam_desktop_ui::color::Color::BLACK),
                 line_height: 0.0,
+                inline_block: false,
             }],
             ..plain.clone()
         };
@@ -884,5 +1392,123 @@ mod tests {
             8
         );
         assert_eq!(paragraph.index_at(f32::INFINITY, CGPoint::new(0.0, 5.0)), 0);
+    }
+
+    /// CSS `overflow-wrap: normal`: a word wider than the column overflows
+    /// it on a line of its own instead of being cut between characters;
+    /// `break-all` (`TextWrap::Char`) still cuts it.
+    #[test]
+    fn words_wider_than_the_column_are_not_broken() {
+        let block = TextBlock {
+            runs: vec![run("Disponíveis para este")],
+            ..TextBlock::default()
+        };
+        let word = Paragraph::new(&TextBlock {
+            runs: vec![run("Disponíveis")],
+            ..TextBlock::default()
+        })
+        .measure(f32::INFINITY);
+        let narrow = word.width / 2.0;
+        let metrics = Paragraph::new(&block).measure(narrow);
+        assert_eq!(metrics.line_count, 3);
+        assert!(metrics.width <= narrow);
+        let char_wrapped = Paragraph::new(&TextBlock {
+            wrap: TextWrap::Char,
+            ..block
+        })
+        .measure(narrow);
+        assert!(char_wrapped.line_count > 3);
+    }
+
+    /// Baselines sit where Chromium puts them: whole pixels, ascent rounded
+    /// and `floor(half-leading)` above, whatever the fractional line height.
+    #[test]
+    fn baselines_follow_chromium() {
+        for line_height in [0.0, 13.5, 17.024, 18.4, 24.0] {
+            let block = TextBlock {
+                runs: vec![run("Hxg")],
+                line_height,
+                ..TextBlock::default()
+            };
+            let paragraph = Paragraph::new(&block);
+            let font = font(&block.runs[0].font);
+            let (ascent, descent) = (
+                font.ascender().round() as f32,
+                (-font.descender()).round() as f32,
+            );
+            let expected = ascent
+                + if line_height > 0.0 {
+                    ((line_height - ascent - descent) / 2.0).floor()
+                } else {
+                    0.0
+                };
+            let baseline = paragraph.measure(f32::INFINITY).first_baseline
+                + paragraph.baseline_shift(f32::INFINITY);
+            assert!(
+                (baseline - expected).abs() < 0.001,
+                "{line_height}: {baseline} != {expected}"
+            );
+            assert_eq!(baseline.fract(), 0.0);
+        }
+    }
+
+    /// Lines 18.5625 px apart are drawn from the pixel of each exact top
+    /// (round half up), like Blink: 0, 19, 37 from a whole-pixel top and
+    /// 0, 18, 37 from a top 0.4 px above its snapped pixel.
+    #[test]
+    fn lines_snap_like_blink() {
+        let block = TextBlock {
+            runs: vec![run("one\ntwo\nthree")],
+            line_height: 18.5625,
+            ..TextBlock::default()
+        };
+        let paragraph = Paragraph::new(&block);
+        for (phase, expected) in [(0.0, [0.0, 19.0, 37.0]), (-0.4, [0.0, 18.0, 37.0])] {
+            paragraph.set_line_phase(phase, 1.0);
+            TYPESETTER.with(|typesetter| {
+                typesetter.load(&paragraph, f32::INFINITY);
+                let lines = paragraph.snapped_lines(typesetter, typesetter.glyphs(), CGPoint::ZERO);
+                let tops: Vec<f64> = lines
+                    .iter()
+                    .map(|&(range, at)| {
+                        // SAFETY: the range starts at a laid-out glyph.
+                        let rect = unsafe {
+                            typesetter
+                                .manager
+                                .lineFragmentRectForGlyphAtIndex_effectiveRange(
+                                    range.location,
+                                    std::ptr::null_mut(),
+                                )
+                        };
+                        rect.origin.y + at.y
+                    })
+                    .collect();
+                assert_eq!(tops, expected, "phase {phase}");
+            });
+        }
+    }
+
+    /// An inline-block taller than the line grows its own line only: the
+    /// next line keeps the block's line height, like CSS line boxes.
+    #[test]
+    fn inline_blocks_grow_only_their_line() {
+        let block = TextBlock {
+            runs: vec![run("a "), run("Ctrl"), run(" b\nlast")],
+            boxes: vec![InlineBox {
+                runs: 1..2,
+                padding: [2.0, 6.0, 2.0, 6.0],
+                border: [1.0, 1.0, 1.0, 1.0],
+                border_color: None,
+                radius: 4.0,
+                background: None,
+                line_height: 20.0,
+                inline_block: true,
+            }],
+            line_height: 20.0,
+            ..TextBlock::default()
+        };
+        let metrics = Paragraph::new(&block).measure(f32::INFINITY);
+        assert_eq!(metrics.line_count, 2);
+        assert_eq!(metrics.height, 26.0 + 20.0);
     }
 }
