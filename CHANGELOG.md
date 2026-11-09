@@ -11,6 +11,10 @@
   the new values and keep their cascade order. Before, only rules written
   inside the query saw them, so the skeleton's dark tokens never applied.
   State blocks (`:hover`, `:focus`…) inside a matched query now apply too.
+- **Packaged font families with several weights.** An element that inherits a
+  `@font-face` family and sets its own `font-weight` keeps the weight next to
+  the resolved face, so the GTK host (which names a packaged face by its
+  family) draws the Bold file instead of the Regular one.
 
 ## 2.1.2 - 2026-11-09
 

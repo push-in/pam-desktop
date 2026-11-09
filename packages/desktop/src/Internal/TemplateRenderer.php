@@ -7085,28 +7085,24 @@ final class TemplateRenderer
         // fallbacks for the backend.
         $entries = array_map('trim', explode(',', $family));
         $resolved = false;
-        $exactFirst = false;
         foreach ($entries as $index => $entry) {
             if (!isset($fonts[$entry])) {
                 continue;
             }
-            [$source, $exact] = self::bestFontFace($fonts[$entry], $attributes);
+            [$source] = self::bestFontFace($fonts[$entry], $attributes);
             if ($source === null) {
                 continue;
             }
             $entries[$index] = $source;
             $resolved = true;
-            if ($index === 0) {
-                $exactFirst = $exact;
-            }
         }
         if (!$resolved) {
             return $attributes;
         }
         $attributes['fontFamily'] = implode(', ', $entries);
-        if ($exactFirst) {
-            unset($attributes['fontWeight'], $attributes['fontStyle']);
-        }
+        // The weight and style stay: hosts name a packaged face by its family
+        // (Fontconfig, CoreText), so a family packaged in several weights
+        // needs them to pick the face resolved here, not its regular one.
 
         return $attributes;
     }
