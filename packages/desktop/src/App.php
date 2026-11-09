@@ -48,7 +48,14 @@ final class App
      */
     public static function run(Renderable|Closure|RouteCollection|string|int $root): void
     {
+        if (\Pam\Desktop\Tooling\ProjectCheck::active()) {
+            // `pam-desktop check` runs the entry file only up to here: the
+            // components are registered and checked, no window opens.
+            self::discoverConventionalComponents();
+            \Pam\Desktop\Tooling\ProjectCheck::finish($root);
+        }
         try {
+            \Pam\Desktop\System\SystemTimezone::apply();
             self::discoverConventionalComponents();
             $projectRoot = self::projectRoot();
             if ($projectRoot !== null) MiddlewareRegistry::loadConfig($projectRoot.'/config/middleware.php');

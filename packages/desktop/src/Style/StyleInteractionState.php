@@ -16,4 +16,6 @@ enum StyleInteractionState: int
     case Loading = 8;
     case Error = 9;
     case FocusWithin = 10;
+    /** `:focus-visible`: focused by the keyboard (host-evaluated). */
+    case FocusVisible = 11;
 }

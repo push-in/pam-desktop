@@ -291,7 +291,7 @@ final class StyleValueCompiler
                 continue;
             }
             $rest = substr($value, $index);
-            if (preg_match('/^(?:\d+|\d*\.\d+)(?:px|dp|sp|pt|rem|em|%|[dsl]?vw|[dsl]?vh|[dsl]?vmin|[dsl]?vmax)?(?![A-Za-z])/i', $rest, $match) === 1) {
+            if (preg_match('/^(?:\d*\.\d+|\d+)(?:px|dp|sp|pt|rem|em|%|[dsl]?vw|[dsl]?vh|[dsl]?vmin|[dsl]?vmax)?(?![A-Za-z])/i', $rest, $match) === 1) {
                 $tokens[] = ['type' => 'number', 'value' => $match[0]];
                 $index += strlen($match[0]);
                 continue;

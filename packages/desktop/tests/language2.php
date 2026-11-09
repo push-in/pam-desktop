@@ -537,15 +537,16 @@ $assert(
         && (float) ($styledElement->properties()[PropKey::PressScale->value] ?? 0) === 0.98
         && str_contains(
             (string) ($styledElement->properties()[PropKey::NativeStateStyles->value] ?? ''),
-            '"2"',
+            '"11"',
         )
         && ($nativeStateStyles[10][PropKey::BorderColor->value] ?? null) === 0xFF33CC66
         && ($nativeStateStyles[10][PropKey::BorderTopColor->value] ?? null) === 0xFF33CC66
         && ($nativeStateStyles[10][PropKey::BorderRightColor->value] ?? null) === 0xFF33CC66
         && ($nativeStateStyles[10][PropKey::BorderBottomColor->value] ?? null) === 0xFF33CC66
         && ($nativeStateStyles[10][PropKey::BorderLeftColor->value] ?? null) === 0xFF33CC66
-        && ($nativeStateStyles[2][PropKey::BorderColor->value] ?? null) === 0xFF2244CC
-        && (float) ($nativeStateStyles[2][PropKey::Elevation->value] ?? 0) === 3.0
+        && ($nativeStateStyles[11][PropKey::BorderColor->value] ?? null) === 0xFF2244CC
+        && (float) ($nativeStateStyles[11][PropKey::Elevation->value] ?? 0) === 3.0
+        && !isset($nativeStateStyles[2])
         && $styledChild instanceof \Pam\Desktop\Element
         && (float) ($styledChild->properties()[PropKey::PaddingLeft->value] ?? 0) === 16.0
         && ($styledChild->properties()[PropKey::BackgroundColor->value] ?? null) === 0xFF4F46E5,

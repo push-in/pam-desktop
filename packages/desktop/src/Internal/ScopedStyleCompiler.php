@@ -235,18 +235,27 @@ final class ScopedStyleCompiler
         if (trim(substr($clean, $matchedBytes)) !== '') {
             throw new RuntimeException("Invalid CSS after the last rule in {$name}.");
         }
+        $rootText = [];
         foreach ($rules as [$selectorSource, $body]) {
             if ($selectorSource === ':root') {
                 foreach (self::rawDeclarations($body, $name) as $property => $value) {
+                    if (isset(self::ROOT_INHERITED_PROPERTIES[$property])) {
+                        // The document's text style (`html`/`body` on the
+                        // web): every element inherits it, buttons and
+                        // fields included (`font: inherit`).
+                        $rootText[] = "{$property}: {$value}";
+                        continue;
+                    }
                     if (!str_starts_with($property, '--')) {
                         throw new RuntimeException(
-                            ":root in {$name} may only declare --custom-properties.",
+                            ":root in {$name} may only declare --custom-properties and inherited text properties.",
                         );
                     }
                     $variables[$property] = self::unquote(trim($value));
                 }
             }
         }
+        $rootInherited = $rootText === [] ? [] : self::declarations(implode('; ', $rootText), $variables, $name);
         foreach ($rules as [$selectorSource, $body]) {
             if ($selectorSource !== '@font-face') {
                 continue;
@@ -338,6 +347,7 @@ final class ScopedStyleCompiler
             'cascadeRules' => $cascadeRules,
             'fonts' => $fonts,
             'variables' => $variables,
+            'rootInherited' => $rootInherited,
             'variableRules' => $variableRules,
             'tokens' => $language2['tokens'],
             'states' => $language2['states'],
@@ -671,14 +681,26 @@ final class ScopedStyleCompiler
      *
      * @var array<string, true>
      */
+    /** Inherited text properties `:root` may declare for the whole document. */
+    private const ROOT_INHERITED_PROPERTIES = [
+        'color' => true,
+        'font-family' => true,
+        'font-size' => true,
+        'font-weight' => true,
+        'font-style' => true,
+        'letter-spacing' => true,
+        'line-height' => true,
+        'text-transform' => true,
+        '-webkit-font-smoothing' => true,
+        '-moz-osx-font-smoothing' => true,
+    ];
+
     private const IGNORED_PROPERTIES = [
         '-webkit-tap-highlight-color' => true,
         'touch-action' => true,
         'will-change' => true,
         'contain' => true,
         'isolation' => true,
-        '-webkit-font-smoothing' => true,
-        '-moz-osx-font-smoothing' => true,
         'text-rendering' => true,
         'appearance' => true,
         '-webkit-appearance' => true,
@@ -777,6 +799,20 @@ final class ScopedStyleCompiler
         if ($value === '') {
             throw new RuntimeException("Empty value for CSS property {$property} in {$name}.");
         }
+        // A transform layer (Chromium composites it): the box lands on whole
+        // pixels and its content is painted relative to that origin.
+        if ($property === 'will-change' && preg_match('/(^|,)\s*transform\s*(,|$)/', $lower) === 1) {
+            $output['compositedLayer'] = true;
+
+            return;
+        }
+        // macOS: `antialiased` (or `grayscale`) draws glyphs without the
+        // stem darkening of font smoothing, like Chromium; elsewhere a no-op.
+        if ($property === '-webkit-font-smoothing' || $property === '-moz-osx-font-smoothing') {
+            $output['fontSmoothing'] = in_array($lower, ['antialiased', 'grayscale', 'none'], true) ? 'antialiased' : 'auto';
+
+            return;
+        }
         if (isset(self::IGNORED_PROPERTIES[$property])) {
             return;
         }
@@ -787,6 +823,26 @@ final class ScopedStyleCompiler
             throw new RuntimeException(
                 "CSS-wide keyword {$lower} for {$property} is not supported natively in {$name}; author an explicit value.",
             );
+        }
+        if (
+            in_array($property, ['width', 'min-width', 'max-width', 'height', 'min-height', 'max-height'], true)
+            && preg_match('/^(\d+(?:\.\d+)?|\.\d+)ch$/iD', trim($value), $match) === 1
+        ) {
+            // `ch` (the advance of "0" in the element's font) is resolved by
+            // the renderer, which knows the font: the number travels as a count.
+            $key = match ($property) {
+                'width' => \Pam\Desktop\PropKey::Width,
+                'min-width' => \Pam\Desktop\PropKey::MinWidth,
+                'max-width' => \Pam\Desktop\PropKey::MaxWidth,
+                'height' => \Pam\Desktop\PropKey::Height,
+                'min-height' => \Pam\Desktop\PropKey::MinHeight,
+                default => \Pam\Desktop\PropKey::MaxHeight,
+            };
+            $style = lcfirst(str_replace(' ', '', ucwords(str_replace('-', ' ', $property))));
+            $output[$style] = $match[1];
+            $previous = isset($output['lengthUnits']) && is_string($output['lengthUnits']) ? $output['lengthUnits'].';' : '';
+            $output['lengthUnits'] = $previous.$key->value.'=ch';
+            return;
         }
         if (in_array($property, ['padding', 'margin'], true)) {
             self::expandBox($output, $property, $value, $name);
@@ -1023,6 +1079,34 @@ final class ScopedStyleCompiler
             $output['gridTracks'] = \Pam\Desktop\GridTracks::fromCss($value)->toWire();
             return;
         }
+        if ($property === 'table-layout') {
+            $output['tableLayout'] = match ($lower) {
+                'auto' => 1,
+                'fixed' => 2,
+                default => throw new RuntimeException("Native table-layout in {$name} supports auto or fixed; got {$value}."),
+            };
+            return;
+        }
+        if ($property === 'border-collapse') {
+            $output['borderCollapse'] = match ($lower) {
+                'separate' => 1,
+                'collapse' => 2,
+                default => throw new RuntimeException("Native border-collapse in {$name} supports separate or collapse; got {$value}."),
+            };
+            return;
+        }
+        if ($property === 'vertical-align') {
+            $output['verticalAlign'] = match ($lower) {
+                'baseline' => 1,
+                'top' => 2,
+                'middle' => 3,
+                'bottom' => 4,
+                'text-top' => 5,
+                'text-bottom' => 6,
+                default => throw new RuntimeException("Native vertical-align in {$name} supports baseline, top, middle, bottom, text-top or text-bottom; got {$value}."),
+            };
+            return;
+        }
         if ($property === 'grid-column') {
             if (preg_match('/^span\s+([1-9]|[1-5][0-9]|6[0-4])$/iD', $value, $match) !== 1) {
                 throw new RuntimeException("Native grid-column in {$name} must be 'span 1' through 'span 64'.");
@@ -1031,15 +1115,45 @@ final class ScopedStyleCompiler
             return;
         }
         if ($property === 'display') {
+            if ($lower === 'inline-block') {
+                // A nested Text becomes an inline-block box of its paragraph;
+                // any other box is an atomic inline of its parent's lines.
+                $output['visible'] = true;
+                $output['inlineBlock'] = true;
+                $output['inlineLevel'] = 2;
+                return;
+            }
+            if ($lower === 'inline') {
+                // An inline box: its parent lays it on line boxes.
+                $output['visible'] = true;
+                $output['inlineLevel'] = 1;
+                return;
+            }
+            if ($lower === 'inline-flex' || $lower === 'inline-grid' || $lower === '-webkit-inline-box') {
+                $output['visible'] = true;
+                $output['inlineLevel'] = 3;
+                return;
+            }
+            $table = match ($lower) {
+                'table', 'inline-table' => 1,
+                'table-header-group', 'table-row-group', 'table-footer-group' => 2,
+                'table-row' => 3,
+                'table-cell' => 4,
+                default => null,
+            };
+            if ($table !== null) {
+                $output['visible'] = true;
+                $output['tableDisplay'] = $table;
+                return;
+            }
             $output['visible'] = match ($lower) {
                 'none' => false,
-                'flex', 'inline-flex', 'grid', 'inline-grid', 'block', 'flow-root',
-                '-webkit-box', '-webkit-inline-box' => true,
+                'flex', 'grid', 'block', 'flow-root', '-webkit-box' => true,
                 'contents' => throw new RuntimeException(
                     "display: contents is unsupported natively in {$name}; move the children up or style the parent.",
                 ),
                 default => throw new RuntimeException(
-                    "Native display in {$name} supports flex, grid, block or none; got {$value}.",
+                    "Native display in {$name} supports flex, grid, block, inline, inline-block, inline-flex, inline-grid, table boxes or none; got {$value}.",
                 ),
             };
             return;
@@ -1049,9 +1163,7 @@ final class ScopedStyleCompiler
                 'relative', 'static' => 'relative',
                 'absolute' => 'absolute',
                 'fixed' => 'fixed',
-                'sticky' => throw new RuntimeException(
-                    "position: sticky is unsupported natively in {$name}; use a header outside the ScrollView or stickyHeaderIndices.",
-                ),
+                'sticky' => 'sticky',
                 default => throw new RuntimeException("Invalid position value {$value} in {$name}."),
             };
             return;
@@ -1061,11 +1173,17 @@ final class ScopedStyleCompiler
             if (count($parts) !== 1) {
                 throw new RuntimeException("Native overflow uses one value for both axes in {$name}.");
             }
-            $output['overflow'] = match ((string) reset($parts)) {
+            $mode = (string) reset($parts);
+            if ($property === 'overflow' && ($mode === 'auto' || $mode === 'scroll')) {
+                // Both axes scroll in one viewport: a <ScrollView> styled with it.
+                $output['scrollBothAxes'] = true;
+                return;
+            }
+            $output['overflow'] = match ($mode) {
                 'visible' => 'visible',
                 'hidden', 'clip' => 'hidden',
                 'auto', 'scroll' => throw new RuntimeException(
-                    "overflow: {$lower} is unsupported natively in {$name}; wrap the content in <ScrollView>.",
+                    "{$property}: {$lower} is unsupported natively in {$name}; use <ScrollView> (one axis) or overflow: auto on a <ScrollView> (both axes).",
                 ),
                 default => throw new RuntimeException("Invalid overflow value {$value} in {$name}."),
             };
@@ -1193,13 +1311,17 @@ final class ScopedStyleCompiler
             return;
         }
         if ($property === 'scrollbar-color') {
-            // `scrollbar-color: <thumb> <track>`: the thumb colour is drawn;
-            // the track stays transparent like Chromium's thin scrollbars.
+            // `scrollbar-color: <thumb> <track>`: the thumb colour, and the
+            // track (and corner) colour of a classic bar; no track or a
+            // transparent one leaves it transparent.
             if (in_array($lower, ['auto', 'initial', 'unset'], true)) {
                 return;
             }
-            $thumb = preg_split('/\s+(?![^(]*\))/', trim($value))[0] ?? '';
-            $output['scrollbarColor'] = self::color($thumb, $property, $name);
+            $colors = preg_split('/\s+(?![^(]*\))/', trim($value));
+            $output['scrollbarColor'] = self::color($colors[0] ?? '', $property, $name);
+            if (isset($colors[1]) && strtolower($colors[1]) !== 'transparent') {
+                $output['scrollbarTrackColor'] = self::color($colors[1], $property, $name);
+            }
             return;
         }
         if ($property === 'scrollbar-width') {
@@ -1800,8 +1922,19 @@ final class ScopedStyleCompiler
         string $name,
     ): void {
         $lower = strtolower(trim($value));
+        if ($lower === 'auto' && $property === 'min-width') {
+            // An authored `min-width: auto`: the flex item's automatic
+            // minimum size (its min-content width), as in a browser. Native
+            // boxes default to 0 when nothing is authored.
+            unset($output['minWidth'], $output['minWidthPercent']);
+            $output['minWidthAuto'] = true;
+            return;
+        }
         if ($lower === 'auto' || ($lower === 'none' && str_starts_with($property, 'max-'))) {
             return;
+        }
+        if ($property === 'min-width') {
+            unset($output['minWidthAuto']);
         }
         if (in_array($lower, ['min-content', 'max-content', 'fit-content', 'stretch', '-webkit-fill-available'], true)) {
             throw new RuntimeException(
@@ -1813,7 +1946,23 @@ final class ScopedStyleCompiler
             $output[$attribute.'Percent'] = self::percentage($value, $name);
             return;
         }
-        $output[$attribute] = self::scalar($value, $name);
+        $output[$attribute] = self::layoutUnit(self::scalar($value, $name));
+    }
+
+    /**
+     * Blink resolves a box size to LayoutUnits (1/64 px, truncated toward
+     * zero): `min-height: calc(.8rem * 1.3 * 2)` is 33.265625px there, not
+     * 33.28px, and a grid of such boxes drifts a pixel without it.
+     */
+    private static function layoutUnit(string $value): string
+    {
+        if (!is_numeric($value)) {
+            return $value;
+        }
+        $units = (float) $value * 64;
+        $truncated = $units < 0 ? ceil($units - 1e-6) : floor($units + 1e-6);
+
+        return (string) ($truncated / 64);
     }
 
     /** @return array{Top: string, Right: string, Bottom: string, Left: string} */
@@ -2133,6 +2282,9 @@ final class ScopedStyleCompiler
         $lower = strtolower(trim($value));
         unset($output['lineHeight'], $output['lineHeightMultiplier']);
         if ($lower === 'normal') {
+            // 0 is the font's own line height; it also overrides a line
+            // height that an earlier rule (e.g. `Text { … }`) gave the element.
+            $output['lineHeight'] = '0';
             return;
         }
         $multiplier = null;
@@ -2142,6 +2294,10 @@ final class ScopedStyleCompiler
             $multiplier = (float) self::percentage($lower, $name) / 100;
         } elseif (preg_match('/^((?:\d+|\d*\.\d+))em$/D', $lower, $match) === 1) {
             $multiplier = (float) $match[1];
+        } elseif (preg_match('/^calc\([\d\s.+\-*\/()]+\)$/D', $lower) === 1) {
+            // A unitless calc() is a number (Tailwind's `--text-sm--line-height:
+            // calc(1.25 / .875)`), so it scales the font like `1.428571`.
+            $multiplier = StyleValueCompiler::resolve(StyleValueCompiler::encode($lower, $name), []);
         }
         if ($multiplier === null) {
             $output['lineHeight'] = self::scalar($value, $name);
@@ -2149,7 +2305,7 @@ final class ScopedStyleCompiler
         }
         $fontSize = $output['fontSize'] ?? null;
         if (is_string($fontSize) && is_numeric($fontSize)) {
-            $output['lineHeight'] = (string) (round($multiplier * (float) $fontSize * 100) / 100);
+            $output['lineHeight'] = (string) \Pam\Desktop\Style\LayoutUnit::lineHeight((float) $fontSize, $multiplier);
             return;
         }
         // Resolved against the element's final font size at render time.
@@ -2543,6 +2699,12 @@ final class ScopedStyleCompiler
     {
         $trimmed = trim($value);
         if (StyleValueCompiler::isDynamic($trimmed)) {
+            $absolute = preg_replace('/(?<=[\d.])(?:px|rem)\b/i', '', substr($trimmed, 5)) ?? '';
+            if (str_starts_with(strtolower($trimmed), 'calc(') && preg_match('/^[\d\s.+\-*\/()]+$/D', $absolute) === 1) {
+                // Only px/rem/numbers: a constant, known now, so box sizes
+                // still land on LayoutUnits (`calc(.8rem * 1.3 * 2)`).
+                return (string) StyleValueCompiler::resolve(StyleValueCompiler::encode($trimmed, $name), ['rootFontSize' => 16.0]);
+            }
             return StyleValueCompiler::encode($trimmed, $name);
         }
         if (preg_match('/^-?(?:\d+|\d*\.\d+)(?:px|dp|pt|rem)?$/D', $trimmed) !== 1) {

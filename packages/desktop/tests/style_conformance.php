@@ -63,13 +63,12 @@ foreach ($styleConformance as $property => $value) {
 $invalidStyleConformance = [
     'float: left;',
     'display: contents;',
-    'display: inline;',
-    'position: sticky;',
+    'display: ruby;',
     'box-sizing: content-box;',
     'grid-template-columns: subgrid;',
     'border-radius: 50% / 25%;',
     'border-radius: 25%;',
-    'overflow: auto;',
+    'overflow-x: auto;',
     'background: conic-gradient(red, blue);',
     'background: url(a.png);',
     'background: linear-gradient(red, 30%, blue);',
@@ -84,7 +83,7 @@ $invalidStyleConformance = [
     'text-decoration: underline wavy red;',
     'color: inherit;',
     'animation: spin 1s linear infinite;',
-    'vertical-align: middle;',
+    'vertical-align: super;',
     'font-size: larger;',
     'border-style: solid dashed;',
 ];
@@ -97,5 +96,10 @@ foreach ($invalidStyleConformance as $declaration) {
     }
     $assert($rejected, "Unsupported native CSS must fail closed: {$declaration}");
 }
+
+// Box sizes resolve to Blink LayoutUnits (1/64 px, truncated); sticky compiles.
+$sized = ScopedStyleCompiler::compileDeclarations('min-height: 33.28px; width: 12px; position: sticky; top: 0;', [], 'LayoutUnit sizes');
+$assert(json_encode($sized) !== false && str_contains((string) json_encode($sized), '33.265625'), 'min-height 33.28px compiles to 33.265625 (LayoutUnit).');
+$assert(str_contains((string) json_encode($sized), 'sticky'), 'position: sticky compiles.');
 
 require __DIR__.'/css_complete.php';

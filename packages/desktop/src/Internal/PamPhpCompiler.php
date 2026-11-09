@@ -58,7 +58,7 @@ final class PamPhpCompiler
     /** Directories one component walk may visit (a link to `/` or `$HOME` must not hang the build). */
     private const MAX_COMPONENT_DIRECTORIES = 10_000;
     private const MAX_SOURCE_BYTES = 2_097_152;
-    private const CACHE_VERSION = 9;
+    private const CACHE_VERSION = 14;
 
     /**
      * Content fingerprints of stylesheets read during one compileDirectory()

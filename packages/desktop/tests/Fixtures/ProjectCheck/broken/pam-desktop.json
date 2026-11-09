@@ -1,0 +1,5 @@
+{
+    "applicationId": "dev.pam.check.broken",
+    "name": "Check fixture",
+    "entry": "main.php"
+}

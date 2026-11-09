@@ -15,13 +15,17 @@ use Pam\Desktop\TextDataDetectorType;
 use Pam\Desktop\TextEllipsizeMode;
 use Pam\Desktop\TextHyphenationFrequency;
 
+use function array_map;
 use function count;
+use function explode;
+use function implode;
 use function is_bool;
 use function is_float;
 use function is_int;
 use function is_scalar;
 use function is_string;
 use function sprintf;
+use function trim;
 
 final class Text extends Element
 {
@@ -239,7 +243,8 @@ final class Text extends Element
         $radius = $length($properties[PropKey::BorderRadius->value] ?? null) ?? 0.0;
         $background = $properties[PropKey::BackgroundColor->value] ?? null;
         $background = is_int($background) ? $background : null;
-        if (max([...$padding, ...$border]) <= 0.0 && ($radius <= 0.0 || $background === null)) {
+        $inlineBlock = ($properties[PropKey::TextInlineBlock->value] ?? false) === true;
+        if (!$inlineBlock && max([...$padding, ...$border]) <= 0.0 && ($radius <= 0.0 || $background === null)) {
             return null;
         }
         $color = $properties[PropKey::BorderColor->value] ?? $properties[PropKey::BorderTopColor->value] ?? null;
@@ -250,6 +255,7 @@ final class Text extends Element
             $radius,
             $background ?? '',
             $length($properties[PropKey::LineHeight->value] ?? null) ?? '',
+            $inlineBlock ? 1 : '',
         ];
 
         return implode(',', array_map(
@@ -261,8 +267,13 @@ final class Text extends Element
     private static function spanField(mixed $value, int $index): string
     {
         if ($index === 9) {
-            $family = is_string($value) ? $value : '';
-            return preg_match('/^[A-Za-z0-9 _.\/:-]{1,256}$/D', $family) === 1 ? $family : '';
+            // A CSS family list travels with `|` between its families (the
+            // record separates fields with commas); quotes only group names.
+            $family = is_string($value) ? implode('|', array_map(
+                static fn (string $entry): string => trim($entry, " \t\"'"),
+                explode(',', $value),
+            )) : '';
+            return preg_match('/^[A-Za-z0-9 _.\/:|-]{1,256}$/D', $family) === 1 ? $family : '';
         }
         if (is_bool($value)) {
             return $value ? '1' : '0';

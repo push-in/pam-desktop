@@ -9,6 +9,11 @@ declare(strict_types=1);
  *     vendor/bin/pam-desktop dev
  *     vendor/bin/pam-desktop build --format deb
  *
+ * `vendor/bin/pam-desktop check [--json] [--src=<dir>]` is handled here in
+ * PHP: it compiles and validates every component template, stylesheet and
+ * route of the application and lists all diagnostics, with no host and no
+ * window (exit 0 when clean, 1 otherwise).
+ *
  * The host of this package's version is downloaded once from the GitHub
  * release, verified against its published SHA-256 and kept in the cache of
  * the user. PAM_DESKTOP_HOST points at a host binary to run instead, with no
@@ -16,7 +21,7 @@ declare(strict_types=1);
  * PAM_DESKTOP_HOST_CACHE_DIR names another absolute directory for the cache.
  */
 
-const HOST_VERSION = '2.0.1';
+const HOST_VERSION = '2.1.0';
 const REPOSITORY = 'push-in/pam-desktop';
 const MAX_ARCHIVE_BYTES = 536_870_912;
 const MAX_EXTRACTED_BYTES = 1_073_741_824;
@@ -177,6 +182,27 @@ function extractArchive(string $archive, string $work, string $package, string $
 }
 
 $arguments = array_slice($argv, 1);
+if (($arguments[0] ?? null) === 'check') {
+    $project = getcwd();
+    if (!is_string($project)) {
+        fail('cannot resolve the project directory');
+    }
+    foreach ([
+        $GLOBALS['_composer_autoload_path'] ?? null,
+        $project.DIRECTORY_SEPARATOR.'vendor'.DIRECTORY_SEPARATOR.'autoload.php',
+        dirname(__DIR__, 4).DIRECTORY_SEPARATOR.'autoload.php',
+        dirname(__DIR__).DIRECTORY_SEPARATOR.'vendor'.DIRECTORY_SEPARATOR.'autoload.php',
+    ] as $autoload) {
+        if (is_string($autoload) && is_file($autoload)) {
+            require_once $autoload;
+            break;
+        }
+    }
+    if (!class_exists(\Pam\Desktop\Tooling\ProjectCheck::class)) {
+        fail('check needs the Composer autoloader of the application (vendor/autoload.php)');
+    }
+    exit(\Pam\Desktop\Tooling\ProjectCheck::run(array_slice($arguments, 1), $project));
+}
 // PAM_DESKTOP_HOST_BINARY is the name PAM Desktop 1.x used.
 foreach (['PAM_DESKTOP_HOST', 'PAM_DESKTOP_HOST_BINARY'] as $variable) {
     $override = getenv($variable);

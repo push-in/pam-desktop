@@ -145,6 +145,7 @@ final class TemplateRenderer
         'textAlign',
         'textTransform',
         'fontFeatureSettings',
+        'fontSmoothing',
         'textShadowOffsetX',
         'textShadowOffsetY',
         'textShadowRadius',
@@ -163,6 +164,7 @@ final class TemplateRenderer
         'textAlign' => true,
         'textTransform' => true,
         'fontFeatureSettings' => true,
+        'fontSmoothing' => true,
         'textShadowOffsetX' => true,
         'textShadowOffsetY' => true,
         'textShadowRadius' => true,
@@ -310,6 +312,7 @@ final class TemplateRenderer
         'scrollbarWidth' => PropKey::ScrollbarWidth,
         'scrollbarThickness' => PropKey::ScrollbarThickness,
         'scrollbarColor' => PropKey::ScrollbarColor,
+        'scrollbarTrackColor' => PropKey::ScrollbarTrackColor,
         'textColor' => PropKey::TextColor,
         'fontSize' => PropKey::FontSize,
         'borderRadius' => PropKey::BorderRadius,
@@ -368,6 +371,19 @@ final class TemplateRenderer
         'srcSet' => PropKey::ImageSourceSet,
         'elevation' => PropKey::Elevation,
         'visible' => PropKey::Visible,
+        'inlineBlock' => PropKey::TextInlineBlock,
+        'tableDisplay' => PropKey::TableDisplay,
+        'inlineLevel' => PropKey::InlineLevel,
+        'scrollBothAxes' => PropKey::ScrollBothAxes,
+        'inputSize' => PropKey::InputSize,
+        'menuListOptions' => PropKey::MenuListOptions,
+        'minWidthAuto' => PropKey::MinWidthAuto,
+        'tableLayout' => PropKey::TableLayout,
+        'borderCollapse' => PropKey::BorderCollapse,
+        'verticalAlign' => PropKey::VerticalAlign,
+        'lengthUnits' => PropKey::LengthUnits,
+        'compositedLayer' => PropKey::CompositedLayer,
+        'fontSmoothing' => PropKey::FontSmoothing,
         'presentation' => PropKey::ModalPresentation,
         'animationType' => PropKey::ModalAnimationType,
         'backdropColor' => PropKey::ModalBackdropColor,
@@ -809,6 +825,92 @@ final class TemplateRenderer
      * @internal Drops the last element built in place, so it does not keep
      * a finished frame's tree alive until the next render builds one.
      */
+    /** Built-in tags whose attributes are all native properties (plus the per-tag extras). */
+    private const CHECKED_TAGS = [
+        'View' => [], 'Column' => [], 'Row' => [], 'Grid' => [], 'Screen' => [], 'SafeAreaView' => [],
+        'Spacer' => [], 'Text' => [], 'Span' => [],
+        'Pressable' => [], 'TouchableOpacity' => [], 'TouchableHighlight' => [],
+        'TouchableWithoutFeedback' => [], 'TouchableNativeFeedback' => [],
+        'Icon' => ['name' => true, 'font' => true, 'size' => true, 'color' => true],
+        'Image' => ['source' => true],
+    ];
+
+    /** Common slips from the web or React Native and the attribute meant. */
+    private const ATTRIBUTE_ALIASES = [
+        'color' => 'textColor',
+        'background' => 'backgroundColor',
+        'bg' => 'backgroundColor',
+        'font' => 'fontFamily',
+        'src' => 'source',
+        'onClick' => 'on:press',
+        'onPress' => 'on:press',
+        'className' => 'class',
+        'maxLines' => 'numberOfLines',
+        'style' => 'class',
+    ];
+
+    /**
+     * Why `$attribute` does nothing on the built-in `$tag` ("unknown attribute
+     * Text.color, did you mean textColor?"), or null when the renderer uses it
+     * or the tag is not checked. `pam desktop check`, the tests and a dev boot
+     * report it instead of ignoring the attribute.
+     */
+    /**
+     * Class names of `$classes` that a built-in element of the template
+     * `$root` cannot resolve: not in its scoped stylesheet, not a registered
+     * class and not a utility. Rendering such an element throws
+     * "Unknown Pam Desktop class"; `pam-desktop check` reports it first.
+     *
+     * @return list<string>
+     */
+    public static function unknownClasses(CompiledTemplateNode $root, string $classes): array
+    {
+        $local = self::styleSheetClasses(['__pamStyles' => self::styleSheet($root)]);
+        $unknown = [];
+        foreach (preg_split('/\\s+/', trim($classes)) ?: [] as $class) {
+            if (
+                $class === '' || isset($local[$class])
+                || TemplateRegistry::classProperties($class) !== null
+                || self::utility($class) !== null
+            ) {
+                continue;
+            }
+            $unknown[] = $class;
+        }
+
+        return $unknown;
+    }
+
+    public static function unknownBuiltinAttribute(string $tag, string $attribute): ?string
+    {
+        $extras = self::CHECKED_TAGS[$tag] ?? null;
+        $name = ltrim($attribute, ':');
+        if (
+            $extras === null
+            || isset($extras[$name])
+            || isset(self::PROPERTIES[$name])
+            || isset(self::SPECIAL_ATTRIBUTES[$name])
+            || isset(self::EVENTS[$name])
+            || ($tag === 'Image' && isset(self::MEDIA_CACHE_VALUES[$name]))
+            || in_array($name, ['class', 'key', 'ref', 'nativeRef', 'recipe', 'text'], true)
+            || preg_match('/^(p-|on:|@|data-|aria-|variant:|bind:|model|__pam)/', $name) === 1
+        ) {
+            return null;
+        }
+        $suggestion = self::ATTRIBUTE_ALIASES[$name] ?? null;
+        if ($suggestion === null) {
+            $best = 3;
+            foreach ([...array_keys(self::PROPERTIES), ...array_keys(self::SPECIAL_ATTRIBUTES), ...array_keys($extras)] as $known) {
+                $distance = levenshtein(strtolower($name), strtolower($known));
+                if ($distance < $best) {
+                    [$best, $suggestion] = [$distance, $known];
+                }
+            }
+        }
+
+        return "unknown attribute {$tag}.{$name}".($suggestion === null ? '' : ", did you mean {$suggestion}?");
+    }
+
     public static function releaseFrame(): void
     {
         self::$freshElement = null;
@@ -824,6 +926,14 @@ final class TemplateRenderer
     ): Element
     {
         $data['__pamStyles'] = self::styleSheet($tree);
+        $root = $data['__pamStyles']['rootInherited'] ?? [];
+        if (is_array($root) && $root !== []) {
+            // `:root` text styles under whatever the parent passed down.
+            $inherited = $data['__pamInheritedStyles'] ?? [];
+            $merged = [...array_intersect_key($root, self::INHERITED_STYLE_SET), ...(is_array($inherited) ? $inherited : [])];
+            $data['__pamInheritedStyles'] = $merged;
+            $data['__pamInheritedKey'] = serialize($merged);
+        }
         $rendered = self::nodes($tree->children, $scope, self::handOver($data));
 
         if ($rendered === []) {
@@ -1494,6 +1604,13 @@ final class TemplateRenderer
         $inheritedStyles = $data['__pamInheritedStyles'] ?? [];
         if (!is_array($inheritedStyles)) {
             $inheritedStyles = [];
+        }
+        if ($tag === 'Icon' && $inheritedStyles !== []) {
+            // An icon font glyph keeps its own font and size, like `.pi` or
+            // `.fa` on the web: only the colour and the letter spacing (which
+            // `.pi` does not reset, so an `<i>` adds the parent's computed
+            // spacing after its glyph) are inherited.
+            $inheritedStyles = array_intersect_key($inheritedStyles, ['textColor' => true, 'letterSpacing' => true]);
         }
         $sheet = $data['__pamStyles'] ?? null;
         $styleKey = null;
@@ -4572,11 +4689,14 @@ final class TemplateRenderer
             PropKey::InputFormatDecimalDigits,
             PropKey::InputFormatDecimalMinDigits,
             PropKey::InputFormatLocale,
+            PropKey::InputSize,
             => $kind === NodeKind::Input,
+            PropKey::MenuListOptions => $kind === NodeKind::Text,
             PropKey::ScrollbarGutter,
             PropKey::ScrollbarWidth,
             PropKey::ScrollbarThickness,
             PropKey::ScrollbarColor,
+            PropKey::ScrollbarTrackColor,
             => $kind === NodeKind::Scroll || $kind === NodeKind::VirtualList,
             default => true,
         };
@@ -4716,7 +4836,12 @@ final class TemplateRenderer
                 'end' => 3, 'flex-end' => 3, 'stretch' => 4,
                 'space-between' => 5, 'space-around' => 6, 'space-evenly' => 7,
             ]),
+            PropKey::InputSize => max(1, min(10_000, (int) self::floatValue($value, 'Input size'))),
+            PropKey::MenuListOptions => is_array($value)
+                ? implode("\n", array_map(static fn (mixed $option): string => is_scalar($option) ? (string) $option : throw new InvalidArgumentException('menuListOptions requires a list of labels.'), $value))
+                : (is_scalar($value) ? (string) $value : null),
             PropKey::FlexBasisContent,
+            PropKey::MinWidthAuto,
             PropKey::MarginTopAuto,
             PropKey::MarginRightAuto,
             PropKey::MarginBottomAuto,
@@ -4908,6 +5033,7 @@ final class TemplateRenderer
                 'relative' => 1,
                 'absolute' => 2,
                 'fixed' => 3,
+                'sticky' => 4,
             ]),
             PropKey::TextDecoration => self::named($value, [
                 'none' => 1,
@@ -5537,6 +5663,7 @@ final class TemplateRenderer
             'scopeId' => is_string($decoded['scopeId'] ?? null) ? $decoded['scopeId'] : '',
             'tokens' => self::safeStyleMetadata($decoded['tokens'] ?? [], $tree->source),
             'variables' => self::safeStyleMetadata($decoded['variables'] ?? [], $tree->source),
+            'rootInherited' => self::safeStyleMetadata($decoded['rootInherited'] ?? [], $tree->source),
             'variableRules' => self::safeStyleMetadata($decoded['variableRules'] ?? [], $tree->source),
             'states' => self::safeStyleMetadata($decoded['states'] ?? [], $tree->source),
             'stateRules' => self::safeStyleMetadata($decoded['stateRules'] ?? [], $tree->source),
@@ -5790,7 +5917,9 @@ final class TemplateRenderer
             }
             $stateKind = match ($state) {
                 'pressed', 'active' => StyleInteractionState::Pressed,
-                'focus', 'focus-visible' => StyleInteractionState::Focused,
+                'focus' => StyleInteractionState::Focused,
+                // Keyboard focus only: the host tracks the input modality.
+                'focus-visible' => StyleInteractionState::FocusVisible,
                 'focus-within' => StyleInteractionState::FocusWithin,
                 'hover' => StyleInteractionState::Hovered,
                 'disabled' => StyleInteractionState::Disabled,
@@ -6563,7 +6692,7 @@ final class TemplateRenderer
             if (!array_key_exists('lineHeight', $attributes) && is_numeric($multiplier)) {
                 // Native text defaults to 14dp when no font-size is authored.
                 $base = $knownFontSize ? (float) $environment['fontSize'] : 14.0;
-                $attributes['lineHeight'] = round((float) $multiplier * $base * 100) / 100;
+                $attributes['lineHeight'] = \Pam\Desktop\Style\LayoutUnit::lineHeight($base, (float) $multiplier);
             }
         }
 

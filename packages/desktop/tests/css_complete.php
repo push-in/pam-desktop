@@ -95,7 +95,11 @@ $assert(
 $assert($css('filter: blur(4px);') === ['blurRadius' => '4', 'filterColorMatrix' => ''], 'filter: blur() must compile.');
 require __DIR__.'/css_effects.php';
 $assert($css('pointer-events: none;') === ['pointerEvents' => 'none'], 'pointer-events must compile.');
-$assert($css('-webkit-tap-highlight-color: transparent; will-change: transform;') === [], 'Browser-only properties are documented no-ops.');
+$assert($css('-webkit-tap-highlight-color: transparent; will-change: opacity;') === [], 'Browser-only properties are documented no-ops.');
+$assert(($css('will-change: transform;')['compositedLayer'] ?? null) === true, 'will-change: transform makes a compositing layer.');
+$rootSheet = ScopedStyleCompiler::compile(':root { --sans: Inter, sans-serif; font-family: var(--sans); -webkit-font-smoothing: antialiased; } .a { color: red; }', 'RootText.pam.php');
+$assert(($rootSheet['rootInherited']['fontFamily'] ?? null) === 'Inter, sans-serif' && ($rootSheet['rootInherited']['fontSmoothing'] ?? null) === 'antialiased', ':root inherited text properties compile to the document text style.');
+$assert(($css('-webkit-font-smoothing: antialiased;')['fontSmoothing'] ?? null) === 'antialiased' && ($css('-moz-osx-font-smoothing: grayscale;')['fontSmoothing'] ?? null) === 'antialiased' && ($css('-webkit-font-smoothing: auto;')['fontSmoothing'] ?? null) === 'auto', 'font-smoothing compiles to fontSmoothing (macOS draws antialiased text without stem darkening).');
 $assert($css('cursor: pointer;') === ['cursor' => 'pointer'], 'cursor must compile to the desktop pointer cursor.');
 $assert($css('cursor: url(hand.cur), grab;') === ['cursor' => 'grab'], 'cursor keeps the keyword after url() fallbacks.');
 $assert($css('user-select: none;') === ['selectable' => false], 'user-select must map to text selection.');
@@ -320,3 +324,21 @@ $assert(
     'A matching media query must replace point width and zero flex-basis with percentage width and auto basis.',
 );
 Runtime::replaceWindowMetrics($previousMetrics);
+
+// scrollbar-color: <thumb> <track>; a transparent or missing track stays unset.
+$scrollbar = $css('scrollbar-color: #9F9F9F #2C2C2C;');
+$assert(
+    ($scrollbar['scrollbarColor'] ?? null) === 0xFF9F9F9F && ($scrollbar['scrollbarTrackColor'] ?? null) === 0xFF2C2C2C,
+    'scrollbar-color must compile the thumb and the track colour.',
+);
+$assert(
+    !isset($css('scrollbar-color: rgba(255,255,255,.08) transparent;')['scrollbarTrackColor'])
+        && !isset($css('scrollbar-color: #999999;')['scrollbarTrackColor']),
+    'A transparent or missing scrollbar track stays transparent.',
+);
+
+// min-width: auto is the flex item's automatic minimum; a later length wins.
+$auto = $css('flex: 1; min-width: auto;');
+$assert(($auto['minWidthAuto'] ?? null) === true && !isset($auto['minWidth']), 'min-width: auto must compile to the automatic minimum.');
+$later = $css('min-width: auto; min-width: 220px;');
+$assert(!isset($later['minWidthAuto']) && ($later['minWidth'] ?? null) == 220, 'A later min-width length must replace min-width: auto.');

@@ -104,6 +104,11 @@ $assert(
         && $apiRich->properties()[PropKey::TextSpans->value] === '2,3,,600',
     'Text::rich must flatten nested runs with code point offsets.',
 );
+$familyRich = Text::rich('a', Text::make('b')->property(PropKey::FontFamily, 'ui-monospace, "Liberation Mono", monospace'));
+$assert(
+    $familyRich->properties()[PropKey::TextSpans->value] === '1,2,,,,,,,,ui-monospace|Liberation Mono|monospace',
+    'A span must carry a CSS font-family list, its commas as |.',
+);
 $plainNested = Text::rich('x', Text::make('y'));
 $assert(
     !isset($plainNested->properties()[PropKey::TextSpans->value]),
@@ -134,6 +139,65 @@ $assert(
 $assert(
     !isset($typographyRender('<Text>a <Text class="b">b</Text></Text>', '.b { font-weight: 700; }')->properties()[PropKey::TextSpanBoxes->value]),
     'Runs without a box send no TextSpanBoxes.',
+);
+$inlineBlock = $typographyRender(
+    '<Text>a <Text class="kbd">Ctrl</Text> b</Text>',
+    '.kbd { display: inline-block; padding: 1px 6px; border-width: 1px; line-height: 15.4px; }',
+)->properties();
+$assert(
+    ($inlineBlock[PropKey::TextSpanBoxes->value] ?? null) === '2,6,1,6,1,6,1,1,1,1,,0,,15.4,1',
+    'display: inline-block flags the box record (field 15): '
+        .var_export($inlineBlock[PropKey::TextSpanBoxes->value] ?? null, true),
+);
+
+// Inline-level boxes: the parent lays them on line boxes (InlineLevel).
+$inlineLevels = $typographyRender(
+    '<Row class="cell"><Text class="a">a</Text><Input class="b" multiline="true" /><Row class="c"><Text>c</Text></Row></Row>',
+    '.cell { font-size: 16px; line-height: 24px; } .a { display: inline; vertical-align: text-top; }'
+        .' .b { display: inline-block; vertical-align: text-bottom; } .c { display: inline-flex; vertical-align: middle; }',
+);
+[$inlineText, $inlineField, $inlineFlex] = $inlineLevels->children();
+$assert(
+    ($inlineText->properties()[PropKey::InlineLevel->value] ?? null) === 1
+        && ($inlineText->properties()[PropKey::VerticalAlign->value] ?? null) === 5
+        && ($inlineField->properties()[PropKey::InlineLevel->value] ?? null) === 2
+        && ($inlineField->properties()[PropKey::VerticalAlign->value] ?? null) === 6
+        && ($inlineFlex->properties()[PropKey::InlineLevel->value] ?? null) === 3
+        && ($inlineFlex->properties()[PropKey::VerticalAlign->value] ?? null) === 3
+        && ($inlineLevels->properties()[PropKey::FontSize->value] ?? null) == 16,
+    'display: inline/inline-block/inline-flex and vertical-align compile to InlineLevel and VerticalAlign.',
+);
+
+// overflow: auto on a ScrollView scrolls both axes (ScrollBothAxes).
+$bothAxes = $typographyRender('<ScrollView class="wrap"><Text>a</Text></ScrollView>', '.wrap { overflow: auto; }')->properties();
+$assert(
+    ($bothAxes[PropKey::ScrollBothAxes->value] ?? null) === true,
+    'overflow: auto compiles to ScrollBothAxes on a ScrollView.',
+);
+
+// CSS tables and font-relative lengths.
+$table = $typographyRender(
+    '<Column class="t"><Row class="r"><Text class="c">a</Text></Row></Column>',
+    '.t { display: table; border-collapse: collapse; table-layout: fixed; }'
+        .' .r { display: table-row; } .c { display: table-cell; vertical-align: middle; max-width: 52ch; }',
+);
+$tableProperties = $table->properties();
+$row = $table->children()[0];
+$cell = $row->children()[0];
+$assert(
+    ($tableProperties[PropKey::TableDisplay->value] ?? null) === 1
+        && ($tableProperties[PropKey::BorderCollapse->value] ?? null) === 2
+        && ($tableProperties[PropKey::TableLayout->value] ?? null) === 2
+        && ($row->properties()[PropKey::TableDisplay->value] ?? null) === 3
+        && ($cell->properties()[PropKey::TableDisplay->value] ?? null) === 4
+        && ($cell->properties()[PropKey::VerticalAlign->value] ?? null) === 3,
+    'display: table/table-row/table-cell, border-collapse, table-layout and vertical-align compile to table properties.',
+);
+$assert(
+    (float) ($cell->properties()[PropKey::MaxWidth->value] ?? 0) === 52.0
+        && ($cell->properties()[PropKey::LengthUnits->value] ?? null) === PropKey::MaxWidth->value.'=ch',
+    'max-width: 52ch travels as 52 with the ch unit for the renderer: '
+        .var_export($cell->properties()[PropKey::LengthUnits->value] ?? null, true),
 );
 
 // includeFontPadding: React Native Android default true, CSS/prop opt-out.
@@ -240,6 +304,19 @@ try {
             && $iconProperties[PropKey::TextAllowFontScaling->value] === false,
         'Icon must render its glyph with the icon font, size and CSS color.',
     );
+    // `<i class="pi">` inherits the parent's computed letter-spacing (em
+    // resolved at the parent's font size) but keeps its own font size.
+    $spaced = $typographyRender(
+        '<Row class="nav"><Icon name="heart" size="16.8" /><Text>Home</Text></Row>',
+        '.nav { font-size: 9px; letter-spacing: 0.08em; color: #7D90AC; }',
+    );
+    $spacedIcon = $spaced->children()[0]->properties();
+    $assert(
+        abs((float) ($spacedIcon[PropKey::LetterSpacing->value] ?? 0) - 0.72) < 1e-9
+            && (float) $spacedIcon[PropKey::FontSize->value] === 16.8
+            && $spacedIcon[PropKey::TextColor->value] === 0xFF7D90AC,
+        'Icon must inherit the parent letter-spacing (computed px) and colour, not its font size: '.json_encode($spacedIcon),
+    );
     $assert(\Pam\Desktop\UI\Icon::make('missing')->properties()[PropKey::Text->value] === '?', 'Unknown glyphs render "?" like React Native.');
     \Pam\Desktop\UI\Icon::register('Brand', 'asset://assets/fonts/Brand.ttf', ['logo' => 0xE001]);
     $assert(\Pam\Desktop\UI\Icon::has('logo', 'Brand') && !\Pam\Desktop\UI\Icon::has('heart', 'Brand'), 'Registered icon fonts use their own glyph maps.');
@@ -301,3 +378,25 @@ $keyboardScroll = $typographyRender('<ScrollView keyboardInset="true"><Column />
 $assert(($keyboardScroll->properties()[PropKey::ScrollKeyboardInset->value] ?? null) === true, 'keyboardInset must reach the scroll view.');
 $offsetScroll = $typographyRender('<ScrollView keyboardInset="true" keyboardVerticalOffset="156"><Column /></ScrollView>', '');
 $assert(($offsetScroll->properties()[PropKey::KeyboardVerticalOffset->value] ?? null) == 156, 'Keyboard-aware scroll clearance must use the existing keyboard offset property.');
+// Blink's line-height conversions (ComputedStyle::ComputedLineHeight): the
+// font size rounds to 1/64, the float product truncates to 1/64. The
+// rounded font size can land above `font-size × factor` (22.4px × 1.5 is
+// 33.609375, not the 33.59375 that `line-height: 33.6px` floors to).
+foreach ([[13.12, 1.45, 19.03125], [12.8, 1.45, 18.546875], [12.8, 1 / 0.75, 17.046875], [12.0, 1 / 0.75, 16.0], [24.0, 2 / 1.5, 32.0], [12.8, 1.33333, 17.046875], [12.16, 1.4, 17.015625], [12.8, 1.5, 19.1875], [9.0, 1.5, 13.5], [22.4, 1.5, 33.609375], [13.76, 1.5, 20.640625], [16.8, 1.5, 25.1875]] as [$size, $factor, $expected]) {
+    $assert(\Pam\Desktop\Style\LayoutUnit::lineHeight($size, $factor) === $expected, "line-height {$size}px x {$factor} must be {$expected}.");
+}
+// A built-in tag's unknown attribute is a diagnostic (PAM2401 file:line), not a silent no-op.
+$assert(TemplateRenderer::unknownBuiltinAttribute('Text', 'color') === 'unknown attribute Text.color, did you mean textColor?', 'Text color= must suggest textColor.');
+$assert(TemplateRenderer::unknownBuiltinAttribute('Text', ':maxLines') === 'unknown attribute Text.maxLines, did you mean numberOfLines?', 'maxLines must suggest numberOfLines.');
+$assert(TemplateRenderer::unknownBuiltinAttribute('Row', 'backgroundColr') === 'unknown attribute Row.backgroundColr, did you mean backgroundColor?', 'Typos must suggest the closest attribute.');
+foreach ([['Text', 'textColor'], ['Text', ':numberOfLines'], ['Icon', 'color'], ['Row', 'on:press'], ['Column', 'p-if'], ['Image', 'cacheKey'], ['Text', '__pamStyles'], ['FlatList', 'anything']] as [$tag, $attribute]) {
+    $assert(TemplateRenderer::unknownBuiltinAttribute($tag, $attribute) === null, "{$tag}.{$attribute} must be accepted.");
+}
+$unknownAttribute = null;
+try {
+    \Pam\Desktop\Internal\TemplateContractValidator::validate(\Pam\Desktop\Component::class, TemplateCompiler::compile("<Column>\n  <Text color=\"#fff\">x</Text>\n</Column>", 'Card.pam.php', \Pam\Desktop\LanguageVersion::Language2));
+} catch (\RuntimeException $error) {
+    $unknownAttribute = $error->getMessage();
+}
+$assert(is_string($unknownAttribute) && str_contains($unknownAttribute, 'unknown attribute Text.color, did you mean textColor? at Card.pam.php:2'), 'The validator must report file:line: '.var_export($unknownAttribute, true));
+
