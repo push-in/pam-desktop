@@ -7,6 +7,8 @@ namespace App\Components;
 use App\Domain\Card;
 use App\Services\Board;
 use Pam\Desktop\Component;
+use Pam\Desktop\MenuItem;
+use Pam\Desktop\System\Clipboard;
 use Pam\Desktop\DragPayload;
 
 /** A card in a list: dragged by itself, and a drop before it puts a card there. */
@@ -52,6 +54,28 @@ final class CardTile extends Component
         $this->emit('complete', $this->card->id);
     }
 
+    /** @return list<MenuItem> what a secondary click on the card offers */
+    public function menu(): array
+    {
+        $moves = [];
+        foreach ($this->board->lists() as $list) {
+            if ($list->id !== $this->board->listOf($this->card->id)?->id) {
+                $moves[] = MenuItem::make($list->title, fn () => $this->emit('moveTo', ['card' => $this->card->id, 'list' => $list->id]));
+            }
+        }
+
+        return [
+            MenuItem::make('Open card', $this->open(...), shortcut: 'Enter'),
+            MenuItem::make($this->card->complete ? 'Mark incomplete' : 'Mark complete', $this->toggleComplete(...)),
+            MenuItem::make($this->card->watching ? 'Stop watching' : 'Watch', fn () => $this->emit('watch', $this->card->id), shortcut: 'S'),
+            MenuItem::separator(),
+            MenuItem::submenu('Move to', ...$moves),
+            MenuItem::make('Copy link', fn () => Clipboard::setText('https://trello.com/c/'.$this->card->id), shortcut: 'Ctrl+C'),
+            MenuItem::separator(),
+            MenuItem::make('Archive', null, shortcut: 'C', destructive: true),
+        ];
+    }
+
     public function dueClass(): string
     {
         return 'due due-'.$this->card->dueState($this->board->today());
@@ -69,7 +93,7 @@ final class CardTile extends Component
         <Column class="slot">
             <View p-if="$over" class="gap" />
             <DragSource dragType="1" :dragData="$card->id" on:dragStart="start" on:dragEnd="end">
-                <Pressable :class="tileClass()" cursor="pointer" @press="open" :accessibilityLabel="$card->title">
+                <Pressable :class="tileClass()" cursor="pointer" @press="open" :accessibilityLabel="$card->title" :contextMenu="menu()">
                     <Image p-if="$card->cover !== null" :source="$card->cover" class="cover" />
                     <Column class="content">
                         <Row p-if="$card->labels !== []" class="labels">

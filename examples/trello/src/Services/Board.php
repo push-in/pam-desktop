@@ -115,6 +115,65 @@ final class Board
     }
 
     /** Moves a card into a list, before another card or at the end. */
+    /**
+     * Every card where it is, for storage: id, list, position, title,
+     * complete, watching.
+     *
+     * @return list<list<string|int>>
+     */
+    public function snapshot(): array
+    {
+        $rows = [];
+        foreach ($this->lists as $listId => $list) {
+            foreach ($list->cardIds as $position => $cardId) {
+                $card = $this->cards[$cardId];
+                $rows[] = [$cardId, $listId, $position, $card->title, (int) $card->complete, (int) $card->watching];
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Puts back what `snapshot()` stored: cards added since are created,
+     * the others take their title, state and place.
+     *
+     * @param list<array<string, string|int|float|bool|null>> $rows
+     */
+    public function restore(array $rows): void
+    {
+        if ($rows === []) {
+            return;
+        }
+        $order = [];
+        foreach ($rows as $row) {
+            $id = (string) $row['card_id'];
+            $listId = (string) $row['list_id'];
+            if (!isset($this->lists[$listId])) {
+                continue;
+            }
+            $card = $this->cards[$id] ?? new Card($id, (string) $row['title']);
+            $this->cards[$id] = $card->with(title: (string) $row['title'], complete: (bool) $row['complete'], watching: (bool) $row['watching']);
+            $order[$listId][(int) $row['position']] = $id;
+            if (preg_match('/^c(\d+)$/', $id, $match) === 1) {
+                $this->sequence = max($this->sequence, (int) $match[1]);
+            }
+        }
+        foreach ($this->lists as $listId => $list) {
+            $ids = $order[$listId] ?? [];
+            ksort($ids);
+            $this->lists[$listId] = $list->withCards(array_values($ids));
+        }
+    }
+
+    /** Cards past their due date and not complete: the count on the app icon. */
+    public function overdue(): int
+    {
+        $now = new DateTimeImmutable();
+
+        return count(array_filter($this->cards, static fn (Card $card): bool => !$card->complete && $card->due !== null && $card->due < $now));
+    }
+
     public function move(string $cardId, string $listId, ?string $beforeId = null): void
     {
         if (!isset($this->cards[$cardId], $this->lists[$listId]) || $cardId === $beforeId) {
