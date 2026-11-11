@@ -24,12 +24,13 @@ if [ ${#examples[@]} -eq 0 ]; then
     done
 fi
 if [ "$(uname -s)" = Linux ] && [ -z "${DISPLAY:-}" ]; then
-    display=:${PAM_E2E_DISPLAY:-93}
-    Xvfb "$display" -screen 0 1600x1200x24 -nolisten tcp >/dev/null 2>&1 &
+    # Xvfb picks a free display and writes its number to the pipe.
+    number=$(mktemp)
+    Xvfb -displayfd 3 -screen 0 1600x1200x24 -nolisten tcp 3>"$number" >/dev/null 2>&1 &
     xvfb=$!
-    trap 'kill $xvfb 2>/dev/null' EXIT
-    export DISPLAY=$display
-    sleep 1
+    trap 'kill $xvfb 2>/dev/null; rm -f "$number"' EXIT
+    for _ in $(seq 1 50); do [ -s "$number" ] && break; sleep 0.1; done
+    export DISPLAY=:$(head -n 1 "$number")
 fi
 # Paths for the host: Windows wants its own form (Git Bash gives /c/…).
 native() {
