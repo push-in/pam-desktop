@@ -233,6 +233,45 @@ A click or a drag sets the value (a drag keeps following the pointer past either
 
 `placement` and `offset` work as for `Popover`. `background`, `color`, `muted` and `border` set its colours.
 
+## SplitView
+
+`<SplitView>` puts its two children side by side (`direction="horizontal"`, the default) or one above the other (`vertical`), with a divider between them that the pointer drags. `sized` says which child has `size` points: `start` (the first, the default) or `end`. The other one takes the rest.
+
+```html
+<SplitView :size="$sidebar" min="170" max="480" on:resize="resizeSidebar">
+    <Explorer />
+    <Editor />
+</SplitView>
+```
+
+- Dragging the divider emits `resize` with the new size, rounded and kept between `min` and `max`. The owner stores it, so it can save it and restore it.
+- With the divider focused, the arrow keys move it by `step` points (10 by default), and Home/End jump to `min`/`max`.
+- The line is `thickness` points wide (1 by default) and takes the pointer over `hitArea` points (6 by default), so it is easy to grab without taking room from the panes. It turns `activeColor` while hovered or dragged.
+- `resizable="false"` keeps the size fixed.
+
+## TreeView
+
+`<TreeView>` shows `TreeNode` values as a virtualized tree, as in a file explorer. Only the rows on screen are built.
+
+```php
+use Pam\DesktopUi\TreeNode;
+
+$this->files = [
+    new TreeNode('src', 'src', fn () => $this->folder('src'), icon: 'folder'),
+    new TreeNode('README.md', 'README.md', icon: 'file-text', iconColor: '#519ABA', badge: 'M', badgeColor: '#E2C08D'),
+];
+```
+
+```html
+<TreeView :nodes="$files" :selected="$active" :expanded="['src']" on:activate="open" on:select="select" />
+```
+
+- A node with `children: null` is a leaf. A list makes it a branch, and so does a closure that returns a list: the closure runs the first time the branch opens, which suits a folder read from disk.
+- Pressing a branch opens or closes it, and pressing a leaf emits `activate` with its id. Every selection change emits `select`, and opening or closing a branch emits `toggle` with `['id' => …, 'open' => …]`.
+- With a row focused: Up and Down move, Right opens a branch (or goes to its first child), Left closes it (or goes to its parent), Enter and Space press it, Home and End jump to the ends. The selected row is scrolled into view.
+- Each row shows the node's `icon` (in `iconFont`, Lucide by default), `label`, an optional dim `detail`, an optional `badge` at the end and a `tooltip`. Indent guides show while the pointer is over the tree (`guides="false"` turns them off).
+- `rowHeight`, `indent`, `iconSize`, `fontSize`, `color`, `muted` and `guideColor` adjust the look.
+
 ## ProgressButton
 
 A button that keeps its label and shows a spinner while `loading`; it ignores presses while loading or disabled. See [ProgressButton](../packages/desktop-ui/docs/progress-button.md).
