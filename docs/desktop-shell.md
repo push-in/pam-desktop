@@ -190,7 +190,28 @@ Pressable::make(Text::make($name))
     );
 ```
 
-Items may be check items and submenus, as in the menu bar.
+Items may be check items and submenus, as in the menu bar. A `shortcut` is shown beside the label; it only labels the item, so register the key itself with `Shortcut::register()` or the menu bar.
+
+In a template, `:contextMenu` takes a list of `MenuItem`, usually from a method of the component:
+
+```php
+/** @return list<MenuItem> */
+public function menu(Message $message): array
+{
+    return [
+        MenuItem::make('Edit message', fn () => $this->edit($message), shortcut: 'E'),
+        MenuItem::make('Copy link', fn () => $this->copyLink($message)),
+        MenuItem::separator(),
+        MenuItem::make('Delete message', fn () => $this->delete($message), destructive: true),
+    ];
+}
+```
+
+```html
+<Pressable p-for="$message in $messages" :contextMenu="menu($message)">…</Pressable>
+```
+
+Anything other than `MenuItem` values throws when the template renders.
 
 ## Tray icon
 

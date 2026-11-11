@@ -118,13 +118,17 @@ fn build_menu(
                 });
                 group.add_action(&action);
                 let detailed = format!("{scope}.{name}");
-                section.append(
+                let item = gio::MenuItem::new(
                     Some(&pam_desktop_ui::i18n::menu_label(label, *role, None)),
                     Some(&detailed),
                 );
                 if let Some(accelerator) = accelerator {
-                    accelerators.push((detailed, accelerator_string(accelerator)));
+                    let accelerator = accelerator_string(accelerator);
+                    // A popover menu shows the `accel` attribute beside the label.
+                    item.set_attribute_value("accel", Some(&accelerator.to_variant()));
+                    accelerators.push((detailed, accelerator));
                 }
+                section.append_item(&item);
             }
         }
     }

@@ -744,6 +744,7 @@ final class TemplateRenderer
         'statusBarTranslucent' => true,
         'horizontal' => true,
         'contentOffset' => true,
+        'contextMenu' => true,
     ];
 
     /** @var array<string, EventKind> */
@@ -4419,6 +4420,18 @@ final class TemplateRenderer
                 $attributes['accessibilityLabel'],
                 'Accessibility label',
             ));
+        }
+
+        if (isset($attributes['contextMenu'])) {
+            $items = $attributes['contextMenu'];
+            if (!is_array($items) || array_filter($items, static fn (mixed $item): bool => !$item instanceof \Pam\Desktop\MenuItem) !== []) {
+                throw new InvalidArgumentException(
+                    'Element contextMenu must be a list of MenuItem (MenuItem::make, ::checkbox, ::submenu, ::separator).',
+                );
+            }
+            if ($items !== []) {
+                $element = $element->contextMenu(...array_values($items));
+            }
         }
 
         if (isset($attributes['accessibilityActions'])) {

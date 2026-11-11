@@ -504,7 +504,11 @@ fn context_menu_level(value: &serde_json::Value, depth: usize) -> Option<Vec<Men
                 Some(MenuNode::Item {
                     id: entry.get("id")?.as_str()?.to_owned(),
                     label,
-                    accelerator: None,
+                    // Shown beside the label; the window's shortcuts run it.
+                    accelerator: entry
+                        .get("shortcut")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(crate::shell::Accelerator::parse),
                     enabled,
                     checked: flag(entry, "checked"),
                     role: None,
