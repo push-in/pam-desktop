@@ -104,6 +104,10 @@ final class TemplateContractValidator
             }
         }
 
+        if (!TemplateRenderer::knownTag($node->name)) {
+            $errors[] = self::error($node, "unknown tag <{$node->name}>: no built-in tag, component or registered tag has this name (a package not booted, such as DesktopUI::boot() or Markdown::register()?)");
+        }
+
         $contract = TemplateRegistry::tagContract($node->name);
         if ($contract !== null) {
             $knownProps = [];

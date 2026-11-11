@@ -6,10 +6,19 @@ namespace App\Components;
 
 use App\Domain\Entry;
 use App\Services\Workspace;
+use Pam\Desktop\Attributes\State;
 use Pam\Desktop\Component;
+use Pam\Desktop\MenuItem;
+use Pam\Desktop\System\Clipboard;
 
 final class MessageRow extends Component
 {
+    /** @var list<string> the quick reactions of the picker */
+    public const array EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '🙌', '🔥', '✅', '🙏', '💯', '🚀', '😮'];
+
+    #[State]
+    public bool $picking = false;
+
     public function __construct(
         public Entry $entry,
         public Workspace $workspace,
@@ -45,6 +54,56 @@ final class MessageRow extends Component
             'smile-plus' => $this->react('👍'),
             default => null,
         };
+    }
+
+    public function togglePicker(): void
+    {
+        $this->picking = !$this->picking;
+    }
+
+    public function closePicker(): void
+    {
+        $this->picking = false;
+    }
+
+    public function pick(string $emoji): void
+    {
+        $this->picking = false;
+        $this->react($emoji);
+    }
+
+    /** @return list<string> */
+    public function emoji(): array
+    {
+        return self::EMOJI;
+    }
+
+    public function pickerRef(): string
+    {
+        return 'react-'.$this->entry->key;
+    }
+
+    /** @return list<MenuItem> what a secondary click on a message offers */
+    public function menu(): array
+    {
+        $message = $this->entry->message;
+        if ($message === null) {
+            return [];
+        }
+        $items = $this->inThread ? [] : [MenuItem::make('Reply in thread', $this->openThread(...), shortcut: 'T')];
+
+        return [
+            ...$items,
+            MenuItem::make('Add reaction', fn () => $this->picking = true, shortcut: 'R'),
+            MenuItem::separator(),
+            MenuItem::make('Copy text', static fn () => Clipboard::setText($message->text)),
+            MenuItem::make('Copy link', static fn () => Clipboard::setText('https://acme.slack.com/archives/'.$message->id), shortcut: 'L'),
+            MenuItem::separator(),
+            MenuItem::make('Mark unread', null, shortcut: 'U'),
+            MenuItem::make('Remind me about this', null, shortcut: 'M'),
+            MenuItem::separator(),
+            MenuItem::make('Delete message…', null, shortcut: 'Delete', destructive: true),
+        ];
     }
 
     public function avatar(string $memberId): string
@@ -98,7 +157,7 @@ final class MessageRow extends Component
         <View class="rule" />
     </Row>
 
-    <Row p-else :class="$entry->continued ? 'message continued' : 'message'">
+    <Row p-else :class="$entry->continued ? 'message continued' : 'message'" :contextMenu="menu()">
         <Column class="gutter">
             <Image p-if="!$entry->continued" :source="$entry->author->avatar" class="avatar" />
         </Column>
@@ -115,9 +174,16 @@ final class MessageRow extends Component
                     <Text class="emoji">{{ $chip['emoji'] }}</Text>
                     <Text :class="$chip['mine'] ? 'chip-count mine-count' : 'chip-count'">{{ $chip['count'] }}</Text>
                 </Pressable>
-                <Column class="chip add-reaction">
+                <Pressable :nativeRef="pickerRef()" class="chip add-reaction" cursor="pointer" @press="togglePicker">
                     <Icon name="smile-plus" font="Lucide" size="16" class="add-icon" />
-                </Column>
+                </Pressable>
+                <Popover :open="$picking" :anchor="pickerRef()" placement="top-start" label="Add reaction" on:close="closePicker">
+                    <Row class="picker">
+                        <Pressable p-for="$emoji in emoji()" p-key="$emoji" class="pick" cursor="pointer" on:press="pick($emoji)">
+                            <Text class="pick-emoji">{{ $emoji }}</Text>
+                        </Pressable>
+                    </Row>
+                </Popover>
             </Row>
             <Pressable p-if="!$inThread && $entry->message->replies > 0" class="thread" cursor="pointer" @press="openThread">
                 <Image p-for="$id in $entry->message->repliedBy" p-key="$id" :source="avatar($id)" class="replier" />
@@ -202,4 +268,9 @@ final class MessageRow extends Component
     .run-plain { font-weight: 400; }
     .run-bold { font-weight: 700; }
     .run-mention { color: var(--link); background-color: #1D9BD11A; border-radius: 3px; padding: 0 2px; }
+    .picker { width: 264px; flex-wrap: wrap; padding: 6px; gap: 2px; border-radius: 8px; border-width: 1px; border-color: #DDDDDD;
+              background-color: #FFFFFF; box-shadow: 0 4px 12px #0000001F; }
+    .pick { width: 40px; height: 36px; border-radius: 6px; align-items: center; justify-content: center; transition: background-color 100ms; }
+    .pick:hover { background-color: #F0F0F0; }
+    .pick-emoji { font-size: 20px; }
 </style>

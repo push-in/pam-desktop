@@ -11,6 +11,7 @@ use function Pam\Desktop\Testing\mount;
 require dirname(__DIR__).'/vendor/autoload.php';
 
 Pam\Desktop\Markdown\Markdown::register();
+Pam\DesktopUi\DesktopUI::boot(dirname(__DIR__).'/.pam-desktop/desktop-ui');
 App::components(dirname(__DIR__).'/src', dirname(__DIR__).'/.pam-desktop/components');
 
 $check = static function (bool $condition, string $message): void {

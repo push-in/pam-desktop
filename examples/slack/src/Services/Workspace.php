@@ -115,6 +115,12 @@ final class Workspace
         return $this->messages[$conversationId];
     }
 
+    /** Unread mentions and direct messages: the count on the app icon. */
+    public function mentions(): int
+    {
+        return array_sum(array_map(static fn (Conversation $conversation): int => $conversation->mentions, $this->conversations));
+    }
+
     public function markRead(string $conversationId): void
     {
         $this->conversations[$conversationId] = $this->conversations[$conversationId]->read();

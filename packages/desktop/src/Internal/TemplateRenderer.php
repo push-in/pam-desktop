@@ -857,6 +857,24 @@ final class TemplateRenderer
         'Modal' => ['presentation' => true, 'visible' => true],
     ];
 
+    /** Tags the renderer builds itself (the others come from TemplateRegistry). */
+    private const BUILTIN_TAGS = [
+        'ActivityIndicator' => true, 'Animated' => true, 'Audio' => true, 'BottomSheet' => true, 'Button' => true,
+        'Column' => true, 'CustomView' => true, 'DragSource' => true, 'DrawingCanvas' => true, 'DropTarget' => true,
+        'FlatList' => true, 'GestureDetector' => true, 'Grid' => true, 'Icon' => true, 'Image' => true,
+        'ImageBackground' => true, 'Input' => true, 'InputAccessoryView' => true, 'InteractionRegion' => true,
+        'KeyboardAvoidingView' => true, 'LinearGradient' => true, 'Link' => true, 'MediaPlayer' => true,
+        'Modal' => true, 'Native' => true, 'NativeList' => true, 'Pressable' => true, 'RefreshControl' => true,
+        'Row' => true, 'SafeAreaView' => true, 'Screen' => true, 'Scroll' => true, 'ScrollView' => true,
+        'SectionList' => true, 'Shimmer' => true, 'Spacer' => true, 'Span' => true, 'StatusBar' => true,
+        'Swipeable' => true, 'Switch' => true, 'Text' => true, 'TextInput' => true, 'TouchableHighlight' => true,
+        'TouchableNativeFeedback' => true, 'TouchableOpacity' => true, 'TouchableWithoutFeedback' => true,
+        'Video' => true, 'View' => true, 'VirtualGrid' => true, 'VirtualizedList' => true, 'WebView' => true,
+        'If' => true, 'Show' => true, 'Match' => true, 'Await' => true, 'Each' => true, 'Slot' => true,
+        'Case' => true, 'Else' => true, 'Default' => true, 'Pending' => true, 'Then' => true, 'Catch' => true,
+        'Template' => true, 'Fragment' => true,
+    ];
+
     /** Common slips from the web or React Native and the attribute meant. */
     private const ATTRIBUTE_ALIASES = [
         'color' => 'textColor',
@@ -933,6 +951,16 @@ final class TemplateRenderer
         }
 
         return "unknown prop {$tag}.{$name}".($suggestion === null ? '' : ", did you mean {$suggestion}?");
+    }
+
+    /** Whether `$tag` names something a template can render. */
+    public static function knownTag(string $tag): bool
+    {
+        return $tag === ''
+            || isset(self::BUILTIN_TAGS[$tag])
+            || TemplateRegistry::factory($tag) !== null
+            || TemplateRegistry::isCompiledComponent($tag)
+            || !ctype_upper($tag[0]);
     }
 
     public static function unknownBuiltinAttribute(string $tag, string $attribute): ?string
