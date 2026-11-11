@@ -1860,6 +1860,9 @@ impl Scene {
                         ""
                     };
                     backend.set_key_capture(*id, keys);
+                    if node.kind == NodeKind::Terminal {
+                        backend.set_text_input(*id, true);
+                    }
                     let mode = node.props().integer_or(PropKey::PointerEvents, 1);
                     backend.set_pointer_events(*id, !matches!(mode, 2 | 3), !matches!(mode, 2 | 4));
                 }

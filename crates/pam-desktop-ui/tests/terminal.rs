@@ -184,6 +184,14 @@ fn a_terminal_binds_sizes_paints_and_types_through_the_hub() {
     );
     assert_eq!(remote.0.lock().unwrap()[1..], ["\x1b[A", "\x03"]);
 
+    // Text the input method composed is written as UTF-8.
+    terminals.on_text(&mut harness.ctx(), 2, "ção");
+    assert_eq!(
+        remote.0.lock().unwrap().last().map(String::as_str),
+        Some("ção")
+    );
+    remote.0.lock().unwrap().pop();
+
     // A drag selects cells; the copy shortcut copies them.
     let mut down = harness.pointer(PointerPhase::Down, 4.0 + 7.0 * 8.0 + 1.0, 10.0);
     down.click_count = 1;

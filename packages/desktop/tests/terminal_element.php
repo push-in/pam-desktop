@@ -56,4 +56,30 @@ foreach ([static fn () => Terminal::make(''), static fn () => Terminal::make('x'
     } catch (InvalidArgumentException) {
     }
 }
+// Bare method handlers get the decoded map too.
+$bare = new class () {
+    public array $seen = [];
+    public function resized(array $event): void { $this->seen[] = $event; }
+    public function exited(array $event): void { $this->seen[] = $event; }
+};
+$element = TemplateRenderer::render(TemplateCompiler::compile('<Terminal channel="C3" on:resize="resized" on:exit="exited" />', 'bare.pam'), $bare, [])->toElement();
+$element->events()[EventKind::TerminalResize->value](Wire::map(['cols' => 90, 'rows' => 30]));
+$element->events()[EventKind::TerminalExit->value](Wire::map(['exitCode' => 3]));
+$check($bare->seen === [['cols' => 90, 'rows' => 30], ['exitCode' => 3]], 'Bare handlers receive the decoded map: '.json_encode($bare->seen));
+
+// Page text styles do not reach the terminal; its own colours do.
+$styled = TemplateCompiler::compile(
+    '<Column textColor="#1f2328" fontFamily="Inter"><Terminal channel="C4" foreground="#c0c0c0" background="#0d1117" cursorColor="#58a6ff" selectionColor="#264f78" /><Text>x</Text></Column>',
+    'styled.pam',
+);
+$page = TemplateRenderer::render($styled, $bare, [])->toElement();
+$terminal = $page->children()[0];
+$props = $terminal->properties();
+$check($terminal->kind === NodeKind::Terminal, 'Styled page holds the terminal.');
+$check(($page->children()[1]->properties()[PropKey::TextColor->value] ?? null) === 0xFF1F2328, 'The page colour is inherited by text (the test is meaningful).');
+$check(($props[PropKey::TextColor->value] ?? null) === 0xFFC0C0C0, 'foreground wins over the page colour: '.dechex((int) ($props[PropKey::TextColor->value] ?? 0)));
+$check(($props[PropKey::BackgroundColor->value] ?? null) === 0xFF0D1117 && ($props[PropKey::TerminalCursorColor->value] ?? null) === 0xFF58A6FF && ($props[PropKey::TerminalSelectionColor->value] ?? null) === 0xFF264F78, 'Hex colour attributes are applied.');
+$check(str_contains((string) ($props[PropKey::FontFamily->value] ?? ''), 'monospace'), 'The page font does not reach the terminal: '.($props[PropKey::FontFamily->value] ?? ''));
+$plain = TemplateRenderer::render(TemplateCompiler::compile('<Column textColor="#1f2328"><Terminal channel="C5" /></Column>', 'plain.pam'), $bare, [])->toElement()->children()[0];
+$check(!isset($plain->properties()[PropKey::TextColor->value]), 'Without foreground the terminal keeps its theme colour.');
 echo "terminal element ok\n";

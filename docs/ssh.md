@@ -118,7 +118,7 @@ Terminal::make($shell->channel())
 | `palette` | One Dark-like | The 16 ANSI colours, a list (or a comma-separated string). |
 | `scrollback` | 5000 | Lines kept above the screen, at most 100000. |
 | `padding` | 0 | Space around the grid, in the terminal's background. |
-| `on:resize` | | `$event` is `['cols' => …, 'rows' => …]`. The remote end hears the size first. |
+| `on:resize` | | `$event` (and the argument of a bare `on:resize="method"`) is `['cols' => …, 'rows' => …]`. The remote end hears the size first. |
 | `on:title` | | `['title' => …]`: OSC 0/2 from the remote end. |
 | `on:exit` | | `['exitCode' => …]` (-1 without a status) when the channel ends. |
 | `on:bell` | | BEL. |
@@ -126,6 +126,8 @@ Terminal::make($shell->channel())
 - **Emulation** is [alacritty_terminal](https://crates.io/crates/alacritty_terminal): xterm escape sequences, the alternate screen, 256 colours and truecolor, bold, dim, italic, underline, inverse, strike, wide characters, bracketed paste, application cursor keys, OSC titles and colour queries. Mouse reporting is not forwarded yet (the pointer always selects), and OSC 52 clipboard access is refused.
 - **Size.** The terminal fills its frame with whole cells and sends the grid size to the remote end (and `on:resize`) 80 ms after it last changed.
 - **Keys** of the focused terminal are encoded like xterm: text, Enter, Backspace (Ctrl: `^H`), Tab and Shift+Tab, Escape, arrows, Home, End, Insert, Delete, PageUp, PageDown, F1–F12 (with xterm modifier parameters), Ctrl+letter and Ctrl+`[\]^_ @`, Alt as an Escape prefix. Shift+PageUp/PageDown scroll the scrollback. Typing returns to the bottom and drops the selection. Tab, arrows and Escape do not move focus while the terminal has it.
+- **Accents and IME.** The focused terminal takes text from the system input method: dead keys and compose sequences (`ç`, `á`, `ã`, `ê` on a Brazilian layout) and IME text arrive composed, as UTF-8. Done on GTK (verified with `setxkbmap br`); AppKit and Win32 do not have the input method path yet and send plain keys only.
+- **Page styles.** A terminal does not inherit the text colour or font of the elements around it; set `foreground`, `fontFamily` and so on on the tag.
 - **Clipboard.** Ctrl+Shift+C and Ctrl+Shift+V (Command+C and Command+V on macOS) copy the selection and paste (bracketed when the remote end asked; at most 1 MiB).
 - **Pointer.** A click focuses; dragging selects cells, a double click a word, a triple click a line. The wheel scrolls the scrollback, or sends arrow keys to programs in the alternate screen (less, vim, htop).
 - **Cost.** Output is parsed on the `pam-ssh` thread that receives it; the UI thread repaints at most once per 16 ms and only after a change (no blinking cursor), and nothing while the terminal is hidden. Painting is one rectangle per run of equal background, one text command per run of equal style on a row (each non-ASCII character alone at its cell), the selection and the cursor.

@@ -50,7 +50,7 @@ use crate::text::{FontSpec, TextAlign, TextBlock, TextRun};
 use crate::wiremap::WireMap;
 
 /// Keys a focused terminal takes from focus traversal and scrolling.
-pub const CAPTURED_KEYS: &str = "Tab,Escape,Enter,Space,Backspace,Delete,Insert,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Home,End,PageUp,PageDown,F1,F2,F3,F4,F5,F6,F7,F8,F9,F10,F11,F12";
+pub const CAPTURED_KEYS: &str = "Tab,Escape,Enter,Backspace,Delete,Insert,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Home,End,PageUp,PageDown,F1,F2,F3,F4,F5,F6,F7,F8,F9,F10,F11,F12";
 pub const DEFAULT_FONT_FAMILY: &str =
     "'JetBrains Mono', 'DejaVu Sans Mono', 'Cascadia Mono', Menlo, Consolas, monospace";
 pub const DEFAULT_FONT_SIZE: f32 = 13.0;
@@ -1129,6 +1129,34 @@ impl Terminals {
         self.dirty = true;
         let _ = ctx;
         true
+    }
+
+    /// Text the input method committed (a composed `ç`, `á`, `ã`…): sent as
+    /// typed, UTF-8.
+    pub fn on_text(&mut self, _ctx: &mut Ctx<'_>, id: NodeId, text: &str) {
+        if text.is_empty() || text.len() > 4096 {
+            return;
+        }
+        let hub = self.hub;
+        let Some(instance) = self.nodes.get_mut(&id) else {
+            return;
+        };
+        let Some(shared) = instance.shared.clone() else {
+            return;
+        };
+        let mut repaint = false;
+        if let Ok(mut emulator) = shared.emulator.lock() {
+            if emulator.term.grid().display_offset() != 0 {
+                emulator.term.scroll_display(Scroll::Bottom);
+                repaint = true;
+            }
+            repaint |= emulator.term.selection.take().is_some();
+        }
+        hub.write(&instance.channel, text.as_bytes());
+        if repaint {
+            instance.paint = true;
+            self.dirty = true;
+        }
     }
 
     /// A key while `focused` has keyboard focus.

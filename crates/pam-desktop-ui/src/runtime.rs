@@ -1289,6 +1289,10 @@ impl<B: Backend> Runtime<B> {
                 self.interaction.on_focus(&mut ctx, id, focused);
                 self.terminals.on_focus(&mut ctx, id, focused);
             }
+            BackendEvent::TextCommitted { id, text } => {
+                let mut ctx = ctx!(self);
+                self.terminals.on_text(&mut ctx, id, &text);
+            }
             BackendEvent::Input { id, event } => {
                 let mut ctx = ctx!(self);
                 self.inputs.on_event(&mut ctx, id, event);

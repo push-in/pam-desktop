@@ -131,6 +131,12 @@ pub enum BackendEvent {
         id: NodeId,
         event: InputEvent,
     },
+    /// Text the input method committed to a view that asked for it with
+    /// `set_text_input` (a composed `ç`, `á`, a CJK phrase, a plain letter).
+    TextCommitted {
+        id: NodeId,
+        text: String,
+    },
     /// A menu bar or tray menu item was chosen.
     MenuAction {
         id: String,
@@ -793,6 +799,10 @@ pub trait Backend {
     /// Keys owned by a composite control before native focus traversal/text submission.
     /// Comma-separated W3C names (`Space` for the literal space key).
     fn set_key_capture(&mut self, _id: NodeId, _keys: &str) {}
+    /// The view takes text from the system input method while it has focus
+    /// (dead keys, compose, IME), reported as `TextCommitted`. A backend
+    /// without one leaves it out: such keys then arrive as `Key` events.
+    fn set_text_input(&mut self, _id: NodeId, _enabled: bool) {}
     /// Native event targeting must agree with scene pointerEvents hit testing.
     fn set_pointer_events(&mut self, _id: NodeId, _target_self: bool, _target_children: bool) {}
     /// What assistive technology is told about a view; `None` restores the

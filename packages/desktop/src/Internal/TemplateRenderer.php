@@ -1714,6 +1714,12 @@ final class TemplateRenderer
         if (!is_array($inheritedStyles)) {
             $inheritedStyles = [];
         }
+        if ($tag === 'Terminal') {
+            // A terminal draws its own grid: the page's font and text colour
+            // must not reach it (a proportional font breaks the cells, a
+            // light theme's dark text vanishes on the terminal background).
+            $inheritedStyles = [];
+        }
         if ($tag === 'Icon' && $inheritedStyles !== []) {
             // An icon font glyph keeps its own font and size, like `.pi` or
             // `.fa` on the web: only the colour and the letter spacing (which
@@ -8068,6 +8074,11 @@ final class TemplateRenderer
         }
         if ($typed !== null && $payload instanceof $typed) {
             $method->invoke($scope, $payload);
+            return;
+        }
+        if (in_array($kind, [EventKind::TerminalResize, EventKind::TerminalTitle, EventKind::TerminalExit, EventKind::TerminalBell], true)) {
+            // `resized(array $event)`: the decoded map, like `$event`.
+            $method->invoke($scope, self::typedEvent($kind, $payload));
             return;
         }
         if (in_array($kind, [EventKind::Press, EventKind::LongPress], true) && is_string($payload)) {
