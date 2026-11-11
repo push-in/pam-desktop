@@ -38,6 +38,7 @@
             "Pam\\Desktop\\Realtime\\": "packages/realtime/src/",
             "Pam\\Desktop\\Sync\\Durable\\": "packages/sync/src/",
             "Pam\\DesktopPrinting\\": "packages/desktop-printing/src/",
+            "Pam\\DesktopSsh\\": "packages/ssh/src/",
             "Pam\\DesktopUi\\": "packages/desktop-ui/src/"
         }
     },

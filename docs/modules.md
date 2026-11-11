@@ -368,6 +368,10 @@ $this->socket->close();
 - Text messages only. Reconnection is left to the application.
 - TLS uses rustls with the root certificates of the system.
 
+## SSH
+
+The `ssh` module keeps SSH sessions in the host: remote commands, SFTP with uploads and downloads, local port forwarding and interactive shells whose output can go straight to a native terminal without PHP. The PHP API is the package `pushinbr/pam-desktop-ssh`; see its [README](../packages/ssh/README.md). The methods, events, limits and the terminal hub are described in [SSH](ssh.md). It is the cargo feature `ssh` of the host, on by default.
+
 ## Printing
 
 The `printing` module prints text documents through the print dialog of the system (GTK with Cairo and Pango, `NSPrintOperation` on macOS, the Windows print dialog with GDI spooling on a worker thread). The PHP API is the package `pushinbr/pam-desktop-printing`; see its [README](../packages/desktop-printing/README.md). Verified on Linux with Print to File; not run on macOS or Windows, and not tested on a physical printer.

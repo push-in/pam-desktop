@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **SSH.** A native `ssh` module (cargo feature `ssh`, on by default) and the
+  package `pushinbr/pam-desktop-ssh`: sessions with password or key
+  authentication and host key pinning, `exec` with bounded output, SFTP
+  (list, stat, mkdir, rename, remove, read, write, realpath, uploads and
+  downloads with progress), local port forwarding and interactive shells. It
+  runs on russh with pure Rust crypto, on threads that exist only while a
+  session is open. See [SSH](docs/ssh.md).
+- **Terminal hub.** `pam_desktop_ui::modules::terminal::TerminalHub` routes a
+  terminal's bytes between a producer (an SSH shell) and a native consumer
+  without PHP.
+- **Binary values in module payloads.** `Pam\Desktop\Modules\WireBytes` sends
+  opaque bytes (wire tag 5), and results that carry bytes decode to strings.
+
 ## 2.2.1 - 2026-11-11
 
 ### Fixed
