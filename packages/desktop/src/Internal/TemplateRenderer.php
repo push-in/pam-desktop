@@ -1609,8 +1609,10 @@ final class TemplateRenderer
             $plan = $planNode->pamTagPlans[$variant]
                 ??= self::tagPlan($tag, $attributes, $factory !== null, $childNodes);
             $attributes = $plan['attributes'];
-        } elseif ($factory === null) {
-            $attributes = self::nativeEventAliases($attributes);
+        } else {
+            $attributes = $factory === null
+                ? self::nativeEventAliases($attributes)
+                : self::componentEventAliases($tag, $attributes);
         }
         $declaredAttributes = $attributes;
         // $knownClass: already evaluated by fastNode() (never twice).
@@ -3772,6 +3774,28 @@ final class TemplateRenderer
      * @param array<string, string|bool> $attributes
      * @return array<string, mixed>
      */
+    /**
+     * `on:name` on a compiled component listens to the component's `name`
+     * event, like `@name`: a component has no native events of its own.
+     *
+     * @param array<string, mixed> $attributes
+     * @return array<string, mixed>
+     */
+    private static function componentEventAliases(string $tag, array $attributes): array
+    {
+        if (!TemplateRegistry::isCompiledComponent($tag)) {
+            return $attributes;
+        }
+        foreach ($attributes as $name => $value) {
+            if (str_starts_with($name, 'on:')) {
+                unset($attributes[$name]);
+                $attributes['@'.substr($name, 3)] ??= $value;
+            }
+        }
+
+        return $attributes;
+    }
+
     private static function tagPlan(string $tag, array $attributes, bool $factory, array $childNodes = []): array
     {
         // Children that are only text interpolations need no child render
@@ -3783,9 +3807,9 @@ final class TemplateRenderer
                 break;
             }
         }
-        if (!$factory) {
-            $attributes = self::nativeEventAliases($attributes);
-        }
+        $attributes = $factory
+            ? self::componentEventAliases($tag, $attributes)
+            : self::nativeEventAliases($attributes);
         $events = [];
         foreach (self::EVENTS as $name => $event) {
             if (isset($attributes[$name])) {

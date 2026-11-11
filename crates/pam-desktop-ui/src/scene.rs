@@ -1097,19 +1097,24 @@ impl Scene {
     /// The transitionable styles of a node as its props and state styles
     /// resolve them, leaving out the transition layer itself.
     fn styled_values(&self, id: NodeId) -> [Option<StyleValue>; 4] {
-        let props = self.nodes.get(&id).map(|node| match self.style_overlays.get(&id) {
-            Some(layers) => Props::with_overlays(
-                &node.props,
-                [layers[0].as_ref(), layers[1].as_ref(), None],
-            ),
-            None => Props::new(&node.props),
-        });
+        let props = self
+            .nodes
+            .get(&id)
+            .map(|node| match self.style_overlays.get(&id) {
+                Some(layers) => Props::with_overlays(
+                    &node.props,
+                    [layers[0].as_ref(), layers[1].as_ref(), None],
+                ),
+                None => Props::new(&node.props),
+            });
         TRANSITION_STYLES.map(|key| {
             let props = props.as_ref()?;
             if key == PropKey::BorderRadius {
                 props.number(key).map(StyleValue::Length)
             } else {
-                props.integer(key).map(|argb| StyleValue::Color(argb as u32))
+                props
+                    .integer(key)
+                    .map(|argb| StyleValue::Color(argb as u32))
             }
         })
     }
@@ -1117,18 +1122,18 @@ impl Scene {
     /// The value style `key` of a node settles on once no transition runs.
     #[must_use]
     pub fn styled_value(&self, id: NodeId, key: PropKey) -> Option<StyleValue> {
-        let position = TRANSITION_STYLES.iter().position(|candidate| *candidate == key)?;
+        let position = TRANSITION_STYLES
+            .iter()
+            .position(|candidate| *candidate == key)?;
         self.styled_values(id)[position]
     }
 
     fn overlaid<'a>(&'a self, node: &'a SceneNode) -> Props<'a> {
         match self.style_overlays.get(&node.id) {
-            Some(layers) => {
-                Props::with_overlays(
-                    &node.props,
-                    [layers[2].as_ref(), layers[0].as_ref(), layers[1].as_ref()],
-                )
-            }
+            Some(layers) => Props::with_overlays(
+                &node.props,
+                [layers[2].as_ref(), layers[0].as_ref(), layers[1].as_ref()],
+            ),
             None => Props::new(&node.props),
         }
     }

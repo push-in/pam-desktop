@@ -7,6 +7,7 @@ use App\Screens\Workbench\WorkbenchScreen;
 use App\Services\Highlighter;
 use App\Services\Workspace;
 use Pam\Desktop\App;
+use Pam\DesktopUi\DesktopUI;
 
 use function Pam\Desktop\Testing\mount;
 
@@ -14,6 +15,7 @@ $root = dirname(__DIR__);
 require $root.'/vendor/autoload.php';
 chdir($root);
 
+DesktopUI::boot($root.'/.pam-desktop/desktop-ui');
 App::components($root.'/src', $root.'/.pam-desktop/components');
 
 $check = static function (bool $condition, string $message): void {
@@ -35,11 +37,12 @@ $check(implode('', array_column(Highlighter::lines('c.css', ".a { color: #FFF; }
 
 // The explorer reads this project from disk, folders first.
 $workspace = new Workspace($root);
-$names = array_map(static fn ($entry): string => $entry->name, $workspace->entries());
+$names = array_map(static fn ($node): string => $node->label, $workspace->tree());
 $check($names[0] === 'assets' && in_array('README.md', $names, true), 'folders come before files');
 $check(!in_array('.pam-desktop', $names, true), 'generated folders are hidden');
-$workspace->toggle('tests');
-$check(in_array('tests/VsCodeTest.php', array_map(static fn ($entry): string => $entry->path, $workspace->entries()), true), 'expanding a folder lists it');
+$tests = array_values(array_filter($workspace->tree(), static fn ($node): bool => $node->id === 'tests'))[0];
+$check($tests->branch() && $tests->children()[0]->id === 'tests/VsCodeTest.php', 'a folder lists its files when it opens');
+$check($workspace->tree() === $workspace->tree(), 'the tree is built once');
 $check(FileKind::language('Editor.pam.php') === 'PAM Component' && FileKind::icon('composer.json') === 'braces', 'file kinds by name');
 
 // Tabs: opening, the active tab, closing moves to the neighbour.

@@ -115,7 +115,8 @@ mod tests {
 
     #[test]
     fn remembers_the_normal_size_and_the_maximized_state() {
-        let directory = std::env::temp_dir().join(format!("pam-window-memory-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("pam-window-memory-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let mut memory = WindowMemory::load(&directory);
         let mut config = WindowConfig::default();
@@ -137,7 +138,11 @@ mod tests {
             ..WindowConfig::default()
         };
         assert!(memory.restore(&mut config));
-        assert_eq!(config.size, Size::new(1300.0, 800.0), "the minimum still applies");
+        assert_eq!(
+            config.size,
+            Size::new(1300.0, 800.0),
+            "the minimum still applies"
+        );
 
         let mut forgetful = WindowConfig {
             remember: false,

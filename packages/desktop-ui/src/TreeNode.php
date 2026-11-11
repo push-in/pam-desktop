@@ -34,6 +34,8 @@ final class TreeNode
         public readonly ?string $badge = null,
         public readonly int|string|null $badgeColor = null,
         public readonly ?string $tooltip = null,
+        /** @var list<\Pam\Desktop\MenuItem> the menu of a secondary click on the row */
+        public readonly array $contextMenu = [],
     ) {
         if ($id === '') {
             throw new InvalidArgumentException('A tree node needs an id.');

@@ -45,6 +45,8 @@ final class SplitView extends Component
         /** The width that takes the pointer, centred on the line. */
         public float $hitArea = 6.0,
         public ?string $label = null,
+        /** Hides the sized pane and the divider (a sidebar toggled off). */
+        #[State] public bool $collapsed = false,
     ) {
         if (!in_array($direction, ['horizontal', 'vertical'], true) || !in_array($sized, ['start', 'end'], true)) {
             throw new InvalidArgumentException('SplitView direction is horizontal or vertical, and sized is start or end.');
@@ -70,6 +72,12 @@ final class SplitView extends Component
     public function fixed(int $index): bool
     {
         return ($index === 0) === ($this->sized === 'start');
+    }
+
+    /** The flex basis of pane `$index`: its size, 0 when it takes the rest or is collapsed. */
+    public function basis(int $index): float
+    {
+        return $this->fixed($index) && !$this->collapsed ? $this->size : 0.0;
     }
 
     public function active(): bool
@@ -137,24 +145,24 @@ final class SplitView extends Component
 
 <template>
     <View class="split" :flexDirection="horizontal() ? 'row' : 'column'">
-        <View class="pane" :flexBasis="fixed(0) ? $size : 0" :flexGrow="fixed(0) ? 0 : 1" :flexShrink="fixed(0) ? 0 : 1">
+        <View p-if="!($collapsed && fixed(0))" key="pane-start" class="pane" :flexBasis="basis(0)" :flexGrow="fixed(0) ? 0 : 1" :flexShrink="fixed(0) ? 0 : 1">
             <Slot :content="pane(0)" />
         </View>
-        <GestureDetector gestureType="pan" :gestureDirection="horizontal() ? 'horizontal' : 'vertical'" gestureMinDistance="1"
-                         :gestureEnabled="$resizable" on:gestureBegin="begin" on:gestureUpdate="drag"
-                         on:gestureEnd="end" on:gestureCancel="end">
-            <Pressable p-if="horizontal()" class="divider across" :width="$hitArea"
-                       :marginLeft="($thickness - $hitArea) / 2" :marginRight="($thickness - $hitArea) / 2"
-                       :enabled="$resizable" :cursor="$resizable ? 'col-resize' : 'default'"
+        <GestureDetector p-if="!$collapsed && horizontal()" key="divider-across" class="divider" gestureType="pan" gestureDirection="horizontal"
+                         gestureMinDistance="1" :gestureEnabled="$resizable" on:gestureBegin="begin" on:gestureUpdate="drag"
+                         on:gestureEnd="end" on:gestureCancel="end" :width="$hitArea" :marginLeft="($thickness - $hitArea) / 2" :marginRight="($thickness - $hitArea) / 2">
+            <Pressable class="handle across" :enabled="$resizable" :cursor="$resizable ? 'col-resize' : 'default'"
                        on:hoverIn="hover(true)" on:hoverOut="hover(false)" on:keyDown="key"
                        captureKeys="ArrowLeft,ArrowRight,ArrowUp,ArrowDown,Home,End"
                        accessibilityRole="adjustable" :accessibilityLabel="$label ?? 'Resize'"
                        :accessibilityValueMin="$min" :accessibilityValueMax="$max" :accessibilityValueNow="$size">
                 <View class="line" :width="$thickness" :backgroundColor="active() ? $activeColor : $dividerColor" />
             </Pressable>
-            <Pressable p-else class="divider down" :height="$hitArea"
-                       :marginTop="($thickness - $hitArea) / 2" :marginBottom="($thickness - $hitArea) / 2"
-                       :enabled="$resizable" :cursor="$resizable ? 'row-resize' : 'default'"
+        </GestureDetector>
+        <GestureDetector p-else-if="!$collapsed" key="divider-down" class="divider" gestureType="pan" gestureDirection="vertical"
+                         gestureMinDistance="1" :gestureEnabled="$resizable" on:gestureBegin="begin" on:gestureUpdate="drag"
+                         on:gestureEnd="end" on:gestureCancel="end" :height="$hitArea" :marginTop="($thickness - $hitArea) / 2" :marginBottom="($thickness - $hitArea) / 2">
+            <Pressable class="handle down" :enabled="$resizable" :cursor="$resizable ? 'row-resize' : 'default'"
                        on:hoverIn="hover(true)" on:hoverOut="hover(false)" on:keyDown="key"
                        captureKeys="ArrowLeft,ArrowRight,ArrowUp,ArrowDown,Home,End"
                        accessibilityRole="adjustable" :accessibilityLabel="$label ?? 'Resize'"
@@ -162,7 +170,7 @@ final class SplitView extends Component
                 <View class="line" :height="$thickness" :backgroundColor="active() ? $activeColor : $dividerColor" />
             </Pressable>
         </GestureDetector>
-        <View class="pane" :flexBasis="fixed(1) ? $size : 0" :flexGrow="fixed(1) ? 0 : 1" :flexShrink="fixed(1) ? 0 : 1">
+        <View p-if="!($collapsed && fixed(1))" key="pane-end" class="pane" :flexBasis="basis(1)" :flexGrow="fixed(1) ? 0 : 1" :flexShrink="fixed(1) ? 0 : 1">
             <Slot :content="pane(1)" />
         </View>
     </View>
@@ -172,7 +180,8 @@ final class SplitView extends Component
     .split { flex: 1; min-width: 0; min-height: 0; }
     .pane { min-width: 0; min-height: 0; overflow: hidden; }
     .divider { z-index: 1; }
-    .across { flex-direction: row; justify-content: center; align-self: stretch; }
-    .down { flex-direction: column; justify-content: center; align-self: stretch; }
+    .handle { flex: 1; }
+    .across { flex-direction: row; justify-content: center; }
+    .down { flex-direction: column; justify-content: center; }
     .line { align-self: stretch; transition: background-color 120ms; }
 </style>

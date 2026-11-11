@@ -316,6 +316,8 @@ pub struct Runtime<B: Backend> {
     pub(crate) selection: crate::selection::TextSelection,
     drag_drop: crate::dragdrop::DragDrop,
     pub(crate) error_overlay: crate::error_overlay::ErrorOverlay,
+    /// The visual inspector of development runs (F12).
+    inspector: crate::inspector::Inspector,
     pub(crate) toasts: crate::toast::Toasts,
     observers: crate::observers::Observers,
     gestures: crate::gestures::Gestures,
@@ -542,6 +544,7 @@ impl<B: Backend> Runtime<B> {
             selection: crate::selection::TextSelection::default(),
             drag_drop: crate::dragdrop::DragDrop::default(),
             error_overlay: crate::error_overlay::ErrorOverlay::new(config.development),
+            inspector: crate::inspector::Inspector::default(),
             toasts: crate::toast::Toasts::default(),
             observers: crate::observers::Observers::default(),
             gestures: crate::gestures::Gestures::default(),
@@ -977,7 +980,17 @@ impl<B: Backend> Runtime<B> {
         self.update_host_overlays();
     }
 
-    /// Stacks the host chrome above the application: toasts, then errors.
+    /// Rebuilds the inspector outline and card (development, F12).
+    fn refresh_inspector(&mut self) {
+        let backend = &mut self.backend;
+        let mut measure =
+            |block: &crate::text::TextBlock, width: f32| backend.measure_text(block, width);
+        let mut ctx = ctx!(self);
+        self.inspector.rebuild(&mut ctx, &mut measure);
+        self.update_host_overlays();
+    }
+
+    /// Stacks the host chrome above the application: toasts, errors, the inspector.
     pub(crate) fn update_host_overlays(&mut self) {
         let overlays: Vec<NodeId> = self
             .shared_elements
@@ -985,6 +998,7 @@ impl<B: Backend> Runtime<B> {
             .iter()
             .chain(self.toasts.roots())
             .chain(self.error_overlay.roots())
+            .chain(self.inspector.roots())
             .copied()
             .collect();
         self.scene.set_host_overlays(overlays);
@@ -1036,6 +1050,10 @@ impl<B: Backend> Runtime<B> {
         }
         if !applied {
             self.resynchronize();
+        }
+        if self.inspector.enabled() {
+            // The inspected node may have moved or gone.
+            self.refresh_inspector();
         }
     }
 
@@ -1125,6 +1143,15 @@ impl<B: Backend> Runtime<B> {
                         pointer.position,
                         self.scene.hit_test(pointer.position)
                     );
+                }
+                if self.inspector.enabled() {
+                    // Inspecting: the pointer picks nodes and never reaches the app.
+                    if pointer.window == MAIN_WINDOW
+                        && self.inspector.pointer(&self.scene, &pointer)
+                    {
+                        self.refresh_inspector();
+                    }
+                    return;
                 }
                 if self.select_text(&pointer) {
                     return;
@@ -1553,10 +1580,9 @@ impl<B: Backend> Runtime<B> {
                         .toasts
                         .on_sample(&mut ctx, sample.value, sample.finished)
                 }
-                Owner::Transition(..) | Owner::Motion(..) | Owner::Style(..) => {
-                    self.motion
-                        .on_sample(&mut ctx, sample.owner, sample.value, sample.finished)
-                }
+                Owner::Transition(..) | Owner::Motion(..) | Owner::Style(..) => self
+                    .motion
+                    .on_sample(&mut ctx, sample.owner, sample.value, sample.finished),
             }
         }
         if toast_changed {
@@ -1785,6 +1811,17 @@ impl<B: Backend> Runtime<B> {
         {
             let mut ctx = ctx!(self);
             self.interaction.set_keyboard_modality(&mut ctx, true);
+        }
+        if self.development && key.pressed && !key.repeat && key.window == MAIN_WINDOW {
+            let toggle = key.key == "F12"
+                || (key.modifiers.control
+                    && key.modifiers.shift
+                    && key.key.eq_ignore_ascii_case("i"));
+            if toggle || (key.key == "Escape" && self.inspector.enabled()) {
+                self.inspector.toggle();
+                self.refresh_inspector();
+                return;
+            }
         }
         if key.pressed && !key.repeat && self.selection_key(key) {
             return;

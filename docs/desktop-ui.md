@@ -247,7 +247,7 @@ A click or a drag sets the value (a drag keeps following the pointer past either
 - Dragging the divider emits `resize` with the new size, rounded and kept between `min` and `max`. The owner stores it, so it can save it and restore it.
 - With the divider focused, the arrow keys move it by `step` points (10 by default), and Home/End jump to `min`/`max`.
 - The line is `thickness` points wide (1 by default) and takes the pointer over `hitArea` points (6 by default), so it is easy to grab without taking room from the panes. It turns `activeColor` while hovered or dragged.
-- `resizable="false"` keeps the size fixed.
+- `resizable="false"` keeps the size fixed, and `:collapsed="true"` hides the sized pane and the divider (a sidebar toggled off) while the other pane stays mounted.
 
 ## TreeView
 
@@ -270,6 +270,8 @@ $this->files = [
 - Pressing a branch opens or closes it, and pressing a leaf emits `activate` with its id. Every selection change emits `select`, and opening or closing a branch emits `toggle` with `['id' => …, 'open' => …]`.
 - With a row focused: Up and Down move, Right opens a branch (or goes to its first child), Left closes it (or goes to its parent), Enter and Space press it, Home and End jump to the ends. The selected row is scrolled into view.
 - Each row shows the node's `icon` (in `iconFont`, Lucide by default), `label`, an optional dim `detail`, an optional `badge` at the end and a `tooltip`. Indent guides show while the pointer is over the tree (`guides="false"` turns them off).
+- A node's `contextMenu` (a list of `MenuItem`) opens on a secondary click on its row.
+- Changing `collapseRequest` (a counter) closes every branch, for a "Collapse Folders" button.
 - `rowHeight`, `indent`, `iconSize`, `fontSize`, `color`, `muted` and `guideColor` adjust the look.
 
 ## ProgressButton

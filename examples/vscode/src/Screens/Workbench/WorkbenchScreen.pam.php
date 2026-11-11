@@ -8,7 +8,9 @@ use App\Domain\FileKind;
 use App\Services\Workspace;
 use Pam\Desktop\Attributes\State;
 use Pam\Desktop\Component;
+use Pam\Desktop\System\Clipboard;
 use Pam\Desktop\KeyEvent;
+use Pam\Desktop\MenuItem;
 use Pam\Desktop\Shortcut;
 
 final class WorkbenchScreen extends Component
@@ -18,11 +20,24 @@ final class WorkbenchScreen extends Component
     /** @var list<string> */
     public array $menus = ['File', 'Edit', 'Selection', 'View', 'Go', 'Run', 'Terminal', 'Help'];
 
-    /** @var list<array{icon: string, label: string}> */
+    /** @var list<array{icon: string, label: string, shortcut: string}> */
     public array $activities = [
-        ['icon' => 'files', 'label' => 'Explorer'], ['icon' => 'search', 'label' => 'Search'],
-        ['icon' => 'git-branch', 'label' => 'Source Control'], ['icon' => 'play', 'label' => 'Run and Debug'],
-        ['icon' => 'blocks', 'label' => 'Extensions'],
+        ['icon' => 'files', 'label' => 'Explorer', 'shortcut' => 'Ctrl+Shift+E'],
+        ['icon' => 'search', 'label' => 'Search', 'shortcut' => 'Ctrl+Shift+F'],
+        ['icon' => 'git-branch', 'label' => 'Source Control', 'shortcut' => 'Ctrl+Shift+G'],
+        ['icon' => 'play', 'label' => 'Run and Debug', 'shortcut' => 'Ctrl+Shift+D'],
+        ['icon' => 'blocks', 'label' => 'Extensions', 'shortcut' => 'Ctrl+Shift+X'],
+    ];
+
+    /** @var list<array{label: string, shortcut: string}> */
+    public array $manage = [
+        ['label' => 'Command Palette...', 'shortcut' => 'Ctrl+Shift+P'],
+        ['label' => 'Profiles', 'shortcut' => ''],
+        ['label' => 'Settings', 'shortcut' => 'Ctrl+,'],
+        ['label' => 'Extensions', 'shortcut' => 'Ctrl+Shift+X'],
+        ['label' => 'Keyboard Shortcuts', 'shortcut' => 'Ctrl+K Ctrl+S'],
+        ['label' => 'Themes', 'shortcut' => ''],
+        ['label' => 'Check for Updates...', 'shortcut' => ''],
     ];
 
     /** @var list<string> */
@@ -46,12 +61,25 @@ final class WorkbenchScreen extends Component
     #[State]
     public int $line = 1;
 
+    #[State]
+    public float $sidebar = 260.0;
+
+    #[State]
+    public float $panel = 190.0;
+
+    #[State]
+    public bool $manageOpen = false;
+
+    #[State]
+    public int $collapsed = 0;
+
     /** @var list<string> */
     private array $shortcuts = [];
 
     public function mount(): void
     {
         $this->workspace = new Workspace(getcwd() ?: '.');
+        $this->workspace->menu = $this->rowMenu(...);
         $this->workspace->open('src/Components/Editor.pam.php');
         $this->workspace->open('src/Services/Highlighter.php');
         $this->workspace->open('src/app.css');
@@ -76,16 +104,53 @@ final class WorkbenchScreen extends Component
         $this->activity = $this->activity === $activity ? '' : $activity;
     }
 
-    public function toggle(string $path): void
-    {
-        $this->workspace->toggle($path);
-        $this->revision++;
-    }
-
     public function collapse(): void
     {
-        $this->workspace->collapseAll();
-        $this->revision++;
+        $this->collapsed++;
+    }
+
+    public function resizeSidebar(float $size): void
+    {
+        $this->sidebar = $size;
+    }
+
+    public function resizePanel(float $size): void
+    {
+        $this->panel = $size;
+    }
+
+    public function toggleManage(): void
+    {
+        $this->manageOpen = !$this->manageOpen;
+    }
+
+    public function closeManage(): void
+    {
+        $this->manageOpen = false;
+    }
+
+    /** @return list<MenuItem> the explorer's menu for one row (VS Code's) */
+    public function rowMenu(string $path, string $kind): array
+    {
+        $items = $kind === 'file' ? [MenuItem::make('Open to the Side', fn () => $this->openFile($path), shortcut: 'Ctrl+Enter')] : [
+            MenuItem::make('New File...', null),
+            MenuItem::make('New Folder...', null),
+        ];
+
+        return [
+            ...$items,
+            MenuItem::make('Reveal in File Explorer', null, shortcut: 'Shift+Alt+R'),
+            MenuItem::make('Open in Integrated Terminal', fn () => $this->terminal = true),
+            MenuItem::separator(),
+            MenuItem::make('Cut', null, shortcut: 'Ctrl+X'),
+            MenuItem::make('Copy', null, shortcut: 'Ctrl+C'),
+            MenuItem::separator(),
+            MenuItem::make('Copy Path', fn () => Clipboard::setText($this->workspace->root.'/'.$path), shortcut: 'Shift+Alt+C'),
+            MenuItem::make('Copy Relative Path', fn () => Clipboard::setText($path)),
+            MenuItem::separator(),
+            MenuItem::make('Rename...', null, shortcut: 'F2'),
+            MenuItem::make('Delete', null, shortcut: 'Delete', destructive: true),
+        ];
     }
 
     public function openFile(string $path): void
@@ -214,26 +279,33 @@ final class WorkbenchScreen extends Component
 
         <Row class="body">
             <Column class="activitybar">
-                <Pressable p-for="$item in $activities" p-key="$item['label']"
-                           :class="$activity === $item['label'] ? 'activity activity-on' : 'activity'" cursor="pointer"
-                           on:press="choose($item['label'])" :tooltip="$item['label']">
-                    <Icon :name="$item['icon']" font="Lucide" size="24" :class="$activity === $item['label'] ? 'activity-icon on' : 'activity-icon'" />
-                </Pressable>
+                <Tooltip p-for="$item in $activities" p-key="$item['label']" :title="$item['label']" :shortcut="$item['shortcut']" placement="right">
+                    <Pressable :class="$activity === $item['label'] ? 'activity activity-on' : 'activity'" cursor="pointer"
+                               on:press="choose($item['label'])">
+                        <Icon :name="$item['icon']" font="Lucide" size="24" :class="$activity === $item['label'] ? 'activity-icon on' : 'activity-icon'" />
+                    </Pressable>
+                </Tooltip>
                 <View class="spacer" />
-                <View class="activity"><Icon name="circle-user-round" font="Lucide" size="24" class="activity-icon" /></View>
-                <View class="activity"><Icon name="settings" font="Lucide" size="24" class="activity-icon" /></View>
+                <Tooltip title="Accounts" placement="right">
+                    <View class="activity"><Icon name="circle-user-round" font="Lucide" size="24" class="activity-icon" /></View>
+                </Tooltip>
+                <Pressable nativeRef="manage" :class="$manageOpen ? 'activity activity-open' : 'activity'" cursor="pointer" on:press="toggleManage">
+                    <Icon name="settings" font="Lucide" size="24" :class="$manageOpen ? 'activity-icon on' : 'activity-icon'" />
+                </Pressable>
             </Column>
 
-            <Explorer p-if="$activity === 'Explorer'" :workspace="$workspace" :revision="$revision"
-                      @toggle="toggle" @open="openFile" @collapse="collapse" />
-            <Column p-else-if="$activity !== ''" class="other">
-                <Text class="other-title">{{ strtoupper($activity) }}</Text>
-                <Text class="other-text">This view is not part of the clone.</Text>
-            </Column>
-
-            <Column class="main">
+            <SplitView :size="$sidebar" min="170" max="560" :collapsed="$activity === ''" label="Resize Primary Side Bar"
+                       dividerColor="#2B2B2B" activeColor="#0078D4" on:resize="resizeSidebar">
+                <Explorer p-if="$activity === 'Explorer'" :workspace="$workspace" :revision="$revision" :collapsed="$collapsed"
+                          @open="openFile" @collapse="collapse" />
+                <Column p-else class="other">
+                    <Text class="other-title">{{ strtoupper($activity) }}</Text>
+                    <Text class="other-text">This view is not part of the clone.</Text>
+                </Column>
+            <SplitView direction="vertical" sized="end" :size="$panel" min="80" max="600" :collapsed="!$terminal"
+                       label="Resize Panel" on:resize="resizePanel">
                 <Editor :workspace="$workspace" :revision="$revision" @select="select" @close="closeTab" @cursor="cursor" />
-                <Column p-if="$terminal" class="panel">
+                <Column class="panel">
                     <Row class="panel-tabs">
                         <Column p-for="$panel in $panels" p-key="$panel" :class="$panel === 'TERMINAL' ? 'panel-tab panel-tab-on' : 'panel-tab'">
                             <Text :class="$panel === 'TERMINAL' ? 'panel-text panel-text-on' : 'panel-text'">{{ $panel }}</Text>
@@ -253,8 +325,18 @@ final class WorkbenchScreen extends Component
                         <Text class="term"><Span class="prompt">david@notebook</Span><Span class="term-dim">:</Span><Span class="path">~/pam-desktop/examples/vscode</Span><Span class="term-dim">$ </Span><Span class="caret"> </Span></Text>
                     </Column>
                 </Column>
-            </Column>
+            </SplitView>
+            </SplitView>
         </Row>
+
+        <Popover :open="$manageOpen" anchor="manage" placement="right-end" offset="2" label="Manage" on:close="closeManage">
+            <Column class="manage">
+                <Pressable p-for="$entry in $manage" p-key="$entry['label']" class="manage-row" cursor="pointer" on:press="closeManage">
+                    <Text class="manage-text">{{ $entry['label'] }}</Text>
+                    <Text class="manage-key">{{ $entry['shortcut'] }}</Text>
+                </Pressable>
+            </Column>
+        </Popover>
 
         <Row class="statusbar">
             <Row class="remote"><Icon name="chevrons-left-right" font="Lucide" size="14" class="white" /></Row>
@@ -303,6 +385,7 @@ final class WorkbenchScreen extends Component
     .center { flex: 1; max-width: 520px; gap: 8px; align-items: center; justify-content: center; }
     .command-center { flex: 1; flex-direction: row; height: 24px; gap: 6px; align-items: center; justify-content: center;
                       border-radius: 6px; border-width: 1px; border-color: #FFFFFF1F; background-color: #FFFFFF0D; }
+    .command-center { transition: background-color 120ms; }
     .command-center:hover { background-color: #FFFFFF1A; }
     .command-text { font-size: 12px; color: var(--text); }
     .layout { width: 440px; gap: 12px; align-items: center; justify-content: flex-end; padding-right: 8px; }
@@ -310,14 +393,14 @@ final class WorkbenchScreen extends Component
     .activitybar { width: 48px; background-color: var(--sidebar); border-right-width: 1px; border-color: var(--border); }
     .activity { width: 48px; height: 48px; align-items: center; justify-content: center; border-left-width: 2px; border-color: #00000000; }
     .activity-on { border-color: var(--focus); }
-    .activity-icon { color: #868686; }
+    .activity-open { border-color: #00000000; }
+    .activity-icon { color: #868686; transition: color 120ms; }
     .activity:hover .activity-icon { color: #D7D7D7; }
     .on { color: #D7D7D7; }
-    .other { width: 260px; padding: 10px 20px; gap: 12px; background-color: var(--sidebar); border-right-width: 1px; border-color: var(--border); }
+    .other { flex: 1; padding: 10px 20px; gap: 12px; background-color: var(--sidebar); }
     .other-title { font-size: 11px; color: var(--text); }
     .other-text { font-size: 13px; color: var(--dim); }
-    .main { flex: 1; min-width: 0; }
-    .panel { height: 190px; border-top-width: 1px; border-color: var(--border); background-color: var(--sidebar); }
+    .panel { flex: 1; background-color: var(--sidebar); }
     .panel-tabs { height: 35px; padding: 0 8px; gap: 12px; align-items: center; }
     .panel-tab { height: 35px; padding: 0 4px; justify-content: center; border-bottom-width: 1px; border-color: #00000000; }
     .panel-tab-on { border-color: var(--focus); }
@@ -345,6 +428,12 @@ final class WorkbenchScreen extends Component
     .quick-row-on { background-color: #04395E; }
     .quick-name { font-size: 13px; color: var(--text); }
     .quick-folder { flex: 1; font-size: 12px; color: var(--dim); }
+    .manage { width: 300px; padding: 4px; border-radius: 6px; border-width: 1px; border-color: #454545; background-color: #1F1F1F;
+              box-shadow: 0 4px 16px #00000099; }
+    .manage-row { flex-direction: row; height: 26px; padding: 0 22px 0 24px; align-items: center; justify-content: space-between; border-radius: 3px; }
+    .manage-row:hover { background-color: #04395E; }
+    .manage-text { font-size: 13px; color: var(--text); }
+    .manage-key { font-size: 12px; color: var(--dim); }
     .spacer { flex: 1; }
     .text { color: var(--text); }
     .white { color: #FFFFFF; }

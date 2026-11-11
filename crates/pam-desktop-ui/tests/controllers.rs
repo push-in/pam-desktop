@@ -1202,7 +1202,9 @@ fn a_corner_radius_change_from_php_transitions_and_clips_while_it_runs() {
                 (PropKey::BorderRadius, PropValue::Float(0.0)),
                 (
                     PropKey::TransitionSpec,
-                    PropValue::String("@property border-radius\n@duration 100\n@timing linear".into()),
+                    PropValue::String(
+                        "@property border-radius\n@duration 100\n@timing linear".into(),
+                    ),
                 ),
             ],
             Rect::new(0., 0., 100., 100.),
@@ -1216,7 +1218,12 @@ fn a_corner_radius_change_from_php_transitions_and_clips_while_it_runs() {
         value: Some(PropValue::Float(20.0)),
     }]);
     h.settle(|ctx, change| motion.on_change(ctx, change));
-    let radius = |h: &Harness| h.scene.effective_props(2).unwrap().number(PropKey::BorderRadius);
+    let radius = |h: &Harness| {
+        h.scene
+            .effective_props(2)
+            .unwrap()
+            .number(PropKey::BorderRadius)
+    };
     assert_eq!(radius(&h), Some(0.0));
     for sample in h.animator.tick(50) {
         motion.on_sample(&mut h.ctx(), sample.owner, sample.value, sample.finished);

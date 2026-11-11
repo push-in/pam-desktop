@@ -13,7 +13,8 @@ use crate::context::{Ctx, event_kind};
 use crate::geometry::{Rect, Size};
 use crate::props::{PropMap, Props};
 use crate::scene::{
-    Change, IdMap, LayerOverride, LayerSlot, StyleLayer, StyleValue, TRANSITION_STYLES, motion_default,
+    Change, IdMap, LayerOverride, LayerSlot, StyleLayer, StyleValue, TRANSITION_STYLES,
+    motion_default,
 };
 
 const SLOT_PRESET: u32 = 0;
@@ -942,7 +943,10 @@ impl Motion {
         key: PropKey,
         previous: Option<StyleValue>,
     ) {
-        let Some(slot) = TRANSITION_STYLES.iter().position(|candidate| *candidate == key) else {
+        let Some(slot) = TRANSITION_STYLES
+            .iter()
+            .position(|candidate| *candidate == key)
+        else {
             return;
         };
         let owner = Owner::Style(id, slot as u8);
@@ -974,7 +978,8 @@ impl Motion {
             {
                 self.styles.insert((id, slot as u8), (from, to));
                 Self::write_style(ctx, id, key, Some(from));
-                ctx.animator.start(owner, 0.0, 1.0, curve, delay, ctx.now_ms);
+                ctx.animator
+                    .start(owner, 0.0, 1.0, curve, delay, ctx.now_ms);
             }
             _ => Self::write_style(ctx, id, key, None),
         }
@@ -982,7 +987,11 @@ impl Motion {
 
     /// Puts one style on (or takes it off) the node's transition layer.
     fn write_style(ctx: &mut Ctx<'_>, id: NodeId, key: PropKey, value: Option<StyleValue>) {
-        let mut layer = ctx.scene.style_overlay(id, StyleLayer::Transition).cloned().unwrap_or_default();
+        let mut layer = ctx
+            .scene
+            .style_overlay(id, StyleLayer::Transition)
+            .cloned()
+            .unwrap_or_default();
         match value {
             Some(value) => {
                 layer.insert(key, value.to_prop());

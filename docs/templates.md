@@ -115,6 +115,26 @@ A public instance method of an object can be called with `->`:
 
 A component given through `:content` is mounted while the slot shows it and unmounted when the value changes. This is how a component keeps a chart, a [DesktopUI](desktop-ui.md) control or a dialog in a property and places it in its template.
 
+## Component events
+
+A component tells its owner that something happened with `$this->emit('name', $payload)`. The owner listens on the tag with `on:name` or `@name`, the same thing. The handler receives the payload, typed like any other handler (`float $size`, `string $id`, a `KeyEvent`…):
+
+```php
+final class Explorer extends Component
+{
+    public function choose(string $path): void
+    {
+        $this->emit('open', $path);
+    }
+}
+```
+
+```html
+<Explorer :workspace="$workspace" on:open="openFile" />
+```
+
+On a component every `on:` attribute is one of its own events, even when the name is also a native event (`on:close`, `on:toggle`). Native events belong to the elements inside the component's template.
+
 ## Attributes
 
 - `width`, `height`, `minWidth`, `minHeight`, `maxWidth` and `maxHeight` take points or a percentage (`width="75.5%"`). A bound value (`:width="$size"`) may switch between the two from one render to the next.

@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Services;
 
-use App\Domain\Entry;
 use App\Domain\FileKind;
+use Closure;
+use Pam\Desktop\MenuItem;
+use Pam\DesktopUi\TreeNode;
 
 /**
  * The folder the editor opened (this example, on disk): the explorer tree,
@@ -17,8 +19,7 @@ final class Workspace
     /** Never listed: generated or downloaded, as `files.exclude` hides them. */
     private const array HIDDEN = ['.git', '.pam-desktop', 'dist'];
 
-    /** @var array<string, true> */
-    private array $expanded = [];
+    private const array EXPANDED = ['src', 'src/Components', 'src/Services'];
 
     /** @var list<string> */
     public array $tabs = [];
@@ -30,42 +31,50 @@ final class Workspace
 
     public function __construct(public readonly string $root)
     {
-        $this->expanded = ['src' => true, 'src/Components' => true, 'src/Services' => true];
+    }
+
+    /** @var list<TreeNode>|null the explorer's top level, built once */
+    private ?array $tree = null;
+
+    /** @var (Closure(string, string): list<MenuItem>)|null the row menu, given the path and its kind */
+    public ?Closure $menu = null;
+
+    /**
+     * The explorer as tree nodes: a folder is read the first time it opens,
+     * folders first, each level sorted.
+     *
+     * @return list<TreeNode>
+     */
+    public function tree(string $folder = ''): array
+    {
+        if ($folder === '' && $this->tree !== null) {
+            return $this->tree;
+        }
+        $nodes = [];
+        foreach ($this->children($folder) as [$name, $isFolder]) {
+            $path = ltrim($folder.'/'.$name, '/');
+            $nodes[] = new TreeNode(
+                $path,
+                $name,
+                $isFolder ? fn (): array => $this->tree($path) : null,
+                icon: $isFolder ? null : FileKind::icon($name),
+                iconColor: $isFolder ? null : FileKind::colour($name),
+                contextMenu: $this->menu === null ? [] : ($this->menu)($path, $isFolder ? 'folder' : 'file'),
+            );
+        }
+
+        return $folder === '' ? $this->tree = $nodes : $nodes;
+    }
+
+    /** @return list<string> the folders open when the explorer first shows */
+    public function expanded(): array
+    {
+        return self::EXPANDED;
     }
 
     public function name(): string
     {
         return strtoupper(basename($this->root));
-    }
-
-    /** @return list<Entry> the rows of the explorer, folders first, each level sorted */
-    public function entries(string $folder = '', int $depth = 0): array
-    {
-        $rows = [];
-        foreach ($this->children($folder) as [$name, $isFolder]) {
-            $path = ltrim($folder.'/'.$name, '/');
-            $open = $isFolder && isset($this->expanded[$path]);
-            $rows[] = new Entry($path, $name, $isFolder, $depth, $open);
-            if ($open) {
-                array_push($rows, ...$this->entries($path, $depth + 1));
-            }
-        }
-
-        return $rows;
-    }
-
-    public function toggle(string $path): void
-    {
-        if (isset($this->expanded[$path])) {
-            unset($this->expanded[$path]);
-        } else {
-            $this->expanded[$path] = true;
-        }
-    }
-
-    public function collapseAll(): void
-    {
-        $this->expanded = [];
     }
 
     public function open(string $path): void

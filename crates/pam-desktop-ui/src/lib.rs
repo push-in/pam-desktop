@@ -24,6 +24,7 @@ pub mod i18n;
 pub mod images;
 pub mod input_format;
 pub mod inputs;
+pub mod inspector;
 pub mod interaction;
 pub mod marquee;
 pub mod media;

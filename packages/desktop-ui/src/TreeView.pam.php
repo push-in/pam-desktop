@@ -40,6 +40,7 @@ final class TreeView extends Component
     #[State] public int $scrollRevision = 0;
     #[State] public float $scrollTarget = 0.0;
     private float $scrollOffset = 0.0;
+    private int $collapsed;
     private float $viewport = 0.0;
     public readonly string $key;
 
@@ -61,9 +62,20 @@ final class TreeView extends Component
         public int|string $muted = '#8C8C8C',
         public int|string $guideColor = '#585858',
         public ?string $label = null,
+        /** Every change closes all branches (a "Collapse Folders" button). */
+        #[State] public int $collapseRequest = 0,
     ) {
+        $this->collapsed = $collapseRequest;
         $this->open = array_fill_keys($expanded, true);
         $this->key = 'tree-'.spl_object_id($this);
+    }
+
+    public function rendering(): void
+    {
+        if ($this->collapseRequest !== $this->collapsed) {
+            $this->collapsed = $this->collapseRequest;
+            $this->collapseAll();
+        }
     }
 
     /** @return list<TreeRow> the visible rows, depth first */
@@ -244,7 +256,7 @@ final class TreeView extends Component
     <VirtualizedList class="tree" :estimatedRowHeight="$rowHeight" :scrollRequest="$scrollRevision" :scrollTargetOffset="$scrollTarget"
                      on:scroll="scrolled" on:layout="measured" accessibilityRole="list" :accessibilityLabel="$label">
         <Pressable p-for="($row, $index) in rows()" p-key="$row->node->id" :nativeRef="rowRef($index)" :class="rowClass($row)"
-                   :height="$rowHeight" :tooltip="$row->node->tooltip" on:press="press($row->node->id)" on:keyDown="key"
+                   :height="$rowHeight" :tooltip="$row->node->tooltip" :contextMenu="$row->node->contextMenu" on:press="press($row->node->id)" on:keyDown="key"
                    captureKeys="ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Home,End,Enter,Space"
                    accessibilityRole="listitem" :accessibilityLabel="$row->node->label"
                    :accessibilityExpanded="$row->node->branch() ? $row->open : null" :accessibilitySelected="$row->node->id === $selected">
