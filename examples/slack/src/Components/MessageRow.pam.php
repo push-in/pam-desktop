@@ -107,9 +107,8 @@ final class MessageRow extends Component
                 <Text class="author">{{ $entry->author->name }}</Text>
                 <Text class="time">{{ $entry->message->time() }}</Text>
             </Row>
-            <Text class="body">
-                <Span p-for="($run, $i) in $entry->runs" p-key="$i" :class="'run-' . $run->style">{{ $run->text }}</Span>
-            </Text>
+            <Markdown :source="$entry->message->text" flavor="slack" :people="$workspace->names()" :me="$workspace->me()->name"
+                      :theme="$workspace->markdownTheme()" />
             <Row p-if="$entry->message->reactions !== []" class="reactions">
                 <Pressable p-for="$chip in $entry->message->reactionChips(\App\Services\Workspace::ME)" p-key="$chip['emoji']"
                            :class="$chip['mine'] ? 'chip mine' : 'chip'" cursor="pointer" @press="react($chip['emoji'])">
@@ -183,15 +182,6 @@ final class MessageRow extends Component
     .meta { gap: 8px; align-items: baseline; }
     .author { font-size: 15px; font-weight: 900; }
     .time { font-size: 12px; color: var(--muted); }
-    .body { font-size: 15px; line-height: 22px; }
-    .run-plain { font-weight: 400; }
-    .run-bold { font-weight: 700; }
-    .run-italic { font-style: italic; }
-    .run-code { font-family: monospace; font-size: 12px; color: #E01E5A; background-color: #1D1C1D0A;
-                padding: 2px 3px; border-width: 1px; border-color: var(--faint); border-radius: 3px; }
-    .run-link { color: var(--link); }
-    .run-mention-me { color: var(--link); background-color: #F2C74466; border-radius: 3px; padding: 0 2px; }
-    .run-mention { color: var(--link); background-color: #1D9BD11A; border-radius: 3px; padding: 0 2px; }
 
     .reactions { gap: 4px; margin-top: 4px; flex-wrap: wrap; }
     .chip { flex-direction: row; height: 24px; gap: 4px; padding: 0 8px; align-items: center; border-radius: 12px;
@@ -209,4 +199,7 @@ final class MessageRow extends Component
     .replier { width: 24px; height: 24px; border-radius: 4px; }
     .replies { margin-left: 4px; font-size: 13px; font-weight: 700; color: var(--link); }
     .last-reply { margin-left: 4px; font-size: 13px; color: var(--muted); }
+    .run-plain { font-weight: 400; }
+    .run-bold { font-weight: 700; }
+    .run-mention { color: var(--link); background-color: #1D9BD11A; border-radius: 3px; padding: 0 2px; }
 </style>

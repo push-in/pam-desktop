@@ -7,14 +7,12 @@ namespace App\Domain;
 /** A row of the conversation timeline: the intro, a day divider or a message. */
 final readonly class Entry
 {
-    /** @param list<Run> $runs */
     private function __construct(
         public string $key,
         public ?string $day = null,
         public ?Message $message = null,
         public ?Member $author = null,
         public bool $continued = false,
-        public array $runs = [],
         public ?Conversation $intro = null,
         public ?Member $peer = null,
     ) {
@@ -31,10 +29,9 @@ final readonly class Entry
         return new self('day-'.$label, day: $label);
     }
 
-    /** @param list<Run> $runs */
-    public static function message(Message $message, Member $author, bool $continued, array $runs): self
+    public static function message(Message $message, Member $author, bool $continued): self
     {
-        return new self($message->id, message: $message, author: $author, continued: $continued, runs: $runs);
+        return new self($message->id, message: $message, author: $author, continued: $continued);
     }
 
     public function isIntro(): bool

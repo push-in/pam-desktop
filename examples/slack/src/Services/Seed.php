@@ -36,6 +36,7 @@ final class Seed
             ['09:02', 'u-diego', 'iOS build is green, submitting to TestFlight now.'],
             ['09:20', 'u-felipe', 'Dashboards show p95 latency down 18% since the deploy. Nice work everyone.', ['🎉' => ['u-bruno', 'u-me', 'u-ana']]],
             ['10:15', 'u-bruno', '@David Balbino can you take a look at the flaky `sync_test` before lunch?'],
+            ['10:21', 'u-diego', "It fails on the second run only:\n- run `pam composer test` twice\n- the second run reuses the warm cache\n```\nsync_test: expected 3 rows, got 2\n  at SyncTest.php:48\n```\n> I think the outbox is not drained between runs"],
         ]);
         $this->conversation($workspace, 'general', [
             ['-1 day 09:00', 'u-erica', 'Welcome to the team, @Felipe Rocha! 👋', ['👋' => ['u-me', 'u-ana', 'u-bruno', 'u-carla', 'u-diego']]],

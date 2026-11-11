@@ -10,6 +10,7 @@ use function Pam\Desktop\Testing\mount;
 
 require dirname(__DIR__).'/vendor/autoload.php';
 
+Pam\Desktop\Markdown\Markdown::register();
 App::components(dirname(__DIR__).'/src', dirname(__DIR__).'/.pam-desktop/components');
 
 $check = static function (bool $condition, string $message): void {
@@ -28,8 +29,9 @@ $check(end($timeline)->isIntro(), 'the intro is the last row, at the top');
 $check(count(array_filter($timeline, static fn ($entry): bool => $entry->isDay())) === 2, 'one divider per day');
 
 // A message that mentions the reader is highlighted apart from other mentions.
-$styles = array_map(static fn ($run): string => $run->style, $workspace->timeline('dm-ana')[0]->runs);
-$check(in_array('mention-me', $styles, true) && in_array('link', $styles, true), 'mentions of the reader and links are styled');
+$runs = Pam\Desktop\Markdown\Markdown::parse($workspace->timeline('dm-ana')[0]->message->text, slack: true, people: $workspace->names())[0][1];
+$mentions = array_column(array_filter($runs, static fn (array $run): bool => $run['mention']), 'text');
+$check($mentions === ['@David Balbino'] && array_filter($runs, static fn (array $run): bool => $run['link'] !== null) !== [], 'mentions with spaces and links are found in message bodies');
 
 // Reactions toggle for the reader; posting adds a message at the bottom.
 $mine = static fn (): bool => in_array(Workspace::ME, $workspace->message('design', 's2')?->reactions['👀'] ?? [], true);
