@@ -274,6 +274,26 @@ $this->files = [
 - Changing `collapseRequest` (a counter) closes every branch, for a "Collapse Folders" button.
 - `rowHeight`, `indent`, `iconSize`, `fontSize`, `color`, `muted` and `guideColor` adjust the look.
 
+## CodeEditor
+
+`<CodeEditor>` edits source code: syntax highlighting from [Code](code.md), line numbers, the active line, selections, several cursors and undo, with the keys of VS Code. Only the lines on screen are built.
+
+```html
+<CodeEditor :text="$source" language="php" fontFamily="JetBrains Mono" on:change="edited" on:cursor="moved" />
+```
+
+- `change` carries the whole text after each edit. `cursor` carries `['line' => …, 'column' => …, 'cursors' => …]`, 1-based, for a status bar.
+- A new `text` from the owner (another file, a reload) replaces the document. Giving back the text from `change` does not.
+- Text goes in through a native text field that the editor keeps focused, so dead keys, compose sequences and input methods (accents, CJK) work as in any field. Everything else is drawn by the editor, in a monospaced font: cursors, selections and colours.
+- Keys: arrows, Home/End (Home goes to the indent first), PageUp/PageDown, Shift to select, Ctrl+Arrows to move by word, Ctrl+Home/End, Enter (keeps the indent, one level deeper after `{`, `[`, `(` or `:`), Backspace (a whole indent level in leading spaces), Delete, Ctrl+Backspace/Delete for words, Tab and Shift+Tab (indent and outdent the selected lines), Ctrl+/ (line comments, with the language's marker), Ctrl+A, Ctrl+C/X/V (Ctrl+X with nothing selected cuts the line), Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, Ctrl+D (select the word, then add a cursor at its next occurrence), Escape (back to one cursor).
+- Mouse: a click places the cursor, Shift+click extends the selection, Alt+click adds a cursor, and dragging selects.
+- Tabs stay in the text and show as tab stops of `tabSize` columns (4 by default).
+- Typing recolours the edited line at once and the whole text after a 300 ms pause, which settles block comments and strings that span lines.
+- `theme` takes a `CodeTheme` (`darkModern()` by default). Also `fontSize`, `lineHeight`, `fontFamily`, `lineNumbers`, `readOnly`, `tabSize`, `label` and `autoFocus`.
+- `CodeDocument` is the text model on its own (lines, cursors, edits, undo), for tests or for commands of your own: `$editor->document`.
+
+Long lines are clipped; there is no horizontal scrolling yet.
+
 ## ProgressButton
 
 A button that keeps its label and shows a spinner while `loading`; it ignores presses while loading or disabled. See [ProgressButton](../packages/desktop-ui/docs/progress-button.md).

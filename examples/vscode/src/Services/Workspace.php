@@ -102,13 +102,29 @@ final class Workspace
         }
     }
 
+    /** @var array<string, string> edited text by path, not saved */
+    private array $edits = [];
+
+    public function source(string $path): string
+    {
+        return $this->edits[$path] ?? (string) file_get_contents($this->root.'/'.$path);
+    }
+
+    public function edit(string $path, string $text): void
+    {
+        $this->edits[$path] = $text;
+        unset($this->documents[$path]);
+    }
+
+    public function modified(string $path): bool
+    {
+        return isset($this->edits[$path]);
+    }
+
     /** @return list<list<array{0: string, 1: int}>> */
     public function lines(string $path): array
     {
-        return $this->documents[$path] ??= Highlighter::lines(
-            (string) file_get_contents($this->root.'/'.$path),
-            Highlighter::language($path),
-        );
+        return $this->documents[$path] ??= Highlighter::lines($this->source($path), Highlighter::language($path));
     }
 
     /** @return list<string> every readable file, for Quick Open */

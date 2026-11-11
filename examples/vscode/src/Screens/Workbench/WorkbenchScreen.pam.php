@@ -62,6 +62,9 @@ final class WorkbenchScreen extends Component
     public int $line = 1;
 
     #[State]
+    public int $column = 1;
+
+    #[State]
     public float $sidebar = 260.0;
 
     #[State]
@@ -175,9 +178,16 @@ final class WorkbenchScreen extends Component
         $this->revision++;
     }
 
-    public function cursor(int $line): void
+    /** @param array{line: int, column: int, cursors: int} $at */
+    public function cursor(array $at): void
     {
-        $this->line = $line;
+        $this->line = $at['line'];
+        $this->column = $at['column'];
+    }
+
+    public function edited(): void
+    {
+        $this->revision++;
     }
 
     public function toggleTerminal(): void
@@ -304,7 +314,7 @@ final class WorkbenchScreen extends Component
                 </Column>
             <SplitView direction="vertical" sized="end" :size="$panel" min="80" max="600" :collapsed="!$terminal"
                        label="Resize Panel" on:resize="resizePanel">
-                <Editor :workspace="$workspace" :revision="$revision" @select="select" @close="closeTab" @cursor="cursor" />
+                <Editor :workspace="$workspace" :revision="$revision" @select="select" @close="closeTab" @cursor="cursor" @edit="edited" />
                 <Column class="panel">
                     <Row class="panel-tabs">
                         <Column p-for="$panel in $panels" p-key="$panel" :class="$panel === 'TERMINAL' ? 'panel-tab panel-tab-on' : 'panel-tab'">
@@ -351,7 +361,7 @@ final class WorkbenchScreen extends Component
                 <Text class="status-text">0</Text>
             </Row>
             <View class="spacer" />
-            <Text p-if="$workspace->active !== null" class="status-text item">Ln {{ $line }}, Col 1</Text>
+            <Text p-if="$workspace->active !== null" class="status-text item">Ln {{ $line }}, Col {{ $column }}</Text>
             <Text class="status-text item">Spaces: 4</Text>
             <Text class="status-text item">UTF-8</Text>
             <Text class="status-text item">LF</Text>

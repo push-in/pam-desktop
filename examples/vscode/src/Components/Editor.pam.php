@@ -7,6 +7,7 @@ namespace App\Components;
 use App\Domain\FileKind;
 use App\Services\Workspace;
 use Pam\Desktop\Attributes\State;
+use Pam\Desktop\Code\Highlighter;
 use Pam\Desktop\Component;
 
 final class Editor extends Component
@@ -41,10 +42,24 @@ final class Editor extends Component
         $this->emit('close', $path);
     }
 
-    public function place(int $line): void
+    public function language(): ?string
     {
-        $this->cursor = $line;
-        $this->emit('cursor', $line);
+        return $this->workspace->active === null ? null : Highlighter::language($this->workspace->active);
+    }
+
+    /** @param array{line: int, column: int, cursors: int} $at */
+    public function moved(array $at): void
+    {
+        $this->cursor = $at['line'];
+        $this->emit('cursor', $at);
+    }
+
+    public function edited(string $text): void
+    {
+        if ($this->workspace->active !== null) {
+            $this->workspace->edit($this->workspace->active, $text);
+            $this->emit('edit', $this->workspace->active);
+        }
     }
 
     public function tabClass(string $path): string
@@ -97,8 +112,9 @@ final class Editor extends Component
                 <Icon :name="icon($path)" font="Lucide" size="15" :color="colour($path)" />
                 <Text :class="$path === $workspace->active ? 'tab-name tab-name-on' : 'tab-name'">{{ fileName($path) }}</Text>
                 <Pressable :class="$path === $workspace->active ? 'tab-close shown' : 'tab-close'" cursor="pointer"
-                           on:press="close($path)" tooltip="Close">
-                    <Icon name="x" font="Lucide" size="15" class="text" />
+                           on:press="close($path)" :tooltip="$workspace->modified($path) ? 'Unsaved changes' : 'Close'">
+                    <Icon p-if="$workspace->modified($path)" name="circle" font="Lucide" size="10" class="text dot" />
+                    <Icon p-else name="x" font="Lucide" size="15" class="text" />
                 </Pressable>
             </Pressable>
             <View class="tabs-rest" />
@@ -113,15 +129,9 @@ final class Editor extends Component
                 </Row>
             </Row>
             <Row class="surface">
-                <VirtualizedList class="code" estimatedRowHeight="19" :key="'code-' . $workspace->active">
-                    <Pressable p-for="$line in lines()" p-key="$lineIndex" :class="$lineIndex + 1 === $cursor ? 'line line-on' : 'line'"
-                               on:press="place($lineIndex + 1)">
-                        <Text :class="$lineIndex + 1 === $cursor ? 'number number-on' : 'number'">{{ $lineIndex + 1 }}</Text>
-                        <Text class="source" numberOfLines="1">
-                            <Span p-for="$run in $line" p-key="$runIndex" :textColor="$run[1]">{{ $run[0] }}</Span>
-                        </Text>
-                    </Pressable>
-                </VirtualizedList>
+                <CodeEditor :key="'code-' . $workspace->active" :text="$workspace->source($workspace->active)"
+                            :language="language()" fontFamily="JetBrains Mono"
+                            :label="$workspace->active" autoFocus="true" on:change="edited" on:cursor="moved" />
                 <Column class="minimap">
                     <Row p-for="$row in minimap()" p-key="$rowIndex" class="map-row">
                         <View p-for="$bar in $row" p-key="$barIndex" class="map-bar" :width="$bar[0]" :backgroundColor="$bar[1]" />
@@ -159,12 +169,8 @@ final class Editor extends Component
     .crumb { gap: 4px; align-items: center; }
     .crumb-text { font-size: 13px; color: var(--dim); }
     .surface { flex: 1; }
-    .code { flex: 1; scrollbar-width: thin; }
-    .line { flex-direction: row; height: 19px; align-items: center; border-width: 1px; border-color: #00000000; }
-    .line-on { border-color: #282828; }
-    .number { width: 64px; padding-right: 24px; font-family: "JetBrains Mono", monospace; font-size: 13px; color: #6E7681; text-align: right; }
-    .number-on { color: #CCCCCC; }
-    .source { flex: 1; font-family: "JetBrains Mono", monospace; font-size: 13px; color: #CCCCCC; }
+    .dot { opacity: 1; }
+    .tab:hover .dot { opacity: 0; }
     .minimap { width: 90px; padding: 0 10px; gap: 0; overflow: hidden; border-left-width: 1px; border-color: #FFFFFF08; }
     .map-row { height: 2px; gap: 0; }
     .map-bar { height: 2px; opacity: 0.55; }
