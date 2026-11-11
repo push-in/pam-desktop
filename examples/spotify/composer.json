@@ -13,7 +13,7 @@
   "name": "app/spotify",
   "require": {
     "php": "^8.5",
-    "pushinbr/pam-desktop": "^2.1.8"
+    "pushinbr/pam-desktop": "^2.2.1"
   },
   "scripts": {
     "build": "pam-desktop build",
