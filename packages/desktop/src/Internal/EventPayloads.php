@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Pam\Desktop\Internal;
 
+use Pam\Desktop\DragPayload;
 use Pam\Desktop\GestureEvent;
 use Pam\Desktop\GestureSettleEvent;
 use Pam\Desktop\ImageErrorEvent;
@@ -39,6 +40,7 @@ final class EventPayloads
         TextLayoutEvent::class => true,
         KeyEvent::class => true,
         LayoutEvent::class => true,
+        DragPayload::class => true,
     ];
 
     private function __construct()

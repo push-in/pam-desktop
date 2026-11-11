@@ -19,9 +19,10 @@ What the Spotify clone in `examples/spotify` needed: a `Slider` control,
 
 ### Fixed
 
-- **Key and layout handlers receive typed events.** A template handler
-  typed `KeyEvent` (`on:keyDown`) or `LayoutEvent` (`on:layout`) got the wire
-  string and failed with a TypeError.
+- **Key, layout and drop handlers receive typed events.** A template handler
+  typed `KeyEvent` (`on:keyDown`), `LayoutEvent` (`on:layout`) or
+  `DragPayload` (`on:drop`, `on:dragEnter`, …) got the wire string and failed
+  with a TypeError.
 - **DesktopUI and Charts install with `pushinbr/pam-desktop`.** The docs told
   to require `pushinbr/pam-desktop-ui` and `pushinbr/pam-desktop-charts`, which
   are not published: both ship in `pushinbr/pam-desktop`.

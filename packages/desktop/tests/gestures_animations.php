@@ -469,6 +469,12 @@ foreach ([-0.1, 1.1, NAN, INF] as $invalid) {
 $typedKeys = new class {
     public ?\Pam\Desktop\KeyEvent $key = null;
     public ?\Pam\Desktop\LayoutEvent $layout = null;
+    public ?\Pam\Desktop\DragPayload $dropped = null;
+
+    public function drop(\Pam\Desktop\DragPayload $drag): void
+    {
+        $this->dropped = $drag;
+    }
 
     public function key(\Pam\Desktop\KeyEvent $event): void
     {
@@ -481,12 +487,17 @@ $typedKeys = new class {
     }
 };
 $typedTemplate = TemplateRenderer::render(
-    TemplateCompiler::compile('<View captureKeys="Escape" on:keyDown="key" on:layout="measure"><Text>Field</Text></View>', 'typed-keys.pam.php'),
+    TemplateCompiler::compile('<View captureKeys="Escape" on:keyDown="key" on:layout="measure"><DropTarget dropType="1" on:drop="drop"><Text>Field</Text></DropTarget></View>', 'typed-keys.pam.php'),
     $typedKeys,
     [],
 );
 $typedTemplate->events()[EventKind::KeyDown->value](Wire::map(['key' => 'Escape', 'shift' => true]));
 $typedTemplate->events()[EventKind::Layout->value](Wire::map(['x' => 0.0, 'y' => 0.0, 'width' => 240.0, 'height' => 16.0]));
+$typedTemplate->children()[0]->events()[EventKind::Drop->value](Wire::map(['type' => 1, 'data' => 'card-7']));
+$assert(
+    $typedKeys->dropped?->data === 'card-7' && $typedKeys->dropped->type === 1,
+    'Template on:drop handlers typed with DragPayload must receive the decoded payload.',
+);
 $assert(
     $typedKeys->key?->key === 'Escape' && $typedKeys->key->shift && $typedKeys->layout?->width === 240.0,
     'Template on:keyDown / on:layout handlers typed with KeyEvent / LayoutEvent must receive decoded events.',
