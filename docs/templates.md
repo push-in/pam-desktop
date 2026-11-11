@@ -115,6 +115,10 @@ A public instance method of an object can be called with `->`:
 
 A component given through `:content` is mounted while the slot shows it and unmounted when the value changes. This is how a component keeps a chart, a [DesktopUI](desktop-ui.md) control or a dialog in a property and places it in its template.
 
+## Event payloads in expressions
+
+A handler can be a method name (`on:press="save"`), which receives the event as its typed parameter, or an expression (`on:press="pick($row, $event)"`). In an expression `$event` is the payload: a `PressEvent` for presses, a `KeyEvent` for keys, a `LayoutEvent` for `on:layout`, a `GestureEvent` or `GestureSettleEvent` for gestures and a `DragPayload` for drops. Events without a payload class pass their raw value, such as the text of an input's `on:change` or the offset of `on:scroll`.
+
 ## Component events
 
 A component tells its owner that something happened with `$this->emit('name', $payload)`. The owner listens on the tag with `on:name` or `@name`, the same thing. The handler receives the payload, typed like any other handler (`float $size`, `string $id`, a `KeyEvent`…):

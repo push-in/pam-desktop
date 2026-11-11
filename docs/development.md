@@ -172,13 +172,20 @@ composer analyse --working-dir=packages/desktop
 
 ### Template diagnostics
 
-When a component loads, its template is checked against what the renderer uses. An attribute that a built-in tag (`View`, `Column`, `Row`, `Grid`, `Text`, `Span`, `Pressable`, the `Touchable*` tags, `Icon`, `Image`) does not know is an error with the file, line and the attribute meant, instead of being ignored:
+When a component loads, its template is checked against what the renderer uses. An attribute that a built-in tag (`View`, `Column`, `Row`, `Grid`, `Text`, `Span`, `Pressable`, the `Touchable*` tags, `Icon`, `Image`, `Input`, `TextInput`, `Scroll`, `ScrollView`, `VirtualizedList`, `GestureDetector`, `Switch`, `Link`, `Modal`, `DragSource`, `DropTarget`) does not know is an error with the file, line and the attribute meant, instead of being ignored. The same goes for an `on:` event the tag never emits, and for an attribute of a `.pam` component tag that is neither one of its props, nor an attribute of its root element, nor an event:
 
 ```text
 PAM2401 unknown attribute Text.color, did you mean textColor? at src/Screens/Card.pam.php:12:5.
 ```
 
-Common slips are named directly (`color` → `textColor`, `maxLines` → `numberOfLines`, `src` → `source`, `onClick` → `on:press`); other names get the closest known attribute. In `pam-desktop dev` the error overlay shows it at boot, and the PHP tests of an app fail on it. Bindings (`:name`), `p-*`, `on:*`, `@*`, `data-*`, `aria-*` and `variant:*` are not checked here; components with a contract check their own props.
+```text
+PAM2401 unknown event Pressable.on:pres, did you mean on:press?
+PAM2401 unknown prop SplitView.sizee, did you mean size?
+```
+
+Common slips are named directly (`color` → `textColor`, `maxLines` → `numberOfLines`, `src` → `source`, `onClick` → `on:press`); other names get the closest known attribute. In `pam-desktop dev` the error overlay shows it at boot, and the PHP tests of an app fail on it. `p-*`, `@*`, `data-*`, `aria-*` and `variant:*` are not checked here; components with a contract check their own props.
+
+A bound attribute that evaluates to `null` leaves its property unset (`:textColor="$active ? '#FFF' : null"` falls back to the stylesheet), for every property.
 
 `vendor/bin/pam-desktop check` reports all of these without starting the host or opening a window, and does not stop at the first one. It runs the entry file of the application (the `entry` of `pam-desktop.json`, `index.php` by default) up to `App::run()`, so every `App::components()` root it declares is checked (DesktopUI's too), compiles each component into a private temporary cache (the application's `.pam-desktop` cache is left alone) and prints one line per diagnostic, then a summary:
 

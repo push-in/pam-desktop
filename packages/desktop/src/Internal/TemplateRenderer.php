@@ -847,6 +847,14 @@ final class TemplateRenderer
         'TouchableWithoutFeedback' => [], 'TouchableNativeFeedback' => [],
         'Icon' => ['name' => true, 'font' => true, 'size' => true, 'color' => true],
         'Image' => ['source' => true],
+        'Input' => ['value' => true], 'TextInput' => ['value' => true],
+        'Scroll' => [], 'ScrollView' => ['horizontal' => true],
+        'VirtualizedList' => ['items' => true],
+        'GestureDetector' => ['gestureType' => true],
+        'Switch' => ['checked' => true],
+        'Link' => ['mode' => true, 'params' => true, 'route' => true, 'to' => true],
+        'DragSource' => ['dragData' => true, 'dragType' => true], 'DropTarget' => ['dropType' => true],
+        'Modal' => ['presentation' => true, 'visible' => true],
     ];
 
     /** Common slips from the web or React Native and the attribute meant. */
@@ -895,6 +903,38 @@ final class TemplateRenderer
         return $unknown;
     }
 
+    /**
+     * An attribute of a compiled component tag that is neither one of its
+     * props (`$props`), nor an attribute of its root element, nor an event:
+     * rendering it fails with "Unknown props".
+     *
+     * @param array<string, true> $props
+     */
+    public static function unknownComponentAttribute(string $tag, string $attribute, array $props): ?string
+    {
+        $name = ltrim($attribute, ':');
+        if (
+            isset($props[$name])
+            || isset(self::PROPERTIES[$name])
+            || isset(self::SPECIAL_ATTRIBUTES[$name])
+            || isset(self::EVENTS[$name])
+            || in_array($name, ['class', 'key', 'ref', 'nativeRef', 'recipe', 'className'], true)
+            || preg_match('/^(p-|on:|@|data-|aria-|variant:|bind:|model|__pam)/', $name) === 1
+        ) {
+            return null;
+        }
+        $best = 3;
+        $suggestion = null;
+        foreach (array_keys($props) as $known) {
+            $distance = levenshtein(strtolower($name), strtolower($known));
+            if ($distance < $best) {
+                [$best, $suggestion] = [$distance, $known];
+            }
+        }
+
+        return "unknown prop {$tag}.{$name}".($suggestion === null ? '' : ", did you mean {$suggestion}?");
+    }
+
     public static function unknownBuiltinAttribute(string $tag, string $attribute): ?string
     {
         $extras = self::CHECKED_TAGS[$tag] ?? null;
@@ -907,9 +947,22 @@ final class TemplateRenderer
             || isset(self::EVENTS[$name])
             || ($tag === 'Image' && isset(self::MEDIA_CACHE_VALUES[$name]))
             || in_array($name, ['class', 'key', 'ref', 'nativeRef', 'recipe', 'text'], true)
-            || preg_match('/^(p-|on:|@|data-|aria-|variant:|bind:|model|__pam)/', $name) === 1
+            || preg_match('/^(p-|@|data-|aria-|variant:|bind:|model|__pam)/', $name) === 1
         ) {
             return null;
+        }
+        if (str_starts_with($name, 'on:')) {
+            // An event the element never emits would never run.
+            $best = 3;
+            $suggestion = null;
+            foreach (array_keys(self::EVENTS) as $known) {
+                $distance = levenshtein(strtolower($name), strtolower($known));
+                if ($distance < $best) {
+                    [$best, $suggestion] = [$distance, $known];
+                }
+            }
+
+            return "unknown event {$tag}.{$name}".($suggestion === null ? '' : ", did you mean {$suggestion}?");
         }
         $suggestion = self::ATTRIBUTE_ALIASES[$name] ?? null;
         if ($suggestion === null) {
@@ -4781,6 +4834,11 @@ final class TemplateRenderer
 
     private static function propertyValue(PropKey $key, mixed $value): string|int|float|bool|null
     {
+        // A bound null leaves the property unset, whatever its type
+        // (`:textColor="$on ? '#F00' : null"` falls back to the stylesheet).
+        if ($value === null) {
+            return null;
+        }
         // Conversions of scalar inputs are pure; memoized per native key.
         $id = $key->value;
         if (is_string($value)) {
@@ -7733,6 +7791,31 @@ final class TemplateRenderer
     /**
      * @param array<string, mixed> $data
      */
+    /**
+     * `$event` in a handler expression (`on:press="pick($row, $event)"`):
+     * the typed payload of the kinds that have one, else the raw value.
+     */
+    private static function typedEvent(EventKind $kind, mixed $payload): mixed
+    {
+        $class = match ($kind) {
+            EventKind::Press, EventKind::PressIn, EventKind::PressOut, EventKind::LongPress => \Pam\Desktop\PressEvent::class,
+            EventKind::KeyDown, EventKind::KeyUp => \Pam\Desktop\KeyEvent::class,
+            EventKind::Layout => \Pam\Desktop\LayoutEvent::class,
+            EventKind::GestureBegin, EventKind::GestureUpdate, EventKind::GestureEnd, EventKind::GestureCancel => \Pam\Desktop\GestureEvent::class,
+            EventKind::GestureSettle => \Pam\Desktop\GestureSettleEvent::class,
+            EventKind::Drop => \Pam\Desktop\DragPayload::class,
+            default => null,
+        };
+        if ($class === null || !is_string($payload) || $payload === '') {
+            return $payload;
+        }
+        try {
+            return EventPayloads::decode($class, $payload);
+        } catch (\Throwable) {
+            return $payload;
+        }
+    }
+
     private static function handler(
         string|bool $raw,
         EventKind $kind,
@@ -7751,6 +7834,7 @@ final class TemplateRenderer
 
             return static function (mixed $payload = '') use (
                 $raw,
+                $kind,
                 $scope,
                 $data,
             ): void {
@@ -7760,7 +7844,7 @@ final class TemplateRenderer
                 TemplateExpression::evaluate(
                     $raw,
                     $scope,
-                    [...$data, 'event' => $payload],
+                    [...$data, 'event' => self::typedEvent($kind, $payload)],
                 );
             };
         }
