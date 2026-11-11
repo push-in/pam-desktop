@@ -83,7 +83,8 @@ pub type Task = Box<dyn FnOnce(&Rc<App>)>;
 pub enum Mail {
     Image(crate::images::Decoded),
     /// A toast notification was activated.
-    Notification(String),
+    /// A toast was activated: its id and the button pressed, if any.
+    Notification(String, Option<String>),
     /// A Media Foundation engine event: player token, event, parameters.
     Media {
         player: u64,
@@ -723,7 +724,9 @@ impl App {
         for mail in self.mailbox.take() {
             match mail {
                 Mail::Image(decoded) => crate::images::decoded(self, decoded),
-                Mail::Notification(id) => self.emit(BackendEvent::NotificationActivated { id }),
+                Mail::Notification(id, action) => {
+                    self.emit(BackendEvent::NotificationActivated { id, action })
+                }
                 Mail::Media {
                     player,
                     event,

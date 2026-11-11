@@ -172,10 +172,27 @@ $assert($saved === null && $host->last('saveFile')['defaultName'] === 'report.pd
 // --- Notifications and tray ---------------------------------------------------
 $activated = 0;
 $id = Notification::show('Export finished', 'report.pdf', static function () use (&$activated): void { $activated++; });
-$assert($host->last('notify') == ['id' => $id, 'title' => 'Export finished', 'body' => 'report.pdf'], 'Notifications carry title and body: '.json_encode($host->last('notify')));
+$assert($host->last('notify') == ['id' => $id, 'title' => 'Export finished', 'body' => 'report.pdf', 'actions' => '[]'], 'Notifications carry title and body: '.json_encode($host->last('notify')));
 $host->emit('notification', $id);
 $host->emit('notification', $id);
 $assert($activated === 1, 'A notification activates its handler once.');
+$pressed = [];
+$id = Notification::show('Ana', 'Can you review the deck?', static function () use (&$pressed): void { $pressed[] = 'open'; }, [
+    'Reply' => static function () use (&$pressed): void { $pressed[] = 'reply'; },
+    'Mark as read' => static function () use (&$pressed): void { $pressed[] = 'read'; },
+]);
+$assert(json_decode($host->last('notify')['actions'], true) === [['id' => 'a0', 'label' => 'Reply'], ['id' => 'a1', 'label' => 'Mark as read']], 'Buttons travel with the notification.');
+$host->emit('notification', $id, ['action' => 'a1']);
+$assert($pressed === ['read'], 'A button runs its own handler, not the click one: '.json_encode($pressed));
+try {
+    Notification::show('Too many', '', null, ['A' => static fn () => 1, 'B' => static fn () => 2, 'C' => static fn () => 3, 'D' => static fn () => 4]);
+    $assert(false, 'Four buttons are refused.');
+} catch (InvalidArgumentException) {
+}
+Window::badge(3);
+$assert($host->last('window') === ['command' => 'badge', 'count' => 3], 'The badge carries its count.');
+Window::badge(0);
+$assert($host->last('window') === ['command' => 'badge'], 'A zero badge removes it.');
 $trayLog = [];
 Tray::show(
     Menu::make('Tray', MenuItem::make('Open', static function () use (&$trayLog): void { $trayLog[] = 'open'; })),

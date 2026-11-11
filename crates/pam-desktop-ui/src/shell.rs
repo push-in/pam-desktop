@@ -296,6 +296,15 @@ pub struct NotificationConfig {
     pub id: String,
     pub title: String,
     pub body: String,
+    /// Buttons on the notification (at most three), reported by their id.
+    pub actions: Vec<NotificationAction>,
+}
+
+/// A button of a notification.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NotificationAction {
+    pub id: String,
+    pub label: String,
 }
 
 /// A registered shortcut. Global ones fire while the application is in the
@@ -328,6 +337,9 @@ pub enum WindowCommand {
     Close,
     /// Progress on the taskbar or dock icon, `None` removes it.
     SetProgress(Option<f32>),
+    /// A count on the dock, launcher or taskbar icon (unread messages);
+    /// `None` or 0 removes it.
+    SetBadge(Option<u32>),
 }
 
 /// What the application hands to the share sheet of the system.

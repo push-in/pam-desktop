@@ -268,6 +268,7 @@ impl<B: Backend> Runtime<B> {
                         .chars()
                         .take(4096)
                         .collect(),
+                    actions: notification_actions(request.text("actions").unwrap_or("[]")),
                 });
                 reply.done();
             }
@@ -326,6 +327,11 @@ impl<B: Backend> Runtime<B> {
             "progress" => {
                 WindowCommand::SetProgress(number("value").map(|value| value.clamp(0.0, 1.0)))
             }
+            "badge" => WindowCommand::SetBadge(
+                number("count")
+                    .filter(|count| *count >= 1.0)
+                    .map(|count| count.min(99_999.0) as u32),
+            ),
             "interceptClose" => {
                 self.shell.intercepts_close = request.boolean("enabled").unwrap_or(true);
                 return reply.done();
@@ -519,9 +525,37 @@ fn context_menu_level(value: &serde_json::Value, depth: usize) -> Option<Vec<Men
     )
 }
 
+/// `[{"id": "reply", "label": "Reply"}, …]`: at most three buttons.
+fn notification_actions(json: &str) -> Vec<crate::shell::NotificationAction> {
+    let Ok(serde_json::Value::Array(entries)) = serde_json::from_str::<serde_json::Value>(json)
+    else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let id: String = entry.get("id")?.as_str()?.chars().take(64).collect();
+            let label: String = entry.get("label")?.as_str()?.chars().take(64).collect();
+            (!id.is_empty() && !label.is_empty())
+                .then_some(crate::shell::NotificationAction { id, label })
+        })
+        .take(3)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notification_buttons_are_bounded() {
+        let actions = notification_actions(
+            r#"[{"id":"reply","label":"Reply"},{"id":"","label":"x"},{"id":"a","label":"A"},{"id":"b","label":"B"},{"id":"c","label":"C"}]"#,
+        );
+        let ids: Vec<&str> = actions.iter().map(|action| action.id.as_str()).collect();
+        assert_eq!(ids, ["reply", "a", "b"]);
+        assert!(notification_actions("nonsense").is_empty());
+    }
 
     #[test]
     fn filters_keep_only_safe_extensions() {

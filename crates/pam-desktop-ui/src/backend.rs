@@ -141,8 +141,10 @@ pub enum BackendEvent {
     },
     /// The tray icon itself was activated.
     TrayActivated,
+    /// A notification was clicked (`action` `None`) or one of its buttons.
     NotificationActivated {
         id: String,
+        action: Option<String>,
     },
     /// Files were dropped on a window.
     FilesDropped {

@@ -152,10 +152,27 @@ impl Shell {
         let queue = Rc::clone(&events);
         action.connect_activate(move |_, parameter| {
             if let Some(id) = parameter.and_then(|parameter| parameter.get::<String>()) {
-                queue.push(BackendEvent::NotificationActivated { id });
+                queue.push(BackendEvent::NotificationActivated { id, action: None });
             }
         });
         application.add_action(&action);
+        // And one every button: (notification id, button id).
+        let button = gio::SimpleAction::new(
+            "notification-action",
+            Some(glib::VariantTy::new("(ss)").expect("valid variant type")),
+        );
+        let queue = Rc::clone(&events);
+        button.connect_activate(move |_, parameter| {
+            if let Some((id, action)) =
+                parameter.and_then(|parameter| parameter.get::<(String, String)>())
+            {
+                queue.push(BackendEvent::NotificationActivated {
+                    id,
+                    action: Some(action),
+                });
+            }
+        });
+        application.add_action(&button);
         Self {
             application,
             events,
@@ -384,6 +401,13 @@ impl Shell {
             "app.notification-activated",
             Some(&notification.id.to_variant()),
         );
+        for action in &notification.actions {
+            native.add_button_with_target_value(
+                &action.label,
+                "app.notification-action",
+                Some(&(notification.id.as_str(), action.id.as_str()).to_variant()),
+            );
+        }
         let id = (!notification.id.is_empty()).then_some(notification.id.as_str());
         self.application.send_notification(id, &native);
     }
@@ -417,7 +441,21 @@ pub fn window_command(window: &gtk::ApplicationWindow, host: &PamView, command: 
         WindowCommand::Focus | WindowCommand::Show => window.present(),
         WindowCommand::Hide => window.set_visible(false),
         WindowCommand::Close => window.destroy(),
-        WindowCommand::SetProgress(progress) => launcher_progress(window, *progress),
+        WindowCommand::SetProgress(progress) => {
+            let properties = glib::VariantDict::new(None);
+            properties.insert(
+                "progress",
+                f64::from(progress.unwrap_or(0.0).clamp(0.0, 1.0)),
+            );
+            properties.insert("progress-visible", progress.is_some());
+            launcher_update(window, &properties);
+        }
+        WindowCommand::SetBadge(count) => {
+            let properties = glib::VariantDict::new(None);
+            properties.insert("count", i64::from(count.unwrap_or(0)));
+            properties.insert("count-visible", count.is_some_and(|count| count > 0));
+            launcher_update(window, &properties);
+        }
         // Through the window manager on X11; Wayland gives applications no
         // say on placement or stacking.
         WindowCommand::Center => {
@@ -429,10 +467,11 @@ pub fn window_command(window: &gtk::ApplicationWindow, host: &PamView, command: 
     }
 }
 
-/// Progress on the launcher icon, through the entry API that the Ubuntu
-/// Dock, Dash to Dock and the Plasma task manager listen to. It reaches an
-/// installed application, whose desktop entry is named after its id.
-fn launcher_progress(window: &gtk::ApplicationWindow, progress: Option<f32>) {
+/// Progress and count badge on the launcher icon, through the entry API
+/// that the Ubuntu Dock, Dash to Dock and the Plasma task manager listen to.
+/// It reaches an installed application, whose desktop entry is named after
+/// its id.
+fn launcher_update(window: &gtk::ApplicationWindow, properties: &glib::VariantDict) {
     let Some(application) = window.application() else {
         return;
     };
@@ -441,12 +480,6 @@ fn launcher_progress(window: &gtk::ApplicationWindow, progress: Option<f32>) {
     else {
         return;
     };
-    let properties = glib::VariantDict::new(None);
-    properties.insert(
-        "progress",
-        f64::from(progress.unwrap_or(0.0).clamp(0.0, 1.0)),
-    );
-    properties.insert("progress-visible", progress.is_some());
     let entry = format!("application://{id}.desktop");
     let path = format!(
         "/com/canonical/unity/launcherentry/{}",

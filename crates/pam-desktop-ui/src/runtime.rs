@@ -1282,8 +1282,9 @@ impl<B: Backend> Runtime<B> {
             BackendEvent::MenuAction { id } => self.shell.emit("menu", &id, "{}"),
             BackendEvent::Shortcut { id } => self.shell.emit("shortcut", &id, "{}"),
             BackendEvent::TrayActivated => self.shell.emit("tray", "activate", "{}"),
-            BackendEvent::NotificationActivated { id } => {
-                self.shell.emit("notification", &id, "{}")
+            BackendEvent::NotificationActivated { id, action } => {
+                let payload = serde_json::json!({ "action": action }).to_string();
+                self.shell.emit("notification", &id, &payload);
             }
             BackendEvent::FilesDropped {
                 window,

@@ -104,6 +104,15 @@ final class Window
         self::command('progress', $value === null ? [] : ['value' => max(0.0, min(1.0, $value))]);
     }
 
+    /**
+     * A count on the application's icon in the dock, launcher or taskbar
+     * (unread messages, pending tasks); null or 0 removes it.
+     */
+    public static function badge(?int $count): void
+    {
+        self::command('badge', $count === null || $count <= 0 ? [] : ['count' => min($count, 99_999)]);
+    }
+
     /** Closes the window and ends the application, without asking. */
     public static function close(): void
     {
