@@ -3,7 +3,7 @@
 A Slack desktop clone built only with PAM and PAM Desktop: no web view, no
 JavaScript, every pixel a native view.
 
-![Slack clone](https://raw.githubusercontent.com/push-in/pam-desktop/main/examples/slack/screenshot.png)
+![Slack clone, recorded live](demo.gif)
 
 ```bash
 pam composer install

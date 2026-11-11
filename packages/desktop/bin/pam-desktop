@@ -21,7 +21,7 @@ declare(strict_types=1);
  * PAM_DESKTOP_HOST_CACHE_DIR names another absolute directory for the cache.
  */
 
-const HOST_VERSION = '2.1.7';
+const HOST_VERSION = '2.1.8';
 const REPOSITORY = 'push-in/pam-desktop';
 const MAX_ARCHIVE_BYTES = 536_870_912;
 const MAX_EXTRACTED_BYTES = 1_073_741_824;

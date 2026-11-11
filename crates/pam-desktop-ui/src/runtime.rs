@@ -1738,6 +1738,15 @@ impl<B: Backend> Runtime<B> {
     }
 
     fn handle_key(&mut self, key: &KeyEvent) {
+        if debug_enabled() && key.pressed {
+            eprintln!(
+                "key {:?} {:?} window {} focused {:?}",
+                key.key,
+                key.modifiers,
+                key.window,
+                self.interaction.focused()
+            );
+        }
         if key.window != MAIN_WINDOW && self.windows.root_of(key.window).is_none() {
             return;
         }
@@ -1780,6 +1789,9 @@ impl<B: Backend> Runtime<B> {
                 return self.go_back();
             }
             if let Some(id) = self.shell.shortcut_for(&key.key, key.modifiers) {
+                if debug_enabled() {
+                    eprintln!("shortcut {id}");
+                }
                 return self.shell.emit("shortcut", &id, "{}");
             }
             // The menu key and Shift+F10 open the menu of the focused element.
