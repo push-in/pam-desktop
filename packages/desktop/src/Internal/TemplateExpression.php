@@ -1032,11 +1032,16 @@ final class TemplateExpression
     {
         $lenient = $this->coalescingDepth > 0;
         $missing = $this->missing;
-        /** @var list<array{0: bool|string, 1: string|Closure|list<Closure>}> $steps */
+        /** @var list<array{0: bool|string|null, 1: string|Closure|list<Closure>}> $steps */
         $steps = [];
 
         while (true) {
-            $arrow = $this->take(T_OBJECT_OPERATOR);
+            // `?->`: a null value ends the chain with null, as in PHP.
+            $nullsafe = $this->take(T_NULLSAFE_OBJECT_OPERATOR);
+            if ($nullsafe) {
+                $steps[] = [null, ''];
+            }
+            $arrow = $nullsafe || $this->take(T_OBJECT_OPERATOR);
             if ($arrow || ($dot && $this->takePropertyDot())) {
                 $segment = $this->peek();
                 if ($segment === null || $segment['type'] !== T_STRING) {
@@ -1065,6 +1070,12 @@ final class TemplateExpression
 
         return static function (mixed $value, array $data, ?object $scope) use ($steps, $lenient, $missing): mixed {
             foreach ($steps as [$isProperty, $step]) {
+                if ($isProperty === null) {
+                    if ($value === null) {
+                        return null;
+                    }
+                    continue;
+                }
                 if (is_string($isProperty)) {
                     /** @var list<Closure> $step */
                     $arguments = [];
@@ -1556,6 +1567,7 @@ final class TemplateExpression
                         T_IS_GREATER_OR_EQUAL,
                         T_IS_SMALLER_OR_EQUAL,
                         T_OBJECT_OPERATOR,
+                        T_NULLSAFE_OBJECT_OPERATOR,
                         T_DOUBLE_COLON,
                         T_DOUBLE_ARROW,
                         T_COALESCE,

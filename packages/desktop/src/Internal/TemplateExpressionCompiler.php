@@ -502,7 +502,7 @@ final class TemplateExpressionCompiler
     private function chained(string $value): string
     {
         $next = $this->peek()['type'] ?? null;
-        if ($next !== T_OBJECT_OPERATOR && $next !== '[') {
+        if ($next !== T_OBJECT_OPERATOR && $next !== T_NULLSAFE_OBJECT_OPERATOR && $next !== '[') {
             return $value;
         }
         $result = $this->temporary();
@@ -516,9 +516,16 @@ final class TemplateExpressionCompiler
     {
         $lenient = $this->coalescingDepth > 0 ? 'true' : 'false';
         $runtime = self::RUNTIME;
+        // `?->` skips the rest of the chain when the value is null.
+        $guards = 0;
 
         while (true) {
-            $arrow = $this->take(T_OBJECT_OPERATOR);
+            $nullsafe = $this->take(T_NULLSAFE_OBJECT_OPERATOR);
+            if ($nullsafe) {
+                $this->emit("if ({$value} !== null) {");
+                $guards++;
+            }
+            $arrow = $nullsafe || $this->take(T_OBJECT_OPERATOR);
             if ($arrow || ($dot && $this->takePropertyDot())) {
                 $segment = $this->peek();
                 if ($segment === null || $segment['type'] !== T_STRING) {
@@ -552,6 +559,9 @@ final class TemplateExpressionCompiler
                     "{$value} = is_array({$value}) && (is_int({$index}) || is_string({$index})) && array_key_exists({$index}, {$value}) ? {$value}[{$index}] : {$runtime}::__pamIndex({$value}, {$index}, {$lenient});",
                 );
                 continue;
+            }
+            if ($guards > 0) {
+                $this->emit(str_repeat('}', $guards));
             }
 
             return;

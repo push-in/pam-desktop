@@ -2,9 +2,7 @@
 
 `pushinbr/pam-desktop-charts` (namespace `Pam\Desktop\Charts`) draws line, area, bar and donut charts, sparklines and progress rings. A chart is an immutable value turned into a scene of vector commands and painted by the native canvas of the backend (Cairo on GTK, Core Graphics on AppKit, Direct2D on Win32) through `pushinbr/pam-desktop-canvas`. Nothing is rasterized in PHP and no web view is involved.
 
-```bash
-composer require pushinbr/pam-desktop-charts
-```
+It ships inside `pushinbr/pam-desktop`: nothing else to require.
 
 ```php
 // index.php, before App::run()

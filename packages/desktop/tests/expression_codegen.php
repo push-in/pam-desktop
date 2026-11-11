@@ -33,6 +33,11 @@ $codegenScope = new class {
         return $this->profile;
     }
 
+    public function nobody(): ?object
+    {
+        return null;
+    }
+
     public function viewer(): object
     {
         return new class {
@@ -95,6 +100,13 @@ $codegenExpressions = [
     "(\$count > 3 ? \$profile : null)->name",
     "glyph('a') . 'b'",
     "(\$row)['title']",
+    "owner()?->name",
+    "nobody()?->name",
+    "nobody()?->name ?? 'nobody'",
+    "nobody()?->initials(\$undefinedVariable)",
+    "\$profile?->name",
+    "\$nothing?->name ?? 'empty'",
+    "(\$count > 3 ? \$profile : null)?->links['site']",
 ];
 foreach ($codegenExpressions as $codegenExpression) {
     $outcomes = [];
@@ -110,6 +122,17 @@ foreach ($codegenExpressions as $codegenExpression) {
     $assert(
         $outcomes[0] === $outcomes[1],
         "Generated template expression must match the reference evaluator: {$codegenExpression} ({$outcomes[0]} vs {$outcomes[1]}).",
+    );
+}
+foreach ([true, false] as $generated) {
+    TemplateExpression::useGeneratedCode($generated);
+    $nullsafe = static fn (string $expression): mixed => TemplateExpression::evaluate($expression, $codegenScope, ['row' => $codegenScope->row, 'nothing' => null]);
+    $assert(
+        $nullsafe('owner()?->name') === $codegenScope->profile->name
+            && $nullsafe("nobody()?->name ?? 'nobody'") === 'nobody'
+            && $nullsafe('nobody()?->initials($undefinedVariable)') === null
+            && $nullsafe("\$nothing?->name ?? 'empty'") === 'empty',
+        '?-> must end the chain with null on a null value, without evaluating the rest.',
     );
 }
 TemplateExpression::useGeneratedCode(true);

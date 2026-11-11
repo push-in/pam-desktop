@@ -464,3 +464,30 @@ foreach ([-0.1, 1.1, NAN, INF] as $invalid) {
         $assert(true, 'Invalid follow rejected.');
     }
 }
+
+// Key and layout handlers typed with KeyEvent / LayoutEvent receive the objects.
+$typedKeys = new class {
+    public ?\Pam\Desktop\KeyEvent $key = null;
+    public ?\Pam\Desktop\LayoutEvent $layout = null;
+
+    public function key(\Pam\Desktop\KeyEvent $event): void
+    {
+        $this->key = $event;
+    }
+
+    public function measure(\Pam\Desktop\LayoutEvent $event): void
+    {
+        $this->layout = $event;
+    }
+};
+$typedTemplate = TemplateRenderer::render(
+    TemplateCompiler::compile('<View captureKeys="Escape" on:keyDown="key" on:layout="measure"><Text>Field</Text></View>', 'typed-keys.pam.php'),
+    $typedKeys,
+    [],
+);
+$typedTemplate->events()[EventKind::KeyDown->value](Wire::map(['key' => 'Escape', 'shift' => true]));
+$typedTemplate->events()[EventKind::Layout->value](Wire::map(['x' => 0.0, 'y' => 0.0, 'width' => 240.0, 'height' => 16.0]));
+$assert(
+    $typedKeys->key?->key === 'Escape' && $typedKeys->key->shift && $typedKeys->layout?->width === 240.0,
+    'Template on:keyDown / on:layout handlers typed with KeyEvent / LayoutEvent must receive decoded events.',
+);

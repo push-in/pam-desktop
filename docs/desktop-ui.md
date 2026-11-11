@@ -2,9 +2,7 @@
 
 `pushinbr/pam-desktop-ui` (namespace `Pam\DesktopUi`) is a set of ready controls written as PAM Desktop templates: selects, autocomplete, a date picker, toasts and a few smaller pieces. They are ordinary components made of native views, so they follow the backend they run on and need no host feature of their own.
 
-```bash
-composer require pushinbr/pam-desktop-ui
-```
+It ships inside `pushinbr/pam-desktop`: nothing else to require.
 
 ```php
 // index.php, before App::run()
@@ -188,6 +186,21 @@ $this->active = new Checkbox($this->enabled, fn (bool $checked) => $this->enable
 ```
 
 `size` is 24 by default; `theme` takes a `SelectTheme` or a `Closure` returning one. Space and Enter toggle it while focused. `boxSize` paints a smaller box at the top-left of the `size` slot (PrimeVue `.p-checkbox` vs `.p-checkbox-box`, e.g. `size: 20, boxSize: 18`) and `radius` sets its corners (5 by default).
+
+## Slider
+
+```php
+$this->volume = new Slider($this->level, fn (float $value) => $this->level = $value, label: 'Volume');
+$this->seek = new Slider(
+    $this->position,
+    fn (float $value) => $this->position = $value,
+    max: $this->duration,
+    committed: fn (float $value) => $this->player->seek($value),
+    label: 'Position',
+);
+```
+
+A click or a drag sets the value (a drag keeps following the pointer past either end); the arrow keys step it by `step`, or a twentieth of the range when `step` is 0, Page Up and Page Down by five steps, Home and End to the ends. `$changed` reports every new value; `$committed`, when given, runs once the pointer is released or a key changed the value, for work too costly to repeat while dragging. `trackHeight`, `thumbSize`, `trackColor`, `fillColor`, `activeColor` (the fill while hovered or dragged) and `thumbColor` (the thumb shows while hovered or dragged) style it; the defaults are a media player's. It is exposed to screen readers as a slider with its range, its value and `valueText`. `min`, `max` and `value` are state: change them on the same instance (the length of the next track) rather than creating another slider.
 
 ## ProgressButton
 
