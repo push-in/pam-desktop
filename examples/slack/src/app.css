@@ -1,0 +1,28 @@
+/* Slack's Aubergine theme and type. Screen-specific rules live in each .pam.php component. */
+@font-face { font-family: "Lato"; src: url("asset://assets/fonts/Lato-Regular.ttf"); font-weight: 400; }
+@font-face { font-family: "Lato"; src: url("asset://assets/fonts/Lato-Italic.ttf"); font-weight: 400; font-style: italic; }
+@font-face { font-family: "Lato"; src: url("asset://assets/fonts/Lato-Bold.ttf"); font-weight: 700; }
+@font-face { font-family: "Lato"; src: url("asset://assets/fonts/Lato-Black.ttf"); font-weight: 900; }
+
+:root {
+    --chrome: #3F0E40;
+    --chrome-text: #FFFFFF;
+    --chrome-muted: #FFFFFFB3;
+    --chrome-hover: #FFFFFF1A;
+    --chrome-active: #F9EDFF;
+    --chrome-active-text: #39063A;
+    --sidebar: #FFFFFF0F;
+    --surface: #FFFFFF;
+    --text: #1D1C1D;
+    --muted: #616061;
+    --faint: #1D1C1D21;
+    --hover: #F8F8F8;
+    --link: #1264A3;
+    --presence: #2BAC76;
+    --badge: #CD2553;
+    --send: #007A5A;
+    --reaction: #EFF6FB;
+    --reaction-border: #1D9BD1;
+}
+
+Text, Input { font-family: "Lato", sans-serif; color: var(--text); }

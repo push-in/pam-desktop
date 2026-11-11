@@ -1,0 +1,7 @@
+{
+  "$schema": "https://push-in.github.io/pam-docs/schemas/pam.schema.json",
+  "name": "slack",
+  "schema": 1,
+  "type": 4,
+  "version": "0.1.0"
+}

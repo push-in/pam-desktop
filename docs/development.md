@@ -187,6 +187,7 @@ pam-desktop check: 3 diagnostics (12 components in 2 roots).
 | `PAM2402` | Template or component compile error. |
 | `PAM2403` | Invalid CSS in a `<style>` block, `app.css` or an imported stylesheet (the first one of each component). |
 | `PAM2404` | Route error from `routes.php`: unknown route, missing or mistyped parameter in a literal `navigate()`, `redirect()` or `<Link>`. |
+| `PAM2405` | Template expression that cannot run: a syntax error (`{{ $count + }}`), or a bare call to a method the component does not have or that is not public (`p-if="missing()"`). Calls on values (`$row->label()`) are only known at runtime. |
 | `PAM2400` | The entry file failed before `App::run()`. |
 
 It exits 0 when there is nothing to report and 1 otherwise, so a CI step can run it before the slower suites. `--json` prints `{"ok", "components", "roots", "diagnostics": [{"file", "line", "column", "code", "message"}]}` instead; `--src=<dir>` (repeatable) checks those directories instead of the entry's roots, and `--entry=<file>` names another entry file.
@@ -272,6 +273,7 @@ The script writes `pam-desktop-<version>-<target>.tar.gz` and its `.sha256` in t
 
 | Switch | Effect |
 | --- | --- |
+| `PAM_DESKTOP_PROFILE=1` | Times each interaction on standard error: the PHP handler and render of every event and flush, the host's layout of each committed frame, the native view work it caused and the frame painted after it (`[pam-desktop profile] @<ms> ...`, the wall clock modulo 100 s lines worker and host up). GTK lists the heaviest backend calls (`create_view 1.3×120`: milliseconds × calls). |
 | `PAM_DESKTOP_DEBUG=1` | Logs every pointer press and every event sent to PHP on the host's standard error. |
 | `PAM_DESKTOP_WINDOW=800x600` | Forces the size of the first window. |
 | `PAM_DESKTOP_STATE_DIR`, `PAM_DESKTOP_DATA_DIR`, `PAM_DESKTOP_CACHE_DIR` | Absolute paths that isolate a run from the application's real files. |

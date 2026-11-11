@@ -105,6 +105,30 @@ final class Language2StyleCompiler
                 continue;
             }
 
+            // `.row:hover .actions`: the host shows the descendant's state
+            // while the pointer is over the nearest `.row` (a hover group).
+            if (preg_match('/^(.+?):(?:hover|hovered)((?:\s*>\s*|\s+)[^:,]+)$/D', $header, $match) === 1) {
+                $group = trim($match[1]);
+                $selector = $group.$match[2];
+                self::assertSelector($group, $name);
+                self::assertSelector($selector, $name);
+                try {
+                    $states[$selector]['group-hover'] = ScopedStyleCompiler::compileDeclarations(
+                        $body,
+                        $variables,
+                        $name,
+                    );
+                } catch (CssDiagnostic $diagnostic) {
+                    $diagnostic->selector ??= $header;
+                    throw $diagnostic;
+                }
+                $states[$group]['group'] ??= [];
+                if (str_contains($body, 'var(')) {
+                    $stateVariableRules[] = ['selector' => $selector, 'state' => 'group-hover', 'body' => $body];
+                }
+                continue;
+            }
+
             if (preg_match('/^(.+):(pressed|focus|focused|focus-visible|focus-within|disabled|selected|checked|hover|hovered|active|loading|error)$/D', $header, $match) === 1) {
                 $selector = trim($match[1]);
                 self::assertSelector($selector, $name);

@@ -27,6 +27,21 @@ $codegenScope = new class {
     {
         return $value * 2;
     }
+
+    public function owner(): object
+    {
+        return $this->profile;
+    }
+
+    public function viewer(): object
+    {
+        return new class {
+            public function initials(string $name): string
+            {
+                return mb_substr($name, 0, 1);
+            }
+        };
+    }
 };
 $codegenExpressions = [
     "['message-row', 'message-row-selected' => \$row['selected'], 'dark' => \$row['selected'] && \$row['dark']]",
@@ -71,6 +86,15 @@ $codegenExpressions = [
     "\$count ? \$undefinedVariable : 1",
     "true ? 'yes' : 'no'",
     "null ?? false ?? 'x'",
+    "owner()->name",
+    "owner()->links['site']",
+    "owner()['name'] ?? 'not an array'",
+    "viewer()->initials(\$row['title'])",
+    "owner()->unknown ?? 'none'",
+    "owner()->unknown",
+    "(\$count > 3 ? \$profile : null)->name",
+    "glyph('a') . 'b'",
+    "(\$row)['title']",
 ];
 foreach ($codegenExpressions as $codegenExpression) {
     $outcomes = [];

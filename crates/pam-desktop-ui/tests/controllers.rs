@@ -965,3 +965,72 @@ fn dialogs_shown_in_one_commit_stack_in_tree_order() {
     assert_eq!(harness.scene.hit_test(Point::new(200.0, 150.0)), Some(8));
     assert!(modals.request_close_top(&mut harness.ctx()));
 }
+
+#[test]
+fn group_hover_styles_descendants_of_the_hovered_group_only() {
+    use pam_desktop_ui::backend::PointerPhase;
+    use pam_desktop_ui::interaction::Interaction;
+    use pam_desktop_ui::scene::Change;
+    let group = PropValue::String(r#"{"g":1}"#.into());
+    let member = PropValue::String(r#"{"12":{"38":1.0}}"#.into());
+    let hidden = (PropKey::Opacity, PropValue::Float(0.0));
+    let mut h = Harness::with_tree(&[
+        (1, 0, NodeKind::Column, &[], Rect::new(0., 0., 400., 300.)),
+        (
+            2,
+            1,
+            NodeKind::Row,
+            &[(PropKey::NativeStateStyles, group.clone())],
+            Rect::new(0., 0., 400., 40.),
+        ),
+        (
+            3,
+            2,
+            NodeKind::Row,
+            &[(PropKey::NativeStateStyles, member.clone()), hidden.clone()],
+            Rect::new(300., 0., 80., 30.),
+        ),
+        (
+            4,
+            1,
+            NodeKind::Row,
+            &[(PropKey::NativeStateStyles, group)],
+            Rect::new(0., 60., 400., 40.),
+        ),
+        (
+            5,
+            4,
+            NodeKind::Row,
+            &[(PropKey::NativeStateStyles, member), hidden],
+            Rect::new(300., 0., 80., 30.),
+        ),
+    ]);
+    let mut interaction = Interaction::default();
+    for (id, kind) in [
+        (2, NodeKind::Row),
+        (3, NodeKind::Row),
+        (4, NodeKind::Row),
+        (5, NodeKind::Row),
+    ] {
+        interaction.on_change(&mut h.ctx(), Change::Created(id, kind));
+    }
+    let opacity = |h: &Harness, id| {
+        h.scene
+            .effective_props(id)
+            .unwrap()
+            .number(PropKey::Opacity)
+    };
+    assert_eq!((opacity(&h, 3), opacity(&h, 5)), (Some(0.0), Some(0.0)));
+
+    let over_first = h.pointer(PointerPhase::Move, 50.0, 20.0);
+    interaction.on_pointer(&mut h.ctx(), over_first);
+    assert_eq!((opacity(&h, 3), opacity(&h, 5)), (Some(1.0), Some(0.0)));
+
+    let over_second = h.pointer(PointerPhase::Move, 50.0, 80.0);
+    interaction.on_pointer(&mut h.ctx(), over_second);
+    assert_eq!((opacity(&h, 3), opacity(&h, 5)), (Some(0.0), Some(1.0)));
+
+    let outside = h.pointer(PointerPhase::Move, 50.0, 250.0);
+    interaction.on_pointer(&mut h.ctx(), outside);
+    assert_eq!((opacity(&h, 3), opacity(&h, 5)), (Some(0.0), Some(0.0)));
+}

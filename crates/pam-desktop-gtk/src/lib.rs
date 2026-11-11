@@ -20,6 +20,7 @@ mod input;
 mod media;
 mod paint;
 mod printing;
+mod prof;
 mod raster;
 mod share;
 mod shell;

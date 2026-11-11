@@ -22,10 +22,15 @@ use function is_string;
  *
  * Fonts are resolved from `register()` or by convention from the project:
  * `assets/fonts/{Font}.ttf` plus the react-native-vector-icons glyph map
- * `assets/fonts/{Font}.json` (`{"name": codepoint}`).
+ * `assets/fonts/{Font}.json` (`{"name": codepoint}`). Lucide (ISC) ships with
+ * the package, so `Icon::make('hash', 'Lucide')` works in any project.
  */
 final class Icon
 {
+    /** Icon fonts that ship with the package: `Icon::make('hash', 'Lucide')` needs no project asset. */
+    public const array BUNDLED = ['Lucide'];
+
+
     /** @var array<string, array{source: string, glyphs: array<string, int>|null, map: string|null}> */
     private static array $fonts = [];
 
@@ -120,10 +125,37 @@ final class Icon
                 }
             }
         }
+        if (!isset(self::$fonts[$font]) && ($bundled = self::bundled($font)) !== null) {
+            self::$fonts[$font] = $bundled;
+        }
 
         return self::$fonts[$font] ?? throw new RuntimeException(
             "Unknown icon font {$font}: add assets/fonts/{$font}.ttf and {$font}.json or call Icon::register().",
         );
+    }
+
+    /**
+     * A font shipped with the package (`resources/fonts`), addressed through
+     * the project's `vendor` folder so the host serves it like any packaged
+     * asset. Null when the package is not inside the project (a Composer
+     * `path` repository linked from elsewhere): the host only serves files
+     * below the project root.
+     *
+     * @return array{source: string, glyphs: null, map: string}|null
+     */
+    private static function bundled(string $font): ?array
+    {
+        if (!in_array($font, self::BUNDLED, true)) {
+            return null;
+        }
+        $root = rtrim(strtr(getcwd() ?: '.', '\\', '/'), '/').'/';
+        $directory = strtr(dirname(__DIR__, 2), '\\', '/').'/resources/fonts/';
+        if (!str_starts_with($directory, $root) || !is_file("{$directory}{$font}.ttf")) {
+            return null;
+        }
+        $relative = substr($directory, strlen($root));
+
+        return ['source' => "asset://{$relative}{$font}.ttf", 'glyphs' => null, 'map' => "{$relative}{$font}.json"];
     }
 
     /** @return array<string, int> */

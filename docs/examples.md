@@ -35,4 +35,5 @@ Every directory under `examples/` is a runnable application that exercises one f
 | `modules` | Timers, storage, alerts, clipboard, device information, appearance |
 | `links` | A URL scheme, a single instance that receives the link of every later launch, a screen reader announcement |
 | `toast`, `errors` | Toasts; the development error overlay |
+| `slack` | A Slack clone: workspace sidebar, mrkdwn messages with reactions, hover actions, threads, DMs, search, the composer |
 | `web-defaults` | Web semantics: a content-sized list, CSS font stacks, thin classic scrollbars, value methods in templates, Chart.js value axes |

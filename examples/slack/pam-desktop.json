@@ -1,0 +1,13 @@
+{
+    "$schema": "./vendor/pushinbr/pam-desktop/packages/desktop/resources/pam-desktop.schema.json",
+    "applicationId": "dev.pam.examples.slack",
+    "entry": "index.php",
+    "name": "Slack",
+    "version": "0.1.0",
+    "window": {
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 560
+    }
+}

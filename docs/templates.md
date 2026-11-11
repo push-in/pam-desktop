@@ -51,7 +51,7 @@ final class HomeScreen extends Component
 | `:name="$expr"` | An attribute bound to an expression. |
 | `on:press="method"` | An event handler: a public method of the component. |
 | `p-if="…"`, `p-else-if="…"`, `p-else` | Conditional elements (`v-if` and the other `v-` spellings are accepted too). |
-| `p-for="$item in $items"` with `p-key="…"` | A repeated element with a stable key. |
+| `p-for="$item in $items"` with `p-key="…"` | A repeated element with a stable key. The position is `$itemIndex` (rename it with `p-index="i"` or Vue's `p-for="($item, $i) in $items"`). |
 | `class="a b"` | Classes of the scoped stylesheet. |
 
 ## Expressions

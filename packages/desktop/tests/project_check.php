@@ -65,7 +65,9 @@ $expected = [
     'src/Screens/Profile.pam.php:18:36 PAM2401 unknown attribute Text.maxLines, did you mean numberOfLines?',
     'src/Screens/Profile.pam.php:19:9 PAM2401 class ghost has no style rule in this component, no registered class and no utility',
     'src/Screens/Profile.pam.php:20:9 PAM2401 class missing has no style rule in this component, no registered class and no utility',
-    'pam-desktop check: 7 diagnostics (4 components in 1 root).',
+    'src/Screens/Totals.pam.php:22:9 PAM2405 template expression: ended unexpectedly in $count +',
+    'src/Screens/Totals.pam.php:23:9 PAM2405 template expression: method missing() does not exist on Pam\\Desktop\\Tests\\ProjectCheck\\Broken\\Screens\\Totals',
+    'pam-desktop check: 9 diagnostics (5 components in 1 root).',
 ];
 $assert(
     $status === 1 && explode("\n", trim($output)) === $expected,
@@ -81,8 +83,8 @@ $report = json_decode($output, true);
 $assert(
     $status === 1
         && ($report['ok'] ?? null) === false
-        && ($report['components'] ?? null) === 4
-        && count($report['diagnostics'] ?? []) === 7
+        && ($report['components'] ?? null) === 5
+        && count($report['diagnostics'] ?? []) === 9
         && ($report['diagnostics'][2] ?? null) === [
             'file' => 'src/Screens/Profile.pam.php',
             'line' => 17,

@@ -18,4 +18,6 @@ enum StyleInteractionState: int
     case FocusWithin = 10;
     /** `:focus-visible`: focused by the keyboard (host-evaluated). */
     case FocusVisible = 11;
+    /** `.group:hover .node`: the nearest hover group above is hovered (host-evaluated). */
+    case GroupHover = 12;
 }

@@ -309,7 +309,7 @@ final class Runtime
                 if ($frame !== null) {
                     $committed = true;
                     if (function_exists('pam_desktop_commit')) {
-                        $committed = pam_desktop_commit($frame);
+                        $committed = Profiler::measure('host.commit', static fn (): bool => pam_desktop_commit($frame));
                         if (!$committed && !$encoded['full']) {
                             $encoder->forceFullFrame();
                             $recovery = $encoder->encode($element);
@@ -544,6 +544,21 @@ final class Runtime
         if (!self::$pending) {
             return false;
         }
+        $started = (self::$profileEvents ??= getenv('PAM_DESKTOP_PROFILE') === '1') ? hrtime(true) : null;
+        $since = $started === null ? 0.0 : microtime(true);
+        try {
+            self::renderPending();
+        } finally {
+            if ($started !== null) {
+                self::reportProfile('Flush', $started, $since);
+            }
+        }
+
+        return true;
+    }
+
+    private static function renderPending(): void
+    {
         for ($pass = 0; $pass < 2 && self::$pending; $pass++) {
             self::$pending = false;
             try {
@@ -553,8 +568,6 @@ final class Runtime
             }
             self::drainScheduledTasks();
         }
-
-        return true;
     }
 
     private static function drainScheduledTasks(): void
@@ -587,12 +600,41 @@ final class Runtime
 
     public static function dispatchEvent(int $nodeId, int $eventKind, string $payload): void
     {
+        $started = (self::$profileEvents ??= getenv('PAM_DESKTOP_PROFILE') === '1') ? hrtime(true) : null;
+        $since = $started === null ? 0.0 : microtime(true);
         try {
             self::dispatchEventNow($nodeId, $eventKind, $payload);
         } finally {
             // A handler that rendered nothing (pure, unchanged) still flushes its view calls.
             self::drainAfterCommit();
+            if ($started !== null) {
+                self::reportProfile(EventKind::tryFrom($eventKind)?->name ?? (string) $eventKind, $started, $since);
+            }
         }
+    }
+
+    /** Set from PAM_DESKTOP_PROFILE=1: one stderr line per event and per render turn. */
+    private static ?bool $profileEvents = null;
+
+    /**
+     * `PAM_DESKTOP_PROFILE=1`: how long an event or a render turn took in PHP
+     * and where the time went (handler, render, encode, commit to the host).
+     */
+    private static function reportProfile(string $what, int $started, float $since): void
+    {
+        $total = (hrtime(true) - $started) / 1_000_000;
+        $phases = [];
+        foreach (Profiler::spans() as $span) {
+            if ($span->timestamp >= $since) {
+                $phases[$span->name] = ($phases[$span->name] ?? 0.0) + $span->durationMs;
+            }
+        }
+        $spent = array_sum($phases);
+        $parts = [sprintf('handler %.1f', max(0.0, $total - $spent))];
+        foreach ($phases as $name => $duration) {
+            $parts[] = sprintf('%s %.1f', $name, $duration);
+        }
+        file_put_contents('php://stderr', sprintf("[pam-desktop profile] @%d %s %.1f ms: %s\n", (int) (microtime(true) * 1000) % 100000, $what, $total, implode(', ', $parts)));
     }
 
     private static function dispatchEventNow(int $nodeId, int $eventKind, string $payload): void

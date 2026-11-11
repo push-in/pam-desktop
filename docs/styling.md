@@ -115,6 +115,13 @@ Components written as single-file templates (`.pam` files, as in `examples/showc
 
 The host applies these properties for a state: opacity, scale, translation, background color, text color, border color (also per side: `border-top-color` and the others) and elevation. When several states are active, hover is applied first, then focus, then pressed, so pressed wins.
 
+A hover on an ancestor styles a descendant, as in CSS: `.row:hover .actions` reveals a row's actions while the pointer is anywhere over the row (Slack's message toolbar, a track's play button, a card's edit pencil). The host applies it with the same properties as the other states and no round trip to PHP; the ancestor is the nearest element above that the rule's `.row` matches. A view at `opacity: 0` is not hit by the pointer, so hidden actions overlapping a neighbour do not steal its hover.
+
+```css
+.actions { position: absolute; top: -16px; right: 20px; opacity: 0; }
+.message:hover .actions { opacity: 1; }
+```
+
 `:focus-within` matches a box while it or one of its descendants has the keyboard focus, as in CSS. It styles the frame around an input without making the frame focusable:
 
 ```css
@@ -270,6 +277,8 @@ A `<select>` is a styled `Pressable` whose label `Text` carries `menuListOptions
 `width`, `min-width`, `max-width`, `height`, `min-height` and `max-height` accept `ch` (`max-width: 52ch`): the advance of "0" in the element's own font, measured by the renderer. `line-height: normal` is the font's rounded ascent plus descent, as in Chromium, and overrides a line height another rule gave the element. Line heights land on Blink's LayoutUnits: `line-height: 18.56px` rounds to 1/64 px (18.5625); a number, percentage, `em` or unitless `calc()` (`1.45`, `calc(1.25 / .875)`) multiplies the font size rounded to 1/64 in float and truncates (13.12px × 1.45 = 19.03125). Write the number the web stylesheet authors, not the px that getComputedStyle prints: the two can differ by 1/64 px per line. A `calc()` of only px, rem and numbers is resolved when the stylesheet compiles, so box sizes stay on LayoutUnits too.
 
 Icons (`<Icon>`) keep their own font and size and are one em tall (`line-height: 1`), like icon fonts on the web: only the colour of their container is inherited.
+
+The package ships [Lucide](https://lucide.dev) (ISC licence), so `<Icon name="hash" font="Lucide" size="18" />` works with no asset in the project; names are Lucide's (`message-square`, `chevron-down`, `send-horizontal`). Any other icon font is registered once at startup with `Icon::register('Ionicons', 'asset://assets/fonts/Ionicons.ttf', 'assets/fonts/Ionicons.json')` (a JSON of name => codepoint).
 
 ### Compositing layers
 
