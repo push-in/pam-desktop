@@ -4,20 +4,20 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "89195fc9a09ddb1200b3ed4decdb4028",
+    "content-hash": "caa3ca7aa11b63bc8c76d1f726842d3e",
     "packages": [
         {
             "name": "pushinbr/pam-desktop",
-            "version": "v2.1.8",
+            "version": "v2.2.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/push-in/pam-desktop.git",
-                "reference": "630a224003a272b2e9f1f6254e0c49ef453a7762"
+                "reference": "f9f2b400c2685cd98dcd8395cf95e5a9d9ea02e8"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/push-in/pam-desktop/zipball/630a224003a272b2e9f1f6254e0c49ef453a7762",
-                "reference": "630a224003a272b2e9f1f6254e0c49ef453a7762",
+                "url": "https://api.github.com/repos/push-in/pam-desktop/zipball/f9f2b400c2685cd98dcd8395cf95e5a9d9ea02e8",
+                "reference": "f9f2b400c2685cd98dcd8395cf95e5a9d9ea02e8",
                 "shasum": ""
             },
             "require": {
@@ -52,9 +52,12 @@
                     "Pam\\Desktop\\": "packages/desktop/src/",
                     "Pam\\DesktopUi\\": "packages/desktop-ui/src/",
                     "Pam\\Desktop\\Qr\\": "packages/qr/src/",
+                    "Pam\\Desktop\\Auth\\": "packages/auth/src/",
+                    "Pam\\Desktop\\Code\\": "packages/code/src/",
                     "Pam\\Desktop\\Canvas\\": "packages/canvas/src/",
                     "Pam\\Desktop\\Charts\\": "packages/charts/src/",
                     "Pam\\DesktopPrinting\\": "packages/desktop-printing/src/",
+                    "Pam\\Desktop\\Markdown\\": "packages/markdown/src/",
                     "Pam\\Desktop\\Realtime\\": "packages/realtime/src/",
                     "Pam\\Desktop\\Sync\\Durable\\": "packages/sync/src/"
                 }
@@ -78,7 +81,7 @@
                 "issues": "https://github.com/push-in/pam-desktop/issues",
                 "source": "https://github.com/push-in/pam-desktop"
             },
-            "time": "2026-11-11T03:07:33+00:00"
+            "time": "2026-11-11T05:42:39+00:00"
         },
         {
             "name": "symfony/polyfill-intl-normalizer",
