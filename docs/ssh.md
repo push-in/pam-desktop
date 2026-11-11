@@ -87,6 +87,51 @@ drop(subscription);                         // detaches; output goes to PHP agai
 - `write` and `resize` queue the request (256 waiting at most) and answer `false` when the channel is gone or the queue is full.
 - The hub keeps the last 128 KiB of each channel, so a terminal that attaches late, or again after a hot reload of its screen, can repaint.
 
+## The terminal element
+
+`<Terminal>` (`Pam\Desktop\UI\Terminal`) shows a hub channel, normally the `channel()` of a shell, as an xterm-256color terminal drawn by the host. Output, keystrokes and resizes never pass through PHP.
+
+```php
+<Terminal :channel="$channel" fontSize="13" padding="6"
+          :palette="['#282c34', '#e06c75', '#98c379', '#e5c07b', '#61afef', '#c678dd', '#56b6c2', '#abb2bf',
+                     '#5c6370', '#f0828b', '#b5e08f', '#f2d08f', '#82c1f5', '#d99be8', '#7ccfd9', '#ffffff']"
+          on:title="title = $event['title']" on:exit="closed($event['exitCode'])" on:resize="size = $event" on:bell="ring" />
+```
+
+```php
+Terminal::make($shell->channel())
+    ->font("'JetBrains Mono', monospace", 13)
+    ->theme(background: '#1b1d23', foreground: '#d0d4dc', cursor: '#e8e8e8', selection: '#3e4a5e')
+    ->scrollback(5000)
+    ->onTitle(fn (string $title) => $this->title = $title)
+    ->onResize(fn (int $cols, int $rows) => ...)
+    ->onExit(fn (int $exitCode) => ...)
+    ->onBell(fn () => ...)
+    ->style(new Style(flexGrow: 1, padding: 6));
+```
+
+| Attribute | Default | Meaning |
+| --- | --- | --- |
+| `channel` | required | The hub channel (`Shell::channel()`). |
+| `fontFamily`, `fontSize`, `lineHeight` | a monospace stack, 13, the font's | The cell is the advance of `M` × the line height (`lineHeight` ≤ 4 is a multiple, above it logical units). |
+| `background`, `foreground`, `cursorColor`, `selectionColor` | a dark theme | `#rrggbb`, `#aarrggbb` or `0xAARRGGBB`. `backgroundColor` and `textColor` work too. |
+| `palette` | One Dark-like | The 16 ANSI colours, a list (or a comma-separated string). |
+| `scrollback` | 5000 | Lines kept above the screen, at most 100000. |
+| `padding` | 0 | Space around the grid, in the terminal's background. |
+| `on:resize` | | `$event` is `['cols' => …, 'rows' => …]`. The remote end hears the size first. |
+| `on:title` | | `['title' => …]`: OSC 0/2 from the remote end. |
+| `on:exit` | | `['exitCode' => …]` (-1 without a status) when the channel ends. |
+| `on:bell` | | BEL. |
+
+- **Emulation** is [alacritty_terminal](https://crates.io/crates/alacritty_terminal): xterm escape sequences, the alternate screen, 256 colours and truecolor, bold, dim, italic, underline, inverse, strike, wide characters, bracketed paste, application cursor keys, OSC titles and colour queries. Mouse reporting is not forwarded yet (the pointer always selects), and OSC 52 clipboard access is refused.
+- **Size.** The terminal fills its frame with whole cells and sends the grid size to the remote end (and `on:resize`) 80 ms after it last changed.
+- **Keys** of the focused terminal are encoded like xterm: text, Enter, Backspace (Ctrl: `^H`), Tab and Shift+Tab, Escape, arrows, Home, End, Insert, Delete, PageUp, PageDown, F1–F12 (with xterm modifier parameters), Ctrl+letter and Ctrl+`[\]^_ @`, Alt as an Escape prefix. Shift+PageUp/PageDown scroll the scrollback. Typing returns to the bottom and drops the selection. Tab, arrows and Escape do not move focus while the terminal has it.
+- **Clipboard.** Ctrl+Shift+C and Ctrl+Shift+V (Command+C and Command+V on macOS) copy the selection and paste (bracketed when the remote end asked; at most 1 MiB).
+- **Pointer.** A click focuses; dragging selects cells, a double click a word, a triple click a line. The wheel scrolls the scrollback, or sends arrow keys to programs in the alternate screen (less, vim, htop).
+- **Cost.** Output is parsed on the `pam-ssh` thread that receives it; the UI thread repaints at most once per 16 ms and only after a change (no blinking cursor), and nothing while the terminal is hidden. Painting is one rectangle per run of equal background, one text command per run of equal style on a row (each non-ASCII character alone at its cell), the selection and the cursor.
+
+The example `examples/terminal` connects with `PAM_SSH_HOST`, `PAM_SSH_PORT`, `PAM_SSH_USER` and `PAM_SSH_PASSWORD` (or `PAM_SSH_KEY`) and shows the shell.
+
 ## Testing
 
 The unit tests run with the host's (`cargo test -p pam-desktop-host ssh`). The end-to-end test needs an OpenSSH server and is ignored by default:

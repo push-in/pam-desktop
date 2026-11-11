@@ -510,3 +510,4 @@ With the default `TabPresentation::Adaptive` the bar is a rail on the side when 
 | `LineChart`, `AreaChart`, `BarChart`, `DonutChart`, `Sparkline`, `ProgressRing` | [Charts](charts.md) (`Pam\Desktop\Charts`) |
 | `Markdown` | [Markdown](markdown.md) (`Pam\Desktop\Markdown`) |
 | `.pam.php` templates, `<Slot>`, expressions | [Templates](templates.md) |
+| `Terminal` (a VT terminal for SSH shells) | [SSH](ssh.md#the-terminal-element) |

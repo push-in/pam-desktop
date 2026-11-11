@@ -7,7 +7,7 @@ The PHP package (`pushinbr/pam-desktop`) and the native host (`pam-desktop`) are
 Before it starts the worker, the host exports `PAM_RENDERER_CONTRACT`: its ABI version, the protocol versions it speaks and the highest property and event identifiers it implements, for the core table and for the extension and desktop tables. The current host exports:
 
 ```json
-{"abi":1,"events":[80,2007],"properties":[543,2043],"protocol":[1,1]}
+{"abi":1,"events":[80,2011],"properties":[543,2052],"protocol":[1,1]}
 ```
 
 At boot the PHP package negotiates with that contract:
@@ -48,10 +48,12 @@ The desktop table starts at 2001. These are the identifiers added after the firs
 | `InputSize` | 2041 | `inputSize` (HTML `size`) and the intrinsic width of a single-line `Input` |
 | `MenuListOptions` | 2042 | `menuListOptions` on a select's label (as wide as its widest option) |
 | `MinWidthAuto` | 2043 | `min-width: auto` on a flex item |
+| `TerminalChannel` … `OnTerminalBell` | 2044-2052 | `<Terminal>` (node kind 32): with an older host the SDK throws a protocol error naming the missing identifier |
 
 | Event | Id | Reported to |
 | --- | --- | --- |
 | `DragEnter`, `DragLeave` | 2006, 2007 | `onDragEnter`, `onDragLeave` |
+| `TerminalResize`, `TerminalTitle`, `TerminalExit`, `TerminalBell` | 2008-2011 | `Terminal` `on:resize`, `on:title`, `on:exit`, `on:bell` |
 
 The full desktop table, with the identifiers from 2001, is in [Architecture](architecture.md#property-and-event-tables).
 

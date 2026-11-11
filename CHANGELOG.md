@@ -11,6 +11,13 @@
   downloads with progress), local port forwarding and interactive shells. It
   runs on russh with pure Rust crypto, on threads that exist only while a
   session is open. See [SSH](docs/ssh.md).
+- **Terminal element.** `<Terminal channel="…">` (`Pam\Desktop\UI\Terminal`)
+  draws an xterm-256color terminal for a hub channel such as an SSH shell:
+  alacritty_terminal emulation on the thread that receives the bytes,
+  painted on a drawing surface at most once per frame and only after a
+  change, with keys, selection, clipboard, scrollback, a theme and
+  `on:resize`, `on:title`, `on:exit`, `on:bell`. Node kind 32, desktop
+  properties 2044–2052 and events 2008–2011. See [SSH](docs/ssh.md#the-terminal-element).
 - **Terminal hub.** `pam_desktop_ui::modules::terminal::TerminalHub` routes a
   terminal's bytes between a producer (an SSH shell) and a native consumer
   without PHP.
