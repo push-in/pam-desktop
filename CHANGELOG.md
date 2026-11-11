@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Fixed
+
+- **DesktopUI CodeEditor:** an owner that keeps passing its original
+  `:text` (storing the edits elsewhere) no longer resets the document after
+  every edit (typed text vanished and later typing landed at the start). The
+  column width probe fits narrow editors, so the caret and clicks no longer
+  drift left of the text in editors under ~800 px.
+- **DesktopUI Toast** uses the bundled Lucide icons; PrimeIcons is no longer
+  required (a toast threw "Unknown icon font PrimeIcons").
+- Template `min()`/`max()` accept numeric strings, like PHP.
+- `pam-desktop check` reports PAM2104 (dynamic `$this->{…}` access) and PAM2105
+  (`eval`/`extract`), which a production build refuses at boot.
+- `PAM_DESKTOP_SECURE_STORAGE=memory` keeps secrets in the host process, so
+  tests never touch the keychain of the machine.
+- Docs: eight-digit hex colours are `#AARRGGBB` in attributes and
+  `#RRGGBBAA` in stylesheets; the trello example's backdrop now dims.
+
 ### Added
 
 - **SSH.** A native `ssh` module (cargo feature `ssh`, on by default) and the

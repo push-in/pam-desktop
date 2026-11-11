@@ -14,6 +14,9 @@ foreach ([false, true] as $generated) {
     $cases = [
         ['min(440, count($rows) * 66)', ['rows' => range(1, 10)], 440],
         ['max([2, 3.5, -1])', [], 3.5],
+        // Numeric strings count as numbers, like PHP's min()/max().
+        ['max([1, "2"])', [], 2],
+        ['min($limit, 50)', ['limit' => '12.5'], 12.5],
         ['array_slice($rows, 1, 2)', ['rows' => ['a', 'b', 'c', 'd']], ['b', 'c']],
         ['array_slice($rows, -1, null, true)', ['rows' => ['a', 'b']], [1 => 'b']],
     ];
@@ -22,7 +25,7 @@ foreach ([false, true] as $generated) {
             throw new RuntimeException('Collection expression mismatch: '.$expression);
         }
     }
-    foreach (['min()', 'max([1, "2"])', 'array_slice([], "0")', 'array_slice([], 0, null, 1)'] as $expression) {
+    foreach (['min()', 'max([1, "x"])', 'max(1, "")', 'array_slice([], "0")', 'array_slice([], 0, null, 1)'] as $expression) {
         try {
             TemplateExpression::evaluate($expression, null, []);
         } catch (RuntimeException) {

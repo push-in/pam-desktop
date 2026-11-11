@@ -27,7 +27,6 @@ function serviceElements(Element $element): array
 
 \Pam\Desktop\App::components(dirname(__DIR__).'/src', sys_get_temp_dir().'/pam-toast-service-tests');
 serviceCheck(\Pam\Desktop\Internal\PamPhpCompiler::failures() === [], 'DesktopUI components compile.');
-\Pam\Desktop\UI\Icon::register('PrimeIcons', 'asset://resources/fonts/PrimeIcons.ttf', ['check' => 0xe909, 'times' => 0xe90b, 'info-circle' => 0xe924, 'exclamation-triangle' => 0xe922, 'times-circle' => 0xe90c]);
 
 final class ToastServiceScreen implements \Pam\Desktop\Renderable
 {

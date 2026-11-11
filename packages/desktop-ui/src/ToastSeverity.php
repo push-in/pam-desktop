@@ -14,13 +14,14 @@ enum ToastSeverity: int
     case Secondary = 5;
     case Contrast = 6;
 
+    /** The Lucide glyph (the icon font that ships with PAM Desktop). */
     public function icon(): string
     {
         return match ($this) {
-            self::Success => 'check',
-            self::Info, self::Secondary, self::Contrast => 'info-circle',
-            self::Warn => 'exclamation-triangle',
-            self::Error => 'times-circle',
+            self::Success => 'circle-check',
+            self::Info, self::Secondary, self::Contrast => 'info',
+            self::Warn => 'triangle-alert',
+            self::Error => 'circle-x',
         };
     }
 

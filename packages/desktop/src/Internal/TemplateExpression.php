@@ -1246,7 +1246,12 @@ final class TemplateExpression
         if ($builtIn === 'min' || $builtIn === 'max') {
             $values = count($arguments) === 1 && is_array($arguments[0]) ? $arguments[0] : $arguments;
             if ($values === []) throw new RuntimeException("Template {$builtIn}() expects numeric values.");
-            foreach ($values as $value) {
+            foreach ($values as $index => $value) {
+                // Numeric strings count as numbers, like PHP's min()/max()
+                // (a value read from a form, a file or a database).
+                if (is_string($value) && is_numeric($value)) {
+                    $value = $values[$index] = $value + 0;
+                }
                 if ((!is_int($value) && !is_float($value)) || !is_finite((float) $value)) {
                     throw new RuntimeException("Template {$builtIn}() expects finite numeric values.");
                 }

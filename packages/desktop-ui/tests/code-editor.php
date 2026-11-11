@@ -17,7 +17,8 @@ $editor = new CodeEditor("<?php\necho 1;\n", language: 'php');
 $mounted = Pam\Desktop\Testing\mount($editor);
 try {
     $mounted->render();
-    $editor->measureChar(new LayoutEvent(0, 0, 780, 19));
+    strlen($editor->probe()) * 7.8 < 100 || $fail('The probe fits a narrow editor.');
+    $editor->measureChar(new LayoutEvent(0, 0, strlen($editor->probe()) * 7.8, 19));
     $editor->charWidth === 7.8 || $fail('The column width comes from the probe.');
     count($editor->rows()) === 3 || $fail('One row per line.');
     $colours = array_unique(array_column($editor->runs(1), 1));
@@ -32,7 +33,13 @@ try {
     $editor->typed('2');
     $editor->typed('23');
     $editor->document->lines[1] === 'echo 231;' || $fail('Typed text goes in once, at the cursor: '.json_encode($editor->document->lines[1]));
-    $editor->text === "<?php\necho 231;\n" || $fail('The text follows the document.');
+    $changes = [];
+    $editor->text === "<?php\necho 1;\n" || $fail('`text` stays what the owner passed.');
+    // An owner that keeps passing its original text (it stores the edits
+    // elsewhere) re-renders: the edits and the cursor stay.
+    $mounted->render();
+    $editor->document->text() === "<?php\necho 231;\n" && $editor->document->cursors[0][1] === 7
+        || $fail('Re-rendering with the same owner text keeps the edits: '.json_encode($editor->document->text()));
     $editor->key(new KeyEvent('Enter'));
     $editor->key(new KeyEvent('z', control: true));
     $editor->document->lines[1] === 'echo 231;' && count($editor->document->lines) === 3 || $fail('Ctrl+Z undoes the new line.');
@@ -44,6 +51,13 @@ try {
     $editor->key(new KeyEvent('Home', shift: true));
     $editor->selections(1) === [[0.0, 7 * 7.8]] || $fail('Selections in pixels: '.json_encode($editor->selections(1)));
     $editor->carets(1) === [0.0] || $fail('The caret sits at the head of the selection.');
+
+    // A different text from the owner (another file) replaces the document.
+    $editor->text = "other\n";
+    $mounted->render();
+    $editor->document->text() === "other\n" || $fail('A new owner text replaces the document.');
+    $editor->text = "<?php\necho 231;\n";
+    $mounted->render();
 
     $readOnly = new CodeEditor('fixed', readOnly: true);
     $readOnly->typed('x');

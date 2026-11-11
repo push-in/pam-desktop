@@ -59,6 +59,7 @@ $fixtures = __DIR__.'/Fixtures/ProjectCheck';
 [$status, $output, $errors] = $projectCheck($fixtures.'/broken');
 $expected = [
     'src/Screens/Badge.pam.php:21:1 PAM2403 Expected a native numeric CSS value in src/Screens/Badge.pam.php, got banana',
+    'src/Screens/Dynamic.pam.php:15:25 PAM2104 dynamic component property access prevents dependency tracking (a production build refuses it at boot)',
     'src/Screens/Header.pam.php:1:1 PAM2402 Unexpected closing tag Row in src/Screens/Header.pam.php',
     'src/Screens/Profile.pam.php:17:9 PAM2401 unknown attribute Text.color, did you mean textColor?',
     'src/Screens/Profile.pam.php:18:9 PAM2401 action save does not exist on Pam\Desktop\Tests\ProjectCheck\Broken\Screens\Profile',
@@ -67,7 +68,7 @@ $expected = [
     'src/Screens/Profile.pam.php:20:9 PAM2401 class missing has no style rule in this component, no registered class and no utility',
     'src/Screens/Totals.pam.php:22:9 PAM2405 template expression: ended unexpectedly in $count +',
     'src/Screens/Totals.pam.php:23:9 PAM2405 template expression: method missing() does not exist on Pam\\Desktop\\Tests\\ProjectCheck\\Broken\\Screens\\Totals',
-    'pam-desktop check: 9 diagnostics (5 components in 1 root).',
+    'pam-desktop check: 10 diagnostics (6 components in 1 root).',
 ];
 $assert(
     $status === 1 && explode("\n", trim($output)) === $expected,
@@ -83,9 +84,9 @@ $report = json_decode($output, true);
 $assert(
     $status === 1
         && ($report['ok'] ?? null) === false
-        && ($report['components'] ?? null) === 5
-        && count($report['diagnostics'] ?? []) === 9
-        && ($report['diagnostics'][2] ?? null) === [
+        && ($report['components'] ?? null) === 6
+        && count($report['diagnostics'] ?? []) === 10
+        && ($report['diagnostics'][3] ?? null) === [
             'file' => 'src/Screens/Profile.pam.php',
             'line' => 17,
             'column' => 9,

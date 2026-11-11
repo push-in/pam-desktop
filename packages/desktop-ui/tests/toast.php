@@ -10,7 +10,6 @@ use Pam\DesktopUi\{Toast, ToastPosition, ToastSeverity};
 function toastCheck(bool $ok, string $message): void { if (!$ok) throw new RuntimeException($message); }
 
 \Pam\Desktop\App::components(dirname(__DIR__).'/src', sys_get_temp_dir().'/pam-toast-tests');
-\Pam\Desktop\UI\Icon::register('PrimeIcons', 'asset://resources/fonts/PrimeIcons.ttf', ['check' => 0xe909, 'times' => 0xe90b, 'info-circle' => 0xe924, 'exclamation-triangle' => 0xe922, 'times-circle' => 0xe90c]);
 toastCheck(\Pam\Desktop\Internal\PamPhpCompiler::failures() === [], 'DesktopUI components compile: '.implode('; ', array_map(static fn ($e) => $e->getMessage(), \Pam\Desktop\Internal\PamPhpCompiler::failures())));
 $toast = new Toast(host: 'toast-test', position: ToastPosition::BottomCenter, limit: 3);
 $mounted = Pam\Desktop\Testing\mount($toast);
