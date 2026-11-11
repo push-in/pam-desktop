@@ -1,10 +1,19 @@
 # Changelog
 
+## 2.2.1 - 2026-11-11
+
+### Fixed
+
+- The launcher downloads the 2.2.x host. 2.2.0 still pointed it at the 2.1.8
+  host, so the new tools were missing; update with
+  `pam composer update pushinbr/pam-desktop`.
+- Task group and deferred deadlines are measured on the monotonic clock.
+
 ## 2.2.0 - 2026-11-11
 
 New tools for desktop apps, all used by the four clones in `examples/`. Update
 with `pam composer update pushinbr/pam-desktop`; the launcher downloads the
-2.2.0 host. No app changes needed.
+2.2.1 host. No app changes needed.
 
 ### Added
 
