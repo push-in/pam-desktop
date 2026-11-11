@@ -30,8 +30,8 @@ pub const EXTENSION_BASE: u16 = 1001;
 /// Identifiers that exist only in PAM Desktop start here.
 pub const DESKTOP_BASE: u16 = 2001;
 /// Highest property and event identifiers of the desktop table.
-pub const DESKTOP_PROPERTY_CEILING: u16 = 2043;
-pub const DESKTOP_EVENT_CEILING: u16 = 2007;
+pub const DESKTOP_PROPERTY_CEILING: u16 = 2052;
+pub const DESKTOP_EVENT_CEILING: u16 = 2011;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -145,6 +145,8 @@ pub enum NodeKind {
     DrawingCanvas = 29,
     TabHost = 30,
     Canvas = 31,
+    /// A VT terminal bound to a channel of the terminal hub.
+    Terminal = 32,
 }
 
 impl TryFrom<u8> for NodeKind {
@@ -183,6 +185,7 @@ impl TryFrom<u8> for NodeKind {
             29 => Ok(Self::DrawingCanvas),
             30 => Ok(Self::TabHost),
             31 => Ok(Self::Canvas),
+            32 => Ok(Self::Terminal),
             other => Err(ProtocolError::UnknownNodeKind(other)),
         }
     }
@@ -839,6 +842,19 @@ pub enum PropKey {
     /// minimum size (the min-content width, capped by its specified width
     /// and `max-width`) instead of 0.
     MinWidthAuto = 2043,
+    /// The terminal hub channel a `Terminal` shows (an SSH shell channel id).
+    TerminalChannel = 2044,
+    /// The 16 ANSI colours of a `Terminal`, `#rrggbb` separated by commas.
+    TerminalPalette = 2045,
+    /// Lines of scrollback a `Terminal` keeps.
+    TerminalScrollback = 2046,
+    TerminalCursorColor = 2047,
+    TerminalSelectionColor = 2048,
+    /// Event markers of `Terminal`: resize, title, exit and bell.
+    OnTerminalResize = 2049,
+    OnTerminalTitle = 2050,
+    OnTerminalExit = 2051,
+    OnTerminalBell = 2052,
 }
 
 impl TryFrom<u16> for PropKey {
@@ -1443,6 +1459,15 @@ impl TryFrom<u16> for PropKey {
             2041 => Ok(Self::InputSize),
             2042 => Ok(Self::MenuListOptions),
             2043 => Ok(Self::MinWidthAuto),
+            2044 => Ok(Self::TerminalChannel),
+            2045 => Ok(Self::TerminalPalette),
+            2046 => Ok(Self::TerminalScrollback),
+            2047 => Ok(Self::TerminalCursorColor),
+            2048 => Ok(Self::TerminalSelectionColor),
+            2049 => Ok(Self::OnTerminalResize),
+            2050 => Ok(Self::OnTerminalTitle),
+            2051 => Ok(Self::OnTerminalExit),
+            2052 => Ok(Self::OnTerminalBell),
             other => Err(ProtocolError::UnknownProperty(other)),
         }
     }
@@ -2391,13 +2416,13 @@ mod tests {
 
     #[test]
     fn protocol_enums_are_sequential_and_append_only() {
-        for value in 1..=31 {
+        for value in 1..=32 {
             assert!(
                 NodeKind::try_from(value).is_ok(),
                 "missing node kind {value}"
             );
         }
-        assert!(NodeKind::try_from(32).is_err());
+        assert!(NodeKind::try_from(33).is_err());
 
         for value in 1..=543 {
             assert!(PropKey::try_from(value).is_ok(), "missing property {value}");
