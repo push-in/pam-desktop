@@ -1,0 +1,27 @@
+/* Trello's light theme and type. Screen-specific rules live in each .pam.php component. */
+@font-face { font-family: "Noto Sans"; src: url("asset://assets/fonts/NotoSans-Regular.ttf"); font-weight: 400; }
+@font-face { font-family: "Noto Sans"; src: url("asset://assets/fonts/NotoSans-Medium.ttf"); font-weight: 500; }
+@font-face { font-family: "Noto Sans"; src: url("asset://assets/fonts/NotoSans-SemiBold.ttf"); font-weight: 600; }
+@font-face { font-family: "Noto Sans"; src: url("asset://assets/fonts/NotoSans-Bold.ttf"); font-weight: 700; }
+
+:root {
+    --text: #172B4D;
+    --subtle: #44546F;
+    --subtlest: #626F86;
+    --list: #F1F2F4;
+    --card: #FFFFFF;
+    --card-hover: #F7F8F9;
+    --neutral: #091E420F;
+    --neutral-hover: #091E4224;
+    --brand: #0C66E4;
+    --brand-hover: #0055CC;
+    --success: #1F845A;
+    --danger: #C9372C;
+    --warning: #F5CD47;
+    --focus: #388BFF;
+    --chrome: #FFFFFF29;
+    --chrome-hover: #FFFFFF4D;
+    --chrome-text: #FFFFFF;
+}
+
+Text, Input { font-family: "Noto Sans", sans-serif; color: var(--text); }

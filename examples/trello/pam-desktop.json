@@ -1,0 +1,13 @@
+{
+  "$schema": "./vendor/pushinbr/pam-desktop/packages/desktop/resources/pam-desktop.schema.json",
+  "applicationId": "dev.pam.examples.trello",
+  "entry": "index.php",
+  "name": "Trello",
+  "version": "0.1.0",
+  "window": {
+    "height": 800,
+    "width": 1280,
+    "minWidth": 900,
+    "minHeight": 560
+  }
+}
