@@ -1034,3 +1034,59 @@ fn group_hover_styles_descendants_of_the_hovered_group_only() {
     interaction.on_pointer(&mut h.ctx(), outside);
     assert_eq!((opacity(&h, 3), opacity(&h, 5)), (Some(0.0), Some(0.0)));
 }
+
+#[test]
+fn a_pressable_inside_a_drag_source_drags_it_past_the_threshold() {
+    let mut harness = Harness::with_tree(&[
+        (
+            1,
+            0,
+            NodeKind::Column,
+            &[],
+            Rect::new(0.0, 0.0, 400.0, 300.0),
+        ),
+        (
+            2,
+            1,
+            NodeKind::View,
+            &[
+                (PropKey::Draggable, PropValue::Boolean(true)),
+                (PropKey::DragData, PropValue::String("card-9".into())),
+                (PropKey::OnDragStart, PropValue::Boolean(true)),
+            ],
+            Rect::new(10.0, 10.0, 200.0, 60.0),
+        ),
+        (
+            3,
+            2,
+            NodeKind::Pressable,
+            &[(PropKey::OnPress, PropValue::Boolean(true))],
+            Rect::new(0.0, 0.0, 200.0, 60.0),
+        ),
+        (
+            4,
+            1,
+            NodeKind::Input,
+            &[],
+            Rect::new(10.0, 100.0, 200.0, 30.0),
+        ),
+    ]);
+    let mut drag_drop = DragDrop::default();
+    let down = harness.pointer(PointerPhase::Down, 50.0, 30.0);
+    let far = harness.pointer(PointerPhase::Move, 80.0, 40.0);
+    assert!(!drag_drop.on_pointer(&mut harness.ctx(), down));
+    assert!(
+        drag_drop.on_pointer(&mut harness.ctx(), far),
+        "a card that is pressable still drags its source"
+    );
+    assert_eq!(harness.event_kinds(), vec![event_kind::DRAG_START]);
+
+    let mut drag_drop = DragDrop::default();
+    let in_field = harness.pointer(PointerPhase::Down, 50.0, 110.0);
+    let away = harness.pointer(PointerPhase::Move, 90.0, 115.0);
+    drag_drop.on_pointer(&mut harness.ctx(), in_field);
+    assert!(
+        !drag_drop.on_pointer(&mut harness.ctx(), away),
+        "a text field selects, it never drags"
+    );
+}

@@ -76,13 +76,14 @@ impl DragDrop {
                             {
                                 break Some(current);
                             }
-                            if node.is_pressable()
-                                || matches!(
-                                    node.class,
-                                    crate::backend::ViewClass::Input
-                                        | crate::backend::ViewClass::TextArea
-                                )
-                                || node.parent == 0
+                            // A pressable inside a drag source (a clickable
+                            // card) drags it once the pointer travels; a click
+                            // stays a press. Text fields keep their selection.
+                            if matches!(
+                                node.class,
+                                crate::backend::ViewClass::Input
+                                    | crate::backend::ViewClass::TextArea
+                            ) || node.parent == 0
                             {
                                 break None;
                             }

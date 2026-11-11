@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.1.7 - 2026-11-11
+
+What the Trello clone in `examples/trello` needed: cards that open on click
+and drag between lists. Update with `pam composer update pushinbr/pam-desktop`;
+the launcher downloads the 2.1.7 host. No app changes needed.
+
+### Fixed
+
+- **A clickable card drags.** A `Pressable` inside a `DragSource` (a Trello
+  card that opens on click) never started a drag: the host stopped looking
+  for the drag source at the first pressable. A click stays a press; past
+  4 points of travel the source drags. Text fields still select.
+
 ## 2.1.6 - 2026-11-11
 
 What the Spotify clone in `examples/spotify` needed: a `Slider` control,
