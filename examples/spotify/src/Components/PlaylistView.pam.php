@@ -9,6 +9,8 @@ use App\Domain\Track;
 use App\Services\Library;
 use App\Services\Player;
 use Pam\Desktop\Component;
+use Pam\Desktop\MenuItem;
+use Pam\Desktop\System\Clipboard;
 
 final class PlaylistView extends Component
 {
@@ -60,6 +62,27 @@ final class PlaylistView extends Component
         $this->emit('play', ['id' => $this->playlistId, 'track' => $trackId]);
     }
 
+    /** @return list<MenuItem> what a secondary click on a track offers */
+    public function trackMenu(Track $track): array
+    {
+        $liked = $this->player->isLiked($track->id);
+
+        return [
+            MenuItem::make('Add to queue', fn () => $this->playTrack($track->id)),
+            MenuItem::separator(),
+            MenuItem::make('Go to artist', null),
+            MenuItem::make('Go to album', null),
+            MenuItem::make('View credits', null),
+            MenuItem::separator(),
+            MenuItem::make($liked ? 'Remove from your Liked Songs' : 'Save to your Liked Songs', fn () => $this->like($track->id)),
+            MenuItem::submenu(
+                'Share',
+                MenuItem::make('Copy Song Link', static fn () => Clipboard::setText('https://open.spotify.com/track/'.$track->id)),
+                MenuItem::make('Embed track', null),
+            ),
+        ];
+    }
+
     public function like(string $trackId): void
     {
         $this->player->toggleLike($trackId);
@@ -109,7 +132,7 @@ final class PlaylistView extends Component
                 </Row>
 
                 <Pressable p-for="$track in tracks()" p-key="$track->id" :class="current($track) ? 'row row-on' : 'row'"
-                           on:doubleTap="playTrack($track->id)" doubleTapDelay="300">
+                           on:doubleTap="playTrack($track->id)" doubleTapDelay="300" :contextMenu="trackMenu($track)">
                     <View class="number">
                         <Text :class="current($track) ? 'index index-on' : 'index'">{{ $trackIndex + 1 }}</Text>
                         <Pressable class="row-play" cursor="pointer" on:press="playTrack($track->id)" :tooltip="'Play ' . $track->title">
@@ -170,14 +193,14 @@ final class PlaylistView extends Component
     .col-album { flex: 3; font-size: 14px; color: var(--subdued); }
     .col-time { width: 112px; text-align: right; }
 
-    .row { flex-direction: row; height: 56px; gap: 16px; padding: 0 16px; align-items: center; border-radius: 4px; }
+    .row { flex-direction: row; height: 56px; gap: 16px; padding: 0 16px; align-items: center; border-radius: 4px; transition: background-color 150ms; }
     .row:hover { background-color: var(--tinted); }
     .row-on { background-color: var(--tinted-hover); }
     .number { width: 16px; height: 16px; align-items: center; justify-content: center; }
-    .index { font-size: 16px; color: var(--subdued); text-align: right; }
+    .index { font-size: 16px; color: var(--subdued); text-align: right; transition: opacity 120ms; }
     .index-on { color: var(--green); }
     .row:hover .index { opacity: 0; }
-    .row-play { position: absolute; width: 16px; height: 16px; align-items: center; justify-content: center; opacity: 0; }
+    .row-play { position: absolute; width: 16px; height: 16px; align-items: center; justify-content: center; opacity: 0; transition: opacity 120ms; }
     .row:hover .row-play { opacity: 1; }
     .row-cover { width: 40px; height: 40px; border-radius: 4px; }
     .row-titles { flex: 4; margin-left: -4px; gap: 2px; }

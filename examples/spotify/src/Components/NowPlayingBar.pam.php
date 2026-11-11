@@ -204,22 +204,33 @@ final class NowPlayingBar extends Component
 
         <Column class="transport">
             <Row class="controls">
-                <Pressable class="icon-button" cursor="pointer" @press="shuffle" tooltip="Enable shuffle">
-                    <Icon name="shuffle" font="Lucide" size="16" :class="$player->shuffle ? 'on' : 'dim'" />
-                </Pressable>
-                <Pressable class="icon-button" cursor="pointer" @press="previous" tooltip="Previous">
-                    <Icon name="skip-back" font="Lucide" size="16" class="dim" />
-                </Pressable>
-                <Pressable class="play" cursor="pointer" @press="toggle" :tooltip="$player->playing() ? 'Pause' : 'Play'">
-                    <Icon :name="$player->playing() ? 'pause' : 'play'" font="Lucide" size="16" class="play-icon" />
-                </Pressable>
-                <Pressable class="icon-button" cursor="pointer" @press="next" tooltip="Next">
-                    <Icon name="skip-forward" font="Lucide" size="16" class="dim" />
-                </Pressable>
-                <Pressable class="icon-button" cursor="pointer" @press="repeat" tooltip="Enable repeat">
-                    <Icon :name="$player->repeat === 'one' ? 'repeat-1' : 'repeat'" font="Lucide" size="16"
-                          :class="$player->repeat === 'off' ? 'dim' : 'on'" />
-                </Pressable>
+                <Tooltip :title="$player->shuffle ? 'Disable shuffle' : 'Enable shuffle'" shortcut="Ctrl+S" placement="top">
+                    <Pressable class="icon-button" cursor="pointer" @press="shuffle">
+                        <Icon name="shuffle" font="Lucide" size="16" :class="$player->shuffle ? 'on' : 'dim'" />
+                    </Pressable>
+                </Tooltip>
+                <Tooltip title="Previous" shortcut="Ctrl+Left" placement="top">
+                    <Pressable class="icon-button" cursor="pointer" @press="previous">
+                        <Icon name="skip-back" font="Lucide" size="16" class="dim" />
+                    </Pressable>
+                </Tooltip>
+                <Tooltip :title="$player->playing() ? 'Pause' : 'Play'" shortcut="Space" placement="top">
+                    <Pressable class="play" cursor="pointer" @press="toggle">
+                        <Icon :name="$player->playing() ? 'pause' : 'play'" font="Lucide" size="16" class="play-icon" />
+                    </Pressable>
+                </Tooltip>
+                <Tooltip title="Next" shortcut="Ctrl+Right" placement="top">
+                    <Pressable class="icon-button" cursor="pointer" @press="next">
+                        <Icon name="skip-forward" font="Lucide" size="16" class="dim" />
+                    </Pressable>
+                </Tooltip>
+                <Tooltip :title="$player->repeat === 'off' ? 'Enable repeat' : ($player->repeat === 'all' ? 'Enable repeat one' : 'Disable repeat')"
+                         shortcut="Ctrl+R" placement="top">
+                    <Pressable class="icon-button" cursor="pointer" @press="repeat">
+                        <Icon :name="$player->repeat === 'one' ? 'repeat-1' : 'repeat'" font="Lucide" size="16"
+                              :class="$player->repeat === 'off' ? 'dim' : 'on'" />
+                    </Pressable>
+                </Tooltip>
             </Row>
             <Row class="timeline">
                 <Text class="clock">{{ elapsed() }}</Text>
@@ -258,6 +269,7 @@ final class NowPlayingBar extends Component
     .controls { gap: 8px; align-items: center; }
     .play { width: 32px; height: 32px; border-radius: 16px; background-color: var(--text); align-items: center;
             justify-content: center; margin: 0 8px; }
+    .play { transition: transform 120ms; }
     .play:hover { transform: scale(1.06); }
     .play-icon { color: var(--base); }
     .timeline { width: 100%; gap: 8px; align-items: center; }
