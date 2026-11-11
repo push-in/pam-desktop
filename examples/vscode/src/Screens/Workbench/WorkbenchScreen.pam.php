@@ -81,7 +81,7 @@ final class WorkbenchScreen extends Component
         $this->workspace = new Workspace(getcwd() ?: '.');
         $this->workspace->menu = $this->rowMenu(...);
         $this->workspace->open('src/Components/Editor.pam.php');
-        $this->workspace->open('src/Services/Highlighter.php');
+        $this->workspace->open('src/Services/Workspace.php');
         $this->workspace->open('src/app.css');
         $this->workspace->active = 'src/Components/Editor.pam.php';
         $this->shortcuts = [

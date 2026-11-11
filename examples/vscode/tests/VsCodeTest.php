@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 use App\Domain\FileKind;
 use App\Screens\Workbench\WorkbenchScreen;
-use App\Services\Highlighter;
 use App\Services\Workspace;
 use Pam\Desktop\App;
 use Pam\DesktopUi\DesktopUI;
@@ -25,15 +24,11 @@ $check = static function (bool $condition, string $message): void {
     }
 };
 
-// Highlighting: PHP through its tokenizer, a template's markup by pattern.
-$lines = Highlighter::lines('a.php', "<?php\n// note\n\$total = count(\$items);\n");
-$colours = static fn (array $line): array => array_column($line, 1);
-$check(count($lines) === 4, 'one entry per line');
-$check($colours($lines[1]) === [Highlighter::COMMENT], 'comments are green');
-$check(in_array(Highlighter::VARIABLE, $colours($lines[2]), true) && in_array(Highlighter::FUNCTION, $colours($lines[2]), true), 'variables and calls have their colours');
-$template = Highlighter::lines('b.pam.php', "<?php ?>\n<Text class=\"title\">{{ \$name }}</Text>\n");
-$check(in_array(Highlighter::TAG, $colours($template[1]), true) && in_array(Highlighter::STRING, $colours($template[1]), true), 'template tags and attribute values are coloured');
-$check(implode('', array_column(Highlighter::lines('c.css', ".a { color: #FFF; }")[0], 0)) === '.a { color: #FFF; }', 'highlighting keeps every character');
+// Highlighting comes from Pam\Desktop\Code: one entry per line, every character kept.
+$lines = (new Workspace($root))->lines('index.php');
+$check(count($lines) === substr_count((string) file_get_contents($root.'/index.php'), "\n") + 1, 'one entry per line');
+$check(implode('', array_column($lines[2], 0)) === 'declare(strict_types=1);', 'highlighting keeps every character');
+$check(count(array_unique(array_column(array_merge(...$lines), 1))) > 3, 'PHP gets several colours');
 
 // The explorer reads this project from disk, folders first.
 $workspace = new Workspace($root);

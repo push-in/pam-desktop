@@ -6,6 +6,7 @@ namespace App\Services;
 
 use App\Domain\FileKind;
 use Closure;
+use Pam\Desktop\Code\Highlighter;
 use Pam\Desktop\MenuItem;
 use Pam\DesktopUi\TreeNode;
 
@@ -26,7 +27,7 @@ final class Workspace
 
     public ?string $active = null;
 
-    /** @var array<string, list<list<array{0: string, 1: string}>>> highlighted lines by path */
+    /** @var array<string, list<list<array{0: string, 1: int}>>> highlighted lines by path */
     private array $documents = [];
 
     public function __construct(public readonly string $root)
@@ -101,10 +102,13 @@ final class Workspace
         }
     }
 
-    /** @return list<list<array{0: string, 1: string}>> */
+    /** @return list<list<array{0: string, 1: int}>> */
     public function lines(string $path): array
     {
-        return $this->documents[$path] ??= Highlighter::lines($path, (string) file_get_contents($this->root.'/'.$path));
+        return $this->documents[$path] ??= Highlighter::lines(
+            (string) file_get_contents($this->root.'/'.$path),
+            Highlighter::language($path),
+        );
     }
 
     /** @return list<string> every readable file, for Quick Open */
