@@ -34,17 +34,17 @@ final class Deferred
 
     public function await(?CancellationToken $token = null, ?int $deadlineMs = null): mixed
     {
-        $started = (int) floor(microtime(true) * 1_000);
+        $started = intdiv(hrtime(true), 1_000_000);
         while (!$this->settled) {
             $token?->throwIfCancelled();
-            if ($deadlineMs !== null && (int) floor(microtime(true) * 1_000) - $started >= $deadlineMs) {
+            if ($deadlineMs !== null && intdiv(hrtime(true), 1_000_000) - $started >= $deadlineMs) {
                 throw new DeadlineExceededException();
             }
             if (Scheduler::drain(1.0) === 0) {
                 usleep(500);
             }
         }
-        if ($deadlineMs !== null && (int) floor(microtime(true) * 1_000) - $started >= $deadlineMs) {
+        if ($deadlineMs !== null && intdiv(hrtime(true), 1_000_000) - $started >= $deadlineMs) {
             throw new DeadlineExceededException();
         }
         if ($this->error !== null) {

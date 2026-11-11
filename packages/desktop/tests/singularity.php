@@ -53,7 +53,7 @@ $group->async(static fn (): int => 22);
 $assert($group->awaitAll() === [20, 22], 'Structured task groups must await ordered child results.');
 
 $late = new TaskGroup(deadlineMs: 1);
-$late->async(static function (): void { usleep(2_000); });
+$late->async(static function (): void { usleep(20_000); });
 $deadlineExceeded = false;
 try {
     $late->awaitAll();
