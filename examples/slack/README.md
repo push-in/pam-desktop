@@ -14,17 +14,22 @@ pam desktop dev
 
 - **Workspace chrome**: the Aubergine theme, the rail, the sidebar with
   channels, DMs, unread badges and presence.
-- **Messages**: Slack's mrkdwn (`*bold*`, `_italic_`, `` `code` ``, links,
-  @mentions, your own mentions highlighted), grouping of consecutive messages,
-  day dividers and the conversation intro, in an inverted `VirtualizedList`.
-- **Reactions and hover actions**: reaction chips that toggle, and the
-  message toolbar revealed by `.message:hover .actions` with no PHP round trip.
+- **Messages**: bodies rendered by `Pam\Desktop\Markdown` in Slack's flavor
+  (`*bold*`, `_italic_`, `` `code` ``, code blocks, lists, quotes, links,
+  @mentions with spaces, your own mentions highlighted), grouping of
+  consecutive messages, day dividers and the conversation intro, in an
+  inverted `VirtualizedList`; a context menu on every message.
+- **Reactions and hover actions**: reaction chips that toggle, an emoji
+  picker in a `Popover`, and the message toolbar revealed by
+  `.message:hover .actions` with no PHP round trip.
 - **Threads**: the reply count with its avatars opens the thread pane beside
   the channel, with its own composer.
 - **Search**: channels, people and messages as you type, matches marked;
   Enter opens the first result, Escape or a click outside closes it.
-- **Composer**: formatting toolbar, multiline input, Enter to send and the
-  send button that turns green when there is something to send.
+- **Composer**: formatting toolbar with rich tooltips and shortcuts, multiline
+  input, Enter to send and the send button that turns green when there is
+  something to send.
+- **The app icon** shows the unread mentions (`Window::badge`).
 
 Icons are the Lucide set bundled with PAM Desktop (`font="Lucide"`); the Lato
 font and the avatars are packaged under `assets/`.
