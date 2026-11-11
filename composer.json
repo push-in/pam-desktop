@@ -30,7 +30,10 @@
         "psr-4": {
             "Pam\\Desktop\\": "packages/desktop/src/",
             "Pam\\Desktop\\Canvas\\": "packages/canvas/src/",
+            "Pam\\Desktop\\Auth\\": "packages/auth/src/",
             "Pam\\Desktop\\Charts\\": "packages/charts/src/",
+            "Pam\\Desktop\\Code\\": "packages/code/src/",
+            "Pam\\Desktop\\Markdown\\": "packages/markdown/src/",
             "Pam\\Desktop\\Qr\\": "packages/qr/src/",
             "Pam\\Desktop\\Realtime\\": "packages/realtime/src/",
             "Pam\\Desktop\\Sync\\Durable\\": "packages/sync/src/",

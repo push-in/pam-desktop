@@ -325,6 +325,9 @@ pub enum Owner {
     Press(NodeId),
     /// Implicit transition of one presentation property.
     Transition(NodeId, MotionProperty),
+    /// Implicit transition of a style (index into `TRANSITION_STYLES`),
+    /// sampled 0 → 1.
+    Style(NodeId, u8),
     /// A preset, keyframe or program track of a node.
     Motion(NodeId, u32),
     /// A host-drawn control (switch position, spinner angle).
@@ -358,6 +361,7 @@ impl Owner {
             | Self::ModalContent(id)
             | Self::Press(id)
             | Self::Transition(id, _)
+            | Self::Style(id, _)
             | Self::Motion(id, _)
             | Self::Control(id)
             | Self::Scroll(id)
@@ -501,6 +505,8 @@ pub enum Timer {
     GestureIdle,
     /// A sliding line of text rested long enough at one end.
     Marquee(NodeId),
+    /// The test driver checks its current step.
+    Script,
 }
 
 #[derive(Default)]

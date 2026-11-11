@@ -202,6 +202,98 @@ $this->seek = new Slider(
 
 A click or a drag sets the value (a drag keeps following the pointer past either end); the arrow keys step it by `step`, or a twentieth of the range when `step` is 0, Page Up and Page Down by five steps, Home and End to the ends. `$changed` reports every new value; `$committed`, when given, runs once the pointer is released or a key changed the value, for work too costly to repeat while dragging. `trackHeight`, `thumbSize`, `trackColor`, `fillColor`, `activeColor` (the fill while hovered or dragged) and `thumbColor` (the thumb shows while hovered or dragged) style it; the defaults are a media player's. It is exposed to screen readers as a slider with its range, its value and `valueText`. `min`, `max` and `value` are state: change them on the same instance (the length of the next track) rather than creating another slider.
 
+## Popover
+
+`<Popover>` shows its children next to another element, above the whole window (modals included): a menu, a picker, a card with details. `anchor` is the `nativeRef` of the element it points at.
+
+```html
+<Pressable nativeRef="emoji-button" on:press="toggleEmoji">
+    <Icon name="smile" font="Lucide" size="16" />
+</Pressable>
+<Popover :open="$emojiOpen" anchor="emoji-button" placement="top-end" on:close="closeEmoji">
+    <Column class="emoji-panel">…</Column>
+</Popover>
+```
+
+- `placement` is a side (`bottom`, `top`, `right` or `left`), optionally followed by `-start` or `-end` (`bottom-start` by default). When the surface does not fit on that side, it flips to the other side, and it always stays inside the window.
+- `offset` is the gap to the anchor, in points (6 by default).
+- A press outside the popover, or Escape, emits `close`; the owner sets `open` to false. `dismissible="false"` lets presses outside reach what is below.
+- The popover draws nothing until both the anchor and its content are measured, so it never shows in the wrong place.
+- It takes no surface style of its own: style the children (background, border, radius, shadow).
+
+## Tooltip
+
+`<Tooltip>` is the rich version of the `tooltip` attribute: a title, an optional description and a shortcut, drawn by the app after the pointer rests on the children for `delay` milliseconds (500 by default). It never takes presses, and it hides when the pointer leaves or presses.
+
+```html
+<Tooltip title="Mention someone" shortcut="Ctrl+Shift+2" placement="top">
+    <Icon name="at-sign" font="Lucide" size="16" />
+</Tooltip>
+```
+
+`placement` and `offset` work as for `Popover`. `background`, `color`, `muted` and `border` set its colours.
+
+## SplitView
+
+`<SplitView>` puts its two children side by side (`direction="horizontal"`, the default) or one above the other (`vertical`), with a divider between them that the pointer drags. `sized` says which child has `size` points: `start` (the first, the default) or `end`. The other one takes the rest.
+
+```html
+<SplitView :size="$sidebar" min="170" max="480" on:resize="resizeSidebar">
+    <Explorer />
+    <Editor />
+</SplitView>
+```
+
+- Dragging the divider emits `resize` with the new size, rounded and kept between `min` and `max`. The owner stores it, so it can save it and restore it.
+- With the divider focused, the arrow keys move it by `step` points (10 by default), and Home/End jump to `min`/`max`.
+- The line is `thickness` points wide (1 by default) and takes the pointer over `hitArea` points (6 by default), so it is easy to grab without taking room from the panes. It turns `activeColor` while hovered or dragged.
+- `resizable="false"` keeps the size fixed, and `:collapsed="true"` hides the sized pane and the divider (a sidebar toggled off) while the other pane stays mounted.
+
+## TreeView
+
+`<TreeView>` shows `TreeNode` values as a virtualized tree, as in a file explorer. Only the rows on screen are built.
+
+```php
+use Pam\DesktopUi\TreeNode;
+
+$this->files = [
+    new TreeNode('src', 'src', fn () => $this->folder('src'), icon: 'folder'),
+    new TreeNode('README.md', 'README.md', icon: 'file-text', iconColor: '#519ABA', badge: 'M', badgeColor: '#E2C08D'),
+];
+```
+
+```html
+<TreeView :nodes="$files" :selected="$active" :expanded="['src']" on:activate="open" on:select="select" />
+```
+
+- A node with `children: null` is a leaf. A list makes it a branch, and so does a closure that returns a list: the closure runs the first time the branch opens, which suits a folder read from disk.
+- Pressing a branch opens or closes it, and pressing a leaf emits `activate` with its id. Every selection change emits `select`, and opening or closing a branch emits `toggle` with `['id' => …, 'open' => …]`.
+- With a row focused: Up and Down move, Right opens a branch (or goes to its first child), Left closes it (or goes to its parent), Enter and Space press it, Home and End jump to the ends. The selected row is scrolled into view.
+- Each row shows the node's `icon` (in `iconFont`, Lucide by default), `label`, an optional dim `detail`, an optional `badge` at the end and a `tooltip`. Indent guides show while the pointer is over the tree (`guides="false"` turns them off).
+- A node's `contextMenu` (a list of `MenuItem`) opens on a secondary click on its row.
+- Changing `collapseRequest` (a counter) closes every branch, for a "Collapse Folders" button.
+- `rowHeight`, `indent`, `iconSize`, `fontSize`, `color`, `muted` and `guideColor` adjust the look.
+
+## CodeEditor
+
+`<CodeEditor>` edits source code: syntax highlighting from [Code](code.md), line numbers, the active line, selections, several cursors and undo, with the keys of VS Code. Only the lines on screen are built.
+
+```html
+<CodeEditor :text="$source" language="php" fontFamily="JetBrains Mono" on:change="edited" on:cursor="moved" />
+```
+
+- `change` carries the whole text after each edit. `cursor` carries `['line' => …, 'column' => …, 'cursors' => …]`, 1-based, for a status bar.
+- A new `text` from the owner (another file, a reload) replaces the document. Giving back the text from `change` does not.
+- Text goes in through a native text field that the editor keeps focused, so dead keys, compose sequences and input methods (accents, CJK) work as in any field. Everything else is drawn by the editor, in a monospaced font: cursors, selections and colours.
+- Keys: arrows, Home/End (Home goes to the indent first), PageUp/PageDown, Shift to select, Ctrl+Arrows to move by word, Ctrl+Home/End, Enter (keeps the indent, one level deeper after `{`, `[`, `(` or `:`), Backspace (a whole indent level in leading spaces), Delete, Ctrl+Backspace/Delete for words, Tab and Shift+Tab (indent and outdent the selected lines), Ctrl+/ (line comments, with the language's marker), Ctrl+A, Ctrl+C/X/V (Ctrl+X with nothing selected cuts the line), Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z, Ctrl+D (select the word, then add a cursor at its next occurrence), Escape (back to one cursor).
+- Mouse: a click places the cursor, Shift+click extends the selection, Alt+click adds a cursor, and dragging selects.
+- Tabs stay in the text and show as tab stops of `tabSize` columns (4 by default).
+- Typing recolours the edited line at once and the whole text after a 300 ms pause, which settles block comments and strings that span lines.
+- `theme` takes a `CodeTheme` (`darkModern()` by default). Also `fontSize`, `lineHeight`, `fontFamily`, `lineNumbers`, `readOnly`, `tabSize`, `label` and `autoFocus`.
+- `CodeDocument` is the text model on its own (lines, cursors, edits, undo), for tests or for commands of your own: `$editor->document`.
+
+Long lines are clipped; there is no horizontal scrolling yet.
+
 ## ProgressButton
 
 A button that keeps its label and shows a spinner while `loading`; it ignores presses while loading or disabled. See [ProgressButton](../packages/desktop-ui/docs/progress-button.md).

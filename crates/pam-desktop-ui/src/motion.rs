@@ -12,7 +12,10 @@ use crate::backend::NodeId;
 use crate::context::{Ctx, event_kind};
 use crate::geometry::{Rect, Size};
 use crate::props::{PropMap, Props};
-use crate::scene::{Change, IdMap, LayerOverride, LayerSlot, StyleLayer, motion_default};
+use crate::scene::{
+    Change, IdMap, LayerOverride, LayerSlot, StyleLayer, StyleValue, TRANSITION_STYLES,
+    motion_default,
+};
 
 const SLOT_PRESET: u32 = 0;
 const SLOT_KEYFRAMES: u32 = 1;
@@ -100,6 +103,18 @@ fn parse_transition_spec(spec: &str) -> Vec<Rule> {
         rules.push(rule);
     }
     rules
+}
+
+fn style_rule_for(rules: &[Rule], key: PropKey) -> Option<&Rule> {
+    let name = match key {
+        PropKey::BackgroundColor => "background-color",
+        PropKey::TextColor => "color",
+        PropKey::BorderColor => "border-color",
+        _ => "border-radius",
+    };
+    [name, "all"]
+        .iter()
+        .find_map(|name| rules.iter().find(|rule| rule.property == *name))
 }
 
 fn rule_for(rules: &[Rule], property: MotionProperty) -> Option<&Rule> {
@@ -756,6 +771,8 @@ struct NodeMotion {
 #[derive(Default)]
 pub struct Motion {
     nodes: IdMap<NodeMotion>,
+    /// Style transitions in flight: (node, style index) → (from, to).
+    styles: std::collections::HashMap<(NodeId, u8), (StyleValue, StyleValue)>,
     /// Nodes mounted by the commit being applied: they never transition.
     fresh: Vec<NodeId>,
     dirty: bool,
@@ -800,7 +817,9 @@ impl Motion {
             }
             Change::Removed(id, _) => {
                 self.nodes.remove(&id);
+                self.styles.retain(|(node, _), _| *node != id);
             }
+            Change::Style { id, key, previous } => self.style_transition(ctx, id, key, previous),
             Change::Updated(id, key) => {
                 let flag: fn(&mut NodeMotion) = match key {
                     PropKey::AnimationKind => |state| state.preset = true,
@@ -852,10 +871,10 @@ impl Motion {
     ) {
         let owner = Owner::Transition(id, property);
         let running = ctx.animator.cancel(owner, ctx.now_ms);
-        let Some(node) = ctx.scene.node(id) else {
+        // State styles (`:hover`, `:focus`…) count: they are what shows.
+        let Some(props) = ctx.scene.effective_props(id) else {
             return;
         };
-        let props = node.props();
         let target = props
             .number(crate::scene::motion_prop_key(property))
             .unwrap_or_else(|| motion_default(property));
@@ -913,6 +932,85 @@ impl Motion {
                 }
             }
         }
+    }
+
+    /// A colour or corner radius of a node changed: move towards it when a
+    /// transition names it, starting from what is on screen.
+    fn style_transition(
+        &mut self,
+        ctx: &mut Ctx<'_>,
+        id: NodeId,
+        key: PropKey,
+        previous: Option<StyleValue>,
+    ) {
+        let Some(slot) = TRANSITION_STYLES
+            .iter()
+            .position(|candidate| *candidate == key)
+        else {
+            return;
+        };
+        let owner = Owner::Style(id, slot as u8);
+        let running = ctx.animator.cancel(owner, ctx.now_ms);
+        let shown = match (running, self.styles.remove(&(id, slot as u8))) {
+            (Some(t), Some((from, to))) => Some(from.mix(to, t)),
+            _ => previous,
+        };
+        let target = ctx.scene.styled_value(id, key);
+        let curve = ctx
+            .scene
+            .effective_props(id)
+            .and_then(|props| props.text(PropKey::TransitionSpec))
+            .map(parse_transition_spec)
+            .and_then(|rules| {
+                let rule = style_rule_for(&rules, key)?;
+                match Spring::from_token(&rule.timing) {
+                    Some(spring) => Some((Curve::spring(spring, 0.0, 1.0), rule.delay_ms)),
+                    None if rule.duration_ms == 0 && rule.delay_ms == 0 => None,
+                    None => Some((
+                        Curve::timing(rule.duration_ms, Easing::from_token(&rule.timing)),
+                        rule.delay_ms,
+                    )),
+                }
+            });
+        match (shown, target, curve) {
+            (Some(from), Some(to), Some((curve, delay)))
+                if from != to && !ctx.reduced_motion && !self.fresh.contains(&id) =>
+            {
+                self.styles.insert((id, slot as u8), (from, to));
+                Self::write_style(ctx, id, key, Some(from));
+                ctx.animator
+                    .start(owner, 0.0, 1.0, curve, delay, ctx.now_ms);
+            }
+            _ => Self::write_style(ctx, id, key, None),
+        }
+    }
+
+    /// Puts one style on (or takes it off) the node's transition layer.
+    fn write_style(ctx: &mut Ctx<'_>, id: NodeId, key: PropKey, value: Option<StyleValue>) {
+        let mut layer = ctx
+            .scene
+            .style_overlay(id, StyleLayer::Transition)
+            .cloned()
+            .unwrap_or_default();
+        match value {
+            Some(value) => {
+                layer.insert(key, value.to_prop());
+                // An animated corner radius also clips the node.
+                if key == PropKey::BorderRadius {
+                    layer.insert(PropKey::Overflow, PropValue::Integer(2));
+                }
+            }
+            None => {
+                if layer.remove(&key).is_none() {
+                    return;
+                }
+                if key == PropKey::BorderRadius {
+                    layer.remove(&PropKey::Overflow);
+                }
+            }
+        }
+        ctx.scene
+            .set_style_overlay(id, StyleLayer::Transition, Some(layer));
     }
 
     pub fn after_commit(&mut self, ctx: &mut Ctx<'_>) {
@@ -1076,6 +1174,15 @@ impl Motion {
                 let mut values = ctx.scene.motion(id);
                 values.set(property, if finished { None } else { Some(value) });
                 ctx.scene.set_motion(id, values);
+            }
+            Owner::Style(id, slot) => {
+                let key = TRANSITION_STYLES[usize::from(slot)];
+                if finished {
+                    self.styles.remove(&(id, slot));
+                    Self::write_style(ctx, id, key, None);
+                } else if let Some((from, to)) = self.styles.get(&(id, slot)).copied() {
+                    Self::write_style(ctx, id, key, Some(from.mix(to, value)));
+                }
             }
             Owner::Motion(id, SLOT_SHIMMER) => self.sample_shimmer(ctx, id, value, finished),
             Owner::Motion(id, slot) => {

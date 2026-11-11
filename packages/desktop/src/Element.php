@@ -478,6 +478,9 @@ abstract class Element implements Renderable
                 if ($item->checked !== null) {
                     $entry['checked'] = $item->checked;
                 }
+                if ($item->shortcut !== null) {
+                    $entry['shortcut'] = $item->shortcut;
+                }
                 $entries[] = $entry;
             }
 

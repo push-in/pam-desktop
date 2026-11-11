@@ -356,12 +356,17 @@ impl Manifest {
             if let Some(resizable) = window.get("resizable").and_then(Value::as_bool) {
                 config.resizable = resizable;
             }
+            if let Some(remember) = window.get("remember").and_then(Value::as_bool) {
+                config.remember = remember;
+            }
         }
         if let Some((width, height)) = std::env::var("PAM_DESKTOP_WINDOW").ok().and_then(|value| {
             let (width, height) = value.split_once('x')?;
             Some((width.parse::<f32>().ok()?, height.parse::<f32>().ok()?))
         }) {
             config.size = Size::new(width.clamp(120.0, 16_384.0), height.clamp(120.0, 16_384.0));
+            // An explicit size (screenshots, tests) wins over the last run's.
+            config.remember = false;
         }
         config
     }

@@ -137,9 +137,9 @@ final class Icon
     /**
      * A font shipped with the package (`resources/fonts`), addressed through
      * the project's `vendor` folder so the host serves it like any packaged
-     * asset. Null when the package is not inside the project (a Composer
-     * `path` repository linked from elsewhere): the host only serves files
-     * below the project root.
+     * asset. A package linked from elsewhere (a Composer `path` repository)
+     * is reached through its link in `vendor`, which the host follows like
+     * any path below the project. Null when neither holds the font.
      *
      * @return array{source: string, glyphs: null, map: string}|null
      */
@@ -150,8 +150,12 @@ final class Icon
         }
         $root = rtrim(strtr(getcwd() ?: '.', '\\', '/'), '/').'/';
         $directory = strtr(dirname(__DIR__, 2), '\\', '/').'/resources/fonts/';
+        $linked = $root.'vendor/pushinbr/pam-desktop/packages/desktop/resources/fonts/';
         if (!str_starts_with($directory, $root) || !is_file("{$directory}{$font}.ttf")) {
-            return null;
+            if (!is_file("{$linked}{$font}.ttf")) {
+                return null;
+            }
+            $directory = $linked;
         }
         $relative = substr($directory, strlen($root));
 

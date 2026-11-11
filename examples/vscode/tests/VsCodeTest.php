@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 use App\Domain\FileKind;
 use App\Screens\Workbench\WorkbenchScreen;
-use App\Services\Highlighter;
 use App\Services\Workspace;
 use Pam\Desktop\App;
+use Pam\DesktopUi\DesktopUI;
 
 use function Pam\Desktop\Testing\mount;
 
@@ -14,6 +14,7 @@ $root = dirname(__DIR__);
 require $root.'/vendor/autoload.php';
 chdir($root);
 
+DesktopUI::boot($root.'/.pam-desktop/desktop-ui');
 App::components($root.'/src', $root.'/.pam-desktop/components');
 
 $check = static function (bool $condition, string $message): void {
@@ -23,23 +24,20 @@ $check = static function (bool $condition, string $message): void {
     }
 };
 
-// Highlighting: PHP through its tokenizer, a template's markup by pattern.
-$lines = Highlighter::lines('a.php', "<?php\n// note\n\$total = count(\$items);\n");
-$colours = static fn (array $line): array => array_column($line, 1);
-$check(count($lines) === 4, 'one entry per line');
-$check($colours($lines[1]) === [Highlighter::COMMENT], 'comments are green');
-$check(in_array(Highlighter::VARIABLE, $colours($lines[2]), true) && in_array(Highlighter::FUNCTION, $colours($lines[2]), true), 'variables and calls have their colours');
-$template = Highlighter::lines('b.pam.php', "<?php ?>\n<Text class=\"title\">{{ \$name }}</Text>\n");
-$check(in_array(Highlighter::TAG, $colours($template[1]), true) && in_array(Highlighter::STRING, $colours($template[1]), true), 'template tags and attribute values are coloured');
-$check(implode('', array_column(Highlighter::lines('c.css', ".a { color: #FFF; }")[0], 0)) === '.a { color: #FFF; }', 'highlighting keeps every character');
+// Highlighting comes from Pam\Desktop\Code: one entry per line, every character kept.
+$lines = (new Workspace($root))->lines('index.php');
+$check(count($lines) === substr_count((string) file_get_contents($root.'/index.php'), "\n") + 1, 'one entry per line');
+$check(implode('', array_column($lines[2], 0)) === 'declare(strict_types=1);', 'highlighting keeps every character');
+$check(count(array_unique(array_column(array_merge(...$lines), 1))) > 3, 'PHP gets several colours');
 
 // The explorer reads this project from disk, folders first.
 $workspace = new Workspace($root);
-$names = array_map(static fn ($entry): string => $entry->name, $workspace->entries());
+$names = array_map(static fn ($node): string => $node->label, $workspace->tree());
 $check($names[0] === 'assets' && in_array('README.md', $names, true), 'folders come before files');
 $check(!in_array('.pam-desktop', $names, true), 'generated folders are hidden');
-$workspace->toggle('tests');
-$check(in_array('tests/VsCodeTest.php', array_map(static fn ($entry): string => $entry->path, $workspace->entries()), true), 'expanding a folder lists it');
+$tests = array_values(array_filter($workspace->tree(), static fn ($node): bool => $node->id === 'tests'))[0];
+$check($tests->branch() && $tests->children()[0]->id === 'tests/VsCodeTest.php', 'a folder lists its files when it opens');
+$check($workspace->tree() === $workspace->tree(), 'the tree is built once');
 $check(FileKind::language('Editor.pam.php') === 'PAM Component' && FileKind::icon('composer.json') === 'braces', 'file kinds by name');
 
 // Tabs: opening, the active tab, closing moves to the neighbour.

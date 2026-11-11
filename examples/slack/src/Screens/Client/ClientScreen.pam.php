@@ -8,6 +8,7 @@ use App\Domain\Conversation;
 use App\Services\Workspace;
 use Pam\Desktop\Attributes\State;
 use Pam\Desktop\Component;
+use Pam\Desktop\Window;
 
 final class ClientScreen extends Component
 {
@@ -36,6 +37,7 @@ final class ClientScreen extends Component
     {
         $this->workspace = new Workspace();
         $this->workspace->markRead($this->activeId);
+        Window::badge($this->workspace->mentions());
     }
 
     public function open(string $id): void
@@ -43,6 +45,7 @@ final class ClientScreen extends Component
         $this->workspace->markRead($id);
         $this->activeId = $id;
         $this->threadId = null;
+        Window::badge($this->workspace->mentions());
     }
 
     public function openThread(string $messageId): void

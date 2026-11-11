@@ -69,6 +69,15 @@ App::onError(function (Throwable $error, RuntimeError $report): void {
 
 Most module APIs take a failure closure, which keeps an expected failure (no network, a missing file) out of the overlay; see [Modules](modules.md#failures).
 
+## The inspector
+
+In `pam-desktop dev`, F12 (or Ctrl+Shift+I) turns the inspector on. The element under the pointer is outlined, and a card next to it shows what the host knows about it: its kind, size and position in the window, every property it has after state styles and transitions (colours as `#AARRGGBB`), the states that have styles (`hover`, `focus`, `group-hover`…), the events it listens to and the kinds of its ancestors.
+
+- A click pins the element, so the pointer can move away, and prints the full description on stderr. Another click releases it.
+- F12 or Escape turns the inspector off.
+- While it is on, the pointer never reaches the application. Native controls (text fields, web views) keep their own pointer.
+- `pam-desktop run` has no inspector.
+
 ## Screenshots on a virtual display
 
 `scripts/shot.sh` runs an application on a private X display and captures its window, so nothing appears on your real screen. It is how the examples are checked.
@@ -126,6 +135,47 @@ scripts/visual.sh list
 
 The baseline lives in `target/visual/baseline` and is not committed: fonts, the GTK version and the renderer change pixels, so a baseline is only valid on the machine that recorded it. On one machine the captures are reproducible: two runs of the same build differ in no pixel. The exceptions have a tolerance: the scenarios that never stop moving (`motion`, `media`, the spinner of `controls`, the seconds counter of `modules`, the sliding line of `text`) and `images`, whose status line names the picture the network delivered last. The scenarios, their sizes and tolerances are the table at the top of the script.
 
+## End-to-end scripts
+
+`PAM_DESKTOP_SCRIPT=steps.json pam-desktop run <app>` runs a script against the real window and quits with its result: exit 0 when every step passed, 1 at the first that failed. Actions go through the same core as the user's (pointer, keys, text in fields, shortcuts), so a script runs the same on Linux, macOS and Windows.
+
+```json
+[
+    {"wait": "Acme Inc"},
+    {"click": "engineering"},
+    {"expect": "It fails on the second run only"},
+    {"type": "Shipped the fix", "into": "#composer"},
+    {"submit": "#composer"},
+    {"expect": "Shipped the fix"},
+    {"key": "CmdOrCtrl+B"},
+    {"expectNot": "EXPLORER"}
+]
+```
+
+| Step | Does |
+| --- | --- |
+| `{"wait": selector}` | Waits until it is on screen. |
+| `{"click": selector}`, `{"doubleClick": …}`, `{"hover": …}` | The pointer at the center of the element. |
+| `{"type": "text", "into": selector}` | The text a user types into a field. Without `into`, into the focused one. |
+| `{"submit": selector}` | Enter in a field (its `on:submit`). |
+| `{"key": "CmdOrCtrl+P"}` | A registered shortcut, else the key for the focused element (`Escape`, `ArrowDown`, `Ctrl+Z`…). |
+| `{"expect": selector}`, `{"expectNot": selector}` | Fails unless it shows up, or goes away, within the timeout. |
+| `{"sleep": ms}` | Waits. |
+
+A selector is `#testId`, `@accessibility label`, or text the element shows (the smallest element that contains it wins). Each step waits up to `timeout` milliseconds (10000 by default). When one fails, the output lists the texts on screen, top to bottom.
+
+The four clones each have one in `examples/<name>/tests/e2e.json`. `scripts/e2e-setup.sh` copies them out of the repository and installs them against the working tree (a Composer `path` repository), and `scripts/e2e.sh` runs them (on a private virtual display on Linux):
+
+```bash
+scripts/e2e-setup.sh                         # PAM_E2E_COMPOSER="pam composer" with an older system PHP
+PAM_DESKTOP_HOST=target/debug/pam-desktop scripts/e2e.sh
+e2e slack: passed (1s)
+e2e spotify: passed (1s)
+…
+```
+
+CI runs them on Linux, macOS and Windows.
+
 ## Tests
 
 ### Rust
@@ -163,13 +213,20 @@ composer analyse --working-dir=packages/desktop
 
 ### Template diagnostics
 
-When a component loads, its template is checked against what the renderer uses. An attribute that a built-in tag (`View`, `Column`, `Row`, `Grid`, `Text`, `Span`, `Pressable`, the `Touchable*` tags, `Icon`, `Image`) does not know is an error with the file, line and the attribute meant, instead of being ignored:
+When a component loads, its template is checked against what the renderer uses. An attribute that a built-in tag (`View`, `Column`, `Row`, `Grid`, `Text`, `Span`, `Pressable`, the `Touchable*` tags, `Icon`, `Image`, `Input`, `TextInput`, `Scroll`, `ScrollView`, `VirtualizedList`, `GestureDetector`, `Switch`, `Link`, `Modal`, `DragSource`, `DropTarget`) does not know is an error with the file, line and the attribute meant, instead of being ignored. The same goes for an `on:` event the tag never emits, and for an attribute of a `.pam` component tag that is neither one of its props, nor an attribute of its root element, nor an event:
 
 ```text
 PAM2401 unknown attribute Text.color, did you mean textColor? at src/Screens/Card.pam.php:12:5.
 ```
 
-Common slips are named directly (`color` → `textColor`, `maxLines` → `numberOfLines`, `src` → `source`, `onClick` → `on:press`); other names get the closest known attribute. In `pam-desktop dev` the error overlay shows it at boot, and the PHP tests of an app fail on it. Bindings (`:name`), `p-*`, `on:*`, `@*`, `data-*`, `aria-*` and `variant:*` are not checked here; components with a contract check their own props.
+```text
+PAM2401 unknown event Pressable.on:pres, did you mean on:press?
+PAM2401 unknown prop SplitView.sizee, did you mean size?
+```
+
+Common slips are named directly (`color` → `textColor`, `maxLines` → `numberOfLines`, `src` → `source`, `onClick` → `on:press`); other names get the closest known attribute. In `pam-desktop dev` the error overlay shows it at boot, and the PHP tests of an app fail on it. `p-*`, `@*`, `data-*`, `aria-*` and `variant:*` are not checked here; components with a contract check their own props.
+
+A bound attribute that evaluates to `null` leaves its property unset (`:textColor="$active ? '#FFF' : null"` falls back to the stylesheet), for every property.
 
 `vendor/bin/pam-desktop check` reports all of these without starting the host or opening a window, and does not stop at the first one. It runs the entry file of the application (the `entry` of `pam-desktop.json`, `index.php` by default) up to `App::run()`, so every `App::components()` root it declares is checked (DesktopUI's too), compiles each component into a private temporary cache (the application's `.pam-desktop` cache is left alone) and prints one line per diagnostic, then a summary:
 

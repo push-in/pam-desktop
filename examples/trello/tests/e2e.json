@@ -1,0 +1,14 @@
+[
+    {"wait": "Product Launch"},
+    {"click": "Add a card"},
+    {"type": "Write the end-to-end tests", "into": "#new-card"},
+    {"submit": "#new-card"},
+    {"expect": "Write the end-to-end tests"},
+    {"key": "Escape"},
+    {"expectNot": "#new-card"},
+    {"click": "Webhooks v2"},
+    {"expect": "in list In Progress"},
+    {"expect": "Add to card"},
+    {"key": "Escape"},
+    {"expectNot": "in list In Progress"}
+]

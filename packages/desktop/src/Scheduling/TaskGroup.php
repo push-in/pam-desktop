@@ -39,13 +39,13 @@ final class TaskGroup
     /** @return list<mixed> */
     public function awaitAll(): array
     {
-        $started = (int) floor(microtime(true) * 1_000);
+        $started = intdiv(hrtime(true), 1_000_000);
         try {
             $results = [];
             foreach ($this->tasks as $task) {
                 $remaining = $this->deadlineMs;
                 if ($remaining !== null) {
-                    $remaining -= (int) floor(microtime(true) * 1_000) - $started;
+                    $remaining -= intdiv(hrtime(true), 1_000_000) - $started;
                     if ($remaining < 1) {
                         throw new DeadlineExceededException();
                     }

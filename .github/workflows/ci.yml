@@ -71,6 +71,15 @@ jobs:
             kill "$host"
             exit "$status"
           '
+      - name: DesktopUI, Markdown, Code and Auth packages
+        run: |
+          for test in packages/desktop-ui/tests/*.php packages/markdown/tests/run.php packages/code/tests/run.php packages/auth/tests/run.php; do
+            php "$test" || exit 1
+          done
+      - name: End-to-end scripts of the four clones
+        run: |
+          scripts/e2e-setup.sh
+          PAM_DESKTOP_HOST=target/debug/pam-desktop xvfb-run -a scripts/e2e.sh
       - name: Host archive is reproducible
         run: |
           version=$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "pam-desktop-host") | .version')
@@ -126,3 +135,9 @@ jobs:
       - run: cargo build --locked -p pam-desktop-host
       - name: PHP package
         run: php packages/desktop/tests/run.php
+      - name: End-to-end scripts of the four clones
+        shell: bash
+        run: |
+          composer install --no-interaction --prefer-dist
+          scripts/e2e-setup.sh
+          PAM_DESKTOP_HOST=target/debug/pam-desktop scripts/e2e.sh

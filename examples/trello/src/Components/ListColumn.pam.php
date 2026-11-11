@@ -97,11 +97,12 @@ final class ListColumn extends Component
                               :dragging="$dragging === $card->id" :over="$over === $card->id && $dragging !== $card->id"
                               @open="forward('open', $card->id)" @dragStart="forward('dragStart', $card->id)"
                               @dragEnd="forward('dragEnd')" @over="forward('over', $card->id)"
-                              @drop="dropBefore" @complete="forward('complete', $card->id)" />
+                              @drop="dropBefore" @complete="forward('complete', $card->id)"
+                              @watch="forward('watch', $card->id)" @moveTo="forward('moveTo', $event)" />
             </VirtualizedList>
             <View p-if="$over === 'end:' . $list->id && $dragging !== null" class="gap end-gap" />
             <Column p-if="$adding" class="composer" captureKeys="Escape" on:keyDown="key">
-                <Input class="field" multiline="true" submitBehavior="submit" model="draft" sync="immediate"
+                <Input testId="new-card" class="field" multiline="true" submitBehavior="submit" model="draft" sync="immediate"
                        placeholder="Enter a title or paste a link" placeholderColor="#626F86" autoFocus="true" @submit="add" />
                 <Row class="composer-actions">
                     <Pressable class="add-button" cursor="pointer" @press="add">

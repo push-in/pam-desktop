@@ -24,6 +24,9 @@ pam desktop dev
   The position comes from the clock: the bar ticks once a second only while
   something plays and the window is visible.
 - **Search**: Browse all, then the top result and songs as you type.
+- **Motion**: hover colours and the cards' rising play button are CSS
+  transitions run by the host; a context menu on every track (with a Share
+  submenu) and rich tooltips with shortcuts on the player.
 
 Icons are the Lucide set bundled with PAM Desktop (`font="Lucide"`); Figtree
 and the covers are packaged under `assets/`. Artists and songs are fictional.

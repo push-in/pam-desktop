@@ -25,6 +25,10 @@ pam desktop dev
   Escape closes it.
 - **Card detail**: a `Modal` with the cover, members, labels, watching, the due
   date you can complete, description, checklist progress and the actions.
+- **Kept on disk**: the board is saved in SQLite (`board.db`), its schema
+  versioned with `Migrations`; cards you add or move are there after a
+  restart. A context menu on every card moves it to another list, and the
+  app icon counts the overdue cards.
 
 Icons are the Lucide set bundled with PAM Desktop (`font="Lucide"`); Noto Sans
 (Latin subset), the background and the covers are packaged under `assets/`.

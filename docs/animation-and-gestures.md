@@ -32,6 +32,19 @@ View::make()
 View::make()->transition('transform 300ms spring(1 260 18), opacity 120ms ease-out 40ms');
 ```
 
+`transition()` animates `opacity`, `transform` (or `translate`, `scale`, `rotate`), `background-color`, `color`, `border-color` and `border-radius`, or `all` of them. Any other name throws.
+
+The same list works in a `<style>` block, and it applies to state styles too. `:hover`, `:focus` and group hover are resolved by the host, so the fade below never reaches PHP:
+
+```css
+.row { background-color: #00000000; transition: background-color 120ms ease-out; }
+.row:hover { background-color: #2A2D2E; }
+.row .actions { opacity: 0; transition: opacity 150ms; }
+.row:hover .actions { opacity: 1; }
+```
+
+Pressed styles keep their own fixed press feedback. `prefers-reduced-motion` turns every implicit transition into an instant change.
+
 ## Presets
 
 `motion()` plays an entrance when the element appears.

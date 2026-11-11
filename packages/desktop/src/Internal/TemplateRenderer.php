@@ -744,6 +744,7 @@ final class TemplateRenderer
         'statusBarTranslucent' => true,
         'horizontal' => true,
         'contentOffset' => true,
+        'contextMenu' => true,
     ];
 
     /** @var array<string, EventKind> */
@@ -846,6 +847,32 @@ final class TemplateRenderer
         'TouchableWithoutFeedback' => [], 'TouchableNativeFeedback' => [],
         'Icon' => ['name' => true, 'font' => true, 'size' => true, 'color' => true],
         'Image' => ['source' => true],
+        'Input' => ['value' => true], 'TextInput' => ['value' => true],
+        'Scroll' => [], 'ScrollView' => ['horizontal' => true],
+        'VirtualizedList' => ['items' => true],
+        'GestureDetector' => ['gestureType' => true],
+        'Switch' => ['checked' => true],
+        'Link' => ['mode' => true, 'params' => true, 'route' => true, 'to' => true],
+        'DragSource' => ['dragData' => true, 'dragType' => true], 'DropTarget' => ['dropType' => true],
+        'Modal' => ['presentation' => true, 'visible' => true],
+    ];
+
+    /** Tags the renderer builds itself (the others come from TemplateRegistry). */
+    private const BUILTIN_TAGS = [
+        'ActivityIndicator' => true, 'Animated' => true, 'Audio' => true, 'BottomSheet' => true, 'Button' => true,
+        'Column' => true, 'CustomView' => true, 'DragSource' => true, 'DrawingCanvas' => true, 'DropTarget' => true,
+        'FlatList' => true, 'GestureDetector' => true, 'Grid' => true, 'Icon' => true, 'Image' => true,
+        'ImageBackground' => true, 'Input' => true, 'InputAccessoryView' => true, 'InteractionRegion' => true,
+        'KeyboardAvoidingView' => true, 'LinearGradient' => true, 'Link' => true, 'MediaPlayer' => true,
+        'Modal' => true, 'Native' => true, 'NativeList' => true, 'Pressable' => true, 'RefreshControl' => true,
+        'Row' => true, 'SafeAreaView' => true, 'Screen' => true, 'Scroll' => true, 'ScrollView' => true,
+        'SectionList' => true, 'Shimmer' => true, 'Spacer' => true, 'Span' => true, 'StatusBar' => true,
+        'Swipeable' => true, 'Switch' => true, 'Text' => true, 'TextInput' => true, 'TouchableHighlight' => true,
+        'TouchableNativeFeedback' => true, 'TouchableOpacity' => true, 'TouchableWithoutFeedback' => true,
+        'Video' => true, 'View' => true, 'VirtualGrid' => true, 'VirtualizedList' => true, 'WebView' => true,
+        'If' => true, 'Show' => true, 'Match' => true, 'Await' => true, 'Each' => true, 'Slot' => true,
+        'Case' => true, 'Else' => true, 'Default' => true, 'Pending' => true, 'Then' => true, 'Catch' => true,
+        'Template' => true, 'Fragment' => true,
     ];
 
     /** Common slips from the web or React Native and the attribute meant. */
@@ -894,6 +921,48 @@ final class TemplateRenderer
         return $unknown;
     }
 
+    /**
+     * An attribute of a compiled component tag that is neither one of its
+     * props (`$props`), nor an attribute of its root element, nor an event:
+     * rendering it fails with "Unknown props".
+     *
+     * @param array<string, true> $props
+     */
+    public static function unknownComponentAttribute(string $tag, string $attribute, array $props): ?string
+    {
+        $name = ltrim($attribute, ':');
+        if (
+            isset($props[$name])
+            || isset(self::PROPERTIES[$name])
+            || isset(self::SPECIAL_ATTRIBUTES[$name])
+            || isset(self::EVENTS[$name])
+            || in_array($name, ['class', 'key', 'ref', 'nativeRef', 'recipe', 'className'], true)
+            || preg_match('/^(p-|on:|@|data-|aria-|variant:|bind:|model|__pam)/', $name) === 1
+        ) {
+            return null;
+        }
+        $best = 3;
+        $suggestion = null;
+        foreach (array_keys($props) as $known) {
+            $distance = levenshtein(strtolower($name), strtolower($known));
+            if ($distance < $best) {
+                [$best, $suggestion] = [$distance, $known];
+            }
+        }
+
+        return "unknown prop {$tag}.{$name}".($suggestion === null ? '' : ", did you mean {$suggestion}?");
+    }
+
+    /** Whether `$tag` names something a template can render. */
+    public static function knownTag(string $tag): bool
+    {
+        return $tag === ''
+            || isset(self::BUILTIN_TAGS[$tag])
+            || TemplateRegistry::factory($tag) !== null
+            || TemplateRegistry::isCompiledComponent($tag)
+            || !ctype_upper($tag[0]);
+    }
+
     public static function unknownBuiltinAttribute(string $tag, string $attribute): ?string
     {
         $extras = self::CHECKED_TAGS[$tag] ?? null;
@@ -906,9 +975,22 @@ final class TemplateRenderer
             || isset(self::EVENTS[$name])
             || ($tag === 'Image' && isset(self::MEDIA_CACHE_VALUES[$name]))
             || in_array($name, ['class', 'key', 'ref', 'nativeRef', 'recipe', 'text'], true)
-            || preg_match('/^(p-|on:|@|data-|aria-|variant:|bind:|model|__pam)/', $name) === 1
+            || preg_match('/^(p-|@|data-|aria-|variant:|bind:|model|__pam)/', $name) === 1
         ) {
             return null;
+        }
+        if (str_starts_with($name, 'on:')) {
+            // An event the element never emits would never run.
+            $best = 3;
+            $suggestion = null;
+            foreach (array_keys(self::EVENTS) as $known) {
+                $distance = levenshtein(strtolower($name), strtolower($known));
+                if ($distance < $best) {
+                    [$best, $suggestion] = [$distance, $known];
+                }
+            }
+
+            return "unknown event {$tag}.{$name}".($suggestion === null ? '' : ", did you mean {$suggestion}?");
         }
         $suggestion = self::ATTRIBUTE_ALIASES[$name] ?? null;
         if ($suggestion === null) {
@@ -1608,8 +1690,10 @@ final class TemplateRenderer
             $plan = $planNode->pamTagPlans[$variant]
                 ??= self::tagPlan($tag, $attributes, $factory !== null, $childNodes);
             $attributes = $plan['attributes'];
-        } elseif ($factory === null) {
-            $attributes = self::nativeEventAliases($attributes);
+        } else {
+            $attributes = $factory === null
+                ? self::nativeEventAliases($attributes)
+                : self::componentEventAliases($tag, $attributes);
         }
         $declaredAttributes = $attributes;
         // $knownClass: already evaluated by fastNode() (never twice).
@@ -3771,6 +3855,28 @@ final class TemplateRenderer
      * @param array<string, string|bool> $attributes
      * @return array<string, mixed>
      */
+    /**
+     * `on:name` on a compiled component listens to the component's `name`
+     * event, like `@name`: a component has no native events of its own.
+     *
+     * @param array<string, mixed> $attributes
+     * @return array<string, mixed>
+     */
+    private static function componentEventAliases(string $tag, array $attributes): array
+    {
+        if (!TemplateRegistry::isCompiledComponent($tag)) {
+            return $attributes;
+        }
+        foreach ($attributes as $name => $value) {
+            if (str_starts_with($name, 'on:')) {
+                unset($attributes[$name]);
+                $attributes['@'.substr($name, 3)] ??= $value;
+            }
+        }
+
+        return $attributes;
+    }
+
     private static function tagPlan(string $tag, array $attributes, bool $factory, array $childNodes = []): array
     {
         // Children that are only text interpolations need no child render
@@ -3782,9 +3888,9 @@ final class TemplateRenderer
                 break;
             }
         }
-        if (!$factory) {
-            $attributes = self::nativeEventAliases($attributes);
-        }
+        $attributes = $factory
+            ? self::componentEventAliases($tag, $attributes)
+            : self::nativeEventAliases($attributes);
         $events = [];
         foreach (self::EVENTS as $name => $event) {
             if (isset($attributes[$name])) {
@@ -4421,6 +4527,18 @@ final class TemplateRenderer
             ));
         }
 
+        if (isset($attributes['contextMenu'])) {
+            $items = $attributes['contextMenu'];
+            if (!is_array($items) || array_filter($items, static fn (mixed $item): bool => !$item instanceof \Pam\Desktop\MenuItem) !== []) {
+                throw new InvalidArgumentException(
+                    'Element contextMenu must be a list of MenuItem (MenuItem::make, ::checkbox, ::submenu, ::separator).',
+                );
+            }
+            if ($items !== []) {
+                $element = $element->contextMenu(...array_values($items));
+            }
+        }
+
         if (isset($attributes['accessibilityActions'])) {
             $actions = $attributes['accessibilityActions'];
             if (!is_array($actions)) {
@@ -4744,6 +4862,11 @@ final class TemplateRenderer
 
     private static function propertyValue(PropKey $key, mixed $value): string|int|float|bool|null
     {
+        // A bound null leaves the property unset, whatever its type
+        // (`:textColor="$on ? '#F00' : null"` falls back to the stylesheet).
+        if ($value === null) {
+            return null;
+        }
         // Conversions of scalar inputs are pure; memoized per native key.
         $id = $key->value;
         if (is_string($value)) {
@@ -7696,6 +7819,31 @@ final class TemplateRenderer
     /**
      * @param array<string, mixed> $data
      */
+    /**
+     * `$event` in a handler expression (`on:press="pick($row, $event)"`):
+     * the typed payload of the kinds that have one, else the raw value.
+     */
+    private static function typedEvent(EventKind $kind, mixed $payload): mixed
+    {
+        $class = match ($kind) {
+            EventKind::Press, EventKind::PressIn, EventKind::PressOut, EventKind::LongPress => \Pam\Desktop\PressEvent::class,
+            EventKind::KeyDown, EventKind::KeyUp => \Pam\Desktop\KeyEvent::class,
+            EventKind::Layout => \Pam\Desktop\LayoutEvent::class,
+            EventKind::GestureBegin, EventKind::GestureUpdate, EventKind::GestureEnd, EventKind::GestureCancel => \Pam\Desktop\GestureEvent::class,
+            EventKind::GestureSettle => \Pam\Desktop\GestureSettleEvent::class,
+            EventKind::Drop => \Pam\Desktop\DragPayload::class,
+            default => null,
+        };
+        if ($class === null || !is_string($payload) || $payload === '') {
+            return $payload;
+        }
+        try {
+            return EventPayloads::decode($class, $payload);
+        } catch (\Throwable) {
+            return $payload;
+        }
+    }
+
     private static function handler(
         string|bool $raw,
         EventKind $kind,
@@ -7714,6 +7862,7 @@ final class TemplateRenderer
 
             return static function (mixed $payload = '') use (
                 $raw,
+                $kind,
                 $scope,
                 $data,
             ): void {
@@ -7723,7 +7872,7 @@ final class TemplateRenderer
                 TemplateExpression::evaluate(
                     $raw,
                     $scope,
-                    [...$data, 'event' => $payload],
+                    [...$data, 'event' => self::typedEvent($kind, $payload)],
                 );
             };
         }

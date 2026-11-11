@@ -9,13 +9,15 @@ use App\Domain\ConversationKind;
 use App\Domain\Entry;
 use App\Domain\Member;
 use App\Domain\Message;
-use App\Domain\Run;
 use App\Domain\SearchHit;
 use DateTimeImmutable;
+use Pam\Desktop\Markdown\MarkdownTheme;
 
 /** The Acme Inc workspace, in memory: members, conversations and their messages. */
 final class Workspace
 {
+    private ?MarkdownTheme $markdownTheme = null;
+
     public const string NAME = 'Acme Inc';
 
     public const string ME = 'u-me';
@@ -73,6 +75,18 @@ final class Workspace
         return $this->members[self::ME];
     }
 
+    /** @return list<string> every member's name, for mentions */
+    public function names(): array
+    {
+        return array_map(static fn (Member $member): string => $member->name, array_values($this->members));
+    }
+
+    /** How message bodies look: Slack's text colours in Lato. */
+    public function markdownTheme(): MarkdownTheme
+    {
+        return $this->markdownTheme ??= new MarkdownTheme(fontFamily: 'Lato', monospace: 'monospace', mentionSelf: 0xFF1264A3);
+    }
+
     public function member(string $id): Member
     {
         return $this->members[$id];
@@ -99,6 +113,12 @@ final class Workspace
     public function messages(string $conversationId): array
     {
         return $this->messages[$conversationId];
+    }
+
+    /** Unread mentions and direct messages: the count on the app icon. */
+    public function mentions(): int
+    {
+        return array_sum(array_map(static fn (Conversation $conversation): int => $conversation->mentions, $this->conversations));
     }
 
     public function markRead(string $conversationId): void
@@ -254,14 +274,7 @@ final class Workspace
 
     private function entry(Message $message, ?Message $previous): Entry
     {
-        $names = array_map(static fn (Member $member): string => $member->name, array_values($this->members));
-
-        return Entry::message(
-            $message,
-            $this->members[$message->authorId],
-            $message->continues($previous),
-            Run::parse($message->text, $names, $this->me()->name),
-        );
+        return Entry::message($message, $this->members[$message->authorId], $message->continues($previous));
     }
 
     private static function dayLabel(DateTimeImmutable $at): string

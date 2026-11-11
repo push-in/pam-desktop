@@ -183,6 +183,8 @@ pub struct RuntimeConfig {
     pub modules: Vec<(String, Box<dyn crate::modules::Module>)>,
     /// The HTTP stack of the host binary; without one, network features fail.
     pub http_client: Option<Arc<dyn crate::modules::fetch::HttpClient>>,
+    /// A test script to run against the window (`PAM_DESKTOP_SCRIPT`).
+    pub script: Option<std::path::PathBuf>,
 }
 
 /// Where the application keeps its files.
@@ -316,6 +318,8 @@ pub struct Runtime<B: Backend> {
     pub(crate) selection: crate::selection::TextSelection,
     drag_drop: crate::dragdrop::DragDrop,
     pub(crate) error_overlay: crate::error_overlay::ErrorOverlay,
+    /// The visual inspector of development runs (F12).
+    inspector: crate::inspector::Inspector,
     pub(crate) toasts: crate::toast::Toasts,
     observers: crate::observers::Observers,
     gestures: crate::gestures::Gestures,
@@ -354,6 +358,10 @@ pub struct Runtime<B: Backend> {
     armed_wake: Option<u64>,
     /// Set when the worker exited or the window closed: the host should quit.
     pub finished: bool,
+    /// The main window's size and maximized state, saved when the app quits.
+    window_memory: Option<crate::window_memory::WindowMemory>,
+    /// The test script being run, if any.
+    driver: Option<crate::driver::Driver>,
 }
 
 /// Borrows the controller context out of a runtime's fields.
@@ -382,7 +390,18 @@ impl<B: Backend> Runtime<B> {
         config: RuntimeConfig,
     ) -> std::io::Result<Self> {
         backend.set_asset_root(&config.directories.assets);
-        backend.open_window(MAIN_WINDOW, &config.window);
+        let window_memory = config
+            .window
+            .remember
+            .then(|| crate::window_memory::WindowMemory::load(&config.directories.state));
+        let mut window = config.window.clone();
+        let maximize = window_memory
+            .as_ref()
+            .is_some_and(|memory| memory.restore(&mut window));
+        backend.open_window(MAIN_WINDOW, &window);
+        if maximize {
+            backend.window_command(MAIN_WINDOW, &crate::shell::WindowCommand::Maximize);
+        }
         let system = backend.window_metrics(MAIN_WINDOW);
         let settings = Settings::load(&config.directories.state);
         backend.set_appearance(settings.forced_dark());
@@ -529,6 +548,7 @@ impl<B: Backend> Runtime<B> {
             selection: crate::selection::TextSelection::default(),
             drag_drop: crate::dragdrop::DragDrop::default(),
             error_overlay: crate::error_overlay::ErrorOverlay::new(config.development),
+            inspector: crate::inspector::Inspector::default(),
             toasts: crate::toast::Toasts::default(),
             observers: crate::observers::Observers::default(),
             gestures: crate::gestures::Gestures::default(),
@@ -558,6 +578,30 @@ impl<B: Backend> Runtime<B> {
             quit_requested: false,
             armed_wake: None,
             finished: false,
+            window_memory,
+            driver: None,
+        })
+        .map(|mut runtime: Self| {
+            if let Some(path) = &config.script {
+                match crate::driver::Driver::load(path) {
+                    Ok(driver) => {
+                        eprintln!(
+                            "pam-desktop script: {} steps from {}",
+                            driver.steps(),
+                            path.display()
+                        );
+                        runtime.driver = Some(driver);
+                        let at = runtime.now_ms() + 300;
+                        runtime.timers.schedule(Timer::Script, at);
+                    }
+                    Err(error) => {
+                        eprintln!("pam-desktop script: {error}");
+                        crate::driver::fail();
+                        runtime.finished = true;
+                    }
+                }
+            }
+            runtime
         })
     }
 
@@ -598,6 +642,11 @@ impl<B: Backend> Runtime<B> {
         self.draining = false;
         if self.finished && !self.quit_requested {
             self.quit_requested = true;
+            if let Some(memory) = &mut self.window_memory
+                && let Err(error) = memory.save()
+            {
+                eprintln!("pam-desktop: could not save the window size: {error}");
+            }
             self.worker = None;
             self.backend.quit();
         }
@@ -958,7 +1007,17 @@ impl<B: Backend> Runtime<B> {
         self.update_host_overlays();
     }
 
-    /// Stacks the host chrome above the application: toasts, then errors.
+    /// Rebuilds the inspector outline and card (development, F12).
+    fn refresh_inspector(&mut self) {
+        let backend = &mut self.backend;
+        let mut measure =
+            |block: &crate::text::TextBlock, width: f32| backend.measure_text(block, width);
+        let mut ctx = ctx!(self);
+        self.inspector.rebuild(&mut ctx, &mut measure);
+        self.update_host_overlays();
+    }
+
+    /// Stacks the host chrome above the application: toasts, errors, the inspector.
     pub(crate) fn update_host_overlays(&mut self) {
         let overlays: Vec<NodeId> = self
             .shared_elements
@@ -966,6 +1025,7 @@ impl<B: Backend> Runtime<B> {
             .iter()
             .chain(self.toasts.roots())
             .chain(self.error_overlay.roots())
+            .chain(self.inspector.roots())
             .copied()
             .collect();
         self.scene.set_host_overlays(overlays);
@@ -1017,6 +1077,10 @@ impl<B: Backend> Runtime<B> {
         }
         if !applied {
             self.resynchronize();
+        }
+        if self.inspector.enabled() {
+            // The inspected node may have moved or gone.
+            self.refresh_inspector();
         }
     }
 
@@ -1106,6 +1170,15 @@ impl<B: Backend> Runtime<B> {
                         pointer.position,
                         self.scene.hit_test(pointer.position)
                     );
+                }
+                if self.inspector.enabled() {
+                    // Inspecting: the pointer picks nodes and never reaches the app.
+                    if pointer.window == MAIN_WINDOW
+                        && self.inspector.pointer(&self.scene, &pointer)
+                    {
+                        self.refresh_inspector();
+                    }
+                    return;
                 }
                 if self.select_text(&pointer) {
                     return;
@@ -1205,6 +1278,9 @@ impl<B: Backend> Runtime<B> {
                     return;
                 }
                 let scale_changed = self.metrics.scale != scale;
+                if let Some(memory) = &mut self.window_memory {
+                    memory.resized(size, self.backend.window_state(MAIN_WINDOW));
+                }
                 self.metrics.size = size;
                 self.metrics.scale = scale;
                 self.scene.environment.scale = scale;
@@ -1233,8 +1309,9 @@ impl<B: Backend> Runtime<B> {
             BackendEvent::MenuAction { id } => self.shell.emit("menu", &id, "{}"),
             BackendEvent::Shortcut { id } => self.shell.emit("shortcut", &id, "{}"),
             BackendEvent::TrayActivated => self.shell.emit("tray", "activate", "{}"),
-            BackendEvent::NotificationActivated { id } => {
-                self.shell.emit("notification", &id, "{}")
+            BackendEvent::NotificationActivated { id, action } => {
+                let payload = serde_json::json!({ "action": action }).to_string();
+                self.shell.emit("notification", &id, &payload);
             }
             BackendEvent::FilesDropped {
                 window,
@@ -1247,6 +1324,9 @@ impl<B: Backend> Runtime<B> {
             }
             BackendEvent::WindowStateChanged { window, state } => {
                 if window == MAIN_WINDOW {
+                    if let Some(memory) = &mut self.window_memory {
+                        memory.state_changed(state);
+                    }
                     self.concealed = state.minimized;
                     self.report_app_state();
                     self.window_state_changed(state);
@@ -1285,6 +1365,7 @@ impl<B: Backend> Runtime<B> {
                 let due = self.timers.take_due(self.now_ms());
                 let mut recover = false;
                 let mut toast_changed = false;
+                let mut script = false;
                 let mut ctx = ctx!(self);
                 for timer in due {
                     match timer {
@@ -1328,6 +1409,7 @@ impl<B: Backend> Runtime<B> {
                         Timer::ScrollRest(_) | Timer::ListWindow(_) | Timer::RefreshFallback(_) => {
                             self.scrolling.on_timer(&mut ctx, timer)
                         }
+                        Timer::Script => script = true,
                         _ => self.interaction.on_timer(&mut ctx, timer),
                     }
                 }
@@ -1336,6 +1418,9 @@ impl<B: Backend> Runtime<B> {
                 }
                 if recover {
                     self.reload();
+                }
+                if script {
+                    self.run_script();
                 }
             }
             BackendEvent::ScrollChanged { id, offset } => {
@@ -1528,10 +1613,9 @@ impl<B: Backend> Runtime<B> {
                         .toasts
                         .on_sample(&mut ctx, sample.value, sample.finished)
                 }
-                Owner::Transition(..) | Owner::Motion(..) => {
-                    self.motion
-                        .on_sample(&mut ctx, sample.owner, sample.value, sample.finished)
-                }
+                Owner::Transition(..) | Owner::Motion(..) | Owner::Style(..) => self
+                    .motion
+                    .on_sample(&mut ctx, sample.owner, sample.value, sample.finished),
             }
         }
         if toast_changed {
@@ -1737,6 +1821,112 @@ impl<B: Backend> Runtime<B> {
         }
     }
 
+    /// Runs the test script's steps that can run now, then checks again soon.
+    fn run_script(&mut self) {
+        use crate::backend::{PointerButton, PointerEvent, PointerPhase};
+        use crate::driver::Action;
+        for _ in 0..16 {
+            let now = self.now_ms();
+            let Some(driver) = self.driver.as_mut() else {
+                return;
+            };
+            let action = driver.poll(&self.scene, now);
+            let pointer = |phase, position, count: u8| PointerEvent {
+                window: MAIN_WINDOW,
+                phase,
+                position,
+                button: PointerButton::Primary,
+                modifiers: crate::backend::Modifiers::default(),
+                click_count: count,
+                time_ms: now,
+            };
+            match action {
+                Action::Wait => break,
+                Action::Next => continue,
+                Action::Done => {
+                    eprintln!("pam-desktop script: passed");
+                    self.driver = None;
+                    self.finished = true;
+                    return;
+                }
+                Action::Fail(reason) => {
+                    eprintln!("pam-desktop script: FAILED at {reason}");
+                    self.driver = None;
+                    self.finished = true;
+                    return;
+                }
+                Action::Hover(position) => {
+                    self.handle_backend_event(BackendEvent::Pointer(pointer(
+                        PointerPhase::Move,
+                        position,
+                        0,
+                    )));
+                }
+                Action::Click(_, position, count) => {
+                    for click in 1..=count {
+                        self.handle_backend_event(BackendEvent::Pointer(pointer(
+                            PointerPhase::Move,
+                            position,
+                            0,
+                        )));
+                        self.handle_backend_event(BackendEvent::Pointer(pointer(
+                            PointerPhase::Down,
+                            position,
+                            click,
+                        )));
+                        self.handle_backend_event(BackendEvent::Pointer(pointer(
+                            PointerPhase::Up,
+                            position,
+                            click,
+                        )));
+                    }
+                }
+                Action::Type(field, text) => {
+                    let target = field.or_else(|| self.interaction.focused());
+                    if let Some(id) = target {
+                        let length = text.chars().count() as u32;
+                        self.handle_backend_event(BackendEvent::Input {
+                            id,
+                            event: crate::backend::InputEvent::Edited {
+                                text,
+                                selection: (length, length),
+                            },
+                        });
+                    }
+                }
+                Action::Submit(id) => {
+                    self.handle_backend_event(BackendEvent::Input {
+                        id,
+                        event: crate::backend::InputEvent::Submitted,
+                    });
+                }
+                Action::Key(combo) => {
+                    if let Some(accelerator) = crate::shell::Accelerator::parse(&combo) {
+                        let modifiers = accelerator.modifiers;
+                        let key = accelerator.key.clone();
+                        if let Some(id) = self.shell.shortcut_for(&key, modifiers) {
+                            self.handle_backend_event(BackendEvent::Shortcut { id });
+                        } else {
+                            for pressed in [true, false] {
+                                self.handle_key(&KeyEvent {
+                                    window: MAIN_WINDOW,
+                                    pressed,
+                                    key: key.clone(),
+                                    modifiers,
+                                    repeat: false,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            // The application answers in its own time: look again soon.
+            break;
+        }
+        let at = self.now_ms() + 50;
+        self.timers.schedule(Timer::Script, at);
+    }
+
     fn handle_key(&mut self, key: &KeyEvent) {
         if debug_enabled() && key.pressed {
             eprintln!(
@@ -1760,6 +1950,17 @@ impl<B: Backend> Runtime<B> {
         {
             let mut ctx = ctx!(self);
             self.interaction.set_keyboard_modality(&mut ctx, true);
+        }
+        if self.development && key.pressed && !key.repeat && key.window == MAIN_WINDOW {
+            let toggle = key.key == "F12"
+                || (key.modifiers.control
+                    && key.modifiers.shift
+                    && key.key.eq_ignore_ascii_case("i"));
+            if toggle || (key.key == "Escape" && self.inspector.enabled()) {
+                self.inspector.toggle();
+                self.refresh_inspector();
+                return;
+            }
         }
         if key.pressed && !key.repeat && self.selection_key(key) {
             return;

@@ -16,7 +16,7 @@ pub type PropMap = BTreeMap<PropKey, PropValue>;
 pub struct Props<'a> {
     base: &'a PropMap,
     /// Checked first to last; the first layer that has the key wins.
-    overlays: [Option<&'a PropMap>; 2],
+    overlays: [Option<&'a PropMap>; 3],
 }
 
 impl<'a> Props<'a> {
@@ -24,12 +24,12 @@ impl<'a> Props<'a> {
     pub const fn new(base: &'a PropMap) -> Self {
         Self {
             base,
-            overlays: [None, None],
+            overlays: [None, None, None],
         }
     }
 
     #[must_use]
-    pub const fn with_overlays(base: &'a PropMap, overlays: [Option<&'a PropMap>; 2]) -> Self {
+    pub const fn with_overlays(base: &'a PropMap, overlays: [Option<&'a PropMap>; 3]) -> Self {
         Self { base, overlays }
     }
 

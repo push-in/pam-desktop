@@ -381,7 +381,7 @@ impl Scrolling {
                     self.dirty = true;
                 }
             }
-            Change::Motion { .. } => {}
+            Change::Motion { .. } | Change::Style { .. } => {}
         }
     }
 

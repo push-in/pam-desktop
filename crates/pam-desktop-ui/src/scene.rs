@@ -166,9 +166,56 @@ pub enum StyleLayer {
     Interaction = 0,
     /// Presentation chrome (sheet corners) and animated fills.
     Presenter = 1,
+    /// Colours an implicit transition is moving between two values; above
+    /// every other layer while it runs.
+    Transition = 2,
 }
 
-const STYLE_LAYERS: usize = 2;
+const STYLE_LAYERS: usize = 3;
+
+/// The styles (besides the presentation properties) an implicit transition
+/// can animate.
+pub const TRANSITION_STYLES: [PropKey; 4] = [
+    PropKey::BackgroundColor,
+    PropKey::TextColor,
+    PropKey::BorderColor,
+    PropKey::BorderRadius,
+];
+
+/// A value of one of `TRANSITION_STYLES`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StyleValue {
+    Color(u32),
+    Length(f32),
+}
+
+impl StyleValue {
+    /// `self` → `to` at `t` (0..1); colours mix per ARGB channel.
+    #[must_use]
+    pub fn mix(self, to: Self, t: f32) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        match (self, to) {
+            (Self::Color(from), Self::Color(to)) => {
+                let channel = |shift: u32| {
+                    let a = ((from >> shift) & 0xFF) as f32;
+                    let b = ((to >> shift) & 0xFF) as f32;
+                    ((a + (b - a) * t).round() as u32) << shift
+                };
+                Self::Color(channel(24) | channel(16) | channel(8) | channel(0))
+            }
+            (Self::Length(from), Self::Length(to)) => Self::Length(from + (to - from) * t),
+            (_, to) => to,
+        }
+    }
+
+    #[must_use]
+    pub fn to_prop(self) -> PropValue {
+        match self {
+            Self::Color(argb) => PropValue::Integer(i64::from(argb)),
+            Self::Length(length) => PropValue::Float(f64::from(length)),
+        }
+    }
+}
 
 /// Presentation values an animation writes over a node's own properties:
 /// absolute opacity, translation (logical units), scale factors and rotation
@@ -226,6 +273,15 @@ pub fn motion_prop_key(property: MotionProperty) -> PropKey {
     }
 }
 
+const MOTION_PROPERTIES: [MotionProperty; 6] = [
+    MotionProperty::Opacity,
+    MotionProperty::TranslateX,
+    MotionProperty::TranslateY,
+    MotionProperty::ScaleX,
+    MotionProperty::ScaleY,
+    MotionProperty::Rotate,
+];
+
 fn motion_property(key: PropKey) -> Option<MotionProperty> {
     match key {
         PropKey::Opacity => Some(MotionProperty::Opacity),
@@ -260,6 +316,13 @@ pub enum Change {
         id: NodeId,
         property: MotionProperty,
         previous: Option<f32>,
+    },
+    /// A transitionable style (colour, corner radius) changed, from props or
+    /// state styles; `previous` is what showed (`None` when unset).
+    Style {
+        id: NodeId,
+        key: PropKey,
+        previous: Option<StyleValue>,
     },
     /// The node gained, lost or reordered children.
     Children(NodeId),
@@ -766,6 +829,12 @@ impl Scene {
             return;
         };
         let previous = node.props.get(&key).and_then(PropValue::as_number);
+        let style_before = TRANSITION_STYLES
+            .contains(&key)
+            .then(|| self.styled_value(id, key));
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return;
+        };
         match value {
             Some(value) => {
                 if node.props.get(&key) == Some(&value) {
@@ -780,6 +849,14 @@ impl Scene {
             }
         }
         self.changes.push(Change::Updated(id, key));
+        if let Some(previous) = style_before
+            && previous != self.styled_value(id, key)
+        {
+            self.changes.push(Change::Style { id, key, previous });
+        }
+        let Some(node) = self.nodes.get(&id) else {
+            return;
+        };
         if let Some(property) = motion_property(key) {
             self.changes.push(Change::Motion {
                 id,
@@ -958,13 +1035,39 @@ impl Scene {
         if current == overlay.as_ref() {
             return;
         }
+        let tracked = layer != StyleLayer::Transition;
+        let before = self.overlaid_motion(id);
+        let styles_before = self.styled_values(id);
         let layers = self
             .style_overlays
             .entry(id)
-            .or_insert_with(|| [None, None]);
+            .or_insert_with(|| [None, None, None]);
         layers[layer as usize] = overlay;
         if layers.iter().all(Option::is_none) {
             self.style_overlays.remove(&id);
+        }
+        // A state style that moves a presentation property (`.row:hover
+        // { opacity: 1 }`) reports it like a property change, so an implicit
+        // transition on the node animates it.
+        let after = self.overlaid_motion(id);
+        let styles_after = self.styled_values(id);
+        for (position, key) in TRANSITION_STYLES.iter().enumerate() {
+            if tracked && styles_before[position] != styles_after[position] {
+                self.changes.push(Change::Style {
+                    id,
+                    key: *key,
+                    previous: styles_before[position],
+                });
+            }
+        }
+        for (position, property) in MOTION_PROPERTIES.iter().enumerate() {
+            if tracked && before[position] != after[position] {
+                self.changes.push(Change::Motion {
+                    id,
+                    property: *property,
+                    previous: Some(before[position]),
+                });
+            }
         }
         self.touch(id, Dirty::DECORATION.union(Dirty::TEXT).union(Dirty::LAYER));
         // An overlay may change the paint order among siblings.
@@ -973,11 +1076,64 @@ impl Scene {
         }
     }
 
+    /// The six presentation properties as the node's props and overlays
+    /// resolve them (motion values aside).
+    fn overlaid_motion(&self, id: NodeId) -> [f32; 6] {
+        let props = self.effective_props(id);
+        MOTION_PROPERTIES.map(|property| {
+            props
+                .as_ref()
+                .and_then(|props| props.number(motion_prop_key(property)))
+                .unwrap_or_else(|| motion_default(property))
+        })
+    }
+
+    /// What one layer currently puts over a node's own properties.
+    #[must_use]
+    pub fn style_overlay(&self, id: NodeId, layer: StyleLayer) -> Option<&PropMap> {
+        self.style_overlays.get(&id)?[layer as usize].as_ref()
+    }
+
+    /// The transitionable styles of a node as its props and state styles
+    /// resolve them, leaving out the transition layer itself.
+    fn styled_values(&self, id: NodeId) -> [Option<StyleValue>; 4] {
+        let props = self
+            .nodes
+            .get(&id)
+            .map(|node| match self.style_overlays.get(&id) {
+                Some(layers) => Props::with_overlays(
+                    &node.props,
+                    [layers[0].as_ref(), layers[1].as_ref(), None],
+                ),
+                None => Props::new(&node.props),
+            });
+        TRANSITION_STYLES.map(|key| {
+            let props = props.as_ref()?;
+            if key == PropKey::BorderRadius {
+                props.number(key).map(StyleValue::Length)
+            } else {
+                props
+                    .integer(key)
+                    .map(|argb| StyleValue::Color(argb as u32))
+            }
+        })
+    }
+
+    /// The value style `key` of a node settles on once no transition runs.
+    #[must_use]
+    pub fn styled_value(&self, id: NodeId, key: PropKey) -> Option<StyleValue> {
+        let position = TRANSITION_STYLES
+            .iter()
+            .position(|candidate| *candidate == key)?;
+        self.styled_values(id)[position]
+    }
+
     fn overlaid<'a>(&'a self, node: &'a SceneNode) -> Props<'a> {
         match self.style_overlays.get(&node.id) {
-            Some(layers) => {
-                Props::with_overlays(&node.props, [layers[0].as_ref(), layers[1].as_ref()])
-            }
+            Some(layers) => Props::with_overlays(
+                &node.props,
+                [layers[2].as_ref(), layers[0].as_ref(), layers[1].as_ref()],
+            ),
             None => Props::new(&node.props),
         }
     }
@@ -1365,15 +1521,34 @@ impl Scene {
         let Some(node) = self.nodes.get(&id) else {
             return Point::ZERO;
         };
-        let mut origin = node.frame.origin();
-        let mut current = node.parent;
-        while let Some(ancestor) = self.nodes.get(&current) {
-            if let Some(offset) = self.scroll_offsets.get(&current) {
-                origin = origin.offset(-offset.x, -offset.y);
+        self.window_point(id, node.frame.origin())
+    }
+
+    /// A point laid out in node `id` (frame coordinates) where it shows in
+    /// the window: moved by every transform and scroll offset above it, the
+    /// reverse of what `hit_test` does.
+    #[must_use]
+    pub fn window_point(&self, id: NodeId, point: Point) -> Point {
+        let mut point = point;
+        let mut current = id;
+        while let Some(node) = self.nodes.get(&current) {
+            if !node.layer.transform.is_identity() {
+                let origin = node.frame.origin();
+                let moved = node
+                    .layer
+                    .transform
+                    .apply(Point::new(point.x - origin.x, point.y - origin.y));
+                point = Point::new(moved.x + origin.x, moved.y + origin.y);
             }
-            current = ancestor.parent;
+            if node.parent == 0 {
+                break;
+            }
+            if let Some(offset) = self.scroll_offsets.get(&node.parent) {
+                point = point.offset(-offset.x, -offset.y);
+            }
+            current = node.parent;
         }
-        origin
+        point
     }
 
     /// Frame relative to the parent view, snapped to the device pixel grid.
@@ -2559,6 +2734,15 @@ mod tests {
         scene.set_scroll_offset(1, Point::new(0.0, 290.0));
         assert_eq!(scene.hit_test(Point::new(10.0, 20.0)), Some(3));
         assert_eq!(scene.window_origin(3), Point::new(0.0, 10.0));
+        // window_point is the reverse of hit_test, transforms included.
+        for id in [3, 4] {
+            let frame = scene.node(id).unwrap().frame;
+            let center = Point::new(frame.x + frame.width / 2.0, frame.y + frame.height / 2.0);
+            let shown = scene.window_point(id, center);
+            if shown.y >= 0.0 {
+                assert_eq!(scene.hit_test(shown), Some(id), "node {id} at {shown:?}");
+            }
+        }
     }
 
     #[test]

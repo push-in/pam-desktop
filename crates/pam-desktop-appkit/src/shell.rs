@@ -24,14 +24,16 @@ use objc2_app_kit::{
 };
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{
-    NSArray, NSBundle, NSCopying, NSError, NSNotification, NSOperationQueue, NSProcessInfo, NSURL,
-    NSUUID,
+    NSArray, NSBundle, NSCopying, NSError, NSNotification, NSOperationQueue, NSProcessInfo, NSSet,
+    NSURL, NSUUID,
 };
 use objc2_uniform_type_identifiers::UTType;
 use objc2_user_notifications::{
-    UNAuthorizationOptions, UNMutableNotificationContent, UNNotification,
-    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
-    UNNotificationSound, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+    UNAuthorizationOptions, UNMutableNotificationContent, UNNotification, UNNotificationAction,
+    UNNotificationActionOptions, UNNotificationCategory, UNNotificationCategoryOptions,
+    UNNotificationDefaultActionIdentifier, UNNotificationPresentationOptions,
+    UNNotificationRequest, UNNotificationResponse, UNNotificationSound, UNUserNotificationCenter,
+    UNUserNotificationCenterDelegate,
 };
 use pam_desktop_ui::backend::{AlertButtonStyle, AlertConfig, BackendEvent, Modifiers};
 use pam_desktop_ui::geometry::{Point, Size};
@@ -636,8 +638,12 @@ define_class!(
             completion: &block2::DynBlock<dyn Fn()>,
         ) {
             let id = response.notification().request().identifier().to_string();
+            let pressed = response.actionIdentifier();
+            // SAFETY: a constant string of the framework.
+            let default = unsafe { UNNotificationDefaultActionIdentifier };
+            let action = (!pressed.isEqualToString(default)).then(|| pressed.to_string());
             self.ivars()
-                .run(move || events::post(BackendEvent::NotificationActivated { id }));
+                .run(move || events::post(BackendEvent::NotificationActivated { id, action }));
             completion.call(());
         }
     }
@@ -650,6 +656,9 @@ pub struct Shell {
     menu_target: Option<Retained<MenuTarget>>,
     tray: Option<Tray>,
     notifications: Option<Retained<NotificationDelegate>>,
+    /// Every set of buttons used so far, as categories: the center only
+    /// shows the buttons of a registered category.
+    categories: Vec<Retained<UNNotificationCategory>>,
     /// The monitor of key presses in other applications, while any global
     /// shortcut is registered.
     global_monitor: Option<Retained<AnyObject>>,
@@ -664,6 +673,7 @@ impl Shell {
             menu_target: None,
             tray: None,
             notifications: None,
+            categories: Vec::new(),
             global_monitor: None,
             global_shortcuts: Rc::new(RefCell::new(Vec::new())),
         }
@@ -920,6 +930,54 @@ impl Shell {
     /// Posts a notification through the notification center, asking the
     /// user for permission the first time. Without a bundle identifier
     /// (a bare executable) the system offers no notifications at all.
+    /// The category whose buttons are the notification's (registered the
+    /// first time a set of buttons is used), or `None` without buttons.
+    fn category(
+        &mut self,
+        center: &UNUserNotificationCenter,
+        config: &NotificationConfig,
+    ) -> Option<String> {
+        if config.actions.is_empty() {
+            return None;
+        }
+        let identifier = format!(
+            "pam.{}",
+            config
+                .actions
+                .iter()
+                .map(|action| format!("{}={}", action.id, action.label))
+                .collect::<Vec<_>>()
+                .join("|")
+        );
+        let known = self
+            .categories
+            .iter()
+            .any(|category| category.identifier().to_string() == identifier);
+        if !known {
+            let actions: Vec<Retained<UNNotificationAction>> = config
+                .actions
+                .iter()
+                .map(|action| {
+                    UNNotificationAction::actionWithIdentifier_title_options(
+                        &ns_string(&action.id),
+                        &ns_string(&action.label),
+                        UNNotificationActionOptions::Foreground,
+                    )
+                })
+                .collect();
+            self.categories.push(
+                UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
+                    &ns_string(&identifier),
+                    &NSArray::from_retained_slice(&actions),
+                    &NSArray::new(),
+                    UNNotificationCategoryOptions::empty(),
+                ),
+            );
+            center.setNotificationCategories(&NSSet::from_retained_slice(&self.categories));
+        }
+        Some(identifier)
+    }
+
     pub fn notify(&mut self, config: &NotificationConfig) {
         if NSBundle::mainBundle().bundleIdentifier().is_none() {
             return;
@@ -932,6 +990,7 @@ impl Shell {
             center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
             self.notifications = Some(delegate);
         }
+        let category = self.category(&center, config);
         let (id, title, body) = (config.id.clone(), config.title.clone(), config.body.clone());
         // The answer arrives on a queue of the system: the block only
         // touches what it owns.
@@ -943,6 +1002,9 @@ impl Shell {
             content.setTitle(&ns_string(&title));
             content.setBody(&ns_string(&body));
             content.setSound(Some(&UNNotificationSound::defaultSound()));
+            if let Some(category) = &category {
+                content.setCategoryIdentifier(&ns_string(category));
+            }
             let identifier = if id.is_empty() {
                 NSUUID::new().UUIDString()
             } else {
@@ -1064,6 +1126,14 @@ pub fn window_command(mtm: MainThreadMarker, window: &NSWindow, command: &Window
         WindowCommand::Show => window.makeKeyAndOrderFront(None),
         WindowCommand::Hide => window.orderOut(None),
         WindowCommand::Close => window.close(),
+        WindowCommand::SetBadge(count) => {
+            let badge = count
+                .filter(|count| *count > 0)
+                .map(|count| ns_string(&count.to_string()));
+            NSApplication::sharedApplication(mtm)
+                .dockTile()
+                .setBadgeLabel(badge.as_deref());
+        }
         // The Dock icon shows the progress as its badge.
         WindowCommand::SetProgress(progress) => {
             let badge = progress.map(|progress| {

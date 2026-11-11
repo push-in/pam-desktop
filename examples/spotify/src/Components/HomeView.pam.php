@@ -100,13 +100,14 @@ final class HomeView extends Component
     .quick-row { gap: 8px; }
     .quick { flex: 1; flex-direction: row; height: 48px; gap: 8px; align-items: center; border-radius: 4px;
              background-color: var(--tinted); }
+    .quick { transition: background-color 200ms; }
     .quick:hover { background-color: var(--tinted-hover); }
     .quick-cover { width: 48px; height: 48px; border-top-left-radius: 4px; border-bottom-left-radius: 4px; }
     .quick-liked { width: 48px; height: 48px; border-top-left-radius: 4px; border-bottom-left-radius: 4px;
                    background-color: #5038A0; align-items: center; justify-content: center; }
     .quick-name { flex: 1; font-size: 14px; font-weight: 700; }
     .quick-play { width: 32px; height: 32px; margin-right: 8px; border-radius: 16px; background-color: var(--green);
-                  align-items: center; justify-content: center; opacity: 0; elevation: 4; }
+                  align-items: center; justify-content: center; opacity: 0; elevation: 4; transition: opacity 200ms; }
     .quick:hover .quick-play { opacity: 1; }
     .quick-play:hover { transform: scale(1.04); background-color: var(--green-hover); }
 
@@ -115,14 +116,14 @@ final class HomeView extends Component
     .shelf-title { font-size: 24px; font-weight: 700; }
     .show-all { font-size: 14px; font-weight: 700; color: var(--subdued); }
     .cards { overflow: hidden; }
-    .card { width: 180px; gap: 4px; padding: 12px; border-radius: 6px; }
+    .card { width: 180px; gap: 4px; padding: 12px; border-radius: 6px; transition: background-color 300ms; }
     .card:hover { background-color: var(--elevated); }
     .art { width: 156px; height: 156px; margin-bottom: 4px; }
     .card-cover { width: 156px; height: 156px; border-radius: 6px; }
     .round { border-radius: 78px; }
     .card-play { position: absolute; right: 8px; bottom: 8px; width: 48px; height: 48px; border-radius: 24px;
                  background-color: var(--green); align-items: center; justify-content: center; opacity: 0;
-                 transform: translateY(8px); elevation: 6; }
+                 transform: translateY(8px); elevation: 6; transition: opacity 250ms, transform 250ms ease-out; }
     .card:hover .card-play { opacity: 1; transform: translateY(0px); }
     .card-play:hover { transform: scale(1.04); background-color: var(--green-hover); }
     .shown { opacity: 1; transform: translateY(0px); }

@@ -90,7 +90,7 @@ final class PlayerScreen extends Component
                 </Pressable>
                 <Row class="search">
                     <Icon name="search" font="Lucide" size="22" class="subdued" />
-                    <Input class="search-field" model="query" sync="immediate" placeholder="What do you want to play?"
+                    <Input testId="search" class="search-field" model="query" sync="immediate" placeholder="What do you want to play?"
                            placeholderColor="#B3B3B3" @focus="search" />
                     <View class="search-split" />
                     <Icon name="layout-grid" font="Lucide" size="20" class="subdued" />

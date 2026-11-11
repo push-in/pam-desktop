@@ -123,15 +123,18 @@ The host does not wait for PHP to animate, scroll, track gestures, play media or
 | Components | Layout, text with inline boxes, buttons, inputs (masks, currency, decimal), switches, content-sized lists, scroll views, modals with backdrop blur, bottom sheets, stack navigation with a header, tabs | [Components](docs/components.md) |
 | Templates | `.pam.php` single-file components: expressions with enums, constants and value methods, `<Slot :content>`, per-component error isolation | [Templates](docs/templates.md) |
 | Styling | `Style` and scoped CSS laid out like Chromium (1/64 px LayoutUnits, Blink line heights): state selectors with `:focus-within` and `:focus-visible`, `@media`, CSS tables, inline formatting (`inline`, `inline-block`, `vertical-align`), `position: sticky`, two-axis scrolling, classic and thin scrollbars with `scrollbar-color`, `ch` units, form controls sized like Blink, font stacks and packaged fonts, line breaking, `white-space`, `backdrop-filter` and box shadows matching Skia, fractional grid tracks, dark mode, text scale | [Styling](docs/styling.md), [Grid tracks](docs/grid-tracks.md) |
-| Controls | Select, Autocomplete, MultiSelect, DatePicker, Toast and the window toast service, Checkbox, ProgressButton (`pushinbr/pam-desktop-ui`) | [DesktopUI](docs/desktop-ui.md) |
+| Controls | Select, Autocomplete, MultiSelect, DatePicker, Toast and the window toast service, Checkbox, Slider, Popover, rich Tooltip, SplitView, virtualized TreeView, CodeEditor, ProgressButton (`Pam\DesktopUi`) | [DesktopUI](docs/desktop-ui.md) |
 | Internationalization | Framework defaults in English, Portuguese and Spanish, following the system or `I18n::use()`, overridable per app and per component | [Internationalization](docs/i18n.md) |
-| Charts | Line, area, bar, donut, sparkline, progress ring on the native canvas (`pushinbr/pam-desktop-charts`) | [Charts](docs/charts.md) |
-| Desktop shell | Main window control, secondary windows, menu bar, context menus, tray, local and global shortcuts, key capture, file dialogs, notifications, typed drag and drop, clipboard | [Desktop shell](docs/desktop-shell.md) |
+| Charts | Line, area, bar, donut, sparkline, progress ring on the native canvas (`Pam\Desktop\Charts`) | [Charts](docs/charts.md) |
+| Code | Syntax highlighting of 18 languages with VS Code's themes, and a Language Server Protocol client (`Pam\Desktop\Code`) | [Code](docs/code.md) |
+| Sign-in | OAuth 2.0 / OpenID Connect with PKCE through the system browser and the app's URL scheme, tokens in the keychain, refreshed for you (`Pam\Desktop\Auth`) | [Sign-in with OAuth](docs/auth.md) |
+| Markdown | Markdown as native rich text and boxes: lists, tasks, quotes, code, tables, links, mentions, Slack's mrkdwn (`Pam\Desktop\Markdown`) | [Markdown](docs/markdown.md) |
+| Desktop shell | Main window control (remembered size), secondary windows, menu bar, context menus with shortcuts, tray, local and global shortcuts, key capture, file dialogs, notifications with buttons, a count badge, typed drag and drop, clipboard | [Desktop shell](docs/desktop-shell.md) |
 | Media and web | Images with a disk cache, video and audio, embedded web pages, vector and freehand canvases | [Media and web](docs/media-and-web.md) |
-| Motion | Transitions, presets, animation programs, gesture detectors, drag contracts, swipeable rows, native pan and zoom | [Animation and gestures](docs/animation-and-gestures.md) |
-| Modules | Key/value storage, file sandbox and save dialog, HTTP, WebSocket, SQLite with guarded transactions, secure storage, printing, timers, device information and status, links and deep links with a single instance, toasts, alerts | [Modules](docs/modules.md) |
+| Motion | Transitions (also on `:hover` and `:focus`, colours included), presets, animation programs, gesture detectors, drag contracts, swipeable rows, native pan and zoom | [Animation and gestures](docs/animation-and-gestures.md) |
+| Modules | Key/value storage, file sandbox and save dialog, HTTP, WebSocket, SQLite with guarded transactions and migrations, secure storage, printing, timers, device information and status, links and deep links with a single instance, toasts, alerts | [Modules](docs/modules.md) |
 | Accessibility | Roles, labels, states and actions mapped to AT-SPI, NSAccessibility and UI Automation; announcements; text selection; keyboard navigation | [Accessibility](docs/accessibility.md) |
-| Development | Hot reload with state preservation, the error overlay, `pam-desktop check` (every template/CSS diagnostic without a window), frame dumps compared with Chromium, screenshots on a virtual display, test suites, static analysis, CI | [Development](docs/development.md) |
+| Development | Hot reload with state preservation, the error overlay, the visual inspector (F12), `pam-desktop check` (every template/CSS diagnostic without a window), frame dumps compared with Chromium, screenshots on a virtual display, test suites, static analysis, CI | [Development](docs/development.md) |
 | Internals | Processes, the frame protocol, the render core, the `Backend` contract, threading | [Architecture](docs/architecture.md) |
 | Compatibility | Host and SDK versions, the property table and what an older host refuses | [Compatibility](docs/compatibility.md) |
 | Shipping | Packaging and installers | [Distribution](docs/distribution.md) |
@@ -167,6 +170,9 @@ Every directory under [`examples/`](examples) is a runnable application that exe
 - [Grid tracks](docs/grid-tracks.md)
 - [DesktopUI](docs/desktop-ui.md)
 - [Charts](docs/charts.md)
+- [Markdown](docs/markdown.md)
+- [Code](docs/code.md)
+- [Sign-in with OAuth](docs/auth.md)
 - [Desktop shell](docs/desktop-shell.md)
 - [Media and web](docs/media-and-web.md)
 - [Animation and gestures](docs/animation-and-gestures.md)

@@ -9,11 +9,20 @@ use Pam\Desktop\Component;
 
 final class Composer extends Component
 {
-    /** @var list<string|null> null draws a divider */
-    public array $formatting = ['bold', 'italic', 'strikethrough', null, 'link', null, 'list-ordered', 'list', null, 'code', 'square-code'];
+    /** @var list<array{0: string, 1: string, 2: ?string}|null> icon, label, shortcut; null draws a divider */
+    public array $formatting = [
+        ['bold', 'Bold', 'Ctrl+B'], ['italic', 'Italic', 'Ctrl+I'], ['strikethrough', 'Strikethrough', 'Ctrl+Shift+X'], null,
+        ['link', 'Link', 'Ctrl+Shift+U'], null,
+        ['list-ordered', 'Ordered list', 'Ctrl+Shift+7'], ['list', 'Bulleted list', 'Ctrl+Shift+8'], null,
+        ['code', 'Code', 'Ctrl+Shift+C'], ['square-code', 'Code block', 'Ctrl+Alt+Shift+C'],
+    ];
 
-    /** @var list<string|null> */
-    public array $tools = ['type', 'smile', 'at-sign', null, 'video', 'mic', null, 'square-slash'];
+    /** @var list<array{0: string, 1: string, 2: ?string}|null> */
+    public array $tools = [
+        ['type', 'Hide formatting', null], ['smile', 'Emoji', null], ['at-sign', 'Mention someone', null], null,
+        ['video', 'Record video clip', null], ['mic', 'Record audio clip', null], null,
+        ['square-slash', 'Run shortcut', null],
+    ];
 
     #[State(hotReload: false)]
     public string $draft = '';
@@ -42,16 +51,20 @@ final class Composer extends Component
 <template>
     <Column class="composer">
         <Row class="toolbar">
-            <View p-for="($icon, $i) in $formatting" p-key="$i" :class="$icon === null ? 'divider' : 'button'">
-                <Icon p-if="$icon !== null" :name="$icon" font="Lucide" size="16" class="format" />
+            <View p-for="($item, $i) in $formatting" p-key="$i" :class="$item === null ? 'divider' : 'slot'">
+                <Tooltip p-if="$item !== null" :title="$item[1]" :shortcut="$item[2]" placement="top">
+                    <View class="button"><Icon :name="$item[0]" font="Lucide" size="16" class="format" /></View>
+                </Tooltip>
             </View>
         </Row>
-        <Input class="field" multiline="true" submitBehavior="submit" model="draft" sync="immediate"
+        <Input testId="composer" class="field" multiline="true" submitBehavior="submit" model="draft" sync="immediate"
                :placeholder="$placeholder" placeholderColor="#868686" @submit="send" />
         <Row class="actions">
             <Column class="attach"><Icon name="plus" font="Lucide" size="16" class="attach-icon" /></Column>
-            <View p-for="($icon, $i) in $tools" p-key="$i" :class="$icon === null ? 'divider' : 'button'">
-                <Icon p-if="$icon !== null" :name="$icon" font="Lucide" size="16" class="tool" />
+            <View p-for="($item, $i) in $tools" p-key="$i" :class="$item === null ? 'divider' : 'slot'">
+                <Tooltip p-if="$item !== null" :title="$item[1]" :shortcut="$item[2]" placement="top">
+                    <View class="button"><Icon :name="$item[0]" font="Lucide" size="16" class="tool" /></View>
+                </Tooltip>
             </View>
             <View class="spacer" />
             <Row :class="ready() ? 'send ready' : 'send'">
@@ -91,4 +104,5 @@ final class Composer extends Component
     .send-more { width: 22px; height: 28px; align-items: center; justify-content: center; }
     .send-icon { color: #1D1C1D59; }
     .ready-icon { color: #FFFFFF; }
+    .slot { flex-direction: row; }
 </style>

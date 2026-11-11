@@ -104,6 +104,10 @@ final class TemplateContractValidator
             }
         }
 
+        if (!TemplateRenderer::knownTag($node->name)) {
+            $errors[] = self::error($node, "unknown tag <{$node->name}>: no built-in tag, component or registered tag has this name (a package not booted, such as DesktopUI::boot() or Markdown::register()?)");
+        }
+
         $contract = TemplateRegistry::tagContract($node->name);
         if ($contract !== null) {
             $knownProps = [];
@@ -138,7 +142,15 @@ final class TemplateContractValidator
             }
         }
 
-        if ($contract === null && $node->name !== '') {
+        if ($contract === null && $node->name !== '' && TemplateRegistry::isCompiledComponent($node->name)) {
+            $props = PamPhpRegistry::propNames($node->name);
+            foreach (array_keys($node->attributes) as $attribute) {
+                $unknown = $props === [] ? null : TemplateRenderer::unknownComponentAttribute($node->name, (string) $attribute, $props);
+                if ($unknown !== null) {
+                    $errors[] = self::error($node, $unknown);
+                }
+            }
+        } elseif ($contract === null && $node->name !== '') {
             foreach (array_keys($node->attributes) as $attribute) {
                 $unknown = TemplateRenderer::unknownBuiltinAttribute($node->name, (string) $attribute);
                 if ($unknown !== null) {

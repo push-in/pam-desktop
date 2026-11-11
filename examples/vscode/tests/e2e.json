@@ -1,0 +1,14 @@
+[
+    {"wait": "EXPLORER"},
+    {"click": "Workspace.php"},
+    {"expect": "final class Workspace"},
+    {"key": "CmdOrCtrl+P"},
+    {"wait": "#quick-open"},
+    {"type": "readme", "into": "#quick-open"},
+    {"submit": "#quick-open"},
+    {"expect": "VS Code clone"},
+    {"key": "CmdOrCtrl+B"},
+    {"expectNot": "EXPLORER"},
+    {"key": "CmdOrCtrl+B"},
+    {"expect": "EXPLORER"}
+]

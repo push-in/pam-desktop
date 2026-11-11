@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace App\Screens\Board;
 
+use App\Services\BoardStore;
 use App\Services\Board;
 use Pam\Desktop\Attributes\State;
 use Pam\Desktop\Component;
+use Pam\Desktop\Window;
 
 final class BoardScreen extends Component
 {
@@ -37,6 +39,31 @@ final class BoardScreen extends Component
     public function mount(): void
     {
         $this->board = new Board();
+        BoardStore::open($this->board, function (): void {
+            $this->revision++;
+            Window::badge($this->board->overdue());
+        });
+    }
+
+    /** The board changed: kept on disk, the overdue count on the app icon. */
+    private function persist(): void
+    {
+        $this->revision++;
+        BoardStore::save($this->board);
+        Window::badge($this->board->overdue());
+    }
+
+    public function watch(string $cardId): void
+    {
+        $this->board->toggleWatch($cardId);
+        $this->persist();
+    }
+
+    /** @param array{card: string, list: string} $move */
+    public function moveTo(array $move): void
+    {
+        $this->board->move($move['card'], $move['list']);
+        $this->persist();
     }
 
     public function dragStart(string $cardId): void
@@ -61,20 +88,20 @@ final class BoardScreen extends Component
         $this->board->move($drop['card'], $drop['list'], $drop['before'] ?? null);
         $this->dragging = null;
         $this->over = null;
-        $this->revision++;
+        $this->persist();
     }
 
     /** @param array{list: string, title: string} $request */
     public function add(array $request): void
     {
         $this->board->add($request['list'], $request['title']);
-        $this->revision++;
+        $this->persist();
     }
 
     public function complete(string $cardId): void
     {
         $this->board->toggleComplete($cardId);
-        $this->revision++;
+        $this->persist();
     }
 
     public function open(string $cardId): void
@@ -85,12 +112,12 @@ final class BoardScreen extends Component
     public function close(): void
     {
         $this->openId = null;
-        $this->revision++;
+        $this->persist();
     }
 
     public function changed(): void
     {
-        $this->revision++;
+        $this->persist();
     }
 
     public function star(): void
@@ -164,7 +191,7 @@ final class BoardScreen extends Component
                 <ListColumn p-for="$list in $board->lists()" p-key="$list->id" :list="$list" :board="$board"
                             :dragging="$dragging" :over="$over" :revision="$revision"
                             @open="open" @dragStart="dragStart" @dragEnd="dragEnd" @over="hover" @drop="drop"
-                            @add="add" @complete="complete" />
+                            @add="add" @complete="complete" @watch="watch" @moveTo="moveTo" />
                 <Row class="add-list">
                     <Icon name="plus" font="Lucide" size="16" class="chrome-icon" />
                     <Text class="add-list-text">Add another list</Text>

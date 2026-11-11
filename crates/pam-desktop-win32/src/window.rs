@@ -870,6 +870,7 @@ pub fn command(app: &Rc<App>, window: WindowId, command: &WindowCommand) {
             }
             WindowCommand::Close => close(app, window),
             WindowCommand::SetProgress(progress) => crate::shell::taskbar_progress(hwnd, *progress),
+            WindowCommand::SetBadge(count) => crate::shell::taskbar_badge(app, *count),
         }
     }
 }

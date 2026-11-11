@@ -141,8 +141,10 @@ pub enum BackendEvent {
     },
     /// The tray icon itself was activated.
     TrayActivated,
+    /// A notification was clicked (`action` `None`) or one of its buttons.
     NotificationActivated {
         id: String,
+        action: Option<String>,
     },
     /// Files were dropped on a window.
     FilesDropped {
@@ -668,6 +670,8 @@ pub struct WindowConfig {
     pub parent: Option<WindowId>,
     /// Blocks input to `parent` while open (a dialog).
     pub modal: bool,
+    /// Restores the size and maximized state of the last run (main window).
+    pub remember: bool,
 }
 
 impl Default for WindowConfig {
@@ -680,6 +684,7 @@ impl Default for WindowConfig {
             decorated: true,
             parent: None,
             modal: false,
+            remember: true,
         }
     }
 }

@@ -307,6 +307,29 @@ SQLite::transactionIf(
 
 The module is the `sqlite` cargo feature of the host, on by default.
 
+### Migrations
+
+`Migrations::run()` brings a database's schema up to date. Each migration has a version from 1 and one statement or a list of them (a string holds one statement). The version lives in the database (`PRAGMA user_version`), so a fresh install runs every migration and an update runs only the new ones:
+
+```php
+use Pam\Desktop\Database\Migrations;
+
+Migrations::run('board.db', [
+    1 => 'CREATE TABLE boards (id TEXT PRIMARY KEY, title TEXT NOT NULL)',
+    2 => [
+        'CREATE TABLE cards (id TEXT PRIMARY KEY, board_id TEXT NOT NULL REFERENCES boards(id), title TEXT)',
+        'CREATE INDEX cards_board ON cards (board_id)',
+    ],
+    3 => 'ALTER TABLE cards ADD COLUMN due_at INTEGER',
+], function (int $version, array $applied): void {
+    $this->load(); // the schema is at $version; $applied lists what ran now
+});
+```
+
+- Every pending migration and the new version are written in one transaction. When one fails, `onError` receives the error and the database stays at its previous version, as if nothing ran.
+- The version is checked again inside the transaction, so two windows starting together never run a migration twice.
+- Keep old migrations as they are and add new versions. A database already past the last version (opened by a newer build) is left alone and reported at its version.
+
 ## WebSocket
 
 `Pam\Desktop\Network\WebSocket` keeps a text WebSocket open in the host. A native reader waits for messages; PHP does not poll.

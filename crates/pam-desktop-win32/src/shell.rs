@@ -18,7 +18,10 @@ use pam_desktop_ui::shell::{
 };
 use windows::Data::Xml::Dom::XmlDocument;
 use windows::Foundation::TypedEventHandler;
-use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
+use windows::UI::Notifications::{
+    BadgeNotification, BadgeUpdateManager, ToastActivatedEventArgs, ToastNotification,
+    ToastNotificationManager,
+};
 use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWINDOWATTRIBUTE, DwmSetWindowAttribute,
@@ -938,7 +941,7 @@ fn tray_event(app: &Rc<App>, hwnd: HWND, event: u32) {
                 })
                 .flatten()
                 .unwrap_or_default();
-            app.emit(BackendEvent::NotificationActivated { id });
+            app.emit(BackendEvent::NotificationActivated { id, action: None });
             end_balloon(app);
             app.pump();
         }
@@ -1072,6 +1075,32 @@ fn register_toast_identity(app: &App, identity: &str) {
     }
 }
 
+/// Prefix of the arguments of a toast button (its id follows).
+const TOAST_ACTION: &str = "pam-action:";
+
+/// The count badge on the taskbar button, through the application's
+/// notification identity (the shell shows it where it supports badges).
+pub fn taskbar_badge(app: &Rc<App>, count: Option<u32>) {
+    let Some(identity) = app_user_model_id() else {
+        return;
+    };
+    register_toast_identity(app, &identity);
+    let update = || -> windows::core::Result<()> {
+        let updater =
+            BadgeUpdateManager::CreateBadgeUpdaterForApplicationWithId(&HSTRING::from(identity))?;
+        match count.filter(|count| *count > 0) {
+            Some(count) => {
+                let document = XmlDocument::new()?;
+                document.LoadXml(&HSTRING::from(format!("<badge value=\"{count}\"/>")))?;
+                updater.Update(&BadgeNotification::CreateBadgeNotification(&document)?)?;
+            }
+            None => updater.Clear()?,
+        }
+        Ok(())
+    };
+    let _ = update();
+}
+
 fn show_toast(app: &Rc<App>, notification: &NotificationConfig) -> windows::core::Result<()> {
     let identity = app_user_model_id()
         .ok_or_else(|| windows::core::Error::from(windows::Win32::Foundation::E_FAIL))?;
@@ -1084,7 +1113,20 @@ fn show_toast(app: &Rc<App>, notification: &NotificationConfig) -> windows::core
     if !notification.body.is_empty() {
         xml.push_str(&format!("<text>{}</text>", escape_xml(&notification.body)));
     }
-    xml.push_str("</binding></visual></toast>");
+    xml.push_str("</binding></visual>");
+    if !notification.actions.is_empty() {
+        xml.push_str("<actions>");
+        for action in &notification.actions {
+            xml.push_str(&format!(
+                "<action content=\"{}\" arguments=\"{}{}\" activationType=\"foreground\"/>",
+                escape_xml(&action.label),
+                TOAST_ACTION,
+                escape_xml(&action.id)
+            ));
+        }
+        xml.push_str("</actions>");
+    }
+    xml.push_str("</toast>");
     let document = XmlDocument::new()?;
     document.LoadXml(&HSTRING::from(xml))?;
     let toast = ToastNotification::CreateToastNotification(&document)?;
@@ -1096,10 +1138,23 @@ fn show_toast(app: &Rc<App>, notification: &NotificationConfig) -> windows::core
     let mailbox = Arc::clone(&app.mailbox);
     let id = notification.id.clone();
     // The handler runs on a system thread: it only posts to the UI thread.
-    toast.Activated(&TypedEventHandler::new(move |_, _| {
-        mailbox.post(Mail::Notification(id.clone()));
-        Ok(())
-    }))?;
+    toast.Activated(&TypedEventHandler::new(
+        move |_, arguments: windows_core::Ref<windows_core::IInspectable>| {
+            // A button's arguments name it; the toast body has the launch string.
+            let action = arguments
+                .as_ref()
+                .and_then(|arguments| arguments.cast::<ToastActivatedEventArgs>().ok())
+                .and_then(|arguments| arguments.Arguments().ok())
+                .and_then(|arguments| {
+                    arguments
+                        .to_string()
+                        .strip_prefix(TOAST_ACTION)
+                        .map(str::to_owned)
+                });
+            mailbox.post(Mail::Notification(id.clone(), action));
+            Ok(())
+        },
+    ))?;
     ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(identity))?.Show(&toast)?;
     app.with_state(|state| {
         if state.shell.toasts.len() >= TOAST_HISTORY {

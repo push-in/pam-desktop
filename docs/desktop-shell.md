@@ -41,6 +41,7 @@ Window::onCloseRequested(function (): void {
 | `focus()` | Brings the window to the front and gives it keyboard focus. |
 | `show()`, `hide()` | `hide()` keeps the application running; pair it with a tray icon. |
 | `center()`, `alwaysOnTop(bool)`, `progress(?float)` | Placement, stacking and progress on the taskbar or dock icon. See the note below. |
+| `badge(?int)` | A count on the dock, launcher or taskbar icon (unread messages). `null` or 0 removes it. See the note below. |
 | `close()` | Closes the window and ends the application, without asking. |
 | `onCloseRequested(?Closure)` | The application decides what the close button does. Call `Window::close()` from the handler to really close; pass `null` to restore the default. |
 | `onStateChange(Closure)` | Runs with a `WindowState` when the window is maximized, minimized, focused, resized or enters full screen. Returns an id for `offStateChange()`. |
@@ -58,6 +59,14 @@ On Linux, `center()` and `alwaysOnTop()` work on X11, where they are requests to
 | Linux | On the launcher icon, in docks that listen to the Unity launcher entry API (Ubuntu Dock, Dash to Dock, the Plasma task manager), for an installed application. See [Platforms](platforms.md#wayland-and-x11). |
 | macOS | As a badge on the Dock icon ("42%"). |
 | Windows | As the progress of the taskbar button. |
+
+`badge()` shows a count, up to 99999:
+
+| System | Where it shows |
+| --- | --- |
+| Linux | On the launcher icon, through the same launcher entry API as `progress()`, for an installed application. |
+| macOS | As the badge of the Dock icon. It replaces a progress badge, and the other way round. |
+| Windows | As a badge on the taskbar button, through the application's notification identity, where the shell shows badges. |
 
 ### Application state
 
@@ -190,7 +199,28 @@ Pressable::make(Text::make($name))
     );
 ```
 
-Items may be check items and submenus, as in the menu bar.
+Items may be check items and submenus, as in the menu bar. A `shortcut` is shown beside the label; it only labels the item, so register the key itself with `Shortcut::register()` or the menu bar.
+
+In a template, `:contextMenu` takes a list of `MenuItem`, usually from a method of the component:
+
+```php
+/** @return list<MenuItem> */
+public function menu(Message $message): array
+{
+    return [
+        MenuItem::make('Edit message', fn () => $this->edit($message), shortcut: 'E'),
+        MenuItem::make('Copy link', fn () => $this->copyLink($message)),
+        MenuItem::separator(),
+        MenuItem::make('Delete message', fn () => $this->delete($message), destructive: true),
+    ];
+}
+```
+
+```html
+<Pressable p-for="$message in $messages" :contextMenu="menu($message)">…</Pressable>
+```
+
+Anything other than `MenuItem` values throws when the template renders.
 
 ## Tray icon
 
@@ -286,6 +316,17 @@ Notification::show('Export finished', 'report.pdf is ready', function (): void {
 ```
 
 The notification is shown by the operating system. The optional third argument runs when the user clicks it. `show()` returns the id of the notification.
+
+The fourth argument adds up to three buttons, as `label => handler`. A button runs its own handler instead of the click one:
+
+```php
+Notification::show('Ana', 'Can you review the deck?', fn () => $this->open($thread), [
+    'Reply' => fn () => $this->reply($thread),
+    'Mark as read' => fn () => $this->markRead($thread),
+]);
+```
+
+On Linux the buttons show where the notification server supports actions (GNOME, KDE and most others). On macOS they appear under the notification's options, and on Windows below the toast.
 
 ## Drag and drop
 
