@@ -12,7 +12,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "2.1.8"
+version = "2.2.0"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Pushin <engineering@pushin.com.br>"]

@@ -1,5 +1,67 @@
 # Changelog
 
+## 2.2.0 - 2026-11-11
+
+New tools for desktop apps, all used by the four clones in `examples/`. Update
+with `pam composer update pushinbr/pam-desktop`; the launcher downloads the
+2.2.0 host. No app changes needed.
+
+### Added
+
+- **Transitions on state styles.** `transition` in a stylesheet now animates
+  `:hover`, `:focus` and group hover changes in the host, without PHP, and
+  `background-color`, `color`, `border-color` and `border-radius` animate
+  besides opacity and transforms.
+- **Context menus in templates.** `:contextMenu="menu($row)"` takes a list of
+  `MenuItem`, and an item's `shortcut` shows beside its label.
+- **DesktopUI:** `Popover` (anchored to any `nativeRef`, flips to fit, closes
+  on a press outside or Escape), a rich `Tooltip` (title, description,
+  shortcut), `SplitView` (draggable divider, keyboard, min/max, collapse),
+  a virtualized `TreeView` (lazy branches, keyboard, context menus) and
+  `CodeEditor` (highlighting, several cursors, selections, undo, VS Code keys,
+  native text input so accents and input methods work).
+- **Popovers and tooltips draw above everything** through a window-level
+  portal (`Portal::WINDOW_HOST`): no `PortalHost` to place.
+- **The window remembers its size and maximized state** between launches
+  (`window.remember`, on by default).
+- **The inspector:** F12 or Ctrl+Shift+I in `pam-desktop dev` outlines the
+  element under the pointer and lists its kind, frame, effective properties,
+  state styles and events; a click pins it.
+- **Notification buttons** on Linux, macOS and Windows (`Notification::show`
+  takes `label => handler` actions) and **`Window::badge($count)`** on the
+  dock, launcher or taskbar icon.
+- **SQLite migrations:** `Migrations::run()` versions a database on
+  `PRAGMA user_version` and applies pending migrations in one transaction.
+- **`Pam\Desktop\Markdown`:** Markdown as native rich text and boxes (lists,
+  tasks, quotes, code blocks, tables, links, mentions, Slack's mrkdwn).
+- **`Pam\Desktop\Code`:** syntax highlighting of 18 languages with VS Code's
+  themes, and a Language Server Protocol client.
+- **`Pam\Desktop\Auth`:** OAuth 2.0 and OpenID Connect sign-in with PKCE
+  through the system browser and the app's URL scheme, tokens in the keychain
+  and refreshed for you. `Linking::claim()` lets a library take its callbacks.
+- **End-to-end scripts:** `PAM_DESKTOP_SCRIPT=steps.json` runs clicks, typing,
+  keys and checks against the live window and exits with the result. The four
+  clones have scripts, and CI runs them on Linux, macOS and Windows.
+- **Components listen to their events with `on:name`** as well as `@name`.
+- **`$event` is typed in handler expressions** (`on:press="pick($row, $event)"`
+  gets a `PressEvent`; keys, layout, gestures and drops too).
+
+### Changed
+
+- **`pam-desktop check` reports more:** unknown tags (a package not booted),
+  unknown events (`on:pres`), unknown props of `.pam` components, and unknown
+  attributes of `Input`, `ScrollView`, `VirtualizedList`, `GestureDetector`,
+  `Modal` and other tags.
+- **A bound `null` leaves any property unset**, colours included, instead of
+  failing.
+
+### Fixed
+
+- Positions of elements inside transformed content (a list stacked from the
+  end) are right for menus, file drops and the inspector.
+- Icon fonts bundled with the package load when it is installed through a
+  Composer `path` repository linked from elsewhere.
+
 ## 2.1.8 - 2026-11-11
 
 What the VS Code clone in `examples/vscode` needed: Linux shortcuts and shell
