@@ -69,6 +69,15 @@ App::onError(function (Throwable $error, RuntimeError $report): void {
 
 Most module APIs take a failure closure, which keeps an expected failure (no network, a missing file) out of the overlay; see [Modules](modules.md#failures).
 
+## The inspector
+
+In `pam-desktop dev`, F12 (or Ctrl+Shift+I) turns the inspector on. The element under the pointer is outlined, and a card next to it shows what the host knows about it: its kind, size and position in the window, every property it has after state styles and transitions (colours as `#AARRGGBB`), the states that have styles (`hover`, `focus`, `group-hover`…), the events it listens to and the kinds of its ancestors.
+
+- A click pins the element, so the pointer can move away, and prints the full description on stderr. Another click releases it.
+- F12 or Escape turns the inspector off.
+- While it is on, the pointer never reaches the application. Native controls (text fields, web views) keep their own pointer.
+- `pam-desktop run` has no inspector.
+
 ## Screenshots on a virtual display
 
 `scripts/shot.sh` runs an application on a private X display and captures its window, so nothing appears on your real screen. It is how the examples are checked.
