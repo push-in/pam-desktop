@@ -12,6 +12,9 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+# Composer on Windows wants D:/a/… rather than Git Bash's /d/a/….
+framework=$root
+if command -v cygpath >/dev/null 2>&1; then framework=$(cygpath -m "$root"); fi
 target=${PAM_E2E_DIR:-${RUNNER_TEMP:-/tmp}/pam-e2e}
 read -r -a composer <<< "${PAM_E2E_COMPOSER:-composer}"
 examples=("$@")
@@ -28,7 +31,7 @@ for example in "${examples[@]}"; do
     (cd "$root/examples/$example" && tar --exclude=./vendor --exclude=./.pam-desktop -cf - .) | (cd "$directory" && tar -xf -)
     # A path repository wins over Packagist; the version satisfies ^2.
     "${composer[@]}" config --working-dir="$directory" repositories.framework \
-        "{\"type\": \"path\", \"url\": \"$root\", \"options\": {\"symlink\": true, \"versions\": {\"pushinbr/pam-desktop\": \"2.99.0\"}}}"
+        "{\"type\": \"path\", \"url\": \"$framework\", \"options\": {\"symlink\": true, \"versions\": {\"pushinbr/pam-desktop\": \"2.99.0\"}}}"
     "${composer[@]}" update --working-dir="$directory" pushinbr/pam-desktop --no-interaction --no-progress
     echo "e2e setup $example: $directory, pushinbr/pam-desktop from the working tree"
 done

@@ -28,7 +28,7 @@ final class Notification
 
     /**
      * @param Closure|null $onActivate the user clicked the notification
-     * @param array<string, Closure> $actions buttons (at most three): label => handler
+     * @param array<array-key, mixed> $actions buttons (at most three): label => handler (Closure)
      * @return string the id of the notification
      */
     public static function show(string $title, string $body = '', ?Closure $onActivate = null, array $actions = []): string

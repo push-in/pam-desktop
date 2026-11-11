@@ -43,6 +43,7 @@ limited() {
     local pid=$!
     ( sleep "$seconds" && kill "$pid" 2>/dev/null ) &
     local watchdog=$!
+    disown "$watchdog" 2>/dev/null
     wait "$pid"
     local status=$?
     kill "$watchdog" 2>/dev/null
