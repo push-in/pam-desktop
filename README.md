@@ -127,6 +127,7 @@ The host does not wait for PHP to animate, scroll, track gestures, play media or
 | Internationalization | Framework defaults in English, Portuguese and Spanish, following the system or `I18n::use()`, overridable per app and per component | [Internationalization](docs/i18n.md) |
 | Charts | Line, area, bar, donut, sparkline, progress ring on the native canvas (`Pam\Desktop\Charts`) | [Charts](docs/charts.md) |
 | Code | Syntax highlighting of 18 languages with VS Code's themes, and a Language Server Protocol client (`Pam\Desktop\Code`) | [Code](docs/code.md) |
+| Sign-in | OAuth 2.0 / OpenID Connect with PKCE through the system browser and the app's URL scheme, tokens in the keychain, refreshed for you (`Pam\Desktop\Auth`) | [Sign-in with OAuth](docs/auth.md) |
 | Markdown | Markdown as native rich text and boxes: lists, tasks, quotes, code, tables, links, mentions, Slack's mrkdwn (`Pam\Desktop\Markdown`) | [Markdown](docs/markdown.md) |
 | Desktop shell | Main window control (remembered size), secondary windows, menu bar, context menus with shortcuts, tray, local and global shortcuts, key capture, file dialogs, notifications with buttons, a count badge, typed drag and drop, clipboard | [Desktop shell](docs/desktop-shell.md) |
 | Media and web | Images with a disk cache, video and audio, embedded web pages, vector and freehand canvases | [Media and web](docs/media-and-web.md) |
@@ -171,6 +172,7 @@ Every directory under [`examples/`](examples) is a runnable application that exe
 - [Charts](docs/charts.md)
 - [Markdown](docs/markdown.md)
 - [Code](docs/code.md)
+- [Sign-in with OAuth](docs/auth.md)
 - [Desktop shell](docs/desktop-shell.md)
 - [Media and web](docs/media-and-web.md)
 - [Animation and gestures](docs/animation-and-gestures.md)

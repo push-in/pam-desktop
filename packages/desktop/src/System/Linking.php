@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pam\Desktop\System;
 
 use Closure;
+use InvalidArgumentException;
 use Pam\Desktop\Internal\Runtime;
 use Pam\Desktop\Internal\Wire;
 use Pam\Desktop\ModuleResultStatus;
@@ -20,6 +21,11 @@ final class Linking
 
     /** @var array<int, Closure(string): void> */
     private static array $subscriptions = [];
+
+    /** @var array<int, array{0: string, 1: Closure(string): void}> */
+    private static array $claims = [];
+
+    private static bool $polling = false;
 
     private function __construct()
     {
@@ -113,7 +119,7 @@ final class Linking
         }
         $subscription = self::$nextSubscription++;
         self::$subscriptions[$subscription] = $callback;
-        self::arm($subscription);
+        self::poll();
 
         return $subscription;
     }
@@ -123,10 +129,37 @@ final class Linking
         unset(self::$subscriptions[$subscription]);
     }
 
+    /**
+     * Takes the incoming links that start with `$prefix` (an OAuth redirect
+     * URI) before the `listen()` listener sees any: a library can wait for
+     * its own callback without owning the application's links. Returns an
+     * id for `release()`.
+     *
+     * @param Closure(string): void $handler
+     */
+    public static function claim(string $prefix, Closure $handler): int
+    {
+        if (trim($prefix) === '') {
+            throw new InvalidArgumentException('A link claim needs a prefix.');
+        }
+        $id = self::$nextSubscription++;
+        self::$claims[$id] = [$prefix, $handler];
+        self::poll();
+
+        return $id;
+    }
+
+    public static function release(int $claim): void
+    {
+        unset(self::$claims[$claim]);
+    }
+
     /** @internal */
     public static function resetRuntime(): void
     {
         self::$subscriptions = [];
+        self::$claims = [];
+        self::$polling = false;
         self::$nextSubscription = 1;
     }
 
@@ -194,30 +227,45 @@ final class Linking
         });
     }
 
-    private static function arm(int $subscription): void
+    /** One wait for the next link at a time, while anyone listens or claims. */
+    private static function poll(): void
     {
-        if (!isset(self::$subscriptions[$subscription])) {
+        if (self::$polling || (self::$subscriptions === [] && self::$claims === [])) {
             return;
         }
+        self::$polling = true;
         NativeModules::call(
             'linking',
             'nextUrl',
             [],
-            static function ($result) use ($subscription): void {
-                if (!isset(self::$subscriptions[$subscription])) {
-                    return;
-                }
+            static function ($result): void {
+                self::$polling = false;
                 if ($result->status === ModuleResultStatus::Failure) {
-                    unset(self::$subscriptions[$subscription]);
+                    self::$subscriptions = [];
+                    self::$claims = [];
                     throw new RuntimeException($result->payload);
                 }
                 $values = Wire::decodeMap($result->payload);
                 $url = trim((string) ($values['url'] ?? ''));
                 if ($url !== '') {
-                    self::$subscriptions[$subscription]($url);
+                    self::deliver($url);
                 }
-                self::arm($subscription);
+                self::poll();
             },
         );
+    }
+
+    private static function deliver(string $url): void
+    {
+        foreach (self::$claims as [$prefix, $handler]) {
+            if (str_starts_with($url, $prefix)) {
+                $handler($url);
+
+                return;
+            }
+        }
+        foreach (self::$subscriptions as $callback) {
+            $callback($url);
+        }
     }
 }
