@@ -506,6 +506,6 @@ With the default `TabPresentation::Adaptive` the bar is a rail on the side when 
 | `Image`, `ImageBackground`, `MediaPlayer`, `WebView`, `Canvas`, `DrawingCanvas` | [Media and web](media-and-web.md) |
 | `GestureDetector`, `Swipeable` | [Animation and gestures](animation-and-gestures.md) |
 | `InteractionRegion`, `DragSource`, `DropTarget` (drag and drop), `UI\Window` (secondary windows) | [Desktop shell](desktop-shell.md) |
-| `Select`, `Autocomplete`, `MultiSelect`, `DatePicker`, `Toast`, `Checkbox`, `ProgressButton`, `MediaTile`, `DialogViewport` | [DesktopUI](desktop-ui.md) (package `pushinbr/pam-desktop-ui`) |
-| `LineChart`, `AreaChart`, `BarChart`, `DonutChart`, `Sparkline`, `ProgressRing` | [Charts](charts.md) (package `pushinbr/pam-desktop-charts`) |
+| `Select`, `Autocomplete`, `MultiSelect`, `DatePicker`, `Toast`, `Checkbox`, `Slider`, `ProgressButton`, `MediaTile`, `DialogViewport` | [DesktopUI](desktop-ui.md) (`Pam\DesktopUi`) |
+| `LineChart`, `AreaChart`, `BarChart`, `DonutChart`, `Sparkline`, `ProgressRing` | [Charts](charts.md) (`Pam\Desktop\Charts`) |
 | `.pam.php` templates, `<Slot>`, expressions | [Templates](templates.md) |

@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.1.6 - 2026-11-11
+
+What the Spotify clone in `examples/spotify` needed: a `Slider` control,
+`?->` in templates and typed key and layout events. Update with
+`pam composer update pushinbr/pam-desktop`; no app changes needed.
+
+### Added
+
+- **`Slider`** in DesktopUI: a controlled horizontal slider for volumes,
+  playback positions and settings. Click or drag (past either end), arrow,
+  Page and Home/End keys, a `committed` callback on release, steps, and the
+  slider role with its range for screen readers.
+
+- **`?->` in templates.** `{{ track()?->title ?? '' }}` and `$user?->name`
+  end the chain with null on a null value, as in PHP, without evaluating the
+  rest (its arguments included).
+
+### Fixed
+
+- **Key, layout and drop handlers receive typed events.** A template handler
+  typed `KeyEvent` (`on:keyDown`), `LayoutEvent` (`on:layout`) or
+  `DragPayload` (`on:drop`, `on:dragEnter`, …) got the wire string and failed
+  with a TypeError.
+- **DesktopUI and Charts install with `pushinbr/pam-desktop`.** The docs told
+  to require `pushinbr/pam-desktop-ui` and `pushinbr/pam-desktop-charts`, which
+  are not published: both ship in `pushinbr/pam-desktop`.
+
 ## 2.1.5 - 2026-11-11
 
 Everything the Slack clone in `examples/slack` needed: Lucide icons in the

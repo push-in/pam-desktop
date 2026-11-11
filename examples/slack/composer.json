@@ -13,7 +13,7 @@
   "name": "app/slack",
   "require": {
     "php": "^8.5",
-    "pushinbr/pam-desktop": "^2.1"
+    "pushinbr/pam-desktop": "^2.1.5"
   },
   "scripts": {
     "build": "pam-desktop build",

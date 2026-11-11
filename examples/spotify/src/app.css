@@ -1,0 +1,24 @@
+/* Spotify's dark theme and type. Screen-specific rules live in each .pam.php component. */
+@font-face { font-family: "Figtree"; src: url("asset://assets/fonts/Figtree-Regular.ttf"); font-weight: 400; }
+@font-face { font-family: "Figtree"; src: url("asset://assets/fonts/Figtree-Medium.ttf"); font-weight: 500; }
+@font-face { font-family: "Figtree"; src: url("asset://assets/fonts/Figtree-SemiBold.ttf"); font-weight: 600; }
+@font-face { font-family: "Figtree"; src: url("asset://assets/fonts/Figtree-Bold.ttf"); font-weight: 700; }
+@font-face { font-family: "Figtree"; src: url("asset://assets/fonts/Figtree-ExtraBold.ttf"); font-weight: 800; }
+@font-face { font-family: "Figtree"; src: url("asset://assets/fonts/Figtree-Black.ttf"); font-weight: 900; }
+
+:root {
+    --base: #000000;
+    --panel: #121212;
+    --elevated: #1F1F1F;
+    --highlight: #2A2A2A;
+    --tinted: #FFFFFF12;
+    --tinted-hover: #FFFFFF24;
+    --text: #FFFFFF;
+    --subdued: #B3B3B3;
+    --faint: #727272;
+    --green: #1ED760;
+    --green-hover: #3BE477;
+    --divider: #FFFFFF1A;
+}
+
+Text, Input { font-family: "Figtree", sans-serif; color: var(--text); }

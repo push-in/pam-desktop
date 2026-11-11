@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace Pam\Desktop\Internal;
 
+use Pam\Desktop\DragPayload;
 use Pam\Desktop\GestureEvent;
 use Pam\Desktop\GestureSettleEvent;
 use Pam\Desktop\ImageErrorEvent;
 use Pam\Desktop\ImageLoadEvent;
 use Pam\Desktop\ImageProgressEvent;
+use Pam\Desktop\KeyEvent;
+use Pam\Desktop\LayoutEvent;
 use Pam\Desktop\PageChangeEvent;
 use Pam\Desktop\PressEvent;
 use Pam\Desktop\ScrollPhaseEvent;
@@ -35,6 +38,9 @@ final class EventPayloads
         ScrollPhaseEvent::class => true,
         PageChangeEvent::class => true,
         TextLayoutEvent::class => true,
+        KeyEvent::class => true,
+        LayoutEvent::class => true,
+        DragPayload::class => true,
     ];
 
     private function __construct()

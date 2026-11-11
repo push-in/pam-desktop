@@ -1,0 +1,28 @@
+{
+  "autoload": {
+    "psr-4": {
+      "App\\": "src/"
+    }
+  },
+  "config": {
+    "platform-check": true,
+    "sort-packages": true
+  },
+  "description": "A PAM Desktop application",
+  "license": "proprietary",
+  "name": "app/spotify",
+  "require": {
+    "php": "^8.5",
+    "pushinbr/pam-desktop": "^2.1.5"
+  },
+  "scripts": {
+    "build": "pam-desktop build",
+    "dev": [
+      "Composer\\Config::disableProcessTimeout",
+      "pam-desktop dev"
+    ],
+    "start": "pam-desktop run",
+    "test": "@php tests/SpotifyTest.php"
+  },
+  "type": "project"
+}
