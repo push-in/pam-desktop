@@ -1521,15 +1521,34 @@ impl Scene {
         let Some(node) = self.nodes.get(&id) else {
             return Point::ZERO;
         };
-        let mut origin = node.frame.origin();
-        let mut current = node.parent;
-        while let Some(ancestor) = self.nodes.get(&current) {
-            if let Some(offset) = self.scroll_offsets.get(&current) {
-                origin = origin.offset(-offset.x, -offset.y);
+        self.window_point(id, node.frame.origin())
+    }
+
+    /// A point laid out in node `id` (frame coordinates) where it shows in
+    /// the window: moved by every transform and scroll offset above it, the
+    /// reverse of what `hit_test` does.
+    #[must_use]
+    pub fn window_point(&self, id: NodeId, point: Point) -> Point {
+        let mut point = point;
+        let mut current = id;
+        while let Some(node) = self.nodes.get(&current) {
+            if !node.layer.transform.is_identity() {
+                let origin = node.frame.origin();
+                let moved = node
+                    .layer
+                    .transform
+                    .apply(Point::new(point.x - origin.x, point.y - origin.y));
+                point = Point::new(moved.x + origin.x, moved.y + origin.y);
             }
-            current = ancestor.parent;
+            if node.parent == 0 {
+                break;
+            }
+            if let Some(offset) = self.scroll_offsets.get(&node.parent) {
+                point = point.offset(-offset.x, -offset.y);
+            }
+            current = node.parent;
         }
-        origin
+        point
     }
 
     /// Frame relative to the parent view, snapped to the device pixel grid.
@@ -2715,6 +2734,15 @@ mod tests {
         scene.set_scroll_offset(1, Point::new(0.0, 290.0));
         assert_eq!(scene.hit_test(Point::new(10.0, 20.0)), Some(3));
         assert_eq!(scene.window_origin(3), Point::new(0.0, 10.0));
+        // window_point is the reverse of hit_test, transforms included.
+        for id in [3, 4] {
+            let frame = scene.node(id).unwrap().frame;
+            let center = Point::new(frame.x + frame.width / 2.0, frame.y + frame.height / 2.0);
+            let shown = scene.window_point(id, center);
+            if shown.y >= 0.0 {
+                assert_eq!(scene.hit_test(shown), Some(id), "node {id} at {shown:?}");
+            }
+        }
     }
 
     #[test]

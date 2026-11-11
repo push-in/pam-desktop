@@ -392,19 +392,24 @@ fn run(target: &Path, development: bool, link: Option<String>) -> ExitCode {
             &manifest,
         ),
         http_client: Some(http_client),
+        script: std::env::var_os("PAM_DESKTOP_SCRIPT")
+            .filter(|path| !path.is_empty())
+            .map(PathBuf::from),
     };
 
     #[cfg(target_os = "linux")]
-    {
-        pam_desktop_gtk::run(&application_id, config)
-    }
+    let code = pam_desktop_gtk::run(&application_id, config);
     #[cfg(target_os = "macos")]
-    {
-        pam_desktop_appkit::run(&application_id, config)
-    }
+    let code = pam_desktop_appkit::run(&application_id, config);
     #[cfg(target_os = "windows")]
+    let code = pam_desktop_win32::run(&application_id, config);
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {
-        pam_desktop_win32::run(&application_id, config)
+        // A test script that failed fails the run.
+        if pam_desktop_ui::driver::failed() {
+            return ExitCode::FAILURE;
+        }
+        code
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {

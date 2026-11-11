@@ -183,6 +183,8 @@ pub struct RuntimeConfig {
     pub modules: Vec<(String, Box<dyn crate::modules::Module>)>,
     /// The HTTP stack of the host binary; without one, network features fail.
     pub http_client: Option<Arc<dyn crate::modules::fetch::HttpClient>>,
+    /// A test script to run against the window (`PAM_DESKTOP_SCRIPT`).
+    pub script: Option<std::path::PathBuf>,
 }
 
 /// Where the application keeps its files.
@@ -358,6 +360,8 @@ pub struct Runtime<B: Backend> {
     pub finished: bool,
     /// The main window's size and maximized state, saved when the app quits.
     window_memory: Option<crate::window_memory::WindowMemory>,
+    /// The test script being run, if any.
+    driver: Option<crate::driver::Driver>,
 }
 
 /// Borrows the controller context out of a runtime's fields.
@@ -575,6 +579,29 @@ impl<B: Backend> Runtime<B> {
             armed_wake: None,
             finished: false,
             window_memory,
+            driver: None,
+        })
+        .map(|mut runtime: Self| {
+            if let Some(path) = &config.script {
+                match crate::driver::Driver::load(path) {
+                    Ok(driver) => {
+                        eprintln!(
+                            "pam-desktop script: {} steps from {}",
+                            driver.steps(),
+                            path.display()
+                        );
+                        runtime.driver = Some(driver);
+                        let at = runtime.now_ms() + 300;
+                        runtime.timers.schedule(Timer::Script, at);
+                    }
+                    Err(error) => {
+                        eprintln!("pam-desktop script: {error}");
+                        crate::driver::fail();
+                        runtime.finished = true;
+                    }
+                }
+            }
+            runtime
         })
     }
 
@@ -1338,6 +1365,7 @@ impl<B: Backend> Runtime<B> {
                 let due = self.timers.take_due(self.now_ms());
                 let mut recover = false;
                 let mut toast_changed = false;
+                let mut script = false;
                 let mut ctx = ctx!(self);
                 for timer in due {
                     match timer {
@@ -1381,6 +1409,7 @@ impl<B: Backend> Runtime<B> {
                         Timer::ScrollRest(_) | Timer::ListWindow(_) | Timer::RefreshFallback(_) => {
                             self.scrolling.on_timer(&mut ctx, timer)
                         }
+                        Timer::Script => script = true,
                         _ => self.interaction.on_timer(&mut ctx, timer),
                     }
                 }
@@ -1389,6 +1418,9 @@ impl<B: Backend> Runtime<B> {
                 }
                 if recover {
                     self.reload();
+                }
+                if script {
+                    self.run_script();
                 }
             }
             BackendEvent::ScrollChanged { id, offset } => {
@@ -1787,6 +1819,112 @@ impl<B: Backend> Runtime<B> {
         if std::mem::replace(&mut self.reported_app_state, state) != state {
             self.send_event(0, event_kind::APP_STATE, &[b'0' + state]);
         }
+    }
+
+    /// Runs the test script's steps that can run now, then checks again soon.
+    fn run_script(&mut self) {
+        use crate::backend::{PointerButton, PointerEvent, PointerPhase};
+        use crate::driver::Action;
+        for _ in 0..16 {
+            let now = self.now_ms();
+            let Some(driver) = self.driver.as_mut() else {
+                return;
+            };
+            let action = driver.poll(&self.scene, now);
+            let pointer = |phase, position, count: u8| PointerEvent {
+                window: MAIN_WINDOW,
+                phase,
+                position,
+                button: PointerButton::Primary,
+                modifiers: crate::backend::Modifiers::default(),
+                click_count: count,
+                time_ms: now,
+            };
+            match action {
+                Action::Wait => break,
+                Action::Next => continue,
+                Action::Done => {
+                    eprintln!("pam-desktop script: passed");
+                    self.driver = None;
+                    self.finished = true;
+                    return;
+                }
+                Action::Fail(reason) => {
+                    eprintln!("pam-desktop script: FAILED at {reason}");
+                    self.driver = None;
+                    self.finished = true;
+                    return;
+                }
+                Action::Hover(position) => {
+                    self.handle_backend_event(BackendEvent::Pointer(pointer(
+                        PointerPhase::Move,
+                        position,
+                        0,
+                    )));
+                }
+                Action::Click(_, position, count) => {
+                    for click in 1..=count {
+                        self.handle_backend_event(BackendEvent::Pointer(pointer(
+                            PointerPhase::Move,
+                            position,
+                            0,
+                        )));
+                        self.handle_backend_event(BackendEvent::Pointer(pointer(
+                            PointerPhase::Down,
+                            position,
+                            click,
+                        )));
+                        self.handle_backend_event(BackendEvent::Pointer(pointer(
+                            PointerPhase::Up,
+                            position,
+                            click,
+                        )));
+                    }
+                }
+                Action::Type(field, text) => {
+                    let target = field.or_else(|| self.interaction.focused());
+                    if let Some(id) = target {
+                        let length = text.chars().count() as u32;
+                        self.handle_backend_event(BackendEvent::Input {
+                            id,
+                            event: crate::backend::InputEvent::Edited {
+                                text,
+                                selection: (length, length),
+                            },
+                        });
+                    }
+                }
+                Action::Submit(id) => {
+                    self.handle_backend_event(BackendEvent::Input {
+                        id,
+                        event: crate::backend::InputEvent::Submitted,
+                    });
+                }
+                Action::Key(combo) => {
+                    if let Some(accelerator) = crate::shell::Accelerator::parse(&combo) {
+                        let modifiers = accelerator.modifiers;
+                        let key = accelerator.key.clone();
+                        if let Some(id) = self.shell.shortcut_for(&key, modifiers) {
+                            self.handle_backend_event(BackendEvent::Shortcut { id });
+                        } else {
+                            for pressed in [true, false] {
+                                self.handle_key(&KeyEvent {
+                                    window: MAIN_WINDOW,
+                                    pressed,
+                                    key: key.clone(),
+                                    modifiers,
+                                    repeat: false,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            // The application answers in its own time: look again soon.
+            break;
+        }
+        let at = self.now_ms() + 50;
+        self.timers.schedule(Timer::Script, at);
     }
 
     fn handle_key(&mut self, key: &KeyEvent) {

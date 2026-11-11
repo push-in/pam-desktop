@@ -73,7 +73,7 @@ final class SearchBar extends Component
     <Column class="anchor" @clickOutside="close" captureKeys="Escape" on:keyDown="key">
         <Row :class="$open ? 'bar bar-open' : 'bar bar-closed'">
             <Icon name="search" font="Lucide" size="14" :class="$open ? 'icon icon-open' : 'icon'" />
-            <Input :class="$open ? 'field field-open' : 'field'" model="query" sync="immediate" :placeholder="placeholder()"
+            <Input testId="search" :class="$open ? 'field field-open' : 'field'" model="query" sync="immediate" :placeholder="placeholder()"
                    :placeholderColor="$open ? '#868686' : '#FFFFFFCC'" @focus="show" @submit="submit" />
         </Row>
         <Column p-if="$open" class="panel">

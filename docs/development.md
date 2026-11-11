@@ -135,6 +135,47 @@ scripts/visual.sh list
 
 The baseline lives in `target/visual/baseline` and is not committed: fonts, the GTK version and the renderer change pixels, so a baseline is only valid on the machine that recorded it. On one machine the captures are reproducible: two runs of the same build differ in no pixel. The exceptions have a tolerance: the scenarios that never stop moving (`motion`, `media`, the spinner of `controls`, the seconds counter of `modules`, the sliding line of `text`) and `images`, whose status line names the picture the network delivered last. The scenarios, their sizes and tolerances are the table at the top of the script.
 
+## End-to-end scripts
+
+`PAM_DESKTOP_SCRIPT=steps.json pam-desktop run <app>` runs a script against the real window and quits with its result: exit 0 when every step passed, 1 at the first that failed. Actions go through the same core as the user's (pointer, keys, text in fields, shortcuts), so a script runs the same on Linux, macOS and Windows.
+
+```json
+[
+    {"wait": "Acme Inc"},
+    {"click": "engineering"},
+    {"expect": "It fails on the second run only"},
+    {"type": "Shipped the fix", "into": "#composer"},
+    {"submit": "#composer"},
+    {"expect": "Shipped the fix"},
+    {"key": "CmdOrCtrl+B"},
+    {"expectNot": "EXPLORER"}
+]
+```
+
+| Step | Does |
+| --- | --- |
+| `{"wait": selector}` | Waits until it is on screen. |
+| `{"click": selector}`, `{"doubleClick": …}`, `{"hover": …}` | The pointer at the center of the element. |
+| `{"type": "text", "into": selector}` | The text a user types into a field. Without `into`, into the focused one. |
+| `{"submit": selector}` | Enter in a field (its `on:submit`). |
+| `{"key": "CmdOrCtrl+P"}` | A registered shortcut, else the key for the focused element (`Escape`, `ArrowDown`, `Ctrl+Z`…). |
+| `{"expect": selector}`, `{"expectNot": selector}` | Fails unless it shows up, or goes away, within the timeout. |
+| `{"sleep": ms}` | Waits. |
+
+A selector is `#testId`, `@accessibility label`, or text the element shows (the smallest element that contains it wins). Each step waits up to `timeout` milliseconds (10000 by default). When one fails, the output lists the texts on screen, top to bottom.
+
+The four clones each have one in `examples/<name>/tests/e2e.json`. `scripts/e2e-setup.sh` copies them out of the repository and installs them against the working tree (a Composer `path` repository), and `scripts/e2e.sh` runs them (on a private virtual display on Linux):
+
+```bash
+scripts/e2e-setup.sh                         # PAM_E2E_COMPOSER="pam composer" with an older system PHP
+PAM_DESKTOP_HOST=target/debug/pam-desktop scripts/e2e.sh
+e2e slack: passed (1s)
+e2e spotify: passed (1s)
+…
+```
+
+CI runs them on Linux, macOS and Windows.
+
 ## Tests
 
 ### Rust

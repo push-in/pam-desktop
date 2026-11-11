@@ -46,7 +46,7 @@ final class Composer extends Component
                 <Icon p-if="$icon !== null" :name="$icon" font="Lucide" size="16" class="format" />
             </View>
         </Row>
-        <Input class="field" multiline="true" submitBehavior="submit" model="draft" sync="immediate"
+        <Input testId="composer" class="field" multiline="true" submitBehavior="submit" model="draft" sync="immediate"
                :placeholder="$placeholder" placeholderColor="#868686" @submit="send" />
         <Row class="actions">
             <Column class="attach"><Icon name="plus" font="Lucide" size="16" class="attach-icon" /></Column>

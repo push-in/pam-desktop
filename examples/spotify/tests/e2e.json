@@ -1,0 +1,10 @@
+[
+    {"wait": "Daily Mix 1"},
+    {"click": "Discover Weekly"},
+    {"expect": "10 songs, about 37 min"},
+    {"expect": "Golden Hour Again"},
+    {"type": "vera", "into": "#search"},
+    {"expect": "Vera Nox"},
+    {"click": "Liked Songs"},
+    {"expectNot": "10 songs, about 37 min"}
+]

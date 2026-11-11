@@ -373,7 +373,7 @@ final class WorkbenchScreen extends Component
         </Row>
 
         <Column p-if="$quickOpen" class="quick-open" @clickOutside="hideQuickOpen" captureKeys="Escape" on:keyDown="quickKey">
-            <Input class="quick-field" model="query" sync="immediate" autoFocus="true" placeholder="Search files by name"
+            <Input testId="quick-open" class="quick-field" model="query" sync="immediate" autoFocus="true" placeholder="Search files by name"
                    placeholderColor="#989898" @submit="pickFirst" />
             <Pressable p-for="$path in matches()" p-key="$path" :class="$pathIndex === 0 ? 'quick-row quick-row-on' : 'quick-row'"
                        cursor="pointer" on:press="openFile($path)">

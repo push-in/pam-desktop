@@ -1,0 +1,12 @@
+[
+    {"wait": "Acme Inc"},
+    {"click": "engineering"},
+    {"expect": "It fails on the second run only"},
+    {"type": "Shipped the fix for sync_test", "into": "#composer"},
+    {"submit": "#composer"},
+    {"expect": "Shipped the fix for sync_test"},
+    {"click": "design"},
+    {"click": "4 replies"},
+    {"expect": "Same spring as the sheets"},
+    {"expectNot": "It fails on the second run only"}
+]

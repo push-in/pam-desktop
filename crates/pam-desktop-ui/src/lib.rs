@@ -16,6 +16,7 @@ pub mod context;
 pub mod controls;
 pub mod dragdrop;
 pub mod drawing;
+pub mod driver;
 pub mod error_overlay;
 pub mod frame_dump;
 pub mod geometry;

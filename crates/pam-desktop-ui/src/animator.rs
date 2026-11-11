@@ -505,6 +505,8 @@ pub enum Timer {
     GestureIdle,
     /// A sliding line of text rested long enough at one end.
     Marquee(NodeId),
+    /// The test driver checks its current step.
+    Script,
 }
 
 #[derive(Default)]
