@@ -4,20 +4,20 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "7c9482110641239ea17c8fd1e04da66f",
+    "content-hash": "d10d13495e00f86b51d948ce7996e356",
     "packages": [
         {
             "name": "pushinbr/pam-desktop",
-            "version": "v2.1.5",
+            "version": "v2.1.8",
             "source": {
                 "type": "git",
                 "url": "https://github.com/push-in/pam-desktop.git",
-                "reference": "72eee1c129d2935c46ff660de577052bbee7d9e1"
+                "reference": "630a224003a272b2e9f1f6254e0c49ef453a7762"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/push-in/pam-desktop/zipball/72eee1c129d2935c46ff660de577052bbee7d9e1",
-                "reference": "72eee1c129d2935c46ff660de577052bbee7d9e1",
+                "url": "https://api.github.com/repos/push-in/pam-desktop/zipball/630a224003a272b2e9f1f6254e0c49ef453a7762",
+                "reference": "630a224003a272b2e9f1f6254e0c49ef453a7762",
                 "shasum": ""
             },
             "require": {
@@ -78,7 +78,7 @@
                 "issues": "https://github.com/push-in/pam-desktop/issues",
                 "source": "https://github.com/push-in/pam-desktop"
             },
-            "time": "2026-11-11T02:13:17+00:00"
+            "time": "2026-11-11T03:07:33+00:00"
         },
         {
             "name": "symfony/polyfill-intl-normalizer",

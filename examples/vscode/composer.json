@@ -13,7 +13,7 @@
   "name": "app/vscode",
   "require": {
     "php": "^8.5",
-    "pushinbr/pam-desktop": "^2.1.7"
+    "pushinbr/pam-desktop": "^2.1.8"
   },
   "scripts": {
     "build": "pam-desktop build",
