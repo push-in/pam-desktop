@@ -202,6 +202,37 @@ $this->seek = new Slider(
 
 A click or a drag sets the value (a drag keeps following the pointer past either end); the arrow keys step it by `step`, or a twentieth of the range when `step` is 0, Page Up and Page Down by five steps, Home and End to the ends. `$changed` reports every new value; `$committed`, when given, runs once the pointer is released or a key changed the value, for work too costly to repeat while dragging. `trackHeight`, `thumbSize`, `trackColor`, `fillColor`, `activeColor` (the fill while hovered or dragged) and `thumbColor` (the thumb shows while hovered or dragged) style it; the defaults are a media player's. It is exposed to screen readers as a slider with its range, its value and `valueText`. `min`, `max` and `value` are state: change them on the same instance (the length of the next track) rather than creating another slider.
 
+## Popover
+
+`<Popover>` shows its children next to another element, above the whole window (modals included): a menu, a picker, a card with details. `anchor` is the `nativeRef` of the element it points at.
+
+```html
+<Pressable nativeRef="emoji-button" on:press="toggleEmoji">
+    <Icon name="smile" font="Lucide" size="16" />
+</Pressable>
+<Popover :open="$emojiOpen" anchor="emoji-button" placement="top-end" on:close="closeEmoji">
+    <Column class="emoji-panel">…</Column>
+</Popover>
+```
+
+- `placement` is a side (`bottom`, `top`, `right` or `left`), optionally followed by `-start` or `-end` (`bottom-start` by default). When the surface does not fit on that side, it flips to the other side, and it always stays inside the window.
+- `offset` is the gap to the anchor, in points (6 by default).
+- A press outside the popover, or Escape, emits `close`; the owner sets `open` to false. `dismissible="false"` lets presses outside reach what is below.
+- The popover draws nothing until both the anchor and its content are measured, so it never shows in the wrong place.
+- It takes no surface style of its own: style the children (background, border, radius, shadow).
+
+## Tooltip
+
+`<Tooltip>` is the rich version of the `tooltip` attribute: a title, an optional description and a shortcut, drawn by the app after the pointer rests on the children for `delay` milliseconds (500 by default). It never takes presses, and it hides when the pointer leaves or presses.
+
+```html
+<Tooltip title="Mention someone" shortcut="Ctrl+Shift+2" placement="top">
+    <Icon name="at-sign" font="Lucide" size="16" />
+</Tooltip>
+```
+
+`placement` and `offset` work as for `Popover`. `background`, `color`, `muted` and `border` set its colours.
+
 ## ProgressButton
 
 A button that keeps its label and shows a spinner while `loading`; it ignores presses while loading or disabled. See [ProgressButton](../packages/desktop-ui/docs/progress-button.md).

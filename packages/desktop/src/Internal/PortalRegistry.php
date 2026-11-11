@@ -158,6 +158,12 @@ final class PortalRegistry
         return $content;
     }
 
+    /** Whether any portal targets `$host` (no dependency is recorded). */
+    public function has(string $host): bool
+    {
+        return ($this->entries[$host] ?? []) !== [];
+    }
+
     /** A render() call starts: at most one extra pass is spent on portals. */
     public function beginRender(): void
     {

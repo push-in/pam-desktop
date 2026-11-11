@@ -6,6 +6,7 @@ namespace Pam\Desktop\UI;
 
 use InvalidArgumentException;
 use Pam\Desktop\Element;
+use Pam\Desktop\Internal\PortalRegistry;
 use Pam\Desktop\Internal\Runtime;
 use Pam\Desktop\ModalPresentation;
 use Pam\Desktop\PointerEvents;
@@ -60,7 +61,8 @@ final class WindowLayer
     /** @internal Runtime: the root with the layer modal appended. */
     public static function attach(Element $root): Element
     {
-        if (self::$layers === []) return $root;
+        $portals = PortalRegistry::instance()->has(Portal::WINDOW_HOST);
+        if (self::$layers === [] && !$portals) return $root;
         $fill = new Style(
             positionType: PositionType::Absolute,
             left: 0.0,
@@ -72,6 +74,10 @@ final class WindowLayer
         $layers = [];
         foreach (self::$layers as $key => $content) {
             $layers[] = View::make($content)->key('window-layer:'.$key)->style($fill);
+        }
+        if ($portals) {
+            // Last: popovers and tooltips draw above the other layers.
+            $layers[] = View::make(Portal::host(Portal::WINDOW_HOST))->key('window-layer:portals')->style($fill);
         }
         $modal = Modal::make(View::make(...$layers)->style($fill), true, ModalPresentation::Overlay)
             ->transparent()

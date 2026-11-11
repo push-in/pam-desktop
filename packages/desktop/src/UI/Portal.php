@@ -41,6 +41,12 @@ final class Portal
 {
     public const DEFAULT_HOST = 'screen';
 
+    /**
+     * The host the runtime keeps above the whole window, modals included
+     * (popovers, tooltips): no `PortalHost` to place, window coordinates.
+     */
+    public const WINDOW_HOST = 'window';
+
     private function __construct()
     {
     }
