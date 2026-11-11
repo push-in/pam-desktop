@@ -142,7 +142,20 @@ Capabilities that only exist on phones in PAM Native (location, contacts, sensor
 <a id="examples"></a>
 ## <picture><img src=".github/assets/icons/sparkle.svg" width="22" height="22" alt=""></picture> Examples
 
-Every directory under [`examples/`](examples) is a runnable application that exercises one feature: `counter`, `showcase`, `controls`, `lists`, `chat`, `navigation`, `motion`, `gestures`, `images`, `media`, `webview`, `canvas`, `shell`, `windows`, `dragdrop`, `text`, `modules`, `links`, `toast`, `errors`, `web-defaults`. What each one shows and how to run them from a checkout: [docs/examples.md](docs/examples.md). Crate and package map: [docs/repository-layout.md](docs/repository-layout.md).
+Four clones of desktop apps, written only with PAM and PAM Desktop (no web view, no JavaScript) and recorded live on Linux:
+
+<table>
+  <tr>
+    <td width="50%"><a href="examples/slack"><img src="examples/slack/demo.gif" alt="Slack clone: hover actions, threads, reactions, DMs and search"></a><br><b><a href="examples/slack">Slack</a></b>: threads, reactions, hover actions, DMs, search.</td>
+    <td width="50%"><a href="examples/spotify"><img src="examples/spotify/demo.gif" alt="Spotify clone: library, shelves, playlists, player and search"></a><br><b><a href="examples/spotify">Spotify</a></b>: library, shelves, playlists, the player with sliders, search.</td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="examples/trello"><img src="examples/trello/demo.gif" alt="Trello clone: dragging cards between lists, card detail and inline add"></a><br><b><a href="examples/trello">Trello</a></b>: drag and drop between lists, rich cards, the card dialog.</td>
+    <td width="50%"><a href="examples/vscode"><img src="examples/vscode/demo.gif" alt="VS Code clone: explorer, tabs, syntax colours, Quick Open and shortcuts"></a><br><b><a href="examples/vscode">VS Code</a></b>: the project's own tree, tabs, syntax colours, Quick Open.</td>
+  </tr>
+</table>
+
+Every directory under [`examples/`](examples) is a runnable application that exercises one feature: `slack`, `spotify`, `trello`, `vscode`, `counter`, `showcase`, `controls`, `lists`, `chat`, `navigation`, `motion`, `gestures`, `images`, `media`, `webview`, `canvas`, `shell`, `windows`, `dragdrop`, `text`, `modules`, `links`, `toast`, `errors`, `web-defaults`. What each one shows and how to run them from a checkout: [docs/examples.md](docs/examples.md). Crate and package map: [docs/repository-layout.md](docs/repository-layout.md).
 
 <a id="docs"></a>
 ## <picture><img src=".github/assets/icons/book.svg" width="22" height="22" alt=""></picture> Docs

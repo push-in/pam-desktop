@@ -274,7 +274,7 @@ The script writes `pam-desktop-<version>-<target>.tar.gz` and its `.sha256` in t
 | Switch | Effect |
 | --- | --- |
 | `PAM_DESKTOP_PROFILE=1` | Times each interaction on standard error: the PHP handler and render of every event and flush, the host's layout of each committed frame, the native view work it caused and the frame painted after it (`[pam-desktop profile] @<ms> ...`, the wall clock modulo 100 s lines worker and host up). GTK lists the heaviest backend calls (`create_view 1.3×120`: milliseconds × calls). |
-| `PAM_DESKTOP_DEBUG=1` | Logs every pointer press and every event sent to PHP on the host's standard error. |
+| `PAM_DESKTOP_DEBUG=1` | Logs every pointer press, every key press (with its modifiers and the focused node) and every event sent to PHP on the host's standard error. |
 | `PAM_DESKTOP_WINDOW=800x600` | Forces the size of the first window. |
 | `PAM_DESKTOP_STATE_DIR`, `PAM_DESKTOP_DATA_DIR`, `PAM_DESKTOP_CACHE_DIR` | Absolute paths that isolate a run from the application's real files. |
 | `PAM_DESKTOP_PHP=/path/to/php` | Runs the worker with another PHP executable. |

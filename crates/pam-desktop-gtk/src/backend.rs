@@ -1659,8 +1659,15 @@ pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
         }
         let events = EventQueue::new();
         *queue.borrow_mut() = Some(Rc::clone(&events));
+        // Always queued, never run in place: `MainContext::invoke` calls the
+        // pump at once on the UI thread, where a reply posted while the
+        // runtime drains (a shortcut answering the shell listener) found it
+        // borrowed, was skipped and stranded the inbox.
         let inbox = Inbox::new(|| {
-            glib::MainContext::default().invoke(runtime::pump);
+            glib::idle_add_full(glib::Priority::DEFAULT, || {
+                runtime::pump();
+                glib::ControlFlow::Break
+            });
         });
         let backend = GtkBackend::new(application.clone(), Rc::clone(&events));
         match Runtime::new(backend, inbox, events, config) {

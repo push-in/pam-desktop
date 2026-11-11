@@ -38,4 +38,5 @@ Every directory under `examples/` is a runnable application that exercises one f
 | `slack` | A Slack clone: workspace sidebar, mrkdwn messages with reactions, hover actions, threads, DMs, search, the composer |
 | `spotify` | A Spotify clone: library, home shelves with hover play buttons, playlists, the player bar with sliders, search |
 | `trello` | A Trello board clone: lists, rich cards, drag and drop between lists, inline add, the card detail dialog |
+| `vscode` | A VS Code workbench clone: the project's own tree, tabs, syntax colours from PHP's tokenizer, a minimap, Quick Open, shortcuts |
 | `web-defaults` | Web semantics: a content-sized list, CSS font stacks, thin classic scrollbars, value methods in templates, Chart.js value axes |

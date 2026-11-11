@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.1.8 - 2026-11-11
+
+What the VS Code clone in `examples/vscode` needed: Linux shortcuts and shell
+events that reach PHP. Update with `pam composer update pushinbr/pam-desktop`;
+the launcher downloads the 2.1.8 host. No app changes needed.
+
+### Fixed
+
+- **Linux: shortcuts, menus and other shell events reach PHP.** The GTK host
+  woke its inbox with `MainContext::invoke`, which runs the pump at once on the
+  UI thread. A reply posted while the runtime was draining (a shortcut, a menu
+  or tray item answering the shell listener) found it busy, was skipped and
+  left the inbox stranded: `Shortcut::register('CmdOrCtrl+P', …)` matched but
+  its handler never ran. The wake is now always queued.
+- **`PAM_DESKTOP_DEBUG=1` logs key presses** with their modifiers and the
+  focused node, and the shortcut a key matched.
+
 ## 2.1.7 - 2026-11-11
 
 What the Trello clone in `examples/trello` needed: cards that open on click

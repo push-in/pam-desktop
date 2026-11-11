@@ -3,7 +3,7 @@
 A Spotify desktop clone built only with PAM and PAM Desktop: no web view, no
 JavaScript, every pixel a native view.
 
-![Spotify clone](https://raw.githubusercontent.com/push-in/pam-desktop/main/examples/spotify/screenshot.png)
+![Spotify clone, recorded live](demo.gif)
 
 ```bash
 pam composer install

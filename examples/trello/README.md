@@ -3,7 +3,7 @@
 A Trello board clone built only with PAM and PAM Desktop: no web view, no
 JavaScript, every pixel a native view.
 
-![Trello clone](https://raw.githubusercontent.com/push-in/pam-desktop/main/examples/trello/screenshot.png)
+![Trello clone, recorded live](demo.gif)
 
 ```bash
 pam composer install
