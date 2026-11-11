@@ -8,6 +8,7 @@
     {"expect": "in list In Progress"},
     {"expect": "Add to card"},
     {"key": "Escape"},
+    {"expectNot": "#new-card"},
     {"key": "Escape"},
     {"expectNot": "in list In Progress"}
 ]
