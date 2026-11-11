@@ -668,6 +668,8 @@ pub struct WindowConfig {
     pub parent: Option<WindowId>,
     /// Blocks input to `parent` while open (a dialog).
     pub modal: bool,
+    /// Restores the size and maximized state of the last run (main window).
+    pub remember: bool,
 }
 
 impl Default for WindowConfig {
@@ -680,6 +682,7 @@ impl Default for WindowConfig {
             decorated: true,
             parent: None,
             modal: false,
+            remember: true,
         }
     }
 }

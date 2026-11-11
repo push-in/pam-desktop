@@ -135,6 +135,7 @@ impl Windows {
                 decorated: true,
                 parent: Some(MAIN_WINDOW),
                 modal: props.flag_or(PropKey::WindowModal, false),
+                remember: false,
             };
             let Some(surface) = self.surfaces.get_mut(&id) else {
                 continue;

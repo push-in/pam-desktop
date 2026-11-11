@@ -354,6 +354,8 @@ pub struct Runtime<B: Backend> {
     armed_wake: Option<u64>,
     /// Set when the worker exited or the window closed: the host should quit.
     pub finished: bool,
+    /// The main window's size and maximized state, saved when the app quits.
+    window_memory: Option<crate::window_memory::WindowMemory>,
 }
 
 /// Borrows the controller context out of a runtime's fields.
@@ -382,7 +384,18 @@ impl<B: Backend> Runtime<B> {
         config: RuntimeConfig,
     ) -> std::io::Result<Self> {
         backend.set_asset_root(&config.directories.assets);
-        backend.open_window(MAIN_WINDOW, &config.window);
+        let window_memory = config
+            .window
+            .remember
+            .then(|| crate::window_memory::WindowMemory::load(&config.directories.state));
+        let mut window = config.window.clone();
+        let maximize = window_memory
+            .as_ref()
+            .is_some_and(|memory| memory.restore(&mut window));
+        backend.open_window(MAIN_WINDOW, &window);
+        if maximize {
+            backend.window_command(MAIN_WINDOW, &crate::shell::WindowCommand::Maximize);
+        }
         let system = backend.window_metrics(MAIN_WINDOW);
         let settings = Settings::load(&config.directories.state);
         backend.set_appearance(settings.forced_dark());
@@ -558,6 +571,7 @@ impl<B: Backend> Runtime<B> {
             quit_requested: false,
             armed_wake: None,
             finished: false,
+            window_memory,
         })
     }
 
@@ -598,6 +612,11 @@ impl<B: Backend> Runtime<B> {
         self.draining = false;
         if self.finished && !self.quit_requested {
             self.quit_requested = true;
+            if let Some(memory) = &mut self.window_memory
+                && let Err(error) = memory.save()
+            {
+                eprintln!("pam-desktop: could not save the window size: {error}");
+            }
             self.worker = None;
             self.backend.quit();
         }
@@ -1205,6 +1224,9 @@ impl<B: Backend> Runtime<B> {
                     return;
                 }
                 let scale_changed = self.metrics.scale != scale;
+                if let Some(memory) = &mut self.window_memory {
+                    memory.resized(size, self.backend.window_state(MAIN_WINDOW));
+                }
                 self.metrics.size = size;
                 self.metrics.scale = scale;
                 self.scene.environment.scale = scale;
@@ -1247,6 +1269,9 @@ impl<B: Backend> Runtime<B> {
             }
             BackendEvent::WindowStateChanged { window, state } => {
                 if window == MAIN_WINDOW {
+                    if let Some(memory) = &mut self.window_memory {
+                        memory.state_changed(state);
+                    }
                     self.concealed = state.minimized;
                     self.report_app_state();
                     self.window_state_changed(state);

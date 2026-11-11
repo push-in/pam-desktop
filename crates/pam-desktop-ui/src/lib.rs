@@ -47,6 +47,7 @@ pub mod textlayout;
 pub mod toast;
 pub mod watch;
 pub mod webview;
+pub mod window_memory;
 pub mod windows;
 pub mod wiremap;
 pub mod worker;

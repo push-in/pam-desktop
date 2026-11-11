@@ -239,6 +239,7 @@ The manifest is optional, and running an application never fails because of it: 
 | `window.width`, `window.height` | number | 960 × 640 | Initial size in logical units. Both must be present. Each is clamped to 120…16384. |
 | `window.minWidth`, `window.minHeight` | number | none | Smallest size the user can give the window. Both must be present. |
 | `window.resizable` | boolean | `true` | Whether the user can resize the window. |
+| `window.remember` | boolean | `true` | The window opens with the size and maximized state it had when the app last quit (stored in the app's state directory, `window.json`). `width` and `height` are then only the size of the first launch. `PAM_DESKTOP_WINDOW=WIDTHxHEIGHT` turns it off for that run. |
 
 An `applicationId` is valid when it has at least two segments separated by dots, each segment starts with a letter, `_` or `-` (not a digit), holds only ASCII letters, digits, `_` and `-`, and the whole id is at most 255 bytes. An invalid id is ignored and the default is used.
 
