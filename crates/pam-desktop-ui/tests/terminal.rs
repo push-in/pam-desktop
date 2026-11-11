@@ -206,10 +206,15 @@ fn a_terminal_binds_sizes_paints_and_types_through_the_hub() {
     assert!(terminals.on_pointer(&mut harness.ctx(), drag));
     let up = harness.pointer(PointerPhase::Up, 4.0 + 8.0 * 8.0 + 7.0, 10.0);
     assert!(terminals.on_pointer(&mut harness.ctx(), up));
-    let copy = Modifiers {
-        control: true,
-        shift: true,
-        ..none
+    // Cmd+C/V on macOS, Ctrl+Shift+C/V elsewhere.
+    let copy = if cfg!(target_os = "macos") {
+        Modifiers { meta: true, ..none }
+    } else {
+        Modifiers {
+            control: true,
+            shift: true,
+            ..none
+        }
     };
     assert_eq!(
         terminals.on_key(&mut harness.ctx(), Some(2), &key("C", copy)),
