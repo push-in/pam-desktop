@@ -7733,6 +7733,7 @@ require __DIR__.'/explicit_text_color.php';
 require __DIR__.'/project_check.php';
 require __DIR__.'/drag_drop.php';
 require __DIR__.'/context_menu_template.php';
+require __DIR__.'/migrations.php';
 
 require __DIR__.'/secure_storage_failures.php';
 
