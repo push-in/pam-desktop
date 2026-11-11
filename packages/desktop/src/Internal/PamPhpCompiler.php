@@ -1362,17 +1362,34 @@ final class PamPhpCompiler
 
     private static function validateHotPath(string $php, string $source): void
     {
-        if (!BuildConfiguration::strict()) {
+        // `pam-desktop check` reports what a strict (production) build would
+        // refuse at boot, without stopping at the first one.
+        $checking = !BuildConfiguration::strict() && \Pam\Desktop\Tooling\ProjectCheck::active();
+        if (!BuildConfiguration::strict() && !$checking) {
             return;
         }
-        if (preg_match('/\\$this\\s*->\\s*\\{/', $php) === 1) {
-            throw new RuntimeException(
-                "PAM2104 {$source}: dynamic component property access prevents dependency tracking.",
-            );
+        $problems = [];
+        if (preg_match_all('/\\$this\\s*->\\s*\\{/', $php, $matches, PREG_OFFSET_CAPTURE) > 0) {
+            foreach ($matches[0] as [, $offset]) {
+                $problems[] = ['PAM2104', $offset, 'dynamic component property access prevents dependency tracking'];
+            }
         }
-        if (preg_match('/\\b(eval|extract)\\s*\\(/i', $php, $match) === 1) {
-            throw new RuntimeException(
-                "PAM2105 {$source}: {$match[1]} is not allowed in strict production components.",
+        if (preg_match_all('/\\b(eval|extract)\\s*\\(/i', $php, $matches, PREG_OFFSET_CAPTURE) > 0) {
+            foreach ($matches[1] as [$name, $offset]) {
+                $problems[] = ['PAM2105', $offset, "{$name} is not allowed in strict production components"];
+            }
+        }
+        foreach ($problems as [$code, $offset, $message]) {
+            if (!$checking) {
+                throw new RuntimeException("{$code} {$source}: {$message}.");
+            }
+            $before = substr($php, 0, (int) $offset);
+            $line = substr_count($before, "\n") + 1;
+            $column = (int) $offset - (int) strrpos("\n".$before, "\n") + 1;
+            \Pam\Desktop\Tooling\ProjectCheck::report(
+                new RuntimeException("{$code} {$source}:{$line}:{$column}: {$message} (a production build refuses it at boot)."),
+                $source,
+                $code,
             );
         }
     }

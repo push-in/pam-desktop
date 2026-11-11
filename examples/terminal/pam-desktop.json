@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "applicationId": "dev.pam.examples.terminal",
+    "name": "PAM Desktop terminal",
+    "entry": "index.php",
+    "window": {
+        "width": 900,
+        "height": 560
+    }
+}

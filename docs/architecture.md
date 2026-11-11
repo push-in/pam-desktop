@@ -140,7 +140,11 @@ The desktop table:
 | 2033 | `VerticalAlign` | | 2041 | `InputSize` |
 | 2034 | `LengthUnits` | | 2042 | `MenuListOptions` |
 | 2035 | `CompositedLayer` | | 2043 | `MinWidthAuto` |
-| 2036 | `FontSmoothing` | | | |
+| 2036 | `FontSmoothing` | | 2044 | `TerminalChannel` |
+| 2045 | `TerminalPalette` | | 2046 | `TerminalScrollback` |
+| 2047 | `TerminalCursorColor` | | 2048 | `TerminalSelectionColor` |
+| 2049 | `OnTerminalResize` | | 2050 | `OnTerminalTitle` |
+| 2051 | `OnTerminalExit` | | 2052 | `OnTerminalBell` |
 
 | Id | Event |
 | --- | --- |
@@ -151,6 +155,10 @@ The desktop table:
 | 2005 | `FilesDrop` |
 | 2006 | `DragEnter` |
 | 2007 | `DragLeave` |
+| 2008 | `TerminalResize` |
+| 2009 | `TerminalTitle` |
+| 2010 | `TerminalExit` |
+| 2011 | `TerminalBell` |
 
 Before starting the worker the host exports the highest identifiers it implements in `PAM_RENDERER_CONTRACT`. The PHP package never sends an extension identifier that the host did not declare; [Compatibility](compatibility.md) says what happens instead and which feature needs which identifier.
 
@@ -209,6 +217,7 @@ Each feature is one module with the same shape: `on_change` for scene changes, `
 | `media.rs` | Source resolution, the media cache, the play gate, progress, clock and bar bindings. |
 | `webview.rs` | Page source, navigation policy, load timeout, bridge events. |
 | `drawing.rs` | `Canvas` and `DrawingCanvas` as lists of draw commands. |
+| `terminal.rs` | `Terminal`: a VT emulator fed by the terminal hub, painted as draw commands; keys, selection, scrollback. |
 | `selection.rs`, `dragdrop.rs` | Text selection with the pointer; dragging text between elements. |
 | `controls.rs` | The switch and the activity indicator, drawn by the host. |
 | `presenter/navigation.rs`, `header.rs`, `tabs.rs`, `modal.rs`, `coverage.rs` | Stack transitions, the header, the tab bar, modals and sheets, route covered and focused events. |
@@ -292,6 +301,7 @@ A slow PHP handler delays the next frame of *content*; it does not stall an anim
 | `pam-watch` | Development only: polls the project for changes. |
 | `pam-timers` | Sleeps until the next deadline. Started with the first timer. |
 | `pam-device` | Samples the device status while a watch is open. |
+| `pam-ssh` | The SSH module's runtime, only while a session is open. It also parses terminal output for `Terminal` elements. |
 | `pam-storage`, `pam-files`, `pam-sqlite`, `pam-secure-storage` | One serial thread each, so results arrive in call order. |
 | `pam-http`, `pam-http-transfer`, `pam-files-download`, `pam-image`, `pam-image-prefetch`, `pam-media-cache` | Bounded pools for network work. |
 | Backend threads | Image decoding; on Linux the X11 hotkey listener and the tray service. |

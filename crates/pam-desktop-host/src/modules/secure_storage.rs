@@ -263,6 +263,34 @@ impl Vault {
     }
 }
 
+/// Secrets held by this process only (`PAM_DESKTOP_SECURE_STORAGE=memory`).
+#[derive(Default)]
+struct ProcessMemory(std::sync::Mutex<std::collections::HashMap<String, String>>);
+
+impl SecretStore for ProcessMemory {
+    fn get(&self, account: &str) -> Result<Option<String>, Unavailable> {
+        Ok(self
+            .0
+            .lock()
+            .map_err(|_| Unavailable)?
+            .get(account)
+            .cloned())
+    }
+
+    fn set(&self, account: &str, secret: &str) -> Result<(), Unavailable> {
+        self.0
+            .lock()
+            .map_err(|_| Unavailable)?
+            .insert(account.to_owned(), secret.to_owned());
+        Ok(())
+    }
+
+    fn delete(&self, account: &str) -> Result<(), Unavailable> {
+        self.0.lock().map_err(|_| Unavailable)?.remove(account);
+        Ok(())
+    }
+}
+
 pub struct SecureStorage {
     vault: Arc<Vault>,
     worker: SerialWorker,
@@ -272,7 +300,17 @@ impl SecureStorage {
     /// `data_dir` is the application's data directory and `application_id`
     /// names the application in the keychain of the system.
     #[must_use]
+    ///
+    /// `PAM_DESKTOP_SECURE_STORAGE=memory` keeps the secrets in this process
+    /// instead (for tests and screenshots: the keychain of the machine is
+    /// never read or written, and everything is gone when the host exits).
     pub fn new(data_dir: &Path, application_id: &str) -> Self {
+        if std::env::var_os("PAM_DESKTOP_SECURE_STORAGE").is_some_and(|value| value == "memory") {
+            eprintln!(
+                "pam-desktop: PAM_DESKTOP_SECURE_STORAGE=memory: secrets are kept in memory only"
+            );
+            return Self::with_store(data_dir, Box::new(ProcessMemory::default()));
+        }
         Self::with_store(
             data_dir,
             Box::new(Keychain {
@@ -394,6 +432,26 @@ mod tests {
             self.entries.lock().unwrap().remove(account);
             Ok(())
         }
+    }
+
+    #[test]
+    fn the_memory_store_keeps_secrets_for_the_process_only() {
+        let store = ProcessMemory::default();
+        assert_eq!(store.get("a").unwrap(), None);
+        store.set("a", "secret").unwrap();
+        assert_eq!(store.get("a").unwrap().as_deref(), Some("secret"));
+        store.delete("a").unwrap();
+        assert_eq!(store.get("a").unwrap(), None);
+        // The module over it never reaches the keychain.
+        let directory = temporary_directory("secure-memory");
+        let mut module = SecureStorage::with_store(&directory, Box::new(ProcessMemory::default()));
+        let (reply, answer) = Reply::channel();
+        let mut request = WireMap::new();
+        request.insert("key", "token");
+        request.insert("value", "x".repeat(INLINE_BYTES * 2));
+        module.call("set", &request.encode(), reply);
+        assert_eq!(answer.recv_timeout(WAIT).unwrap().0, MODULE_SUCCESS);
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     struct Fixture {

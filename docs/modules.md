@@ -83,6 +83,8 @@ SecureStorage::get('api-token', function (?string $token): void {
 
 Provide the optional failure callback when restoration must distinguish an unavailable keychain from an absent session. Existing two-argument callers continue to receive `null` for both cases.
 
+**Tests.** The keychain entries are named after the `applicationId`, not the data directory: `PAM_DESKTOP_DATA_DIR` (and `PAM_DESKTOP_STATE_DIR`) move the files and the encrypted large values, but a test run with another data directory still reads and writes the real keychain entries of the application. Start the host with `PAM_DESKTOP_SECURE_STORAGE=memory` to keep the secrets in the host process instead: the keychain is never touched and everything is gone when the host exits (it prints a line saying so). In PHP unit tests without a host, use a test transport (`NativeModules::useTransport()`).
+
 ## Files
 
 `Pam\Desktop\System\Files` is the application's private file sandbox. Every path is relative to `pam-files/` in the data directory. A path that would leave that directory, including through a symbolic link, is refused.
@@ -367,6 +369,10 @@ $this->socket->close();
 - At most 4 connections at a time. Incoming messages are at most 64 KiB, and at most 32 events or 256 KiB wait for PHP: a client that cannot keep up gets a `Failed` event instead of losing messages silently.
 - Text messages only. Reconnection is left to the application.
 - TLS uses rustls with the root certificates of the system.
+
+## SSH
+
+The `ssh` module keeps SSH sessions in the host: remote commands, SFTP with uploads and downloads, local port forwarding and interactive shells whose output can go straight to a native terminal without PHP. The PHP API is the package `pushinbr/pam-desktop-ssh`; see its [README](../packages/ssh/README.md). The methods, events, limits and the terminal hub are described in [SSH](ssh.md). It is the cargo feature `ssh` of the host, on by default.
 
 ## Printing
 

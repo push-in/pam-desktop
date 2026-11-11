@@ -71,9 +71,9 @@ jobs:
             kill "$host"
             exit "$status"
           '
-      - name: DesktopUI, Markdown, Code and Auth packages
+      - name: DesktopUI, Markdown, Code, Auth and SSH packages
         run: |
-          for test in packages/desktop-ui/tests/*.php packages/markdown/tests/run.php packages/code/tests/run.php packages/auth/tests/run.php; do
+          for test in packages/desktop-ui/tests/*.php packages/markdown/tests/run.php packages/code/tests/run.php packages/auth/tests/run.php packages/ssh/tests/run.php; do
             php "$test" || exit 1
           done
       - name: End-to-end scripts of the four clones

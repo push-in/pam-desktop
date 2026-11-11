@@ -177,12 +177,12 @@ final class Toast extends Component
         <Column widthPercent="100" heightPercent="100" pointerEvents="box-none" :padding="$offset" :alignItems="alignment()" :justifyContent="vertical()">
             <Column :width="$width" gap="12" pointerEvents="box-none">
                 <Row p-for="$message in $messages" p-key="$message->id" class="message" :backgroundColor="surface($message)" :borderColor="border($message)" :borderLeftWidth="$theme->edgeWidth > 0 ? $theme->edgeWidth : 1" :borderLeftColor="$theme->edgeWidth > 0 ? edge($message) : border($message)" :borderRadius="$theme->radius" :paddingVertical="$theme->paddingVertical" :paddingHorizontal="$theme->paddingHorizontal" :shadowColor="$theme->shadowColor" :shadowOffsetY="$theme->shadowOffsetY" :shadowBlurRadius="$theme->shadowBlur" :backdropBlurRadius="$backdropBlur" accessibilityRole="alert" :accessibilityLabel="$message->summary">
-                    <Icon :name="icon($message)" font="PrimeIcons" :size="$theme->iconSize" :color="accent($message)" />
+                    <Icon :name="icon($message)" font="Lucide" :size="$theme->iconSize" :color="accent($message)" />
                     <Column flexGrow="1" flexShrink="1" minWidth="0" :gap="$theme->detailGap">
                         <Text :fontFamily="$fontFamily" :fontSize="$theme->summaryFontSize" :lineHeight="$theme->summaryLineHeight" :fontWeight="$theme->summaryFontWeight" :textColor="summaryColor($message)">{{ $message->summary }}</Text>
                         <Text p-if="$message->detail !== ''" :fontFamily="$fontFamily" :fontSize="$theme->detailFontSize" :lineHeight="$theme->detailLineHeight" :fontWeight="$theme->detailFontWeight" :textColor="detailColor($message)">{{ $message->detail }}</Text>
                     </Column>
-                    <Pressable p-if="$message->closable" class="close" :marginLeft="$theme->closeOffsetX" :marginRight="-$theme->closeOffsetX" :marginTop="$theme->closeOffsetY" :marginBottom="-$theme->closeOffsetY" accessibilityRole="button" :accessibilityLabel="uiText('toast.close')" on:press="remove($message->id)"><Icon name="times" font="PrimeIcons" :size="$theme->closeIconSize" :color="accent($message)" /></Pressable>
+                    <Pressable p-if="$message->closable" class="close" :marginLeft="$theme->closeOffsetX" :marginRight="-$theme->closeOffsetX" :marginTop="$theme->closeOffsetY" :marginBottom="-$theme->closeOffsetY" accessibilityRole="button" :accessibilityLabel="uiText('toast.close')" on:press="remove($message->id)"><Icon name="x" font="Lucide" :size="$theme->closeIconSize" :color="accent($message)" /></Pressable>
                 </Row>
             </Column>
         </Column>

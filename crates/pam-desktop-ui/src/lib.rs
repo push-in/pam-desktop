@@ -43,6 +43,7 @@ pub mod scrolling;
 pub mod selection;
 pub mod shell;
 pub mod style;
+pub mod terminal;
 pub mod testing;
 pub mod text;
 pub mod textlayout;

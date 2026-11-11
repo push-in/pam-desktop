@@ -64,7 +64,6 @@ $checkboxView->unmount();
 $pickerView->unmount();
 
 // Toasts on screen follow the switch too.
-\Pam\Desktop\UI\Icon::register('PrimeIcons', 'asset://resources/fonts/PrimeIcons.ttf', ['check' => 0xe909, 'times' => 0xe90b, 'info-circle' => 0xe924, 'exclamation-triangle' => 0xe922, 'times-circle' => 0xe90c]);
 $toast = new Toast(theme: ToastTheme::adaptive(light: new ToastTheme(surface: 0xFFFAFAFA), dark: new ToastTheme(surface: 0xFF0A0A0A)));
 $toastView = Pam\Desktop\Testing\mount($toast);
 $toast->add(ToastSeverity::Info, 'Saved', life: null);

@@ -35,6 +35,8 @@ use Pam\Desktop\System\ViewRef;
  */
 final class CodeEditor extends Component
 {
+    private const PROBE = 8;
+
     #[State] public int $revision = 0;
     #[State] public float $charWidth = 0.0;
     #[State] public int $scrollRevision = 0;
@@ -45,6 +47,7 @@ final class CodeEditor extends Component
     public CodeDocument $document;
     public readonly CodeTheme $palette;
     public readonly string $key;
+    /** The last `text` the owner passed: only a different one replaces the document. */
     private ?string $loaded = null;
     /** @var array<int, list<array{0: string, 1: int}>> coloured runs by line */
     private array $runs = [];
@@ -84,12 +87,17 @@ final class CodeEditor extends Component
 
     public function rendering(): void
     {
-        // A new text from the owner (another file, a reload) replaces the document.
-        if ($this->text !== $this->loaded && $this->text !== $this->document->text()) {
-            $this->document = new CodeDocument($this->text, $this->tabSize);
-            $this->runs = [];
+        // A new text from the owner (another file, a reload) replaces the
+        // document. An owner that keeps passing the text it started with
+        // (`:text="$original"` while it stores the edits elsewhere) is not a
+        // new text: the edits stay.
+        if ($this->text !== $this->loaded) {
+            if ($this->text !== $this->document->text()) {
+                $this->document = new CodeDocument($this->text, $this->tabSize);
+                $this->runs = [];
+            }
+            $this->loaded = $this->text;
         }
-        $this->loaded = $this->text;
         $this->applyEdits();
     }
 
@@ -98,10 +106,15 @@ final class CodeEditor extends Component
         ViewRef::of($this->key.'-input')->focus();
     }
 
-    /** A hundred wide characters: measuring them gives the column width. */
+    /**
+     * Wide characters whose measured width gives the column width. Few
+     * enough to fit any editor: a probe wider than the editor was laid out
+     * narrower (an 800-pixel probe in a 600-pixel editor), the columns came
+     * out too thin and the caret and clicks drifted left of the text.
+     */
     public function probe(): string
     {
-        return str_repeat('M', 100);
+        return str_repeat('M', self::PROBE);
     }
 
     /** @return list<int> the line indexes, for the list */
@@ -288,7 +301,7 @@ final class CodeEditor extends Component
 
     public function measureChar(LayoutEvent $layout): void
     {
-        $width = $layout->width / 100;
+        $width = $layout->width / self::PROBE;
         if (abs($width - $this->charWidth) > 0.001) {
             $this->charWidth = $width;
         }
@@ -335,8 +348,7 @@ final class CodeEditor extends Component
     private function edited(): void
     {
         $this->applyEdits();
-        $this->text = $this->loaded = $this->document->text();
-        $this->emit('change', $this->text);
+        $this->emit('change', $this->document->text());
         $this->moved();
         // Multi-line constructs (block comments, strings) settle once typing pauses.
         $this->relex?->cancel();

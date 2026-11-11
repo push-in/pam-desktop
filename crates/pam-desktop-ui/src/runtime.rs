@@ -63,6 +63,8 @@ pub enum Inbound {
     Image(crate::images::ImageInbound),
     /// Progress or result of a media cache download.
     Media(crate::media::MediaInbound),
+    /// A terminal's emulator has new output, a title, a bell or its end.
+    Terminal(NodeId),
 }
 
 /// Thread-safe queue into the UI thread.
@@ -313,6 +315,7 @@ pub struct Runtime<B: Backend> {
     scrolling: Scrolling,
     images: crate::images::Images,
     drawings: crate::drawing::Drawings,
+    terminals: crate::terminal::Terminals,
     media: crate::media::Media,
     web_views: crate::webview::WebViews,
     pub(crate) selection: crate::selection::TextSelection,
@@ -524,7 +527,7 @@ impl<B: Backend> Runtime<B> {
             worker_command: command,
             generation: 1,
             development: config.development,
-            inbox,
+            inbox: Arc::clone(&inbox),
             events,
             measure,
             batch: Vec::with_capacity(64 * 1024),
@@ -543,6 +546,17 @@ impl<B: Backend> Runtime<B> {
             scrolling: Scrolling::default(),
             images,
             drawings: crate::drawing::Drawings::default(),
+            terminals: {
+                let inbox = Arc::downgrade(&inbox);
+                crate::terminal::Terminals::new(
+                    crate::modules::terminal::TerminalHub::shared(),
+                    Arc::new(move |id| {
+                        if let Some(inbox) = inbox.upgrade() {
+                            inbox.post(Inbound::Terminal(id));
+                        }
+                    }),
+                )
+            },
             media,
             web_views: crate::webview::WebViews::default(),
             selection: crate::selection::TextSelection::default(),
@@ -805,6 +819,7 @@ impl<B: Backend> Runtime<B> {
                 self.scrolling.on_change(&mut ctx, change);
                 self.images.on_change(&mut ctx, change);
                 self.drawings.on_change(&mut ctx, change);
+                self.terminals.on_change(&mut ctx, change);
                 self.media.on_change(&mut ctx, change);
                 self.web_views.on_change(&mut ctx, change);
                 self.selection.on_change(&mut ctx, change);
@@ -852,6 +867,7 @@ impl<B: Backend> Runtime<B> {
             self.observers.evaluate(&mut ctx);
             self.text_layouts.evaluate(&mut ctx, &mut measure);
             self.marquees.evaluate(&mut ctx, &mut measure);
+            self.terminals.evaluate(&mut ctx, &mut measure);
         }
         if flights_changed {
             self.update_host_overlays();
@@ -935,6 +951,10 @@ impl<B: Backend> Runtime<B> {
             Inbound::Media(message) => {
                 let mut ctx = ctx!(self);
                 self.media.on_inbound(&mut ctx, message);
+            }
+            Inbound::Terminal(id) => {
+                let mut ctx = ctx!(self);
+                self.terminals.on_output(&mut ctx, id);
             }
         }
     }
@@ -1236,6 +1256,10 @@ impl<B: Backend> Runtime<B> {
                     if self.drawings.on_pointer(&mut ctx, pointer) {
                         return;
                     }
+                    // A terminal selects with the pointer.
+                    if self.terminals.on_pointer(&mut ctx, pointer) {
+                        return;
+                    }
                 }
                 let action = {
                     let mut ctx = ctx!(self);
@@ -1263,6 +1287,11 @@ impl<B: Backend> Runtime<B> {
                 let mut ctx = ctx!(self);
                 self.inputs.on_focus(&mut ctx, id, focused);
                 self.interaction.on_focus(&mut ctx, id, focused);
+                self.terminals.on_focus(&mut ctx, id, focused);
+            }
+            BackendEvent::TextCommitted { id, text } => {
+                let mut ctx = ctx!(self);
+                self.terminals.on_text(&mut ctx, id, &text);
             }
             BackendEvent::Input { id, event } => {
                 let mut ctx = ctx!(self);
@@ -1410,6 +1439,9 @@ impl<B: Backend> Runtime<B> {
                             self.scrolling.on_timer(&mut ctx, timer)
                         }
                         Timer::Script => script = true,
+                        Timer::TerminalFrame(_) | Timer::TerminalResize(_) => {
+                            self.terminals.on_timer(&mut ctx, timer)
+                        }
                         _ => self.interaction.on_timer(&mut ctx, timer),
                     }
                 }
@@ -1456,7 +1488,9 @@ impl<B: Backend> Runtime<B> {
                     self.gestures.on_wheel_zoom(&mut ctx, position, delta.y);
                 } else if window == MAIN_WINDOW {
                     let mut ctx = ctx!(self);
-                    self.scrolling.on_wheel(&mut ctx, position, delta);
+                    if !self.terminals.on_wheel(&mut ctx, position, delta) {
+                        self.scrolling.on_wheel(&mut ctx, position, delta);
+                    }
                 }
             }
             BackendEvent::Magnify {
@@ -1971,6 +2005,31 @@ impl<B: Backend> Runtime<B> {
                 self.refresh_error_overlay();
             }
             return;
+        }
+        {
+            let focused = self.interaction.focused();
+            let mut ctx = ctx!(self);
+            match self.terminals.on_key(&mut ctx, focused, key) {
+                crate::terminal::KeyOutcome::Ignored => {}
+                crate::terminal::KeyOutcome::Handled => return,
+                crate::terminal::KeyOutcome::Copy(text) => {
+                    self.backend.clipboard_set_text(&text);
+                    return;
+                }
+                crate::terminal::KeyOutcome::Paste { channel, bracketed } => {
+                    self.backend.clipboard_text(Box::new(move |text| {
+                        if let Some(text) = text {
+                            crate::terminal::paste(
+                                crate::modules::terminal::TerminalHub::shared(),
+                                &channel,
+                                &text,
+                                bracketed,
+                            );
+                        }
+                    }));
+                    return;
+                }
+            }
         }
         if key.pressed {
             let mut ctx = ctx!(self);

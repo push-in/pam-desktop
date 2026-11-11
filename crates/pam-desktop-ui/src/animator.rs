@@ -507,6 +507,10 @@ pub enum Timer {
     Marquee(NodeId),
     /// The test driver checks its current step.
     Script,
+    /// A terminal may paint again (one paint per frame interval).
+    TerminalFrame(NodeId),
+    /// A terminal's grid size held long enough to tell the remote end.
+    TerminalResize(NodeId),
 }
 
 #[derive(Default)]

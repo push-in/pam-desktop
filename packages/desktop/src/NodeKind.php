@@ -37,4 +37,6 @@ enum NodeKind: int
     case DrawingCanvas = 29;
     case TabHost = 30;
     case Canvas = 31;
+    /** A VT terminal bound to a channel of the host's terminal hub. */
+    case Terminal = 32;
 }

@@ -829,6 +829,10 @@ final class TemplateRenderer
         'on:layout' => EventKind::Layout,
         'on:buffering' => EventKind::MediaBuffering,
         'on:mediaLoadStart' => EventKind::MediaLoadStart,
+        'on:resize' => EventKind::TerminalResize,
+        'on:title' => EventKind::TerminalTitle,
+        'on:exit' => EventKind::TerminalExit,
+        'on:bell' => EventKind::TerminalBell,
     ];
 
     private function __construct()
@@ -855,6 +859,10 @@ final class TemplateRenderer
         'Link' => ['mode' => true, 'params' => true, 'route' => true, 'to' => true],
         'DragSource' => ['dragData' => true, 'dragType' => true], 'DropTarget' => ['dropType' => true],
         'Modal' => ['presentation' => true, 'visible' => true],
+        'Terminal' => [
+            'channel' => true, 'palette' => true, 'scrollback' => true, 'background' => true,
+            'foreground' => true, 'cursorColor' => true, 'selectionColor' => true,
+        ],
     ];
 
     /** Tags the renderer builds itself (the others come from TemplateRegistry). */
@@ -867,7 +875,7 @@ final class TemplateRenderer
         'Modal' => true, 'Native' => true, 'NativeList' => true, 'Pressable' => true, 'RefreshControl' => true,
         'Row' => true, 'SafeAreaView' => true, 'Screen' => true, 'Scroll' => true, 'ScrollView' => true,
         'SectionList' => true, 'Shimmer' => true, 'Spacer' => true, 'Span' => true, 'StatusBar' => true,
-        'Swipeable' => true, 'Switch' => true, 'Text' => true, 'TextInput' => true, 'TouchableHighlight' => true,
+        'Swipeable' => true, 'Switch' => true, 'Terminal' => true, 'Text' => true, 'TextInput' => true, 'TouchableHighlight' => true,
         'TouchableNativeFeedback' => true, 'TouchableOpacity' => true, 'TouchableWithoutFeedback' => true,
         'Video' => true, 'View' => true, 'VirtualGrid' => true, 'VirtualizedList' => true, 'WebView' => true,
         'If' => true, 'Show' => true, 'Match' => true, 'Await' => true, 'Each' => true, 'Slot' => true,
@@ -1706,6 +1714,12 @@ final class TemplateRenderer
         if (!is_array($inheritedStyles)) {
             $inheritedStyles = [];
         }
+        if ($tag === 'Terminal') {
+            // A terminal draws its own grid: the page's font and text colour
+            // must not reach it (a proportional font breaks the cells, a
+            // light theme's dark text vanishes on the terminal background).
+            $inheritedStyles = [];
+        }
         if ($tag === 'Icon' && $inheritedStyles !== []) {
             // An icon font glyph keeps its own font and size, like `.pi` or
             // `.fa` on the web: only the colour and the letter spacing (which
@@ -2285,6 +2299,7 @@ final class TemplateRenderer
                 self::stringValue($values['source'] ?? '', 'DrawingCanvas source'),
                 self::stringValue($values['value'] ?? '', 'DrawingCanvas value'),
             ),
+            'Terminal' => self::terminal($values),
             'ImageBackground' => ImageBackground::make(
                 self::stringValue($values['source'] ?? '', 'Image source'),
                 ...$children,
@@ -7819,12 +7834,39 @@ final class TemplateRenderer
     /**
      * @param array<string, mixed> $data
      */
+    /** @param array<string, mixed> $values */
+    private static function terminal(array $values): \Pam\Desktop\UI\Terminal
+    {
+        $terminal = \Pam\Desktop\UI\Terminal::make(self::stringValue($values['channel'] ?? '', 'Terminal channel'));
+        if (isset($values['scrollback'])) {
+            $terminal = $terminal->scrollback(self::intValue($values['scrollback'], 'Terminal scrollback'));
+        }
+        $color = static fn (string $name): int|string|null => isset($values[$name]) && (is_int($values[$name]) || is_string($values[$name])) ? $values[$name] : null;
+        $palette = $values['palette'] ?? null;
+        if (is_string($palette)) {
+            $palette = array_map('trim', explode(',', $palette));
+        }
+        if ($palette !== null && !is_array($palette)) {
+            throw new InvalidArgumentException('Terminal palette is a list of colours.');
+        }
+
+        return $terminal->theme($color('background'), $color('foreground'), $color('cursorColor'), $color('selectionColor'), $palette);
+    }
+
     /**
      * `$event` in a handler expression (`on:press="pick($row, $event)"`):
      * the typed payload of the kinds that have one, else the raw value.
      */
     private static function typedEvent(EventKind $kind, mixed $payload): mixed
     {
+        if (in_array($kind, [EventKind::TerminalResize, EventKind::TerminalTitle, EventKind::TerminalExit, EventKind::TerminalBell], true)) {
+            // `$event` is the map: cols/rows, title, exitCode.
+            try {
+                return is_string($payload) && $payload !== '' ? Wire::decodeMap($payload) : [];
+            } catch (\Throwable) {
+                return [];
+            }
+        }
         $class = match ($kind) {
             EventKind::Press, EventKind::PressIn, EventKind::PressOut, EventKind::LongPress => \Pam\Desktop\PressEvent::class,
             EventKind::KeyDown, EventKind::KeyUp => \Pam\Desktop\KeyEvent::class,
@@ -8032,6 +8074,11 @@ final class TemplateRenderer
         }
         if ($typed !== null && $payload instanceof $typed) {
             $method->invoke($scope, $payload);
+            return;
+        }
+        if (in_array($kind, [EventKind::TerminalResize, EventKind::TerminalTitle, EventKind::TerminalExit, EventKind::TerminalBell], true)) {
+            // `resized(array $event)`: the decoded map, like `$event`.
+            $method->invoke($scope, self::typedEvent($kind, $payload));
             return;
         }
         if (in_array($kind, [EventKind::Press, EventKind::LongPress], true) && is_string($payload)) {

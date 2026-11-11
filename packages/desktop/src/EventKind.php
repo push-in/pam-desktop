@@ -95,4 +95,8 @@ enum EventKind: int
     case FilesDrop = 2005;
     case DragEnter = 2006;
     case DragLeave = 2007;
+    case TerminalResize = 2008;
+    case TerminalTitle = 2009;
+    case TerminalExit = 2010;
+    case TerminalBell = 2011;
 }

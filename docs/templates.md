@@ -143,6 +143,8 @@ On a component every `on:` attribute is one of its own events, even when the nam
 
 - `width`, `height`, `minWidth`, `minHeight`, `maxWidth` and `maxHeight` take points or a percentage (`width="75.5%"`). A bound value (`:width="$size"`) may switch between the two from one render to the next.
 - A bound `:textColor` wins over the `color` of the stylesheet on every render.
+- Colour attributes take `#rrggbb`, `#aarrggbb` (alpha **first**, the order of the `0xAARRGGBB` integers) and any CSS colour (`rgba(1, 4, 9, 0.7)`, `transparent`). A stylesheet reads eight hex digits the CSS way, alpha **last**: `backdropColor="#B3010409"` and `background-color: #010409B3` are the same colour. When in doubt write `rgba()`.
+- `min()` and `max()` in expressions take numbers and numeric strings, like PHP's.
 - `captureKeys="Space,Enter"` (W3C key names, comma separated, at most 512 bytes): while the element or one of its descendants has the focus, the listed keys go to its `on:keyDown` before the native control handles them. Combinations with Control, Alt or Meta are never captured.
 - `dragType`, `dropType`, `on:dragEnter`, `on:dragLeave`: typed drag and drop, see [Desktop shell](desktop-shell.md#typed-drag-and-drop).
 - `scrollbarGutter`, `scrollbarWidth`, `scrollbarThickness`, `scrollbarColor` on `ScrollView` and `VirtualizedList`: the same as the CSS properties in [Styling](styling.md#scrollbars).

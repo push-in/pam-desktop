@@ -77,7 +77,7 @@ final class CardDetail extends Component
 ?>
 
 <template>
-    <Modal visible="true" presentation="dialog" backdropColor="#091E427A" on:requestClose="close">
+    <Modal visible="true" presentation="dialog" backdropColor="#7A091E42" on:requestClose="close">
         <Column class="dialog">
             <Image p-if="card()->cover !== null" :source="card()->cover" class="cover" />
             <Pressable class="close" cursor="pointer" @press="close" accessibilityLabel="Close">

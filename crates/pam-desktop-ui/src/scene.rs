@@ -411,7 +411,7 @@ pub fn view_class(kind: NodeKind, props: Props<'_>) -> ViewClass {
                 ViewClass::Input
             }
         }
-        NodeKind::Canvas | NodeKind::DrawingCanvas => ViewClass::Surface,
+        NodeKind::Canvas | NodeKind::DrawingCanvas | NodeKind::Terminal => ViewClass::Surface,
         NodeKind::Media => ViewClass::Media,
         NodeKind::WebView => ViewClass::WebView,
         _ => ViewClass::Box,
@@ -1845,7 +1845,11 @@ impl Scene {
             if dirty.contains(Dirty::CONFIG) {
                 commands += self.push_accessibility(backend, *id);
                 if let Some(node) = self.nodes.get(id) {
-                    let keys = if node.handles(PropKey::OnKeyDown)
+                    let keys = if node.kind == NodeKind::Terminal {
+                        // Keys a focused terminal sends to the remote end
+                        // instead of moving focus or scrolling.
+                        crate::terminal::CAPTURED_KEYS
+                    } else if node.handles(PropKey::OnKeyDown)
                         && node.props().flag_or(PropKey::Enabled, true)
                     {
                         node.props()
@@ -1856,6 +1860,9 @@ impl Scene {
                         ""
                     };
                     backend.set_key_capture(*id, keys);
+                    if node.kind == NodeKind::Terminal {
+                        backend.set_text_input(*id, true);
+                    }
                     let mode = node.props().integer_or(PropKey::PointerEvents, 1);
                     backend.set_pointer_events(*id, !matches!(mode, 2 | 3), !matches!(mode, 2 | 4));
                 }
@@ -1871,9 +1878,12 @@ impl Scene {
             let Some(node) = self.nodes.get(id) else {
                 continue;
             };
-            if dirty.contains(Dirty::CONFIG) && node.class == ViewClass::Box {
-                // Pressable boxes take part in keyboard focus traversal.
-                let focusable = node.is_pressable() && node.props().flag_or(PropKey::Enabled, true);
+            if dirty.contains(Dirty::CONFIG)
+                && (node.class == ViewClass::Box || node.kind == NodeKind::Terminal)
+            {
+                // Pressable boxes and terminals take part in keyboard focus traversal.
+                let focusable = (node.is_pressable() || node.kind == NodeKind::Terminal)
+                    && node.props().flag_or(PropKey::Enabled, true);
                 if focusable != node.pushed_focusable {
                     backend.set_focusable(*id, focusable);
                     commands += 1;

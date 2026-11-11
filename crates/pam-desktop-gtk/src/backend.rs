@@ -48,6 +48,8 @@ struct ViewEntry {
     /// The text the view shows and the accessible name last applied.
     plain_text: Option<String>,
     announced: String,
+    /// The input method of a view that takes text (a terminal).
+    text_input: Option<gtk::IMMulticontext>,
 }
 
 struct WindowEntry {
@@ -745,6 +747,7 @@ impl Backend for GtkBackend {
                 accessibility: None,
                 plain_text: None,
                 announced: String::new(),
+                text_input: None,
             },
         );
     }
@@ -947,6 +950,38 @@ impl Backend for GtkBackend {
                 entry.container.remove_css_class("pam-focusable");
             }
         }
+    }
+
+    fn set_text_input(&mut self, id: NodeId, enabled: bool) {
+        let Some(entry) = self.views.get_mut(&id) else {
+            return;
+        };
+        if !enabled || entry.text_input.is_some() {
+            return;
+        }
+        // Keys reach the input method first while the view has focus: dead
+        // keys and compose sequences become one committed character, plain
+        // letters are committed as they are, and keys it does not want
+        // (Enter, arrows, Control shortcuts) go on as key events.
+        let im = gtk::IMMulticontext::new();
+        im.set_client_widget(Some(&entry.container));
+        let events = Rc::clone(&self.events);
+        im.connect_commit(move |_, text| {
+            events.push(BackendEvent::TextCommitted {
+                id,
+                text: text.to_owned(),
+            });
+        });
+        let keys = gtk::EventControllerKey::new();
+        keys.set_im_context(Some(&im));
+        entry.container.add_controller(keys);
+        let focus = gtk::EventControllerFocus::new();
+        let focused = im.clone();
+        focus.connect_enter(move |_| focused.focus_in());
+        let blurred = im.clone();
+        focus.connect_leave(move |_| blurred.focus_out());
+        entry.container.add_controller(focus);
+        entry.text_input = Some(im);
     }
 
     fn set_key_capture(&mut self, id: NodeId, keys: &str) {

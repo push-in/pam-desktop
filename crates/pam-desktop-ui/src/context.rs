@@ -93,6 +93,10 @@ pub mod event_kind {
     pub const FILES_DROP: u16 = 2005;
     pub const DRAG_ENTER: u16 = 2006;
     pub const DRAG_LEAVE: u16 = 2007;
+    pub const TERMINAL_RESIZE: u16 = 2008;
+    pub const TERMINAL_TITLE: u16 = 2009;
+    pub const TERMINAL_EXIT: u16 = 2010;
+    pub const TERMINAL_BELL: u16 = 2011;
 }
 
 /// An event on its way to the PHP worker.

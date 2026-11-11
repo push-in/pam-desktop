@@ -1,9 +1,11 @@
 //! Native modules that need more than the render core may link: the
-//! keychain of the system, SQLite and signed updates.
+//! keychain of the system, SQLite, SSH and signed updates.
 
 pub mod secure_storage;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
+#[cfg(feature = "ssh")]
+pub mod ssh;
 pub mod updates;
 pub mod websocket;
 
@@ -17,7 +19,8 @@ use crate::bundle::Installed;
 use crate::manifest::Manifest;
 
 /// The modules the host binary adds to the runtime, by the name PHP calls
-/// them: `secure-storage`, `updates` and, with the `sqlite` feature, `sqlite`.
+/// them: `websocket`, `secure-storage`, `updates` and, with their features,
+/// `sqlite` and `ssh`.
 ///
 /// `data` and `cache` are the application's directories and `application_id`
 /// names it in the keychain and in the update feed. `manifest` carries the
@@ -64,6 +67,8 @@ pub fn host_modules(
         #[cfg(feature = "sqlite")]
         (String::from("sqlite"), sqlite),
         (String::from("updates"), updates),
+        #[cfg(feature = "ssh")]
+        (String::from("ssh"), Box::new(ssh::Ssh::new())),
     ]
 }
 
@@ -88,6 +93,7 @@ mod tests {
         assert!(names.contains(&"secure-storage"));
         assert!(names.contains(&"updates"));
         assert_eq!(names.contains(&"sqlite"), cfg!(feature = "sqlite"));
+        assert_eq!(names.contains(&"ssh"), cfg!(feature = "ssh"));
         let _ = std::fs::remove_dir_all(&directory);
     }
 }

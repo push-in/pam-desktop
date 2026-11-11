@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **DesktopUI CodeEditor:** an owner that keeps passing its original
+  `:text` (storing the edits elsewhere) no longer resets the document after
+  every edit (typed text vanished and later typing landed at the start). The
+  column width probe fits narrow editors, so the caret and clicks no longer
+  drift left of the text in editors under ~800 px.
+- **DesktopUI Toast** uses the bundled Lucide icons; PrimeIcons is no longer
+  required (a toast threw "Unknown icon font PrimeIcons").
+- Template `min()`/`max()` accept numeric strings, like PHP.
+- `pam-desktop check` reports PAM2104 (dynamic `$this->{…}` access) and PAM2105
+  (`eval`/`extract`), which a production build refuses at boot.
+- `PAM_DESKTOP_SECURE_STORAGE=memory` keeps secrets in the host process, so
+  tests never touch the keychain of the machine.
+- Docs: eight-digit hex colours are `#AARRGGBB` in attributes and
+  `#RRGGBBAA` in stylesheets; the trello example's backdrop now dims.
+
+### Added
+
+- **SSH.** A native `ssh` module (cargo feature `ssh`, on by default) and the
+  package `pushinbr/pam-desktop-ssh`: sessions with password or key
+  authentication and host key pinning, `exec` with bounded output, SFTP
+  (list, stat, mkdir, rename, remove, read, write, realpath, uploads and
+  downloads with progress), local port forwarding and interactive shells. It
+  runs on russh with pure Rust crypto, on threads that exist only while a
+  session is open. See [SSH](docs/ssh.md).
+- **Terminal element.** `<Terminal channel="…">` (`Pam\Desktop\UI\Terminal`)
+  draws an xterm-256color terminal for a hub channel such as an SSH shell:
+  alacritty_terminal emulation on the thread that receives the bytes,
+  painted on a drawing surface at most once per frame and only after a
+  change, with keys, selection, clipboard, scrollback, a theme and
+  `on:resize`, `on:title`, `on:exit`, `on:bell`. Node kind 32, desktop
+  properties 2044–2052 and events 2008–2011. See [SSH](docs/ssh.md#the-terminal-element).
+- **Terminal hub.** `pam_desktop_ui::modules::terminal::TerminalHub` routes a
+  terminal's bytes between a producer (an SSH shell) and a native consumer
+  without PHP.
+- **Binary values in module payloads.** `Pam\Desktop\Modules\WireBytes` sends
+  opaque bytes (wire tag 5), and results that carry bytes decode to strings.
+
 ## 2.2.1 - 2026-11-11
 
 ### Fixed
