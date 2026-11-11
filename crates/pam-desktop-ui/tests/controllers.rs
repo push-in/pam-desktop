@@ -1090,3 +1090,142 @@ fn a_pressable_inside_a_drag_source_drags_it_past_the_threshold() {
         "a text field selects, it never drags"
     );
 }
+
+#[test]
+fn a_hover_style_runs_the_node_transition_from_what_shows() {
+    use pam_desktop_ui::animator::MotionProperty;
+    use pam_desktop_ui::interaction::Interaction;
+    use pam_desktop_ui::motion::Motion;
+    use pam_desktop_ui::scene::Change;
+    let hover = PropValue::String(r#"{"3":{"38":1.0}}"#.into());
+    let mut h = Harness::with_tree(&[
+        (1, 0, NodeKind::Column, &[], Rect::new(0., 0., 400., 300.)),
+        (
+            2,
+            1,
+            NodeKind::Row,
+            &[
+                (PropKey::NativeStateStyles, hover),
+                (PropKey::Opacity, PropValue::Float(0.2)),
+                (
+                    PropKey::TransitionSpec,
+                    PropValue::String("@property opacity\n@duration 200\n@timing linear".into()),
+                ),
+            ],
+            Rect::new(0., 0., 400., 40.),
+        ),
+    ]);
+    let mut interaction = Interaction::default();
+    let mut motion = Motion::default();
+    interaction.on_change(&mut h.ctx(), Change::Created(2, NodeKind::Row));
+    h.scene.take_changes();
+
+    let over = h.pointer(PointerPhase::Move, 50.0, 20.0);
+    interaction.on_pointer(&mut h.ctx(), over);
+    h.settle(|ctx, change| motion.on_change(ctx, change));
+    assert!(!h.animator.is_idle(), "the hover starts a transition");
+    assert_eq!(h.scene.displayed(2, MotionProperty::Opacity), 0.2);
+
+    // Halfway through, the pointer leaves: it turns back from 0.6.
+    h.now_ms += 100;
+    let outside = h.pointer(PointerPhase::Move, 50.0, 250.0);
+    interaction.on_pointer(&mut h.ctx(), outside);
+    h.settle(|ctx, change| motion.on_change(ctx, change));
+    assert!(!h.animator.is_idle(), "leaving animates back");
+    let displayed = h.scene.displayed(2, MotionProperty::Opacity);
+    assert!((displayed - 0.6).abs() < 0.01, "{displayed}");
+}
+
+#[test]
+fn a_hover_background_fades_through_the_transition_layer_and_lands_on_the_style() {
+    use pam_desktop_ui::interaction::Interaction;
+    use pam_desktop_ui::motion::Motion;
+    use pam_desktop_ui::scene::Change;
+    let hover = PropValue::String(r#"{"3":{"10":4294967295}}"#.into());
+    let mut h = Harness::with_tree(&[
+        (1, 0, NodeKind::Column, &[], Rect::new(0., 0., 400., 300.)),
+        (
+            2,
+            1,
+            NodeKind::Row,
+            &[
+                (PropKey::NativeStateStyles, hover),
+                (PropKey::BackgroundColor, PropValue::Integer(0xFF00_0000)),
+                (
+                    PropKey::TransitionSpec,
+                    PropValue::String(
+                        "@property background-color\n@duration 200\n@timing linear".into(),
+                    ),
+                ),
+            ],
+            Rect::new(0., 0., 400., 40.),
+        ),
+    ]);
+    let mut interaction = Interaction::default();
+    let mut motion = Motion::default();
+    interaction.on_change(&mut h.ctx(), Change::Created(2, NodeKind::Row));
+    h.scene.take_changes();
+    let background = |h: &Harness| {
+        h.scene
+            .effective_props(2)
+            .unwrap()
+            .integer(PropKey::BackgroundColor)
+            .unwrap() as u32
+    };
+
+    let over = h.pointer(PointerPhase::Move, 50.0, 20.0);
+    interaction.on_pointer(&mut h.ctx(), over);
+    h.settle(|ctx, change| motion.on_change(ctx, change));
+    assert_eq!(background(&h), 0xFF00_0000, "starts from what showed");
+    for sample in h.animator.tick(100) {
+        motion.on_sample(&mut h.ctx(), sample.owner, sample.value, sample.finished);
+    }
+    assert_eq!(background(&h), 0xFF80_8080, "halfway");
+    for sample in h.animator.tick(300) {
+        motion.on_sample(&mut h.ctx(), sample.owner, sample.value, sample.finished);
+    }
+    assert_eq!(background(&h), 0xFFFF_FFFF, "lands on the hover style");
+    assert!(h.animator.is_idle());
+}
+
+#[test]
+fn a_corner_radius_change_from_php_transitions_and_clips_while_it_runs() {
+    use pam_desktop_ui::motion::Motion;
+    use pam_desktop_wire::Mutation;
+    let mut h = Harness::with_tree(&[
+        (1, 0, NodeKind::Column, &[], Rect::new(0., 0., 400., 300.)),
+        (
+            2,
+            1,
+            NodeKind::Row,
+            &[
+                (PropKey::BorderRadius, PropValue::Float(0.0)),
+                (
+                    PropKey::TransitionSpec,
+                    PropValue::String("@property border-radius\n@duration 100\n@timing linear".into()),
+                ),
+            ],
+            Rect::new(0., 0., 100., 100.),
+        ),
+    ]);
+    let mut motion = Motion::default();
+    h.scene.take_changes();
+    h.scene.apply(vec![Mutation::Update {
+        id: 2,
+        key: PropKey::BorderRadius,
+        value: Some(PropValue::Float(20.0)),
+    }]);
+    h.settle(|ctx, change| motion.on_change(ctx, change));
+    let radius = |h: &Harness| h.scene.effective_props(2).unwrap().number(PropKey::BorderRadius);
+    assert_eq!(radius(&h), Some(0.0));
+    for sample in h.animator.tick(50) {
+        motion.on_sample(&mut h.ctx(), sample.owner, sample.value, sample.finished);
+    }
+    assert_eq!(radius(&h), Some(10.0));
+    assert!(h.scene.effective_props(2).unwrap().has(PropKey::Overflow));
+    for sample in h.animator.tick(200) {
+        motion.on_sample(&mut h.ctx(), sample.owner, sample.value, sample.finished);
+    }
+    assert_eq!(radius(&h), Some(20.0));
+    assert!(!h.scene.effective_props(2).unwrap().has(PropKey::Overflow));
+}

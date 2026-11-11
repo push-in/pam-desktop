@@ -1528,7 +1528,7 @@ impl<B: Backend> Runtime<B> {
                         .toasts
                         .on_sample(&mut ctx, sample.value, sample.finished)
                 }
-                Owner::Transition(..) | Owner::Motion(..) => {
+                Owner::Transition(..) | Owner::Motion(..) | Owner::Style(..) => {
                     self.motion
                         .on_sample(&mut ctx, sample.owner, sample.value, sample.finished)
                 }

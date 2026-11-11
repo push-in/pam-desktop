@@ -34,6 +34,7 @@ final class Transition
 
     private const array PROPERTIES = [
         'all', 'none', 'opacity', 'transform', 'translate', 'scale', 'rotate', 'border-radius',
+        'background-color', 'color', 'border-color',
     ];
 
     private function __construct()
