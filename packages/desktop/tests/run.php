@@ -2788,6 +2788,13 @@ try {
 }
 $assert($invalidWireFloatDecodeRejected, 'Wire map decoding must reject non-finite decimals.');
 
+$binaryWire = Wire::map(['bytes' => new \Pam\Desktop\Modules\WireBytes("\x00\xff\xc3\x28"), 'text' => 'ok']);
+$assert(
+    str_contains($binaryWire, 'bytes'."\x05".pack('V', 4)."\x00\xff\xc3\x28")
+        && Wire::decodeMap($binaryWire) === ['bytes' => "\x00\xff\xc3\x28", 'text' => 'ok'],
+    'Wire maps carry opaque bytes (tag 5) that need not be UTF-8.',
+);
+
 $canonicalWire = Wire::map([
     'zeta' => 42,
     'ratio' => 1.5,

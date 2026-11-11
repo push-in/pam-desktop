@@ -25,7 +25,8 @@ final class NativeModules
     }
 
     /**
-     * @param array<string, string|int|float|bool> $payload
+     * @param array<string, string|int|float|bool|WireBytes> $payload Binary
+     *        values go in a WireBytes; plain strings must be UTF-8.
      * @param Closure(NativeModuleResult): void $callback
      * @param (Closure(NativeModuleException): void)|null $onFailure Receives
      *        failure results instead of $callback. Without it, $callback sees

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Pam\Desktop\Internal;
 
 use InvalidArgumentException;
+use Pam\Desktop\Modules\WireBytes;
 
 use function array_key_exists;
 use function count;
@@ -75,7 +76,7 @@ final class Wire
     }
 
     /**
-     * @param array<string, string|int|float|bool> $values
+     * @param array<string, string|int|float|bool|WireBytes> $values
      */
     public static function map(array $values): string
     {
@@ -93,8 +94,9 @@ final class Wire
                 is_int($value) => "\x02".pack('P', $value),
                 is_float($value) => "\x03".pack('e', self::validatedFloat($value)),
                 is_bool($value) => "\x04".($value ? "\x01" : "\x00"),
+                $value instanceof WireBytes => "\x05".self::sized($value->bytes),
                 default => throw new InvalidArgumentException(
-                    "Wire map value for {$key} must be a string, integer, float, or boolean.",
+                    "Wire map value for {$key} must be a string, integer, float, boolean or WireBytes.",
                 ),
             };
 
@@ -134,6 +136,7 @@ final class Wire
                 2 => self::readInteger($payload, $offset),
                 3 => self::readFloat($payload, $offset),
                 4 => self::readBoolean($payload, $offset),
+                5 => self::readBytes($payload, $offset, self::readU32($payload, $offset)),
                 default => throw new InvalidArgumentException("Unknown wire value tag {$tag}."),
             };
         }

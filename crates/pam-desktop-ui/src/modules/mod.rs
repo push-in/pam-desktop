@@ -14,6 +14,7 @@ pub mod probe;
 pub mod storage;
 pub mod support;
 pub mod system;
+pub mod terminal;
 pub mod test_support;
 pub mod timers;
 

@@ -20,7 +20,8 @@ final readonly class NativeModuleResult
         return $this->status === ModuleResultStatus::Success;
     }
 
-    /** @return array<string, string|int|float|bool> */
+    /** Opaque byte values (wire tag 5) arrive as plain strings.
+     * @return array<string, string|int|float|bool> */
     public function values(): array
     {
         return Wire::decodeMap($this->payload);
