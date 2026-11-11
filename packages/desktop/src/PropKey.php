@@ -613,4 +613,15 @@ enum PropKey: int
     case MenuListOptions = 2042;
     /** Authored CSS `min-width: auto` on a flex item: its automatic minimum size (min-content). */
     case MinWidthAuto = 2043;
+    /** The terminal hub channel a Terminal shows (an SSH shell channel id). */
+    case TerminalChannel = 2044;
+    /** The 16 ANSI colours of a Terminal, `#rrggbb` separated by commas. */
+    case TerminalPalette = 2045;
+    case TerminalScrollback = 2046;
+    case TerminalCursorColor = 2047;
+    case TerminalSelectionColor = 2048;
+    case OnTerminalResize = 2049;
+    case OnTerminalTitle = 2050;
+    case OnTerminalExit = 2051;
+    case OnTerminalBell = 2052;
 }

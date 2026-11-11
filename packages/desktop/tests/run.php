@@ -7746,5 +7746,6 @@ require __DIR__.'/template_diagnostics_more.php';
 require __DIR__.'/secure_storage_failures.php';
 
 require __DIR__.'/grid_tracks.php';
+require __DIR__.'/terminal_element.php';
 
 echo "Pam Desktop PHP SDK tests passed.\n";
