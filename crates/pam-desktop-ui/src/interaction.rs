@@ -33,6 +33,8 @@ const STATE_HOVERED: u8 = 3;
 const STATE_FOCUS_WITHIN: u8 = 10;
 /// `:focus-visible`: focused while the last input was the keyboard.
 const STATE_FOCUS_VISIBLE: u8 = 11;
+/// `.group:hover .node`: the nearest hover group above the node is hovered.
+const STATE_GROUP_HOVER: u8 = 12;
 
 #[derive(Clone, Copy, Debug)]
 struct Press {
@@ -58,6 +60,8 @@ struct Tap {
 #[derive(Clone, Debug, Default, PartialEq)]
 struct StateStyles {
     states: Vec<(u8, PropMap)>,
+    /// A hover group (`"g"`): descendants style its hover (`STATE_GROUP_HOVER`).
+    group: bool,
 }
 
 impl StateStyles {
@@ -68,13 +72,17 @@ impl StateStyles {
             return Self::default();
         };
         let mut parsed = Vec::new();
+        let mut group = false;
         for (state, rules) in states {
+            if state == "g" {
+                group = true;
+                continue;
+            }
             let (Ok(state), Some(rules)) = (state.parse::<u8>(), rules.as_object()) else {
                 continue;
             };
             if !(STATE_PRESSED..=STATE_HOVERED).contains(&state)
-                && state != STATE_FOCUS_WITHIN
-                && state != STATE_FOCUS_VISIBLE
+                && !(STATE_FOCUS_WITHIN..=STATE_GROUP_HOVER).contains(&state)
             {
                 continue;
             }
@@ -118,7 +126,10 @@ impl StateStyles {
                 parsed.push((state, props));
             }
         }
-        Self { states: parsed }
+        Self {
+            states: parsed,
+            group,
+        }
     }
 
     fn get(&self, state: u8) -> Option<&PropMap> {
@@ -194,7 +205,11 @@ impl Interaction {
             Change::Created(id, kind) => {
                 self.read_styles(ctx, id);
                 self.watch_outside(ctx, id);
-                if kind == NodeKind::Button {
+                let group_member = self
+                    .styles
+                    .get(&id)
+                    .is_some_and(|styles| styles.get(STATE_GROUP_HOVER).is_some());
+                if kind == NodeKind::Button || group_member {
                     self.restyle(ctx, id);
                 }
             }
@@ -332,12 +347,20 @@ impl Interaction {
             .is_some_and(|press| press.node == id && press.inside);
         let hovered = self.hovered.contains(&id);
         let focused = self.focused == Some(id);
+        let group_hovered = self
+            .styles
+            .get(&id)
+            .is_some_and(|styles| styles.get(STATE_GROUP_HOVER).is_some())
+            && self
+                .hover_group(ctx, id)
+                .is_some_and(|group| self.hovered.contains(&group));
         let mut overlay = self
             .default_button(ctx, id, hovered, pressed)
             .unwrap_or_default();
         if let Some(styles) = self.styles.get(&id) {
-            // Later states win: hover, then focus, then pressed.
+            // Later states win: group hover, hover, then focus, then pressed.
             for (active, state) in [
+                (group_hovered, STATE_GROUP_HOVER),
                 (hovered, STATE_HOVERED),
                 (self.focus_within.contains(&id), STATE_FOCUS_WITHIN),
                 (focused, STATE_FOCUSED),
@@ -375,6 +398,38 @@ impl Interaction {
             self.styled.push(id);
         } else if !has_overlay && tracked {
             self.styled.retain(|styled| *styled != id);
+        }
+    }
+
+    /// The nearest hover group strictly above `id`.
+    fn hover_group(&self, ctx: &Ctx<'_>, id: NodeId) -> Option<NodeId> {
+        let mut current = ctx.scene.node(id)?.parent;
+        while current != 0 {
+            if self.styles.get(&current).is_some_and(|styles| styles.group) {
+                return Some(current);
+            }
+            current = ctx.scene.node(current)?.parent;
+        }
+        None
+    }
+
+    /// Restyles the nodes styled by the hover of one of `groups`.
+    fn restyle_group_members(&mut self, ctx: &mut Ctx<'_>, groups: &[NodeId]) {
+        if groups.is_empty() {
+            return;
+        }
+        let members: Vec<NodeId> = self
+            .styles
+            .iter()
+            .filter(|(_, styles)| styles.get(STATE_GROUP_HOVER).is_some())
+            .map(|(id, _)| *id)
+            .filter(|id| {
+                self.hover_group(ctx, *id)
+                    .is_some_and(|group| groups.contains(&group))
+            })
+            .collect();
+        for id in members {
+            self.restyle(ctx, id);
         }
     }
 
@@ -538,6 +593,14 @@ impl Interaction {
         }
         let previous = std::mem::replace(&mut self.hovered, chain);
         let position = position.unwrap_or(Point::ZERO);
+        let groups: Vec<NodeId> = previous
+            .iter()
+            .filter(|id| !self.hovered.contains(id))
+            .chain(self.hovered.iter().filter(|id| !previous.contains(id)))
+            .copied()
+            .filter(|id| self.styles.get(id).is_some_and(|styles| styles.group))
+            .collect();
+        self.restyle_group_members(ctx, &groups);
         for id in previous
             .iter()
             .filter(|id| !self.hovered.contains(id))
@@ -1088,6 +1151,10 @@ mod tests {
         assert_eq!(styles.get(STATE_HOVERED).expect("hover").len(), 1);
         assert!(styles.get(5).is_none());
         assert!(StateStyles::parse("not json").states.is_empty());
+        let grouped = StateStyles::parse(r#"{"g":1,"12":{"38":1.0}}"#);
+        assert!(grouped.group);
+        assert!(grouped.get(STATE_GROUP_HOVER).is_some());
+        assert!(!styles.group);
         let visible = StateStyles::parse(r#"{"11":{"37":4294967295}}"#);
         assert_eq!(
             visible

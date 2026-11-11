@@ -183,7 +183,7 @@ final class TemplateCompiler
                 ) !== 1
             ) {
                 throw new RuntimeException(
-                    "{$forAttribute} must use \"\$item in \$items\" syntax at {$node->source}:{$node->line}:{$node->column}.",
+                    "{$forAttribute} must use \"\$item in \$items\" or \"(\$item, \$index) in \$items\" syntax at {$node->source}:{$node->line}:{$node->column}.",
                 );
             }
         }
@@ -429,6 +429,22 @@ final class TemplateCompiler
 
         if (trim(substr($source, $offset)) !== '') {
             throw new RuntimeException("Invalid attributes in {$name}.");
+        }
+
+        // Vue's `($item, $index) in $items` names the index in the header:
+        // it is `$item in $items` with `p-index`.
+        foreach (['p-for', 'v-for'] as $for) {
+            $directive = $attributes[$for] ?? null;
+            if (
+                is_string($directive)
+                && preg_match('/^\s*\(\s*(\$?[A-Za-z_]\w*)\s*,\s*\$?([A-Za-z_]\w*)\s*\)\s+in\s+(.+)$/sD', $directive, $loop) === 1
+            ) {
+                if (isset($attributes['p-index'])) {
+                    throw new RuntimeException("{$for} names its index twice (in the header and in p-index) in {$name}.");
+                }
+                $attributes[$for] = "{$loop[1]} in {$loop[3]}";
+                $attributes['p-index'] = $loop[2];
+            }
         }
 
         return $attributes;

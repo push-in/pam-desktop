@@ -482,6 +482,20 @@ impl Backend for GtkBackend {
         }
 
         let host = PamView::new();
+        if std::env::var("PAM_DESKTOP_PROFILE").as_deref() == Ok("1") {
+            native.connect_realize(|window| {
+                if let Some(clock) = window.frame_clock() {
+                    clock.connect_after_paint(|_| {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |elapsed| elapsed.as_millis() % 100_000);
+                        if let Some(report) = crate::prof::report() {
+                            eprintln!("[pam-desktop profile] @{now} paint after {report}");
+                        }
+                    });
+                }
+            });
+        }
         let size = Rc::new(Cell::new(config.size));
         {
             let events = Rc::clone(&self.events);
@@ -613,6 +627,7 @@ impl Backend for GtkBackend {
     }
 
     fn create_view(&mut self, id: NodeId, class: ViewClass) {
+        let _span = crate::prof::Span::new("create_view");
         let container = PamView::new();
         {
             let focus = gtk::EventControllerFocus::new();
@@ -735,6 +750,7 @@ impl Backend for GtkBackend {
     }
 
     fn destroy_view(&mut self, id: NodeId) {
+        let _span = crate::prof::Span::new("destroy_view");
         if let Some(mut entry) = self.views.remove(&id) {
             self.key_captures
                 .borrow_mut()
@@ -756,6 +772,7 @@ impl Backend for GtkBackend {
     }
 
     fn set_children(&mut self, parent: NodeId, children: &[NodeId]) {
+        let _span = crate::prof::Span::new("set_children");
         let Some(parent_entry) = self.views.get(&parent) else {
             return;
         };
@@ -790,6 +807,7 @@ impl Backend for GtkBackend {
     }
 
     fn set_frame(&mut self, id: NodeId, frame: Rect) {
+        let _span = crate::prof::Span::new("set_frame");
         let Some(entry) = self.views.get_mut(&id) else {
             return;
         };
@@ -806,6 +824,7 @@ impl Backend for GtkBackend {
     }
 
     fn set_pointer_events(&mut self, id: NodeId, target_self: bool, target_children: bool) {
+        let _span = crate::prof::Span::new("set_pointer_events");
         let parent_allows = self
             .views
             .get(&id)
@@ -837,6 +856,7 @@ impl Backend for GtkBackend {
     }
 
     fn set_decoration(&mut self, id: NodeId, decoration: &Decoration) {
+        let _span = crate::prof::Span::new("set_decoration");
         if let Some(entry) = self.views.get(&id) {
             entry.container.set_decoration(decoration);
             if let Some(scrolled) = entry.widget.downcast_ref::<gtk::ScrolledWindow>() {
@@ -846,6 +866,7 @@ impl Backend for GtkBackend {
     }
 
     fn set_layer(&mut self, id: NodeId, layer: &LayerState) {
+        let _span = crate::prof::Span::new("set_layer");
         let Some(entry) = self.views.get(&id) else {
             return;
         };
@@ -864,12 +885,14 @@ impl Backend for GtkBackend {
     }
 
     fn set_text_geometry(&mut self, id: NodeId, geometry: pam_desktop_ui::backend::TextGeometry) {
+        let _span = crate::prof::Span::new("set_text_geometry");
         if let Some(entry) = self.views.get(&id) {
             entry.container.set_text_geometry(geometry);
         }
     }
 
     fn set_text(&mut self, id: NodeId, text: Option<&TextContent>) {
+        let _span = crate::prof::Span::new("set_text");
         if let Some(entry) = self.views.get_mut(&id) {
             entry.container.set_text(text);
             // The text is the accessible name unless a label was given.
@@ -896,6 +919,7 @@ impl Backend for GtkBackend {
         id: NodeId,
         accessibility: Option<&pam_desktop_ui::accessibility::Accessibility>,
     ) {
+        let _span = crate::prof::Span::new("set_accessibility");
         if let Some(entry) = self.views.get_mut(&id) {
             entry.accessibility = accessibility.cloned().map(Box::new);
             // Native text controls describe themselves; only the name and state are added.
@@ -914,6 +938,7 @@ impl Backend for GtkBackend {
     }
 
     fn set_focusable(&mut self, id: NodeId, focusable: bool) {
+        let _span = crate::prof::Span::new("set_focusable");
         if let Some(entry) = self.views.get(&id) {
             entry.container.set_focusable(focusable);
             if focusable {
@@ -925,6 +950,7 @@ impl Backend for GtkBackend {
     }
 
     fn set_key_capture(&mut self, id: NodeId, keys: &str) {
+        let _span = crate::prof::Span::new("set_key_capture");
         if let Some(entry) = self.views.get(&id) {
             let pointer = entry.container.as_ptr() as usize;
             if keys.is_empty() {
@@ -956,6 +982,7 @@ impl Backend for GtkBackend {
     }
 
     fn set_input_config(&mut self, id: NodeId, config: &InputConfig) {
+        let _span = crate::prof::Span::new("set_input_config");
         if let Some(entry) = self.views.get_mut(&id)
             && let Some(input) = &mut entry.input
         {
@@ -964,6 +991,7 @@ impl Backend for GtkBackend {
     }
 
     fn set_input_text(&mut self, id: NodeId, text: &str, selection: Option<(u32, u32)>) {
+        let _span = crate::prof::Span::new("set_input_text");
         if let Some(input) = self.views.get(&id).and_then(|entry| entry.input.as_ref()) {
             input.set_text(text, selection);
         }
@@ -976,6 +1004,7 @@ impl Backend for GtkBackend {
     }
 
     fn load_image(&mut self, key: ImageKey, source: ImageSource, max_dimension: Option<u32>) {
+        let _span = crate::prof::Span::new("load_image");
         let events = Rc::clone(&self.events);
         let textures = Rc::clone(&self.textures);
         // Decoding runs on a worker thread; only plain pixels cross back to
@@ -1034,6 +1063,7 @@ impl Backend for GtkBackend {
     }
 
     fn set_image(&mut self, id: NodeId, image: Option<&ImageContent>) {
+        let _span = crate::prof::Span::new("set_image");
         let Some(entry) = self.views.get(&id) else {
             return;
         };
@@ -1181,12 +1211,14 @@ impl Backend for GtkBackend {
     }
 
     fn set_scroll_content(&mut self, id: NodeId, size: Size) {
+        let _span = crate::prof::Span::new("set_scroll_content");
         if let Some(entry) = self.views.get(&id) {
             entry.container.set_content_size(Some(size));
         }
     }
 
     fn set_scroll_config(&mut self, id: NodeId, config: &ScrollConfig) {
+        let _span = crate::prof::Span::new("set_scroll_config");
         let Some(scrolled) = self
             .views
             .get(&id)
@@ -1233,6 +1265,7 @@ impl Backend for GtkBackend {
     }
 
     fn measure_text(&mut self, block: &TextBlock, max_width: f32) -> TextMetrics {
+        let _span = crate::prof::Span::new("measure_text");
         match &self.measure_layout {
             Some(layout) => text::measure(layout, block, max_width),
             None => TextMetrics::default(),
@@ -1243,6 +1276,7 @@ impl Backend for GtkBackend {
         &mut self,
         block: &TextBlock,
     ) -> Option<pam_desktop_ui::text::CharMetrics> {
+        let _span = crate::prof::Span::new("text_control_metrics");
         text::control_metrics(self.measure_layout.as_ref()?, block)
     }
 
@@ -1437,6 +1471,7 @@ impl Backend for GtkBackend {
     fn set_shortcuts(&mut self, _shortcuts: &[Shortcut]) {}
 
     fn set_cursor(&mut self, id: NodeId, cursor: Cursor) {
+        let _span = crate::prof::Span::new("set_cursor");
         if let Some(entry) = self.views.get(&id) {
             entry
                 .widget
@@ -1445,6 +1480,7 @@ impl Backend for GtkBackend {
     }
 
     fn set_tooltip(&mut self, id: NodeId, text: Option<&str>) {
+        let _span = crate::prof::Span::new("set_tooltip");
         if let Some(entry) = self.views.get(&id) {
             entry.widget.set_tooltip_text(text);
         }
@@ -1556,6 +1592,7 @@ const STYLESHEET: &str = "
 /// Runs a PAM Desktop application on GTK until its window closes.
 pub fn run(application_id: &str, config: RuntimeConfig) -> ExitCode {
     skip_gl_without_gpu();
+    skip_a11y_without_bus();
     // One instance per application: a second launch hands its URL over.
     let flags = if config.single_instance {
         gio::ApplicationFlags::HANDLES_OPEN
@@ -2150,6 +2187,29 @@ fn skip_gl_without_gpu() {
         std::env::set_var("GDK_DEBUG", debug);
         std::env::set_var("GDK_DISABLE", "gl");
     }
+}
+
+/// Without a D-Bus session bus (a headless session, ssh, CI, a system
+/// service) no assistive technology can reach the application, yet GTK up
+/// to 4.14 tries to register every new widget on the accessibility bus and
+/// waits for it to fail: about 5-13 ms per widget, a second and a half for
+/// a screen of a few hundred views. There accessibility is switched off.
+/// A `GTK_A11Y` the user set is kept.
+fn skip_a11y_without_bus() {
+    if std::env::var_os("GTK_A11Y").is_some() || session_bus() {
+        return;
+    }
+    // SAFETY: called first in `run`, before GTK or any other thread starts.
+    unsafe { std::env::set_var("GTK_A11Y", "none") };
+}
+
+/// A session bus address, or the per-user socket GIO falls back to.
+fn session_bus() -> bool {
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some_and(|address| !address.is_empty()) {
+        return true;
+    }
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .is_some_and(|runtime| std::path::Path::new(&runtime).join("bus").exists())
 }
 
 /// A DRM device (Mesa, the open drivers, nvidia-drm) or the NVIDIA device.

@@ -347,6 +347,57 @@ final class TemplateExpression
     }
 
     /**
+     * Why the expression would fail before rendering, for `pam-desktop
+     * check`: a syntax error, or a bare call to a method the component does
+     * not have (calls on values, `->m()`, are only known at runtime).
+     *
+     * @param \ReflectionClass<\Pam\Desktop\Component>|null $component
+     */
+    public static function problem(string $expression, ?\ReflectionClass $component): ?string
+    {
+        try {
+            $parser = new self(self::normalizeObjectLiteral($expression));
+            $parser->ternary();
+            if ($parser->peek() !== null) {
+                return "unexpected token {$parser->peek()['text']} in {$expression}";
+            }
+        } catch (\Throwable $error) {
+            $message = trim(str_ireplace(['in template expression', 'template expression'], '', $error->getMessage()), ' .');
+
+            return lcfirst($message)." in {$expression}";
+        }
+        if ($component === null) {
+            return null;
+        }
+        $tokens = self::tokenize($expression);
+        foreach ($tokens as $index => $token) {
+            if ($token['type'] !== T_STRING || ($tokens[$index + 1]['type'] ?? null) !== '(') {
+                continue;
+            }
+            $before = $tokens[$index - 1]['type'] ?? null;
+            if (in_array($before, [T_OBJECT_OPERATOR, T_NULLSAFE_OBJECT_OPERATOR, T_DOUBLE_COLON], true)) {
+                continue;
+            }
+            $name = $token['text'];
+            $builtIn = strtolower($name);
+            if (
+                in_array($builtIn, ['min', 'max', 'array_slice', 'count', 'in_array', 't'], true)
+                || isset(self::STRING_HELPERS[$builtIn])
+            ) {
+                continue;
+            }
+            if (!$component->hasMethod($name)) {
+                return "method {$name}() does not exist on {$component->getName()}";
+            }
+            if (!$component->getMethod($name)->isPublic()) {
+                return "method {$name}() must be public";
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * @internal
      * @return list<array{type: int|string, text: string}>
      */
@@ -837,7 +888,7 @@ final class TemplateExpression
             $value = $this->ternary();
             $this->expect(')');
 
-            return $value;
+            return $this->chained($value);
         }
         if ($this->take('[')) {
             return $this->array();
@@ -876,7 +927,7 @@ final class TemplateExpression
                 return self::constant(null);
             }
             if ($this->take('(')) {
-                return $this->call($name, $this->arguments());
+                return $this->chained($this->call($name, $this->arguments()));
             }
             if ($this->take(T_DOUBLE_COLON)) {
                 return $this->staticEnumCase($name);
@@ -963,8 +1014,21 @@ final class TemplateExpression
         };
     }
 
+    /**
+     * `call()->property`, `call()->method()`, `call()[index]` and the same after
+     * a parenthesised expression. A dot stays concatenation there.
+     */
+    private function chained(Closure $value): Closure
+    {
+        $postfix = $this->postfix(dot: false);
+
+        return $postfix === null
+            ? $value
+            : static fn (array $data, ?object $scope): mixed => $postfix($value($data, $scope), $data, $scope);
+    }
+
     /** @return (Closure(mixed, array<string, mixed>, ?object): mixed)|null */
-    private function postfix(): ?Closure
+    private function postfix(bool $dot = true): ?Closure
     {
         $lenient = $this->coalescingDepth > 0;
         $missing = $this->missing;
@@ -973,7 +1037,7 @@ final class TemplateExpression
 
         while (true) {
             $arrow = $this->take(T_OBJECT_OPERATOR);
-            if ($arrow || $this->takePropertyDot()) {
+            if ($arrow || ($dot && $this->takePropertyDot())) {
                 $segment = $this->peek();
                 if ($segment === null || $segment['type'] !== T_STRING) {
                     throw new RuntimeException('Template property path is invalid.');

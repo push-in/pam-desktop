@@ -632,7 +632,17 @@ impl<B: Backend> Runtime<B> {
             self.gestures.flush(&mut ctx);
             self.scrolling.flush(&mut ctx);
         }
+        let started = profile_enabled().then(std::time::Instant::now);
         self.scene.flush(&mut self.backend, MAIN_WINDOW);
+        if let Some(started) = started
+            && started.elapsed() > std::time::Duration::from_millis(2)
+        {
+            eprintln!(
+                "[pam-desktop profile] @{} widgets {:.1} ms",
+                profile_clock(),
+                started.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
         for command in std::mem::take(&mut self.commands) {
             match command {
                 HostCommand::Focus(id) => self.backend.focus(id),
@@ -984,7 +994,9 @@ impl<B: Backend> Runtime<B> {
         if self.error_overlay.frame_committed() {
             self.refresh_error_overlay();
         }
+        let started = profile_enabled().then(std::time::Instant::now);
         let committed = self.with_engine(|engine, batch| engine.commit_into(frame, batch));
+        let laid_out = started.map(|started| started.elapsed());
         let applied = match committed {
             Ok(()) => self.apply_batch(),
             Err(error) => {
@@ -992,6 +1004,17 @@ impl<B: Backend> Runtime<B> {
                 false
             }
         };
+        if let (Some(started), Some(laid_out)) = (started, laid_out) {
+            let total = started.elapsed();
+            eprintln!(
+                "[pam-desktop profile] @{} host commit {} bytes {:.1} ms: layout {:.1}, apply {:.1}",
+                profile_clock(),
+                frame.len(),
+                total.as_secs_f64() * 1000.0,
+                laid_out.as_secs_f64() * 1000.0,
+                (total - laid_out).as_secs_f64() * 1000.0,
+            );
+        }
         if !applied {
             self.resynchronize();
         }
@@ -1823,6 +1846,20 @@ fn new_engine<B: Backend>(metrics: &WindowMetrics, measure: &mut MeasureContext<
 
 /// `PAM_DESKTOP_DEBUG=1` logs every pointer press and every event sent to
 /// PHP. Read once: the environment is not consulted per event.
+/// `PAM_DESKTOP_PROFILE=1`: one stderr line per committed frame (layout and native apply times).
+/// Wall clock in milliseconds modulo 100 s, to line host and worker lines up.
+fn profile_clock() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_millis() % 100_000)
+}
+
+fn profile_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED
+        .get_or_init(|| std::env::var_os("PAM_DESKTOP_PROFILE").is_some_and(|value| value == "1"))
+}
+
 fn debug_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {

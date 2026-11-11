@@ -364,7 +364,7 @@ final class TemplateExpressionCompiler
             $value = $this->ternary();
             $this->expect(')');
 
-            return $value;
+            return $this->chained($value);
         }
         if ($this->take('[')) {
             return $this->arrayLiteral();
@@ -403,7 +403,7 @@ final class TemplateExpressionCompiler
                 return 'null';
             }
             if ($this->take('(')) {
-                return $this->call($name, $this->arguments());
+                return $this->chained($this->call($name, $this->arguments()));
             }
             if ($this->take(T_DOUBLE_COLON)) {
                 return $this->staticEnumCase($name);
@@ -498,14 +498,28 @@ final class TemplateExpressionCompiler
         return $result;
     }
 
-    private function postfix(string $value): void
+    /** `call()->x`, `(expr)->x` and `[index]` after them; a dot stays concatenation. */
+    private function chained(string $value): string
+    {
+        $next = $this->peek()['type'] ?? null;
+        if ($next !== T_OBJECT_OPERATOR && $next !== '[') {
+            return $value;
+        }
+        $result = $this->temporary();
+        $this->emit("{$result} = {$value};");
+        $this->postfix($result, dot: false);
+
+        return $result;
+    }
+
+    private function postfix(string $value, bool $dot = true): void
     {
         $lenient = $this->coalescingDepth > 0 ? 'true' : 'false';
         $runtime = self::RUNTIME;
 
         while (true) {
             $arrow = $this->take(T_OBJECT_OPERATOR);
-            if ($arrow || $this->takePropertyDot()) {
+            if ($arrow || ($dot && $this->takePropertyDot())) {
                 $segment = $this->peek();
                 if ($segment === null || $segment['type'] !== T_STRING) {
                     throw new RuntimeException('Template property path is invalid.');

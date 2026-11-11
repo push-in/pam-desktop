@@ -1,5 +1,53 @@
 # Changelog
 
+## 2.1.5 - 2026-11-11
+
+Everything the Slack clone in `examples/slack` needed: Lucide icons in the
+package, hover actions revealed from an ancestor's `:hover`, call chains in
+templates, expression checks in `pam-desktop check` and an interaction
+profiler. Linux opens new views without the one-second stall it had without
+a session bus. Update with `pam composer update pushinbr/pam-desktop`; no
+app changes needed.
+
+### Added
+
+- **Lucide icons ship with the package.** `<Icon name="hash" font="Lucide" />`
+  draws any of Lucide's 2,370 icons with no font or glyph map copied into the
+  project.
+- **Calls chain in templates.** `{{ owner()->name }}`, `active()->isDirect()`,
+  `entries()[0]` and `($a ?? $b)->title` read the result of a call or a group
+  like any other value (a `.` after a call stays concatenation).
+- **`pam-desktop check` validates template expressions (`PAM2405`).** A syntax
+  error (`{{ $count + }}`) or a bare call to a missing or private component
+  method (`p-if="missing()"`) is listed with its file, line and column instead
+  of failing when the screen first renders.
+- **Hover on an ancestor styles its descendants.** `.message:hover .actions
+  { opacity: 1; }` reveals hover actions with no PHP round trip, on every
+  host. Before, a `:hover` anywhere but the last compound silently matched
+  nothing.
+- **`p-for="($item, $i) in $items"`**, Vue's header, names the loop index
+  (the same as `$itemIndex` or `p-index="i"`).
+- **`PAM_DESKTOP_PROFILE=1`** times every interaction: the PHP handler and
+  render, the host layout of the committed frame, the native view work and the
+  frame painted after it, with a wall clock that lines worker and host up.
+
+### Fixed
+
+- **A Span keeps the spaces at its edges.** `<Span>between </Span><Span>@Ana</Span>`
+  rendered "between@Ana": the edge trimming meant for a plain Text leaf also
+  ran on each Span, the runs whose separators those spaces are.
+- **A class styled only in a state is a known class.** A template using
+  `class="closed"` whose sheet only has `.closed:hover { … }` failed with
+  "Unknown Pam Desktop class closed".
+- **Numeric state styles reach the host.** `opacity` and the other numbers of
+  a `:hover`, `:focus` or `:pressed` rule were sent as strings and ignored.
+
+- **Linux without a session bus renders new views at once.** Started without a
+  D-Bus session bus (Xvfb, ssh, CI, a system service), GTK spent 5 to 13 ms
+  per new widget failing to reach the accessibility bus: opening a panel of a
+  hundred views froze the window for over a second. The host now sets
+  `GTK_A11Y=none` there, where no screen reader could connect anyway.
+
 ## 2.1.4 - 2026-11-09
 
 The same screen now looks the same on Linux, macOS and Windows: text widths,

@@ -97,6 +97,13 @@ final class TemplateContractValidator
             }
         }
 
+        foreach (self::expressions($node) as $expression) {
+            $problem = TemplateExpression::problem($expression, $component);
+            if ($problem !== null) {
+                $errors[] = self::error($node, "template expression: {$problem}", 'PAM2405');
+            }
+        }
+
         $contract = TemplateRegistry::tagContract($node->name);
         if ($contract !== null) {
             $knownProps = [];
@@ -205,10 +212,58 @@ final class TemplateContractValidator
         return $literals;
     }
 
-    private static function error(CompiledTemplateNode $node, string $message): RuntimeException
+    /**
+     * The PHP expressions of a node: bound props, directives, handler calls
+     * and `{{ }}` interpolations of its text and attributes.
+     *
+     * @return list<string>
+     */
+    private static function expressions(CompiledTemplateNode $node): array
+    {
+        $expressions = [];
+        foreach (self::interpolations($node->value) as $expression) {
+            $expressions[] = $expression;
+        }
+        foreach ($node->attributes as $name => $value) {
+            if (!is_string($value)) {
+                continue;
+            }
+            $name = (string) $name;
+            $directive = preg_replace('/^v-/', 'p-', $name);
+            if ($directive === 'p-for') {
+                if (preg_match('/^\s*(?:\([^)]*\)|\$?[A-Za-z_]\w*)\s+in\s+(.+)$/sD', $value, $match) === 1) {
+                    $expressions[] = $match[1];
+                }
+            } elseif (str_starts_with($name, ':') || in_array($directive, ['p-if', 'p-else-if', 'p-show', 'p-key'], true)) {
+                $expressions[] = $value;
+            } elseif (str_starts_with($name, '@') || str_starts_with($name, 'on:')) {
+                if (str_contains($value, '(')) {
+                    $expressions[] = $value;
+                }
+            } else {
+                foreach (self::interpolations($value) as $expression) {
+                    $expressions[] = $expression;
+                }
+            }
+        }
+
+        return $expressions;
+    }
+
+    /** @return list<string> */
+    private static function interpolations(string $text): array
+    {
+        if (!str_contains($text, '{{') || preg_match_all('/\{\{(.*?)\}\}/s', $text, $matches) === 0) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map('trim', $matches[1]), static fn (string $e): bool => $e !== ''));
+    }
+
+    private static function error(CompiledTemplateNode $node, string $message, string $code = 'PAM2401'): RuntimeException
     {
         return new RuntimeException(
-            "PAM2401 {$message} at {$node->source}:{$node->line}:{$node->column}.",
+            "{$code} {$message} at {$node->source}:{$node->line}:{$node->column}.",
         );
     }
 }

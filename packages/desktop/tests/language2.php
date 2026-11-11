@@ -553,6 +553,61 @@ $assert(
     'Compiled states and recipe variants must reach native element properties.',
 );
 
+// `.row:hover .actions`: the row is a hover group, the actions show while
+// the pointer is over it (state 12, evaluated by the host).
+$groupStyles = ScopedStyleCompiler::compile(<<<'CSS'
+.row { padding: 4px; }
+.actions { opacity: 0; }
+.row:hover .actions { opacity: 1; background: #FFFFFF; }
+CSS, 'Language2GroupHover.pam');
+$groupTemplate = TemplateCompiler::compile(
+    '<Row class="row"><Text>Message</Text><Row class="actions"><Text>Reply</Text></Row></Row>',
+    'Language2GroupHover.pam',
+    LanguageVersion::Language2,
+);
+$groupRoot = new CompiledTemplateNode(
+    kind: $groupTemplate->kind,
+    name: $groupTemplate->name,
+    attributes: ['__pamStyles' => json_encode($groupStyles, JSON_THROW_ON_ERROR)],
+    source: $groupTemplate->source,
+    line: $groupTemplate->line,
+    column: $groupTemplate->column,
+);
+$groupRoot->children = $groupTemplate->children;
+$groupElement = TemplateRenderer::render($groupRoot, null, []);
+$groupStates = json_decode((string) ($groupElement->properties()[PropKey::NativeStateStyles->value] ?? '{}'), true);
+$groupActions = $groupElement->children()[1] ?? null;
+$memberStates = $groupActions instanceof \Pam\Desktop\Element
+    ? json_decode((string) ($groupActions->properties()[PropKey::NativeStateStyles->value] ?? '{}'), true)
+    : [];
+$assert(
+    ($groupStates['g'] ?? null) === 1
+        && !isset($groupStates[12])
+        && ($memberStates[12][PropKey::Opacity->value] ?? null) === 1.0
+        && ($memberStates[12][PropKey::BackgroundColor->value] ?? null) === 0xFFFFFFFF
+        && !isset($memberStates['g'])
+        && (float) ($groupActions->properties()[PropKey::Opacity->value] ?? -1) === 0.0,
+    'A descendant of a hovered group must compile to a host group-hover state: '.json_encode([$groupStates, $memberStates]),
+);
+
+// A class styled only in a state (`.closed:hover`) is a known class.
+$stateOnlyStyles = ScopedStyleCompiler::compile('.closed:hover { background: #FFFFFF; }', 'Language2StateOnly.pam');
+$stateOnlyTemplate = TemplateCompiler::compile('<Row class="closed" />', 'Language2StateOnly.pam', LanguageVersion::Language2);
+$stateOnlyRoot = new CompiledTemplateNode(
+    kind: $stateOnlyTemplate->kind,
+    name: $stateOnlyTemplate->name,
+    attributes: ['__pamStyles' => json_encode($stateOnlyStyles, JSON_THROW_ON_ERROR)],
+    source: $stateOnlyTemplate->source,
+    line: $stateOnlyTemplate->line,
+    column: $stateOnlyTemplate->column,
+);
+$stateOnlyRoot->children = $stateOnlyTemplate->children;
+$stateOnlyElement = TemplateRenderer::render($stateOnlyRoot, null, []);
+$assert(
+    isset(json_decode((string) ($stateOnlyElement->properties()[PropKey::NativeStateStyles->value] ?? '{}'), true)[3]),
+    'A class styled only in a :hover rule must render with its state style.',
+);
+
 $virtualKeyRejected = false;
 try {
     TemplateCompiler::compile(

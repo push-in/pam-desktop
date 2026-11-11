@@ -22,6 +22,23 @@ $rich = TemplateRenderer::render(
     ['name' => 'Ana', 'pronouns' => 'ela/dela'],
 );
 $assert($textOf($rich) === 'Ana · ela/dela', 'A Span leaf must keep the leading space of its interpolated value: '.var_export($textOf($rich), true));
+$static = TemplateRenderer::render(
+    TemplateCompiler::compile("<Text>\n    <Span>Just between </Span>\n    <Span>@{{ \$name }}</Span>\n    <Span> and you.</Span>\n</Text>"),
+    null,
+    ['name' => 'Ana'],
+);
+$assert($textOf($static) === 'Just between @Ana and you.', 'Static spaces at the edges of a Span are the run separators (JSX): '.var_export($textOf($static), true));
+
+// Vue's `($item, $index) in` header names the loop position.
+$numbered = TemplateRenderer::render(
+    TemplateCompiler::compile('<Column><Text p-for="($name, $i) in $names" p-key="$i">{{ $i }}. {{ $name }}</Text></Column>'),
+    null,
+    ['names' => ['Ana', 'Bruno']],
+);
+$assert(
+    array_map($textOf, $numbered->children()) === ['0. Ana', '1. Bruno'],
+    'A ($item, $index) p-for header must bind the index: '.json_encode(array_map($textOf, $numbered->children())),
+);
 
 // RN `refreshControl` is a prop of the ScrollView, so the list's own flex
 // sizing decides the box: a RefreshControl wrapper adopts its content's flex

@@ -159,6 +159,8 @@ An element takes one to eight actions. A name is a lower-case identifier of up t
 
 On Linux, GTK fixes the role of a widget once its accessible object is in use, so a role that changes after the element was shown is not picked up.
 
+On Linux, accessibility needs a D-Bus session bus, the channel to the screen reader. Started without one (`DBUS_SESSION_BUS_ADDRESS` unset and no `$XDG_RUNTIME_DIR/bus`: a headless test run, ssh, CI, a system service), the host sets `GTK_A11Y=none`: no assistive technology could reach the application there, and GTK up to 4.14 otherwise spends 5 to 13 ms per new widget failing to reach the bus. Set `GTK_A11Y` yourself to keep another choice.
+
 The Linux column is implemented and runs; the macOS and Windows columns are written and type-checked but have not run on a real machine.
 
 ## Text selection

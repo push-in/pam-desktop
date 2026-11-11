@@ -26,7 +26,8 @@ use Throwable;
  *
  * Codes: PAM2401 template contract (unknown action/prop/event/attribute),
  * PAM2402 template or component compile error, PAM2403 invalid CSS,
- * PAM2404 route error, PAM2400 entry file error.
+ * PAM2404 route error, PAM2405 template expression (syntax or missing
+ * component method), PAM2400 entry file error.
  */
 final class ProjectCheck
 {

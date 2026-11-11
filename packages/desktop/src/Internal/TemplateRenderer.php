@@ -2100,7 +2100,8 @@ final class TemplateRenderer
                 }
             }
         }
-        if ($richParts === null && $textTag) {
+        // A Span is a run of its Text: `between </Span><Span>@Ana` keeps its space.
+        if ($richParts === null && $textTag && $tag !== 'Span') {
             $text = self::trimStaticEdges($defaultNodes, $text);
         }
         if ($text !== '' && $richParts === null) {
@@ -2991,7 +2992,8 @@ final class TemplateRenderer
                 }
             }
         }
-        if ($richParts === null && $textTag) {
+        // A Span is a run of its Text: `between </Span><Span>@Ana` keeps its space.
+        if ($richParts === null && $textTag && $tag !== 'Span') {
             $text = self::trimStaticEdges($childNodes, $text);
         }
         if ($text !== '' && $richParts === null) {
@@ -5759,7 +5761,9 @@ final class TemplateRenderer
         if (is_array($sheet)) {
             $rules = $sheet['cascadeRules'] ?? [];
             if (!is_array($rules)) throw new RuntimeException('Invalid scoped class rules.');
-            foreach ($rules as $rule) {
+            // A class styled only in a state (`.closed:hover`) is known too.
+            $stateRules = $sheet['stateRules'] ?? [];
+            foreach ([...$rules, ...(is_array($stateRules) ? $stateRules : [])] as $rule) {
                 if (!is_array($rule) || !is_array($rule['selector'] ?? null)) continue;
                 $compounds = $rule['selector']['compounds'] ?? [];
                 if (!is_array($compounds)) continue;
@@ -5955,7 +5959,12 @@ final class TemplateRenderer
                     $attributes['pressedScale'] = $declarations['scaleX'];
                 }
             }
+            if ($state === 'group') {
+                $nativeStates['g'] = 1;
+                continue;
+            }
             $stateKind = match ($state) {
+                'group-hover' => StyleInteractionState::GroupHover,
                 'pressed', 'active' => StyleInteractionState::Pressed,
                 'focus' => StyleInteractionState::Focused,
                 // Keyboard focus only: the host tracks the input modality.
@@ -5990,7 +5999,8 @@ final class TemplateRenderer
                     PropKey::BorderLeftColor,
                     PropKey::Elevation,
                 ], true)) {
-                    $nativeStates[$stateKind->value][$property->value] = $value;
+                    // The host reads numbers: `opacity: 1` arrives as "1".
+                    $nativeStates[$stateKind->value][$property->value] = is_string($value) && is_numeric($value) ? (float) $value : $value;
                 }
             }
         }
