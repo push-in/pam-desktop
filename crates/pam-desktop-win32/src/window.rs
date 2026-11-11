@@ -7,8 +7,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 
 use pam_desktop_ui::backend::{
-    BackendEvent, GesturePhase, KeyEvent, NodeId, PointerButton, PointerEvent, PointerPhase,
-    WindowConfig, WindowId, WindowMetrics,
+    BackendEvent, GesturePhase, KeyEvent, Modifiers, NodeId, PointerButton, PointerEvent,
+    PointerPhase, WindowConfig, WindowId, WindowMetrics,
 };
 use pam_desktop_ui::geometry::{Point, Rect, Size};
 use pam_desktop_ui::shell::{Cursor, WindowCommand, WindowState};
@@ -1454,6 +1454,11 @@ fn key(
         }));
         return Some(LRESULT(0));
     }
+    if produces_text(&name, modifiers) && focused_text_input(app) {
+        // TranslateMessage turns the key into WM_CHAR, composing dead keys
+        // and AltGr characters; the text is committed from there.
+        return Some(LRESULT(0));
+    }
     if pressed
         && name == "Tab"
         && !modifiers.control
@@ -1482,6 +1487,64 @@ fn key(
     }
     // System keys keep their default handling (Alt+F4, the window menu).
     if system { None } else { Some(LRESULT(0)) }
+}
+
+/// Whether a key types text: a dead key or one printable character, with no
+/// chord modifier (Control with Alt is AltGr).
+fn produces_text(name: &str, modifiers: Modifiers) -> bool {
+    let mut chars = name.chars();
+    let printable =
+        name == "Dead" || chars.next().is_some_and(|c| !c.is_control()) && chars.next().is_none();
+    let altgr = modifiers.control && modifiers.alt;
+    printable && !modifiers.meta && (altgr || !modifiers.control && !modifiers.alt)
+}
+
+fn focused_text_input(app: &Rc<App>) -> bool {
+    app.with_state(|state| {
+        state
+            .scene
+            .focus
+            .and_then(|id| state.scene.views.get(&id))
+            .is_some_and(|view| view.text_input)
+    })
+    .unwrap_or(false)
+}
+
+thread_local! {
+    /// The high surrogate of a character split across two WM_CHAR messages.
+    static HIGH_SURROGATE: std::cell::Cell<Option<u16>> = const { std::cell::Cell::new(None) };
+}
+
+/// Translated characters are committed to a focused text input view.
+fn character(app: &Rc<App>, wparam: WPARAM) -> Option<LRESULT> {
+    let unit = wparam.0 as u16;
+    if (0xD800..0xDC00).contains(&unit) {
+        HIGH_SURROGATE.with(|high| high.set(Some(unit)));
+        return Some(LRESULT(0));
+    }
+    let units: Vec<u16> = match HIGH_SURROGATE.with(std::cell::Cell::take) {
+        Some(high) if (0xDC00..0xE000).contains(&unit) => vec![high, unit],
+        _ => vec![unit],
+    };
+    let text = String::from_utf16_lossy(&units);
+    if text.chars().any(char::is_control) {
+        return Some(LRESULT(0));
+    }
+    let focus = app
+        .with_state(|state| {
+            state.scene.focus.filter(|id| {
+                state
+                    .scene
+                    .views
+                    .get(id)
+                    .is_some_and(|view| view.text_input)
+            })
+        })
+        .flatten();
+    if let Some(id) = focus {
+        app.emit(BackendEvent::TextCommitted { id, text });
+    }
+    Some(LRESULT(0))
 }
 
 /// A key a native control did not use, reported for its window.
@@ -1923,8 +1986,8 @@ fn handle(
         WM_KEYUP => key(app, window, false, false, wparam, lparam),
         WM_SYSKEYDOWN => key(app, window, true, true, wparam, lparam),
         WM_SYSKEYUP => key(app, window, false, true, wparam, lparam),
-        // Keys are reported from WM_KEYDOWN; the translated characters are not needed.
-        WM_CHAR => Some(LRESULT(0)),
+        // Keys are reported from WM_KEYDOWN; only text input views take characters.
+        WM_CHAR => character(app, wparam),
         WM_SYSCHAR => {
             // Without a menu bar there are no mnemonics: swallowing the
             // character avoids the default beep on Alt chords. Alt+Space
