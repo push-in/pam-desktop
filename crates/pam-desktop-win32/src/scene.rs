@@ -49,6 +49,8 @@ pub struct View {
     pub scroll: Option<Box<ScrollState>>,
     pub focusable: bool,
     pub capture_keys: String,
+    /// Typed text arrives as committed text (WM_CHAR) rather than keys.
+    pub text_input: bool,
     pub target_self: bool,
     pub target_children: bool,
     pub cursor: Cursor,
@@ -89,6 +91,7 @@ impl View {
             scroll: (class == ViewClass::Scroll).then(|| Box::new(ScrollState::default())),
             focusable: false,
             capture_keys: String::new(),
+            text_input: false,
             target_self: true,
             target_children: true,
             cursor: Cursor::Default,

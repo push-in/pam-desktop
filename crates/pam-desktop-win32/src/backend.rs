@@ -272,6 +272,14 @@ impl Backend for Win32Backend {
         }
     }
 
+    fn set_text_input(&mut self, id: NodeId, enabled: bool) {
+        if let Some(mut state) = self.app.state()
+            && let Some(view) = state.scene.views.get_mut(&id)
+        {
+            view.text_input = enabled;
+        }
+    }
+
     fn set_key_capture(&mut self, id: NodeId, keys: &str) {
         if let Some(mut state) = self.app.state()
             && let Some(view) = state.scene.views.get_mut(&id)

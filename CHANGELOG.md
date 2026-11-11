@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.3.1 - 2026-11-11
+
+### Fixed
+
+- **Windows:** `<Terminal>` and other text input views take typed text from
+  `WM_CHAR`, so dead keys (´ ~ ¨ ^ `), AltGr characters and other layouts'
+  letters reach the shell (accents were dropped before). Keys that do not
+  type text, and Control/Alt shortcuts, still arrive as key events.
+
 ## 2.3.0 - 2026-11-11
 
 ### Fixed
